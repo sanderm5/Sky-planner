@@ -17,7 +17,7 @@ export interface JWTPayload {
 export interface CookieOptions {
     name: string;
     options: {
-        domain: string;
+        domain?: string;
         path: string;
         httpOnly: boolean;
         secure: boolean;

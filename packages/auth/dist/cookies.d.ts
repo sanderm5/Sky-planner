@@ -10,7 +10,7 @@ export declare const REFRESH_COOKIE_NAME = "skyplanner_refresh";
  * In production, cookies are set on .skyplanner.no to enable SSO
  * In development, cookies are set on localhost
  */
-export declare function getCookieConfig(isProduction: boolean): CookieOptions;
+export declare function getCookieConfig(isProduction: boolean, customDomain?: string): CookieOptions;
 /**
  * Gets refresh token cookie configuration
  * Longer expiration for remember-me functionality

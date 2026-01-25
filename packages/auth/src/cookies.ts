@@ -13,11 +13,14 @@ export const REFRESH_COOKIE_NAME = 'skyplanner_refresh';
  * In production, cookies are set on .skyplanner.no to enable SSO
  * In development, cookies are set on localhost
  */
-export function getCookieConfig(isProduction: boolean): CookieOptions {
+export function getCookieConfig(isProduction: boolean, customDomain?: string): CookieOptions {
+  // Don't set domain for Vercel deployments - let browser use current domain
+  const domain = customDomain || (isProduction ? undefined : 'localhost');
+
   return {
     name: AUTH_COOKIE_NAME,
     options: {
-      domain: isProduction ? '.skyplanner.no' : 'localhost',
+      domain,
       path: '/',
       httpOnly: true,
       secure: isProduction,
@@ -71,11 +74,12 @@ export function buildSetCookieHeader(
   const parts = [
     `${AUTH_COOKIE_NAME}=${token}`,
     `Path=${options.path}`,
-    `Domain=${options.domain}`,
     `Max-Age=${options.maxAge}`,
     `SameSite=${options.sameSite}`,
   ];
 
+  // Only add Domain if explicitly set (for cross-subdomain SSO)
+  if (options.domain) parts.push(`Domain=${options.domain}`);
   if (options.httpOnly) parts.push('HttpOnly');
   if (options.secure) parts.push('Secure');
 
