@@ -1,0 +1,32 @@
+/**
+ * Cookie utilities for cross-subdomain SSO
+ * Handles authentication cookies shared between skyplanner.no and app.skyplanner.no
+ */
+import type { CookieOptions } from './types';
+export declare const AUTH_COOKIE_NAME = "skyplanner_session";
+export declare const REFRESH_COOKIE_NAME = "skyplanner_refresh";
+/**
+ * Gets cookie configuration for the current environment
+ * In production, cookies are set on .skyplanner.no to enable SSO
+ * In development, cookies are set on localhost
+ */
+export declare function getCookieConfig(isProduction: boolean): CookieOptions;
+/**
+ * Gets refresh token cookie configuration
+ * Longer expiration for remember-me functionality
+ */
+export declare function getRefreshCookieConfig(isProduction: boolean): CookieOptions;
+/**
+ * Extracts token from cookie header string
+ * Works with both Express (parsed cookies) and raw cookie header
+ */
+export declare function extractTokenFromCookies(cookies: string | Record<string, string>, cookieName?: string): string | null;
+/**
+ * Builds a Set-Cookie header value for the auth token
+ */
+export declare function buildSetCookieHeader(token: string, options: CookieOptions['options']): string;
+/**
+ * Builds a Set-Cookie header to clear/logout
+ */
+export declare function buildClearCookieHeader(isProduction: boolean): string;
+//# sourceMappingURL=cookies.d.ts.map

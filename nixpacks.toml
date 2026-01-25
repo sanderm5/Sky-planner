@@ -1,0 +1,16 @@
+# Root nixpacks.toml for monorepo deployment
+# Railway should NOT set a Root Directory when using this
+
+[phases.setup]
+cmds = ["npm install -g pnpm"]
+
+[phases.install]
+dependsOn = ["setup"]
+cmds = ["pnpm install --no-frozen-lockfile"]
+
+[phases.build]
+dependsOn = ["install"]
+cmds = ["pnpm --filter @skyplanner/app build"]
+
+[start]
+cmd = "sh -c \"cd apps/app && HOST=0.0.0.0 npx tsx dist/server.js\""

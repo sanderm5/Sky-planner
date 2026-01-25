@@ -1,0 +1,429 @@
+/**
+ * Authentication routes
+ * Handles login, logout, and session management
+ */
+
+import { Router, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { authLogger, logAudit } from '../services/logger';
+import { generateToken, extractToken, getTokenId, requireAuth } from '../middleware/auth';
+import { asyncHandler, Errors } from '../middleware/errorHandler';
+import { validateLoginRequest } from '../utils/validation';
+import { getConfig } from '../config/env';
+import { blacklistToken, isTokenBlacklisted } from '../services/token-blacklist';
+import type { AuthenticatedRequest, JWTPayload, ApiResponse } from '../types';
+
+const router: Router = Router();
+
+// Session durations
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const REMEMBER_ME_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// Database service interface (will be injected)
+interface DatabaseService {
+  getKlientByEpost(epost: string): Promise<KlientRecord | null>;
+  getBrukerByEpost(epost: string): Promise<BrukerRecord | null>;
+  updateKlientLastLogin(id: number): Promise<void>;
+  updateBrukerLastLogin(id: number): Promise<void>;
+  getOrganizationById(id: number): Promise<OrganizationRecord | null>;
+  logLoginAttempt(data: LoginAttemptData): Promise<void>;
+}
+
+interface KlientRecord {
+  id: number;
+  navn: string;
+  epost: string;
+  passord_hash: string;
+  telefon?: string;
+  adresse?: string;
+  postnummer?: string;
+  poststed?: string;
+  rolle?: string;
+  organization_id?: number;
+  aktiv: boolean;
+}
+
+interface BrukerRecord {
+  id: number;
+  navn: string;
+  epost: string;
+  passord_hash: string;
+  rolle?: string;
+  organization_id?: number;
+  aktiv: boolean;
+}
+
+interface OrganizationRecord {
+  id: number;
+  navn: string;
+  slug: string;
+  logo_url?: string;
+  primary_color?: string;
+  secondary_color?: string;
+  brand_title?: string;
+  brand_subtitle?: string;
+  onboarding_completed?: boolean;
+  industry_template_id?: number | null;
+  plan_type?: 'free' | 'standard' | 'premium' | 'enterprise';
+  subscription_status?: 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
+  trial_ends_at?: string;
+  current_period_end?: string;
+}
+
+interface LoginAttemptData {
+  epost: string;
+  bruker_navn?: string;
+  bruker_type?: string;
+  status: 'vellykket' | 'feilet';
+  ip_adresse: string;
+  user_agent: string;
+  feil_melding?: string;
+}
+
+// Email service interface
+interface EmailService {
+  isEmailConfigured(): boolean;
+  sendEmail(to: string, subject: string, html: string): Promise<void>;
+}
+
+// Dependencies (injected when routes are mounted)
+let dbService: DatabaseService;
+let emailService: EmailService | null = null;
+
+/**
+ * Initialize auth routes with dependencies
+ */
+export function initAuthRoutes(
+  databaseService: DatabaseService,
+  email?: EmailService
+): Router {
+  dbService = databaseService;
+  emailService = email || null;
+  return router;
+}
+
+/**
+ * POST /api/klient/login
+ * Authenticates a user and returns a JWT token
+ */
+router.post(
+  '/login',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { epost, passord, rememberMe } = req.body;
+
+    // Validate input
+    const validationErrors = validateLoginRequest(epost, passord);
+    if (validationErrors) {
+      throw Errors.validationError(validationErrors);
+    }
+
+    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'Ukjent';
+    const userAgent = req.headers['user-agent'] || 'Ukjent';
+
+    // Check klient table first
+    let user: KlientRecord | BrukerRecord | null = await dbService.getKlientByEpost(epost);
+    let userType: 'klient' | 'bruker' = 'klient';
+
+    // If not found, check brukere (admin) table
+    if (!user) {
+      try {
+        user = await dbService.getBrukerByEpost(epost);
+        if (user) userType = 'bruker';
+      } catch {
+        // brukere table might not exist, ignore
+        authLogger.debug('brukere table check failed (might not exist)');
+      }
+    }
+
+    if (!user) {
+      // Log failed attempt
+      await dbService.logLoginAttempt({
+        epost,
+        status: 'feilet',
+        ip_adresse: ip,
+        user_agent: userAgent,
+        feil_melding: 'Bruker ikke funnet',
+      });
+      throw Errors.unauthorized('Feil e-post eller passord');
+    }
+
+    // Verify password
+    const passwordMatch = await bcrypt.compare(passord, user.passord_hash);
+    if (!passwordMatch) {
+      await dbService.logLoginAttempt({
+        epost,
+        bruker_navn: user.navn,
+        bruker_type: userType,
+        status: 'feilet',
+        ip_adresse: ip,
+        user_agent: userAgent,
+        feil_melding: 'Feil passord',
+      });
+      throw Errors.unauthorized('Feil e-post eller passord');
+    }
+
+    // Update last login
+    if (userType === 'klient') {
+      await dbService.updateKlientLastLogin(user.id);
+    } else {
+      await dbService.updateBrukerLastLogin(user.id);
+    }
+
+    // Fetch organization data
+    let organization: OrganizationRecord | null = null;
+    if (user.organization_id) {
+      organization = await dbService.getOrganizationById(user.organization_id);
+    }
+
+    // Generate JWT token
+    const sessionDuration = rememberMe ? '30d' : '24h';
+    const tokenPayload: Omit<JWTPayload, 'iat' | 'exp'> = {
+      userId: user.id,
+      epost: user.epost,
+      organizationId: user.organization_id,
+      organizationSlug: organization?.slug,
+      type: userType,
+      subscriptionStatus: organization?.subscription_status,
+      subscriptionPlan: organization?.plan_type,
+      trialEndsAt: organization?.trial_ends_at,
+      currentPeriodEnd: organization?.current_period_end,
+    };
+    const token = generateToken(tokenPayload, sessionDuration);
+
+    // Calculate expiry timestamp
+    const expiresAt = Date.now() + (rememberMe ? REMEMBER_ME_DURATION_MS : SESSION_DURATION_MS);
+
+    // Log successful login
+    await dbService.logLoginAttempt({
+      epost,
+      bruker_navn: user.navn,
+      bruker_type: userType,
+      status: 'vellykket',
+      ip_adresse: ip,
+      user_agent: userAgent,
+    });
+
+    // Audit log
+    logAudit(authLogger, 'LOGIN', user.id, 'user', user.id, {
+      userType,
+      organizationId: user.organization_id,
+    });
+
+    // Send login notification email (async, don't wait)
+    sendLoginNotification(user, userType, ip, userAgent);
+
+    // Build response
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        token,
+        expiresAt,
+        klient: {
+          id: user.id,
+          navn: user.navn,
+          epost: user.epost,
+          telefon: (user as KlientRecord).telefon,
+          adresse: (user as KlientRecord).adresse,
+          postnummer: (user as KlientRecord).postnummer,
+          poststed: (user as KlientRecord).poststed,
+          rolle: userType === 'bruker' ? 'admin' : (user.rolle || 'klient'),
+          type: userType,
+          organizationId: user.organization_id || null,
+          organizationSlug: organization?.slug || null,
+          organizationName: organization?.navn || null,
+        },
+        organization: organization
+          ? {
+              id: organization.id,
+              navn: organization.navn,
+              slug: organization.slug,
+              logoUrl: organization.logo_url,
+              primaryColor: organization.primary_color,
+              secondaryColor: organization.secondary_color,
+              brandTitle: organization.brand_title,
+              brandSubtitle: organization.brand_subtitle,
+              onboardingCompleted: organization.onboarding_completed ?? false,
+              industryTemplateId: organization.industry_template_id ?? null,
+            }
+          : null,
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * POST /api/klient/logout
+ * Invalidates the current session by blacklisting the token
+ */
+router.post(
+  '/logout',
+  requireAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    // Add token to blacklist to prevent reuse
+    const tokenId = getTokenId(req.user!);
+    const expiresAt = req.user!.exp || Math.floor(Date.now() / 1000) + 86400; // Default 24h
+
+    await blacklistToken(tokenId, expiresAt, req.user!.userId, req.user!.type, 'logout');
+    logAudit(authLogger, 'LOGOUT', req.user!.userId, 'user', req.user!.userId);
+
+    const response: ApiResponse = {
+      success: true,
+      data: { message: 'Logget ut' },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/klient/verify
+ * Verifies the current token is valid (from header or SSO cookie)
+ * Returns a fresh token for localStorage if valid
+ */
+router.get(
+  '/verify',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const config = getConfig();
+    const token = extractToken(req);
+
+    if (!token) {
+      res.json({
+        success: true,
+        data: { valid: false },
+        requestId: req.requestId,
+      });
+      return;
+    }
+
+    try {
+      const decoded = jwt.verify(token, config.JWT_SECRET) as JWTPayload;
+
+      // Check if token has been blacklisted (logout)
+      const tokenId = getTokenId(decoded);
+      const blacklisted = await isTokenBlacklisted(tokenId);
+      if (blacklisted) {
+        res.json({
+          success: true,
+          data: { valid: false, reason: 'token_revoked' },
+          requestId: req.requestId,
+        });
+        return;
+      }
+
+      // Fetch fresh user data
+      let user: KlientRecord | BrukerRecord | null = null;
+      if (decoded.type === 'klient') {
+        user = await dbService.getKlientByEpost(decoded.epost);
+      } else {
+        user = await dbService.getBrukerByEpost(decoded.epost);
+      }
+
+      if (!user || !user.aktiv) {
+        res.json({
+          success: true,
+          data: { valid: false, reason: 'inactive' },
+          requestId: req.requestId,
+        });
+        return;
+      }
+
+      // Fetch organization data
+      let organization: OrganizationRecord | null = null;
+      if (decoded.organizationId) {
+        organization = await dbService.getOrganizationById(decoded.organizationId);
+      }
+
+      // Generate a fresh token for localStorage (for subsequent API calls)
+      const freshToken = generateToken({
+        userId: decoded.userId,
+        epost: decoded.epost,
+        organizationId: decoded.organizationId,
+        organizationSlug: decoded.organizationSlug,
+        type: decoded.type,
+        subscriptionStatus: organization?.subscription_status,
+        subscriptionPlan: organization?.plan_type,
+        trialEndsAt: organization?.trial_ends_at,
+        currentPeriodEnd: organization?.current_period_end,
+      }, '24h');
+
+      res.json({
+        success: true,
+        data: {
+          valid: true,
+          token: freshToken,
+          user: {
+            id: user.id,
+            navn: user.navn,
+            epost: user.epost,
+            type: decoded.type,
+            organizationId: decoded.organizationId,
+            organizationSlug: decoded.organizationSlug,
+          },
+          organization: organization
+            ? {
+                id: organization.id,
+                navn: organization.navn,
+                slug: organization.slug,
+                logoUrl: organization.logo_url,
+                primaryColor: organization.primary_color,
+                secondaryColor: organization.secondary_color,
+                brandTitle: organization.brand_title,
+                brandSubtitle: organization.brand_subtitle,
+                onboardingCompleted: organization.onboarding_completed ?? false,
+                industryTemplateId: organization.industry_template_id ?? null,
+              }
+            : null,
+        },
+        requestId: req.requestId,
+      });
+    } catch {
+      res.json({
+        success: true,
+        data: { valid: false, reason: 'invalid_token' },
+        requestId: req.requestId,
+      });
+    }
+  })
+);
+
+/**
+ * Helper: Send login notification email
+ */
+async function sendLoginNotification(
+  user: KlientRecord | BrukerRecord,
+  userType: string,
+  ip: string,
+  userAgent: string
+): Promise<void> {
+  const config = getConfig();
+  const notifyEmail = process.env.LOGIN_NOTIFY_EMAIL || config.EMAIL_USER;
+
+  if (!notifyEmail || !emailService?.isEmailConfigured()) {
+    return;
+  }
+
+  try {
+    const now = new Date().toLocaleString('nb-NO', { timeZone: 'Europe/Oslo' });
+    const subject = `Innlogging: ${user.navn} (${userType})`;
+    const message = `
+      <h2>Ny innlogging på TREkontroll</h2>
+      <p><strong>Bruker:</strong> ${user.navn}</p>
+      <p><strong>E-post:</strong> ${user.epost}</p>
+      <p><strong>Type:</strong> ${userType}</p>
+      <p><strong>Tidspunkt:</strong> ${now}</p>
+      <p><strong>IP-adresse:</strong> ${ip}</p>
+      <p><strong>Enhet:</strong> ${userAgent}</p>
+    `;
+
+    await emailService.sendEmail(notifyEmail, subject, message);
+  } catch (error) {
+    authLogger.warn({ error }, 'Login notification email failed');
+  }
+}
+
+export default router;

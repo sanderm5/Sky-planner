@@ -1,0 +1,232 @@
+/* Shared styles for authentication pages (reset-passord, nytt-passord) */
+:root {
+  --color-bg: #0f0f0f;
+  --color-bg-card: #1a1a1a;
+  --color-bg-input: #252525;
+  --color-accent: #F97316;
+  --color-accent-hover: #FB923C;
+  --color-text: #ffffff;
+  --color-text-muted: #a0a0a0;
+  --color-border: #333333;
+  --color-success: #10B981;
+  --color-danger: #EF4444;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.container {
+  width: 100%;
+  max-width: 400px;
+  padding: 20px;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.header img {
+  max-width: 100px;
+  margin-bottom: 16px;
+}
+
+.header h1 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.header p {
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.card {
+  background: var(--color-bg-card);
+  border-radius: 12px;
+  padding: 30px;
+  border: 1px solid var(--color-border);
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: var(--color-text-muted);
+}
+
+.form-group input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  font-size: 16px;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.btn {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-accent);
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  text-decoration: none;
+  display: inline-block;
+  text-align: center;
+}
+
+.btn:hover {
+  background: var(--color-accent-hover);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.message {
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  display: none;
+}
+
+.message.error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+}
+
+.message.success {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid var(--color-success);
+  color: var(--color-success);
+}
+
+.back-link {
+  text-align: center;
+  margin-top: 20px;
+}
+
+.back-link a {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.back-link a:hover {
+  color: var(--color-accent);
+}
+
+.info-box {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: #93C5FD;
+}
+
+.info-box i {
+  margin-right: 8px;
+}
+
+.success-view {
+  text-align: center;
+  display: none;
+}
+
+.success-view i {
+  font-size: 48px;
+  color: var(--color-success);
+  margin-bottom: 16px;
+}
+
+.success-view h2 {
+  margin-bottom: 12px;
+}
+
+.success-view p {
+  color: var(--color-text-muted);
+  margin-bottom: 20px;
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+}
+
+.spinner {
+  display: inline-block;
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.invalid-token {
+  text-align: center;
+  padding: 20px;
+}
+
+.invalid-token i {
+  font-size: 48px;
+  color: var(--color-danger);
+  margin-bottom: 16px;
+}
+
+.invalid-token h2 {
+  margin-bottom: 8px;
+}
+
+.invalid-token p {
+  color: var(--color-text-muted);
+  margin-bottom: 20px;
+}
+
+.developer-credit {
+  margin-top: 30px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.developer-credit a {
+  color: rgba(255, 255, 255, 0.5);
+  text-decoration: none;
+}
+
+.developer-credit a:hover {
+  color: var(--color-accent);
+}

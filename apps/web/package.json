@@ -1,0 +1,33 @@
+{
+  "name": "@skyplanner/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sky Planner marketing website",
+  "scripts": {
+    "dev": "astro dev --port 3001",
+    "build": "astro build",
+    "preview": "astro preview",
+    "start": "HOST=0.0.0.0 node dist/server/entry.mjs",
+    "typecheck": "astro check && tsc --noEmit",
+    "clean": "rm -rf dist .astro"
+  },
+  "dependencies": {
+    "@astrojs/node": "^9.4.5",
+    "@astrojs/tailwind": "^5.1.2",
+    "@skyplanner/auth": "workspace:*",
+    "@skyplanner/database": "workspace:*",
+    "astro": "^5.16.3",
+    "bcryptjs": "^2.4.3",
+    "stripe": "^14.0.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.11.0",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3"
+  }
+}

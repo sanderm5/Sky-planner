@@ -1,0 +1,33 @@
+name: Snyk Security Scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 8 * * 1'  # Hver mandag kl 08:00
+
+jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v4 - pinned to commit SHA for security
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Setup Node.js
+        # actions/setup-node v4 - pinned to commit SHA for security
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Snyk to check for vulnerabilities
+        # snyk/actions/node - pinned to commit SHA for security
+        uses: snyk/actions/node@9adf32b1121593767fc3c057af55b55db032dc04
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nytt passord | Sky Planner</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="auth-pages.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="logo.png" alt="" id="pageLogo" style="display: none;">
+      <h1>Velg nytt passord</h1>
+      <p>Skriv inn ditt nye passord</p>
+    </div>
+
+    <div class="card">
+      <!-- Loading state -->
+      <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p style="margin-top: 16px; color: var(--color-text-muted);">Verifiserer lenke...</p>
+      </div>
+
+      <!-- Invalid token -->
+      <div id="invalidToken" class="invalid-token" style="display: none;">
+        <i class="fas fa-exclamation-circle"></i>
+        <h2>Ugyldig lenke</h2>
+        <p>Denne lenken er utløpt eller ugyldig. Be om en ny tilbakestilling.</p>
+        <a href="/reset-passord.html" class="btn">Be om ny lenke</a>
+      </div>
+
+      <!-- Password form -->
+      <div id="passwordForm" style="display: none;">
+        <div class="message" id="message"></div>
+        <form id="resetForm">
+          <div class="form-group">
+            <label for="newPassword">Nytt passord</label>
+            <input type="password" id="newPassword" placeholder="Minst 6 tegn" required minlength="6">
+          </div>
+          <div class="form-group">
+            <label for="confirmPassword">Bekreft passord</label>
+            <input type="password" id="confirmPassword" placeholder="Gjenta passord" required>
+          </div>
+          <button type="submit" class="btn" id="resetBtn">
+            <i class="fas fa-key"></i> Lagre nytt passord
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="back-link">
+      <a href="/"><i class="fas fa-arrow-left"></i> Tilbake til innlogging</a>
+    </div>
+
+    <div class="developer-credit">
+      Utviklet av <a href="https://efffekt.no" target="_blank" rel="noopener">Efffekt AS</a>
+    </div>
+  </div>
+
+  <script>
+    // Get token from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+
+    function showMessage(text, type) {
+      const msg = document.getElementById('message');
+      msg.textContent = text;
+      msg.className = 'message ' + type;
+      msg.style.display = 'block';
+    }
+
+    // Verify token on page load
+    async function verifyToken() {
+      if (!token) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('invalidToken').style.display = 'block';
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/auth/verify-token?token=' + encodeURIComponent(token));
+        const data = await response.json();
+
+        document.getElementById('loading').style.display = 'none';
+
+        if (data.valid) {
+          document.getElementById('passwordForm').style.display = 'block';
+        } else {
+          document.getElementById('invalidToken').style.display = 'block';
+        }
+      } catch (error) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('invalidToken').style.display = 'block';
+      }
+    }
+
+    // Handle form submission
+    document.getElementById('resetForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      const newPassword = document.getElementById('newPassword').value;
+      const confirmPassword = document.getElementById('confirmPassword').value;
+      const btn = document.getElementById('resetBtn');
+
+      if (newPassword !== confirmPassword) {
+        showMessage('Passordene er ikke like', 'error');
+        return;
+      }
+
+      if (newPassword.length < 6) {
+        showMessage('Passordet må være minst 6 tegn', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Lagrer...';
+
+      try {
+        const response = await fetch('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, newPassword })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Kunne ikke oppdatere passord');
+        }
+
+        showMessage('Passord oppdatert! Du blir sendt til innlogging...', 'success');
+
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 2000);
+
+      } catch (error) {
+        showMessage(error.message, 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-key"></i> Lagre nytt passord';
+      }
+    });
+
+    // Verify token when page loads
+    verifyToken();
+  </script>
+</body>
+</html>

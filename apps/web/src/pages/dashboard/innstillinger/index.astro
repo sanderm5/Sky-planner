@@ -1,0 +1,407 @@
+---
+import DashboardLayout from '../../../layouts/DashboardLayout.astro';
+import { requireAuth, isAuthError } from '../../../middleware/auth';
+import * as db from '@skyplanner/database';
+
+// Initialize Supabase client
+db.getSupabaseClient({
+  supabaseUrl: import.meta.env.SUPABASE_URL,
+  supabaseKey: import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY,
+});
+
+// Auth check
+const authResult = await requireAuth(Astro);
+if (isAuthError(authResult)) return authResult;
+
+const { user, organization } = authResult;
+---
+
+<DashboardLayout
+  title="Innstillinger"
+  user={user}
+  organization={organization}
+  currentPath="/dashboard/innstillinger"
+>
+  <!-- Page Header -->
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-white mb-2">Innstillinger</h1>
+    <p class="text-dark-400">Administrer organisasjonsinnstillinger og branding.</p>
+  </div>
+
+  <!-- Organization Settings Form -->
+  <form id="settings-form" class="space-y-8">
+    <!-- General Settings -->
+    <div class="glass-card p-6">
+      <h2 class="text-lg font-semibold text-white mb-6">Generelt</h2>
+
+      <div class="space-y-6">
+        <div>
+          <label class="input-label" for="org-navn">Organisasjonsnavn *</label>
+          <input
+            type="text"
+            id="org-navn"
+            name="navn"
+            value={organization.navn}
+            class="input max-w-md"
+            required
+            maxlength="100"
+          />
+          <p class="text-xs text-dark-400 mt-1">Dette vises i appen og på fakturaer.</p>
+        </div>
+
+        <div>
+          <label class="input-label">URL-slug</label>
+          <div class="flex items-center gap-2 max-w-md">
+            <span class="text-dark-400">skyplanner.no/</span>
+            <input
+              type="text"
+              value={organization.slug}
+              class="input flex-1 bg-dark-700/30"
+              disabled
+            />
+          </div>
+          <p class="text-xs text-dark-400 mt-1">URL-slug kan ikke endres.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Branding Settings -->
+    <div class="glass-card p-6">
+      <h2 class="text-lg font-semibold text-white mb-6">Branding</h2>
+
+      <div class="space-y-6">
+        <!-- Logo Upload -->
+        <div>
+          <label class="input-label">Logo</label>
+          <div class="flex items-start gap-6">
+            <!-- Current Logo Preview -->
+            <div class="flex-shrink-0">
+              <div id="logo-preview-wrapper" class="relative">
+                {organization.logo_url ? (
+                  <img
+                    src={organization.logo_url}
+                    alt="Logo"
+                    class="w-24 h-24 rounded-xl object-cover bg-dark-700 border border-dark-600"
+                    id="logo-preview"
+                  />
+                ) : (
+                  <div class="w-24 h-24 rounded-xl bg-dark-700 border border-dark-600 flex items-center justify-center" id="logo-placeholder">
+                    <svg class="w-10 h-10 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                )}
+                <img
+                  src=""
+                  alt="Logo forhåndsvisning"
+                  class="w-24 h-24 rounded-xl object-cover bg-dark-700 border border-dark-600 hidden"
+                  id="logo-preview-new"
+                />
+              </div>
+            </div>
+
+            <!-- Upload Controls -->
+            <div class="flex-1">
+              <div class="flex flex-col gap-3">
+                <label class="btn-secondary cursor-pointer inline-flex items-center justify-center max-w-xs">
+                  <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  <span id="upload-btn-text">Last opp logo</span>
+                  <input
+                    type="file"
+                    id="logo-upload"
+                    accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                    class="hidden"
+                  />
+                </label>
+                {organization.logo_url && (
+                  <button
+                    type="button"
+                    id="remove-logo-btn"
+                    class="text-red-400 hover:text-red-300 text-sm font-medium text-left"
+                  >
+                    Fjern logo
+                  </button>
+                )}
+              </div>
+              <p class="text-xs text-dark-400 mt-3">PNG, JPG, SVG eller WebP. Maks 2MB.</p>
+              <p class="text-xs text-dark-400">Anbefalt størrelse: 200x200px eller større.</p>
+              <div id="upload-status" class="mt-2 text-sm hidden">
+                <span class="text-green-400" id="upload-success">Logo lastet opp!</span>
+                <span class="text-red-400 hidden" id="upload-error">Feil ved opplasting</span>
+              </div>
+            </div>
+          </div>
+          <!-- Hidden input to track logo URL for form submission -->
+          <input type="hidden" id="logo-url" name="logo_url" value={organization.logo_url || ''} />
+        </div>
+
+        <div>
+          <label class="input-label" for="primary-color">Primærfarge</label>
+          <div class="flex items-center gap-3 max-w-md">
+            <input
+              type="color"
+              id="color-picker"
+              value={organization.primary_color || '#f97316'}
+              class="w-12 h-12 rounded-lg cursor-pointer border-0 bg-transparent"
+            />
+            <input
+              type="text"
+              id="primary-color"
+              name="primary_color"
+              value={organization.primary_color || ''}
+              class="input flex-1"
+              placeholder="#f97316"
+              pattern="^#[0-9A-Fa-f]{6}$"
+            />
+          </div>
+          <p class="text-xs text-dark-400 mt-1">Hex-fargekode (f.eks. #f97316). Brukes i appen for å tilpasse utseendet.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plan Info (Read-only) -->
+    <div class="glass-card p-6">
+      <h2 class="text-lg font-semibold text-white mb-6">Abonnement</h2>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+        <div>
+          <p class="text-sm text-dark-400 mb-1">Plan</p>
+          <p class="text-white font-medium capitalize">{organization.plan_type}</p>
+        </div>
+        <div>
+          <p class="text-sm text-dark-400 mb-1">Maks brukere</p>
+          <p class="text-white font-medium">{organization.max_brukere}</p>
+        </div>
+        <div>
+          <p class="text-sm text-dark-400 mb-1">Maks kunder</p>
+          <p class="text-white font-medium">{organization.max_kunder}</p>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-4 border-t border-dark-700/50">
+        <a href="/dashboard/abonnement" class="text-primary-400 hover:text-primary-300 text-sm font-medium">
+          Administrer abonnement →
+        </a>
+      </div>
+    </div>
+
+    <!-- Form Actions -->
+    <div class="flex items-center gap-4">
+      <button type="submit" class="btn-primary" id="save-btn">
+        Lagre endringer
+      </button>
+      <div id="save-status" class="text-sm hidden">
+        <span class="text-green-400" id="save-success">Endringer lagret!</span>
+        <span class="text-red-400 hidden" id="save-error">Kunne ikke lagre endringer</span>
+      </div>
+    </div>
+  </form>
+
+  <!-- Danger Zone -->
+  <div class="mt-12">
+    <h2 class="text-lg font-semibold text-red-400 mb-4">Faresone</h2>
+    <div class="glass-card p-6 border-red-500/30">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h3 class="text-white font-medium">Slett organisasjon</h3>
+          <p class="text-sm text-dark-400">
+            Permanent sletting av organisasjonen og alle data. Denne handlingen kan ikke angres.
+          </p>
+        </div>
+        <button
+          type="button"
+          id="delete-org-btn"
+          class="px-4 py-2 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl
+                 hover:bg-red-500/20 hover:border-red-500/50 transition-colors text-sm font-medium"
+        >
+          Slett organisasjon
+        </button>
+      </div>
+    </div>
+  </div>
+</DashboardLayout>
+
+<script>
+  const form = document.getElementById('settings-form') as HTMLFormElement;
+  const saveBtn = document.getElementById('save-btn');
+  const saveStatus = document.getElementById('save-status');
+  const saveSuccess = document.getElementById('save-success');
+  const saveError = document.getElementById('save-error');
+  const colorPicker = document.getElementById('color-picker') as HTMLInputElement;
+  const primaryColorInput = document.getElementById('primary-color') as HTMLInputElement;
+  const logoUrlInput = document.getElementById('logo-url') as HTMLInputElement;
+  const deleteOrgBtn = document.getElementById('delete-org-btn');
+
+  // Logo upload elements
+  const logoUpload = document.getElementById('logo-upload') as HTMLInputElement;
+  const logoPreview = document.getElementById('logo-preview') as HTMLImageElement;
+  const logoPreviewNew = document.getElementById('logo-preview-new') as HTMLImageElement;
+  const logoPlaceholder = document.getElementById('logo-placeholder');
+  const removeLogoBtn = document.getElementById('remove-logo-btn');
+  const uploadBtnText = document.getElementById('upload-btn-text');
+  const uploadStatus = document.getElementById('upload-status');
+  const uploadSuccess = document.getElementById('upload-success');
+  const uploadError = document.getElementById('upload-error');
+
+  // Sync color picker with text input
+  colorPicker?.addEventListener('input', () => {
+    primaryColorInput.value = colorPicker.value;
+  });
+
+  primaryColorInput?.addEventListener('input', () => {
+    if (primaryColorInput.value.match(/^#[0-9A-Fa-f]{6}$/)) {
+      colorPicker.value = primaryColorInput.value;
+    }
+  });
+
+  // Logo upload handler
+  logoUpload?.addEventListener('change', async () => {
+    const file = logoUpload.files?.[0];
+    if (!file) return;
+
+    // Show preview immediately
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      logoPreviewNew.src = e.target?.result as string;
+      logoPreviewNew.classList.remove('hidden');
+      logoPreview?.classList.add('hidden');
+      logoPlaceholder?.classList.add('hidden');
+    };
+    reader.readAsDataURL(file);
+
+    // Upload to server
+    if (uploadBtnText) uploadBtnText.textContent = 'Laster opp...';
+    uploadStatus?.classList.add('hidden');
+    uploadSuccess?.classList.add('hidden');
+    uploadError?.classList.add('hidden');
+
+    const formData = new FormData();
+    formData.append('logo', file);
+
+    try {
+      const res = await fetch('/api/dashboard/organization/upload-logo', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result.error || 'Opplasting feilet');
+      }
+
+      // Update hidden input with new URL
+      if (logoUrlInput) logoUrlInput.value = result.logo_url;
+
+      uploadStatus?.classList.remove('hidden');
+      uploadSuccess?.classList.remove('hidden');
+
+      // Show remove button if it was hidden
+      if (removeLogoBtn) {
+        removeLogoBtn.classList.remove('hidden');
+      }
+
+      setTimeout(() => {
+        uploadStatus?.classList.add('hidden');
+      }, 3000);
+
+      // Reload to show updated logo in sidebar
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (err) {
+      uploadStatus?.classList.remove('hidden');
+      if (uploadError) {
+        uploadError.textContent = err instanceof Error ? err.message : 'Opplasting feilet';
+        uploadError.classList.remove('hidden');
+      }
+      // Revert preview
+      logoPreviewNew.classList.add('hidden');
+      if (logoPreview?.src) {
+        logoPreview.classList.remove('hidden');
+      } else {
+        logoPlaceholder?.classList.remove('hidden');
+      }
+    } finally {
+      if (uploadBtnText) uploadBtnText.textContent = 'Last opp logo';
+      logoUpload.value = '';
+    }
+  });
+
+  // Remove logo handler
+  removeLogoBtn?.addEventListener('click', async () => {
+    if (!confirm('Er du sikker på at du vil fjerne logoen?')) return;
+
+    try {
+      const res = await fetch('/api/dashboard/organization/upload-logo', {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const result = await res.json();
+        throw new Error(result.error || 'Kunne ikke fjerne logo');
+      }
+
+      // Reload to show changes
+      window.location.reload();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Kunne ikke fjerne logo');
+    }
+  });
+
+  // Form submission
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    saveBtn?.setAttribute('disabled', 'true');
+    saveBtn!.textContent = 'Lagrer...';
+    saveStatus?.classList.add('hidden');
+    saveSuccess?.classList.add('hidden');
+    saveError?.classList.add('hidden');
+
+    const formData = new FormData(form);
+    const data: Record<string, string | null> = {
+      navn: formData.get('navn') as string,
+      primary_color: (formData.get('primary_color') as string) || null,
+    };
+
+    try {
+      const res = await fetch('/api/dashboard/organization', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+
+      const result = await res.json();
+
+      saveStatus?.classList.remove('hidden');
+
+      if (!res.ok) {
+        saveError!.textContent = result.error || 'Kunne ikke lagre endringer';
+        saveError?.classList.remove('hidden');
+        return;
+      }
+
+      saveSuccess?.classList.remove('hidden');
+
+      // Hide success message after 3 seconds
+      setTimeout(() => {
+        saveStatus?.classList.add('hidden');
+      }, 3000);
+    } catch (err) {
+      saveStatus?.classList.remove('hidden');
+      saveError!.textContent = 'Nettverksfeil. Prøv igjen.';
+      saveError?.classList.remove('hidden');
+    } finally {
+      saveBtn?.removeAttribute('disabled');
+      saveBtn!.textContent = 'Lagre endringer';
+    }
+  });
+
+  // Delete organization (placeholder - would need confirmation flow)
+  deleteOrgBtn?.addEventListener('click', () => {
+    alert('For å slette organisasjonen, vennligst kontakt support på support@skyplanner.no');
+  });
+</script>

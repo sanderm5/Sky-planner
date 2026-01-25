@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skyplanner - Unike Logo Forslag</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+      color: white;
+    }
+    h1 { text-align: center; margin-bottom: 10px; font-size: 2.5rem; }
+    .subtitle { text-align: center; color: #94a3b8; margin-bottom: 50px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 30px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .card {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 16px;
+      padding: 30px;
+      text-align: center;
+      transition: transform 0.2s, box-shadow 0.2s;
+      position: relative;
+    }
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+    }
+    .card h3 { margin-bottom: 8px; color: #e2e8f0; }
+    .card p { font-size: 0.85rem; color: #64748b; margin-bottom: 25px; }
+    .logo-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 20px;
+      padding: 25px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 12px;
+    }
+    .logo-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .logo-text { font-size: 1.8rem; font-weight: 700; }
+    .number {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      background: #6366f1;
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .grad-1 { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+    .grad-2 { background: linear-gradient(135deg, #0ea5e9, #6366f1); }
+    .grad-3 { background: linear-gradient(135deg, #10b981, #0ea5e9); }
+    .grad-4 { background: linear-gradient(135deg, #6366f1, #ec4899); }
+    .grad-5 { background: linear-gradient(135deg, #f97316, #eab308); }
+    .grad-6 { background: linear-gradient(135deg, #14b8a6, #22d3ee); }
+    .grad-7 { background: linear-gradient(135deg, #8b5cf6, #06b6d4); }
+    .grad-8 { background: linear-gradient(135deg, #3b82f6, #8b5cf6); }
+  </style>
+</head>
+<body>
+  <h1>Skyplanner</h1>
+  <p class="subtitle">Unike logo-konsepter - Versjon 2</p>
+
+  <div class="grid">
+
+    <!-- Logo 1: Abstract S-bølge -->
+    <div class="card">
+      <span class="number">1</span>
+      <h3>Flytende S-bølge</h3>
+      <p>Abstrakt S som representerer flyt og planlegging</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-1">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M8 8C8 8 12 8 16 12C20 16 20 20 24 20C28 20 28 16 28 16" stroke="white" stroke-width="4" stroke-linecap="round"/>
+            <path d="M4 16C4 16 8 16 12 20C16 24 20 24 24 24" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 2: Stacked layers -->
+    <div class="card">
+      <span class="number">2</span>
+      <h3>Lagdelt Horisont</h3>
+      <p>Tre lag som representerer planlegging over tid</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-2">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <rect x="4" y="6" width="24" height="5" rx="2.5" fill="white" opacity="0.4"/>
+            <rect x="6" y="13" width="20" height="5" rx="2.5" fill="white" opacity="0.7"/>
+            <rect x="8" y="20" width="16" height="5" rx="2.5" fill="white"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 3: Negative space arrow up -->
+    <div class="card">
+      <span class="number">3</span>
+      <h3>Oppover-pil</h3>
+      <p>Negativ space danner en pil oppover - vekst</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-3">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M6 26L16 6L26 26H20L16 18L12 26H6Z" fill="white"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 4: Connected nodes -->
+    <div class="card">
+      <span class="number">4</span>
+      <h3>Tilkoblede Noder</h3>
+      <p>Nettverksstruktur - kunder og ruter</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-4">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <circle cx="16" cy="8" r="4" fill="white"/>
+            <circle cx="8" cy="22" r="4" fill="white"/>
+            <circle cx="24" cy="22" r="4" fill="white"/>
+            <line x1="16" y1="12" x2="10" y2="19" stroke="white" stroke-width="2.5"/>
+            <line x1="16" y1="12" x2="22" y2="19" stroke="white" stroke-width="2.5"/>
+            <line x1="12" y1="22" x2="20" y2="22" stroke="white" stroke-width="2.5"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 5: Spiral path -->
+    <div class="card">
+      <span class="number">5</span>
+      <h3>Spiral Rute</h3>
+      <p>Optimalisert rute som spiral</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-5">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M16 4C22.627 4 28 9.373 28 16C28 20.418 25.418 24.418 21.5 26.5" stroke="white" stroke-width="3" stroke-linecap="round"/>
+            <path d="M16 10C19.314 10 22 12.686 22 16C22 18.21 20.657 20.105 18.75 21" stroke="white" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="16" cy="16" r="3" fill="white"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 6: Abstract SP monogram -->
+    <div class="card">
+      <span class="number">6</span>
+      <h3>SP Monogram</h3>
+      <p>S og P vevd sammen</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-6">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M7 8C7 8 7 8 11 8C15 8 15 12 15 12C15 12 15 16 11 16C7 16 7 16 7 16" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M7 16C7 16 7 16 11 16C15 16 15 20 15 20C15 20 15 24 11 24C7 24 7 24 7 24" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M18 8V24M18 8H24C26 8 27 10 27 12C27 14 26 16 24 16H18" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 7: Hexagon with path -->
+    <div class="card">
+      <span class="number">7</span>
+      <h3>Heksagon Rute</h3>
+      <p>Geometrisk form med intern sti</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-7">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M16 3L27.5 10V22L16 29L4.5 22V10L16 3Z" stroke="white" stroke-width="2.5" fill="white" fill-opacity="0.15"/>
+            <path d="M10 14L14 18L22 12" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 8: Stacked cards -->
+    <div class="card">
+      <span class="number">8</span>
+      <h3>Stablede Kort</h3>
+      <p>Oppgaver/planer stablet</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-8">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <rect x="6" y="4" width="16" height="12" rx="2" fill="white" opacity="0.3" transform="rotate(6 14 10)"/>
+            <rect x="5" y="8" width="16" height="12" rx="2" fill="white" opacity="0.6" transform="rotate(-3 13 14)"/>
+            <rect x="6" y="12" width="16" height="12" rx="2" fill="white"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 9: Compass/Direction -->
+    <div class="card">
+      <span class="number">9</span>
+      <h3>Kompass</h3>
+      <p>Retning og navigasjon</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-1">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <circle cx="16" cy="16" r="12" stroke="white" stroke-width="2.5" fill="white" fill-opacity="0.1"/>
+            <path d="M16 6L18 14H24L16 18L14 26L12 18H6L14 14L16 6Z" fill="white"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 10: Rising bars/chart -->
+    <div class="card">
+      <span class="number">10</span>
+      <h3>Stigende Graf</h3>
+      <p>Vekst og fremgang</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-2">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <rect x="5" y="18" width="5" height="10" rx="1" fill="white" opacity="0.5"/>
+            <rect x="13" y="12" width="5" height="16" rx="1" fill="white" opacity="0.75"/>
+            <rect x="21" y="6" width="5" height="22" rx="1" fill="white"/>
+            <path d="M6 16L15 9L24 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 3"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 11: Abstract bird/flight -->
+    <div class="card">
+      <span class="number">11</span>
+      <h3>Flukt</h3>
+      <p>Abstrakt fugl - frihet og oversikt</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-3">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M4 20C8 14 14 12 16 12C18 12 24 14 28 20" stroke="white" stroke-width="4" stroke-linecap="round"/>
+            <path d="M10 16C12 13 14 12 16 12C18 12 20 13 22 16" stroke="white" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 12: Infinity route -->
+    <div class="card">
+      <span class="number">12</span>
+      <h3>Uendelig Rute</h3>
+      <p>Kontinuerlig service-syklus</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-4">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M8 16C8 12 10 10 13 10C16 10 16 16 16 16C16 16 16 22 19 22C22 22 24 20 24 16C24 12 22 10 19 10C16 10 16 16 16 16C16 16 16 22 13 22C10 22 8 20 8 16Z" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 13: Pin cluster -->
+    <div class="card">
+      <span class="number">13</span>
+      <h3>Klynge-pins</h3>
+      <p>Flere destinasjoner samlet</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-5">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M10 14C10 10.5 12 8 14 8C16 8 18 10.5 18 14C18 17.5 14 22 14 22C14 22 10 17.5 10 14Z" fill="white" opacity="0.5"/>
+            <path d="M14 12C14 8.5 16 6 18 6C20 6 22 8.5 22 12C22 15.5 18 20 18 20C18 20 14 15.5 14 12Z" fill="white"/>
+            <circle cx="18" cy="11" r="2" fill="#6366f1"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 14: Split square -->
+    <div class="card">
+      <span class="number">14</span>
+      <h3>Delt Firkant</h3>
+      <p>Minimalistisk og moderne</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-6">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <rect x="5" y="5" width="10" height="10" rx="2" fill="white"/>
+            <rect x="17" y="5" width="10" height="10" rx="2" fill="white" opacity="0.6"/>
+            <rect x="5" y="17" width="10" height="10" rx="2" fill="white" opacity="0.6"/>
+            <rect x="17" y="17" width="10" height="10" rx="2" fill="white" opacity="0.3"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 15: Wave pulse -->
+    <div class="card">
+      <span class="number">15</span>
+      <h3>Puls</h3>
+      <p>Aktivitet og kontinuitet</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-7">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M4 16H8L11 8L16 24L21 12L24 16H28" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+    <!-- Logo 16: Diamond with S -->
+    <div class="card">
+      <span class="number">16</span>
+      <h3>Diamant S</h3>
+      <p>Premium og verdifullt</p>
+      <div class="logo-container">
+        <div class="logo-icon grad-8">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <path d="M16 2L28 16L16 30L4 16L16 2Z" fill="white" fill-opacity="0.2" stroke="white" stroke-width="2"/>
+            <path d="M11 12C11 12 13 10 16 10C19 10 19 13 19 13C19 13 19 15 16 16C13 17 13 19 13 19C13 19 13 22 16 22C19 22 21 20 21 20" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span class="logo-text">Skyplanner</span>
+      </div>
+    </div>
+
+  </div>
+
+  <p style="text-align: center; margin-top: 50px; color: #64748b; font-size: 1.1rem;">
+    Skriv nummeret på logoen du liker best!
+  </p>
+</body>
+</html>

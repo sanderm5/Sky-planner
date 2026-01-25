@@ -1,0 +1,171 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import GlassCard from '../components/ui/GlassCard.astro';
+import Badge from '../components/ui/Badge.astro';
+import CTA from '../components/sections/CTA.astro';
+---
+
+<BaseLayout title="Demo" description="Se Sky Planner i aksjon. Video-demonstrasjoner og interaktive previews av systemet.">
+  <!-- Hero Section -->
+  <section class="pt-32 pb-16 px-4 sm:px-6 lg:px-8">
+    <div class="container-wide text-center">
+      <Badge class="mb-6">Se det i aksjon</Badge>
+      <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4">
+        Oppdag hva Sky Planner kan gjøre for deg
+      </h1>
+      <p class="text-lg text-dark-300 max-w-2xl mx-auto">
+        Se hvordan andre bedrifter bruker Sky Planner til å effektivisere sin kundehåndtering
+      </p>
+    </div>
+  </section>
+
+  <!-- Main Video -->
+  <section class="pb-20 px-4 sm:px-6 lg:px-8">
+    <div class="container-wide max-w-4xl">
+      <GlassCard padding="none" class="overflow-hidden">
+        <div class="aspect-video bg-gradient-to-br from-primary-500/20 to-accent-purple/20 flex items-center justify-center relative group cursor-pointer">
+          <!-- Play Button -->
+          <div class="absolute inset-0 flex items-center justify-center">
+            <div class="w-20 h-20 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg class="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+
+          <!-- Video Placeholder Text -->
+          <div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-dark-900/80 to-transparent">
+            <p class="text-white font-medium">Introduksjon til Sky Planner</p>
+            <p class="text-dark-300 text-sm">3:45 min</p>
+          </div>
+        </div>
+      </GlassCard>
+
+      <p class="text-center text-dark-400 mt-4">
+        Video kommer snart. I mellomtiden kan du <a href="/auth/registrer" class="text-primary-400 hover:text-primary-300">starte en gratis prøveperiode</a> for å utforske selv.
+      </p>
+    </div>
+  </section>
+
+  <!-- Feature Videos -->
+  <section class="section bg-dark-950/30">
+    <div class="container-wide">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl font-bold text-white mb-4">Utforsk funksjonene</h2>
+        <p class="text-dark-300">Korte videoer som viser hver funksjon i detalj</p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <GlassCard padding="none" hover class="overflow-hidden group">
+          <div class="aspect-video bg-gradient-to-br from-primary-500/10 to-accent-purple/10 flex items-center justify-center relative">
+            <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg class="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold text-white mb-1">Interaktivt kart</h3>
+            <p class="text-sm text-dark-400">Se hvordan kartet fungerer</p>
+          </div>
+        </GlassCard>
+
+        <GlassCard padding="none" hover class="overflow-hidden group">
+          <div class="aspect-video bg-gradient-to-br from-primary-500/10 to-accent-purple/10 flex items-center justify-center relative">
+            <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg class="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold text-white mb-1">Ruteplanlegging</h3>
+            <p class="text-sm text-dark-400">Optimaliser kjørerutene dine</p>
+          </div>
+        </GlassCard>
+
+        <GlassCard padding="none" hover class="overflow-hidden group">
+          <div class="aspect-video bg-gradient-to-br from-primary-500/10 to-accent-purple/10 flex items-center justify-center relative">
+            <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg class="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold text-white mb-1">Varsler og påminnelser</h3>
+            <p class="text-sm text-dark-400">Aldri gå glipp av en frist</p>
+          </div>
+        </GlassCard>
+
+        <GlassCard padding="none" hover class="overflow-hidden group">
+          <div class="aspect-video bg-gradient-to-br from-primary-500/10 to-accent-purple/10 flex items-center justify-center relative">
+            <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg class="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold text-white mb-1">Kalender</h3>
+            <p class="text-sm text-dark-400">Planlegg og organiser avtaler</p>
+          </div>
+        </GlassCard>
+
+        <GlassCard padding="none" hover class="overflow-hidden group">
+          <div class="aspect-video bg-gradient-to-br from-primary-500/10 to-accent-purple/10 flex items-center justify-center relative">
+            <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg class="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold text-white mb-1">Kundeadministrasjon</h3>
+            <p class="text-sm text-dark-400">Hold oversikt over alle kunder</p>
+          </div>
+        </GlassCard>
+
+        <GlassCard padding="none" hover class="overflow-hidden group">
+          <div class="aspect-video bg-gradient-to-br from-primary-500/10 to-accent-purple/10 flex items-center justify-center relative">
+            <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <svg class="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+          <div class="p-4">
+            <h3 class="font-semibold text-white mb-1">E-postvarsler</h3>
+            <p class="text-sm text-dark-400">Automatiser kundekommunikasjon</p>
+          </div>
+        </GlassCard>
+      </div>
+    </div>
+  </section>
+
+  <!-- Try it yourself -->
+  <section class="section">
+    <div class="container-narrow text-center">
+      <GlassCard class="py-12">
+        <svg class="w-16 h-16 text-primary-400 mx-auto mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+        <h2 class="text-2xl font-bold text-white mb-4">
+          Prøv det selv - gratis i 14 dager
+        </h2>
+        <p class="text-dark-300 mb-8 max-w-md mx-auto">
+          Den beste måten å forstå Sky Planner på er å prøve det selv.
+          Start en gratis prøveperiode og utforsk alle funksjonene.
+        </p>
+        <a href="/auth/registrer" class="btn-primary text-lg px-8 py-4">
+          Start gratis prøveperiode
+          <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+        </a>
+      </GlassCard>
+    </div>
+  </section>
+
+  <CTA />
+</BaseLayout>

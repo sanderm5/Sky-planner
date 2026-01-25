@@ -1,0 +1,62 @@
+{
+  "name": "@skyplanner/app",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sky Planner applikasjon - Backend og frontend",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "tsx dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc && npm run build:frontend",
+    "build:frontend": "npm run minify:js && npm run minify:css",
+    "minify:js": "terser public/app.js -c -m -o public/app.min.js",
+    "minify:css": "cleancss -o public/style.min.css public/style.css",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@skyplanner/auth": "workspace:*",
+    "@skyplanner/database": "workspace:*",
+    "@supabase/supabase-js": "^2.89.0",
+    "tsx": "^4.21.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^7.0.11",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "uuid": "^9.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^9.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.11.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^6.4.14",
+    "@types/uuid": "^9.0.8",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "clean-css-cli": "^5.6.3",
+    "eslint": "^8.57.0",
+    "terser": "^5.44.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  }
+}

@@ -1,0 +1,199 @@
+---
+const screenshots = [
+  {
+    src: '/screenshots/screenshot-map-detail.jpg',
+    alt: 'Kundekart med sidebar',
+    title: 'Oversiktlig kundekart',
+    description: 'Se alle kunder på et interaktivt kart med enkel navigasjon og filtrering i sidepanelet.',
+  },
+  {
+    src: '/screenshots/screenshot-popup.jpg',
+    alt: 'Kundeinfo popup',
+    title: 'Rask tilgang til informasjon',
+    description: 'Klikk på en markør for å se viktig kundeinformasjon direkte på kartet.',
+  },
+  {
+    src: '/screenshots/screenshot-modal.jpg',
+    alt: 'Kundedialog',
+    title: 'Detaljert kundeoversikt',
+    description: 'Full oversikt over kundedata, kontroller, kontakthistorikk og mer i en brukervennlig dialog.',
+  },
+];
+---
+
+<section class="section" id="showcase">
+  <div class="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center mb-16">
+      <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4" data-animate="fade-up">
+        Se Sky Planner i aksjon
+      </h2>
+      <p class="text-lg text-dark-300 max-w-2xl mx-auto" data-animate="fade-up" data-animate-delay="100">
+        Et kraftig verktøy designet for å gjøre hverdagen enklere for servicebedrifter
+      </p>
+    </div>
+
+    <div class="space-y-32">
+      {screenshots.map((screenshot, index) => (
+        <div class={`flex flex-col ${index % 2 === 0 ? 'lg:flex-row' : 'lg:flex-row-reverse'} items-center gap-16`}>
+          <!-- Screenshot -->
+          <div class="lg:flex-[2] w-full" data-animate={index % 2 === 0 ? "fade-right" : "fade-left"}>
+            <div class={`relative ${index % 2 === 0 ? 'screenshot-tilt-left' : 'screenshot-tilt-right'}`}>
+              <button
+                class="screenshot-3d-alt border border-dark-700/50 cursor-zoom-in w-full"
+                onclick={`openLightbox('${screenshot.src}', '${screenshot.alt}')`}
+                aria-label={`Forstørr: ${screenshot.alt}`}
+              >
+                <img
+                  src={screenshot.src}
+                  alt={screenshot.alt}
+                  loading="lazy"
+                  class="w-full h-auto"
+                />
+              </button>
+            </div>
+          </div>
+
+          <!-- Text -->
+          <div class="lg:flex-1 text-center lg:text-left" data-animate={index % 2 === 0 ? "fade-left" : "fade-right"} data-animate-delay="200">
+            <h3 class="text-2xl sm:text-3xl font-bold text-white mb-4">
+              {screenshot.title}
+            </h3>
+            <p class="text-lg text-dark-300 mb-6">
+              {screenshot.description}
+            </p>
+            <div class="flex items-center justify-center lg:justify-start gap-2 text-primary-400">
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+              </svg>
+              <span class="font-medium">Inkludert i alle planer</span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- Lightbox -->
+<div id="lightbox" class="lightbox" onclick="closeLightbox()">
+  <img id="lightbox-img" src="" alt="" />
+  <p class="lightbox-hint">Klikk hvor som helst for å lukke</p>
+</div>
+
+<script is:inline>
+  function openLightbox(src, alt) {
+    const lightbox = document.getElementById('lightbox');
+    const img = document.getElementById('lightbox-img');
+    img.src = src;
+    img.alt = alt;
+    lightbox.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeLightbox() {
+    const lightbox = document.getElementById('lightbox');
+    lightbox.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeLightbox();
+  });
+</script>
+
+<style>
+  .screenshot-tilt-left .screenshot-3d-alt {
+    transform: perspective(1200px) rotateX(5deg) rotateY(8deg);
+  }
+
+  .screenshot-tilt-right .screenshot-3d-alt {
+    transform: perspective(1200px) rotateX(5deg) rotateY(-8deg);
+  }
+
+  .screenshot-3d-alt {
+    @apply rounded-2xl overflow-hidden;
+    transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.6s ease;
+    box-shadow:
+      0 30px 60px -15px rgba(0, 0, 0, 0.5),
+      0 0 50px rgba(249, 115, 22, 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+
+  .screenshot-tilt-left .screenshot-3d-alt:hover {
+    transform: perspective(1200px) rotateX(0deg) rotateY(0deg) scale(1.03);
+    box-shadow:
+      0 40px 80px -20px rgba(0, 0, 0, 0.6),
+      0 0 80px rgba(249, 115, 22, 0.25);
+  }
+
+  .screenshot-tilt-right .screenshot-3d-alt:hover {
+    transform: perspective(1200px) rotateX(0deg) rotateY(0deg) scale(1.03);
+    box-shadow:
+      0 40px 80px -20px rgba(0, 0, 0, 0.6),
+      0 0 80px rgba(249, 115, 22, 0.25);
+  }
+
+  /* Glow under image */
+  .screenshot-tilt-left::before,
+  .screenshot-tilt-right::before {
+    content: '';
+    position: absolute;
+    bottom: -20px;
+    left: 10%;
+    right: 10%;
+    height: 40px;
+    background: radial-gradient(ellipse at center, rgba(249, 115, 22, 0.3) 0%, transparent 70%);
+    filter: blur(20px);
+    z-index: -1;
+    transition: opacity 0.5s ease;
+  }
+
+  .screenshot-tilt-left:hover::before,
+  .screenshot-tilt-right:hover::before {
+    opacity: 0.8;
+  }
+
+  /* Lightbox */
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    cursor: pointer;
+  }
+
+  .lightbox.active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .lightbox img {
+    max-width: 95vw;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: 1rem;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
+    transform: scale(0.9);
+    transition: transform 0.3s ease;
+    pointer-events: none;
+  }
+
+  .lightbox.active img {
+    transform: scale(1);
+  }
+
+  .lightbox-hint {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.875rem;
+    margin-top: 1rem;
+    pointer-events: none;
+  }
+</style>

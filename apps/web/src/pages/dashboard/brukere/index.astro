@@ -1,0 +1,410 @@
+---
+import DashboardLayout from '../../../layouts/DashboardLayout.astro';
+import { requireAuth, isAuthError } from '../../../middleware/auth';
+import * as db from '@skyplanner/database';
+
+// Initialize Supabase client
+db.getSupabaseClient({
+  supabaseUrl: import.meta.env.SUPABASE_URL,
+  supabaseKey: import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY,
+});
+
+// Auth check
+const authResult = await requireAuth(Astro);
+if (isAuthError(authResult)) return authResult;
+
+const { user, organization } = authResult;
+
+// Fetch users
+const users = await db.getKlienterByOrganization(organization.id);
+const activeCount = users.filter(u => u.aktiv).length;
+---
+
+<DashboardLayout
+  title="Brukere"
+  user={user}
+  organization={organization}
+  currentPath="/dashboard/brukere"
+>
+  <!-- Page Header -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+    <div>
+      <h1 class="text-2xl font-bold text-white mb-2">Brukere</h1>
+      <p class="text-dark-400">
+        {activeCount} av {organization.max_brukere} brukerplasser i bruk
+      </p>
+    </div>
+    <button
+      id="invite-user-btn"
+      class="btn-primary"
+      disabled={activeCount >= organization.max_brukere}
+    >
+      <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+      </svg>
+      Inviter bruker
+    </button>
+  </div>
+
+  <!-- User Limit Warning -->
+  {activeCount >= organization.max_brukere && (
+    <div class="glass-card p-4 mb-6 border-yellow-500/30 flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-yellow-500/10 flex items-center justify-center text-yellow-400 flex-shrink-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      </div>
+      <div class="flex-1">
+        <p class="text-white font-medium">Brukergrensen er nådd</p>
+        <p class="text-sm text-dark-400">
+          Oppgrader til en høyere plan for å legge til flere brukere.
+        </p>
+      </div>
+      <a href="/dashboard/abonnement" class="btn-secondary text-sm px-4 py-2">
+        Oppgrader
+      </a>
+    </div>
+  )}
+
+  <!-- Users Table -->
+  <div class="glass-card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-dark-700/50">
+            <th class="text-left p-4 text-sm font-medium text-dark-300">Navn</th>
+            <th class="text-left p-4 text-sm font-medium text-dark-300">E-post</th>
+            <th class="text-left p-4 text-sm font-medium text-dark-300 hidden sm:table-cell">Telefon</th>
+            <th class="text-left p-4 text-sm font-medium text-dark-300">Status</th>
+            <th class="text-right p-4 text-sm font-medium text-dark-300">Handlinger</th>
+          </tr>
+        </thead>
+        <tbody id="users-table-body">
+          {users.map(u => (
+            <tr class="border-b border-dark-700/50 hover:bg-dark-800/30" data-user-id={u.id}>
+              <td class="p-4">
+                <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center">
+                    <span class="text-xs font-semibold text-white">
+                      {u.navn.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                    </span>
+                  </div>
+                  <span class="text-white font-medium">{u.navn}</span>
+                  {u.id === user.id && (
+                    <span class="text-xs text-dark-400">(deg)</span>
+                  )}
+                </div>
+              </td>
+              <td class="p-4 text-dark-300">{u.epost}</td>
+              <td class="p-4 text-dark-300 hidden sm:table-cell">{u.telefon || '-'}</td>
+              <td class="p-4">
+                <span class:list={[
+                  'inline-flex items-center px-2 py-1 rounded-full text-xs font-medium',
+                  u.aktiv
+                    ? 'bg-green-500/10 text-green-400'
+                    : 'bg-dark-600/50 text-dark-400'
+                ]}>
+                  {u.aktiv ? 'Aktiv' : 'Deaktivert'}
+                </span>
+              </td>
+              <td class="p-4 text-right">
+                <div class="flex items-center justify-end gap-2">
+                  <button
+                    class="edit-user-btn p-2 text-dark-400 hover:text-white hover:bg-dark-700/50 rounded-lg transition-colors"
+                    data-user={JSON.stringify({ id: u.id, navn: u.navn, epost: u.epost, telefon: u.telefon, aktiv: u.aktiv })}
+                    title="Rediger"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  {u.id !== user.id && (
+                    <button
+                      class="toggle-user-btn p-2 text-dark-400 hover:text-yellow-400 hover:bg-dark-700/50 rounded-lg transition-colors"
+                      data-user-id={u.id}
+                      data-aktiv={u.aktiv}
+                      title={u.aktiv ? 'Deaktiver' : 'Aktiver'}
+                    >
+                      {u.aktiv ? (
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                      ) : (
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Invite User Modal -->
+  <div id="invite-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="invite-modal-overlay"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="glass-card w-full max-w-md p-6 relative">
+        <button id="close-invite-modal" class="absolute top-4 right-4 text-dark-400 hover:text-white">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        <h2 class="text-xl font-bold text-white mb-6">Inviter ny bruker</h2>
+
+        <form id="invite-form" class="space-y-4">
+          <div>
+            <label class="input-label" for="invite-navn">Navn *</label>
+            <input type="text" id="invite-navn" name="navn" class="input" required />
+          </div>
+          <div>
+            <label class="input-label" for="invite-epost">E-post *</label>
+            <input type="email" id="invite-epost" name="epost" class="input" required />
+          </div>
+          <div>
+            <label class="input-label" for="invite-telefon">Telefon</label>
+            <input type="tel" id="invite-telefon" name="telefon" class="input" />
+          </div>
+          <div>
+            <label class="input-label" for="invite-passord">Midlertidig passord *</label>
+            <input type="password" id="invite-passord" name="passord" class="input" minlength="8" required />
+            <p class="text-xs text-dark-400 mt-1">Minst 8 tegn. Brukeren kan endre dette senere.</p>
+          </div>
+
+          <div id="invite-error" class="form-error hidden"></div>
+
+          <div class="flex gap-3 pt-2">
+            <button type="button" id="cancel-invite" class="btn-secondary flex-1">
+              Avbryt
+            </button>
+            <button type="submit" class="btn-primary flex-1">
+              Opprett bruker
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit User Modal -->
+  <div id="edit-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="edit-modal-overlay"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="glass-card w-full max-w-md p-6 relative">
+        <button id="close-edit-modal" class="absolute top-4 right-4 text-dark-400 hover:text-white">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        <h2 class="text-xl font-bold text-white mb-6">Rediger bruker</h2>
+
+        <form id="edit-form" class="space-y-4">
+          <input type="hidden" id="edit-user-id" name="id" />
+          <div>
+            <label class="input-label" for="edit-navn">Navn *</label>
+            <input type="text" id="edit-navn" name="navn" class="input" required />
+          </div>
+          <div>
+            <label class="input-label" for="edit-epost">E-post *</label>
+            <input type="email" id="edit-epost" name="epost" class="input" required />
+          </div>
+          <div>
+            <label class="input-label" for="edit-telefon">Telefon</label>
+            <input type="tel" id="edit-telefon" name="telefon" class="input" />
+          </div>
+          <div>
+            <label class="input-label" for="edit-passord">Nytt passord (valgfritt)</label>
+            <input type="password" id="edit-passord" name="passord" class="input" minlength="8" />
+            <p class="text-xs text-dark-400 mt-1">La feltet være tomt for å beholde eksisterende passord.</p>
+          </div>
+
+          <div id="edit-error" class="form-error hidden"></div>
+
+          <div class="flex gap-3 pt-2">
+            <button type="button" id="cancel-edit" class="btn-secondary flex-1">
+              Avbryt
+            </button>
+            <button type="submit" class="btn-primary flex-1">
+              Lagre endringer
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</DashboardLayout>
+
+<script>
+  // Invite Modal
+  const inviteBtn = document.getElementById('invite-user-btn');
+  const inviteModal = document.getElementById('invite-modal');
+  const closeInviteModal = document.getElementById('close-invite-modal');
+  const cancelInvite = document.getElementById('cancel-invite');
+  const inviteOverlay = document.getElementById('invite-modal-overlay');
+  const inviteForm = document.getElementById('invite-form') as HTMLFormElement;
+  const inviteError = document.getElementById('invite-error');
+
+  function showInviteModal() {
+    inviteModal?.classList.remove('hidden');
+    document.body.classList.add('overflow-hidden');
+  }
+
+  function hideInviteModal() {
+    inviteModal?.classList.add('hidden');
+    document.body.classList.remove('overflow-hidden');
+    inviteForm?.reset();
+    inviteError?.classList.add('hidden');
+  }
+
+  inviteBtn?.addEventListener('click', showInviteModal);
+  closeInviteModal?.addEventListener('click', hideInviteModal);
+  cancelInvite?.addEventListener('click', hideInviteModal);
+  inviteOverlay?.addEventListener('click', hideInviteModal);
+
+  inviteForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(inviteForm);
+    const data = Object.fromEntries(formData);
+
+    try {
+      const res = await fetch('/api/dashboard/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        if (inviteError) {
+          inviteError.textContent = result.error || 'Noe gikk galt';
+          inviteError.classList.remove('hidden');
+        }
+        return;
+      }
+
+      // Refresh page to show new user
+      window.location.reload();
+    } catch (err) {
+      if (inviteError) {
+        inviteError.textContent = 'Nettverksfeil. Prøv igjen.';
+        inviteError.classList.remove('hidden');
+      }
+    }
+  });
+
+  // Edit Modal
+  const editModal = document.getElementById('edit-modal');
+  const closeEditModal = document.getElementById('close-edit-modal');
+  const cancelEdit = document.getElementById('cancel-edit');
+  const editOverlay = document.getElementById('edit-modal-overlay');
+  const editForm = document.getElementById('edit-form') as HTMLFormElement;
+  const editError = document.getElementById('edit-error');
+
+  function showEditModal(userData: any) {
+    (document.getElementById('edit-user-id') as HTMLInputElement).value = userData.id;
+    (document.getElementById('edit-navn') as HTMLInputElement).value = userData.navn;
+    (document.getElementById('edit-epost') as HTMLInputElement).value = userData.epost;
+    (document.getElementById('edit-telefon') as HTMLInputElement).value = userData.telefon || '';
+    (document.getElementById('edit-passord') as HTMLInputElement).value = '';
+    editModal?.classList.remove('hidden');
+    document.body.classList.add('overflow-hidden');
+  }
+
+  function hideEditModal() {
+    editModal?.classList.add('hidden');
+    document.body.classList.remove('overflow-hidden');
+    editForm?.reset();
+    editError?.classList.add('hidden');
+  }
+
+  closeEditModal?.addEventListener('click', hideEditModal);
+  cancelEdit?.addEventListener('click', hideEditModal);
+  editOverlay?.addEventListener('click', hideEditModal);
+
+  document.querySelectorAll('.edit-user-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const userData = JSON.parse((btn as HTMLElement).dataset.user || '{}');
+      showEditModal(userData);
+    });
+  });
+
+  editForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(editForm);
+    const userId = formData.get('id');
+    const data: Record<string, any> = {
+      navn: formData.get('navn'),
+      epost: formData.get('epost'),
+      telefon: formData.get('telefon'),
+    };
+
+    const passord = formData.get('passord');
+    if (passord) {
+      data.passord = passord;
+    }
+
+    try {
+      const res = await fetch(`/api/dashboard/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        if (editError) {
+          editError.textContent = result.error || 'Noe gikk galt';
+          editError.classList.remove('hidden');
+        }
+        return;
+      }
+
+      window.location.reload();
+    } catch (err) {
+      if (editError) {
+        editError.textContent = 'Nettverksfeil. Prøv igjen.';
+        editError.classList.remove('hidden');
+      }
+    }
+  });
+
+  // Toggle User Status
+  document.querySelectorAll('.toggle-user-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const userId = (btn as HTMLElement).dataset.userId;
+      const isActive = (btn as HTMLElement).dataset.aktiv === 'true';
+      const action = isActive ? 'deaktivere' : 'aktivere';
+
+      if (!confirm(`Er du sikker på at du vil ${action} denne brukeren?`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/dashboard/users/${userId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ aktiv: !isActive }),
+        });
+
+        if (!res.ok) {
+          const result = await res.json();
+          alert(result.error || 'Noe gikk galt');
+          return;
+        }
+
+        window.location.reload();
+      } catch (err) {
+        alert('Nettverksfeil. Prøv igjen.');
+      }
+    });
+  });
+</script>

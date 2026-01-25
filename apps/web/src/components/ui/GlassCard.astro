@@ -1,0 +1,31 @@
+---
+interface Props {
+  class?: string;
+  hover?: boolean;
+  glow?: boolean;
+  padding?: 'none' | 'sm' | 'md' | 'lg';
+}
+
+const {
+  class: className = '',
+  hover = false,
+  glow = false,
+  padding = 'md'
+} = Astro.props;
+
+const paddingClasses = {
+  none: '',
+  sm: 'p-4',
+  md: 'p-6',
+  lg: 'p-8'
+};
+
+const baseClasses = 'glass-card';
+const hoverClasses = hover ? 'glass-card-hover' : '';
+const glowClasses = glow ? 'animate-glow' : '';
+const paddingClass = paddingClasses[padding];
+---
+
+<div class:list={[baseClasses, hoverClasses, glowClasses, paddingClass, className]}>
+  <slot />
+</div>

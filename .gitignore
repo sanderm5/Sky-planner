@@ -1,0 +1,92 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# CSV files / data imports
+*.csv
+
+# Screenshots / temporary files
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Exception: Allow logo and certification images
+!public/logo.png
+!public/dnv-elkontroll.jpg
+!public/nek-405.png
+
+# Exception: Allow web app public assets
+!apps/web/public/**/*.png
+!apps/web/public/**/*.jpg
+!apps/web/public/**/*.jpeg
+!apps/web/public/**/*.svg
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# System files
+Thumbs.db
+
+# Claude AI
+.claude/
+
+# Backup folders and files (may contain sensitive data)
+backup/
+backups/
+*.backup.json
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github/instructions/snyk_rules.instructions.md
+
+# SonarCloud scanner work directory
+.scannerwork/
+
+# CodeQL results
+codeql-agent-results/
+
+# Excel files
+*.xlsx
+*.xls
+
+# Turborepo cache
+.turbo/
+
+# Astro build cache
+.astro/
+
+# Ignore app build outputs (but not shared packages)
+apps/app/dist/
+apps/web/dist/
+
+# Next.js build cache (legacy)
+.next/

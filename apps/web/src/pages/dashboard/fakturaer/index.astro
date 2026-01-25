@@ -1,0 +1,228 @@
+---
+import DashboardLayout from '../../../layouts/DashboardLayout.astro';
+import { requireAuth, isAuthError } from '../../../middleware/auth';
+import * as db from '@skyplanner/database';
+
+// Initialize Supabase client
+db.getSupabaseClient({
+  supabaseUrl: import.meta.env.SUPABASE_URL,
+  supabaseKey: import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY,
+});
+
+// Auth check
+const authResult = await requireAuth(Astro);
+if (isAuthError(authResult)) return authResult;
+
+const { user, organization } = authResult;
+---
+
+<DashboardLayout
+  title="Fakturaer"
+  user={user}
+  organization={organization}
+  currentPath="/dashboard/fakturaer"
+>
+  <!-- Page Header -->
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-white mb-2">Fakturaer</h1>
+    <p class="text-dark-400">Se og last ned tidligere fakturaer.</p>
+  </div>
+
+  <!-- Loading State -->
+  <div id="loading-state" class="glass-card p-8 text-center">
+    <svg class="w-8 h-8 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    <p class="text-dark-400">Laster fakturaer...</p>
+  </div>
+
+  <!-- Empty State -->
+  <div id="empty-state" class="glass-card p-8 text-center hidden">
+    <div class="w-16 h-16 rounded-full bg-dark-700/50 flex items-center justify-center mx-auto mb-4">
+      <svg class="w-8 h-8 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+    </div>
+    <h3 class="text-lg font-semibold text-white mb-2">Ingen fakturaer ennå</h3>
+    <p class="text-dark-400">Fakturaer vil vises her etter første betaling.</p>
+  </div>
+
+  <!-- Error State -->
+  <div id="error-state" class="glass-card p-8 text-center hidden border-red-500/30">
+    <div class="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
+      <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+    </div>
+    <h3 class="text-lg font-semibold text-white mb-2">Kunne ikke laste fakturaer</h3>
+    <p class="text-dark-400 mb-4" id="error-message">En feil oppstod under lasting av fakturaer.</p>
+    <button id="retry-btn" class="btn-secondary">
+      Prøv igjen
+    </button>
+  </div>
+
+  <!-- Invoices Table -->
+  <div id="invoices-container" class="glass-card overflow-hidden hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-dark-700/50">
+            <th class="text-left p-4 text-sm font-medium text-dark-300">Fakturanr.</th>
+            <th class="text-left p-4 text-sm font-medium text-dark-300">Dato</th>
+            <th class="text-left p-4 text-sm font-medium text-dark-300 hidden sm:table-cell">Periode</th>
+            <th class="text-left p-4 text-sm font-medium text-dark-300">Beløp</th>
+            <th class="text-left p-4 text-sm font-medium text-dark-300">Status</th>
+            <th class="text-right p-4 text-sm font-medium text-dark-300">Handlinger</th>
+          </tr>
+        </thead>
+        <tbody id="invoices-table-body">
+          <!-- Populated by JavaScript -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+</DashboardLayout>
+
+<script>
+  interface Invoice {
+    id: string;
+    number: string | null;
+    status: string | null;
+    amount: number;
+    currency: string;
+    created: number;
+    period_start: number;
+    period_end: number;
+    hosted_invoice_url: string | null;
+    invoice_pdf: string | null;
+    description: string;
+  }
+
+  const loadingState = document.getElementById('loading-state');
+  const emptyState = document.getElementById('empty-state');
+  const errorState = document.getElementById('error-state');
+  const invoicesContainer = document.getElementById('invoices-container');
+  const invoicesTableBody = document.getElementById('invoices-table-body');
+  const errorMessage = document.getElementById('error-message');
+  const retryBtn = document.getElementById('retry-btn');
+
+  function formatDate(timestamp: number): string {
+    const date = new Date(timestamp * 1000);
+    return date.toLocaleDateString('nb-NO', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+
+  function formatPeriod(start: number, end: number): string {
+    const startDate = new Date(start * 1000);
+    const endDate = new Date(end * 1000);
+    return `${startDate.toLocaleDateString('nb-NO', { day: 'numeric', month: 'short' })} - ${endDate.toLocaleDateString('nb-NO', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  }
+
+  function formatAmount(amount: number, currency: string): string {
+    return new Intl.NumberFormat('nb-NO', {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+    }).format(amount / 100);
+  }
+
+  function getStatusBadge(status: string | null): string {
+    const statusMap: Record<string, { label: string; class: string }> = {
+      paid: { label: 'Betalt', class: 'bg-green-500/10 text-green-400' },
+      open: { label: 'Åpen', class: 'bg-blue-500/10 text-blue-400' },
+      draft: { label: 'Utkast', class: 'bg-dark-600/50 text-dark-400' },
+      uncollectible: { label: 'Ikke innkrevd', class: 'bg-red-500/10 text-red-400' },
+      void: { label: 'Annullert', class: 'bg-dark-600/50 text-dark-400' },
+    };
+
+    const s = statusMap[status || ''] || { label: status || 'Ukjent', class: 'bg-dark-600/50 text-dark-400' };
+    return `<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${s.class}">${s.label}</span>`;
+  }
+
+  function renderInvoices(invoices: Invoice[]): void {
+    if (!invoicesTableBody) return;
+
+    invoicesTableBody.innerHTML = invoices.map(invoice => `
+      <tr class="border-b border-dark-700/50 hover:bg-dark-800/30">
+        <td class="p-4">
+          <span class="text-white font-medium">${invoice.number || '-'}</span>
+        </td>
+        <td class="p-4 text-dark-300">${formatDate(invoice.created)}</td>
+        <td class="p-4 text-dark-300 hidden sm:table-cell">${formatPeriod(invoice.period_start, invoice.period_end)}</td>
+        <td class="p-4 text-white font-medium">${formatAmount(invoice.amount, invoice.currency)}</td>
+        <td class="p-4">${getStatusBadge(invoice.status)}</td>
+        <td class="p-4 text-right">
+          <div class="flex items-center justify-end gap-2">
+            ${invoice.hosted_invoice_url ? `
+              <a
+                href="${invoice.hosted_invoice_url}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="p-2 text-dark-400 hover:text-white hover:bg-dark-700/50 rounded-lg transition-colors"
+                title="Se faktura"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              </a>
+            ` : ''}
+            ${invoice.invoice_pdf ? `
+              <a
+                href="${invoice.invoice_pdf}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="p-2 text-dark-400 hover:text-white hover:bg-dark-700/50 rounded-lg transition-colors"
+                title="Last ned PDF"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </a>
+            ` : ''}
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadInvoices(): Promise<void> {
+    loadingState?.classList.remove('hidden');
+    emptyState?.classList.add('hidden');
+    errorState?.classList.add('hidden');
+    invoicesContainer?.classList.add('hidden');
+
+    try {
+      const res = await fetch('/api/dashboard/invoices');
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result.error || 'Kunne ikke laste fakturaer');
+      }
+
+      loadingState?.classList.add('hidden');
+
+      if (!result.invoices || result.invoices.length === 0) {
+        emptyState?.classList.remove('hidden');
+        return;
+      }
+
+      renderInvoices(result.invoices);
+      invoicesContainer?.classList.remove('hidden');
+    } catch (err) {
+      loadingState?.classList.add('hidden');
+      errorState?.classList.remove('hidden');
+      if (errorMessage && err instanceof Error) {
+        errorMessage.textContent = err.message;
+      }
+    }
+  }
+
+  retryBtn?.addEventListener('click', loadInvoices);
+
+  // Load invoices on page load
+  loadInvoices();
+</script>

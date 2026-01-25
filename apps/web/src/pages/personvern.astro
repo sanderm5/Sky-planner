@@ -1,0 +1,96 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import GlassCard from '../components/ui/GlassCard.astro';
+---
+
+<BaseLayout title="Personvern" description="Les vår personvernerklæring og hvordan vi behandler dine data.">
+  <section class="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
+    <div class="container-narrow">
+      <h1 class="text-4xl font-bold text-white mb-8">Personvernerklæring</h1>
+
+      <GlassCard class="prose prose-invert max-w-none">
+        <p class="text-dark-300 mb-6">
+          Sist oppdatert: Januar 2026
+        </p>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">1. Innledning</h2>
+        <p class="text-dark-300 mb-4">
+          Efffekt AS ("vi", "oss", "vår") er ansvarlig for behandlingen av personopplysninger
+          i forbindelse med Sky Planner-tjenesten. Vi tar personvern på alvor og er forpliktet til
+          å beskytte personopplysningene dine i samsvar med gjeldende personvernlovgivning, inkludert
+          EUs personvernforordning (GDPR).
+        </p>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">2. Hvilke opplysninger vi samler inn</h2>
+        <p class="text-dark-300 mb-4">Vi samler inn følgende typer personopplysninger:</p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Kontaktinformasjon: Navn, e-postadresse, telefonnummer</li>
+          <li>Bedriftsinformasjon: Firmanavn, organisasjonsnummer</li>
+          <li>Kontoinformasjon: Brukernavn, passord (kryptert)</li>
+          <li>Betalingsinformasjon: Behandles av Stripe (vår betalingsleverandør)</li>
+          <li>Bruksdata: Hvordan du bruker tjenesten</li>
+        </ul>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">3. Hvordan vi bruker opplysningene</h2>
+        <p class="text-dark-300 mb-4">Vi bruker personopplysningene dine til å:</p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Levere og vedlikeholde tjenesten</li>
+          <li>Kommunisere med deg om tjenesten</li>
+          <li>Behandle betalinger</li>
+          <li>Forbedre tjenesten basert på bruksmønstre</li>
+          <li>Overholde juridiske forpliktelser</li>
+        </ul>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">4. Deling av opplysninger</h2>
+        <p class="text-dark-300 mb-4">
+          Vi deler ikke personopplysningene dine med tredjeparter, bortsett fra:
+        </p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Tjenesteleverandører som hjelper oss med å levere tjenesten (f.eks. Stripe for betaling, Supabase for datalagring)</li>
+          <li>Når det kreves av lov</li>
+          <li>Med ditt samtykke</li>
+        </ul>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">5. Lagring av data</h2>
+        <p class="text-dark-300 mb-4">
+          Dataene dine lagres sikkert hos Supabase med servere i EU. Vi bruker kryptering for
+          data i transit (HTTPS) og i hvile. Vi oppbevarer dataene dine så lenge du har en aktiv
+          konto, og sletter dem innen rimelig tid etter at kontoen avsluttes.
+        </p>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">6. Dine rettigheter</h2>
+        <p class="text-dark-300 mb-4">Du har rett til å:</p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Få innsyn i dine personopplysninger</li>
+          <li>Korrigere unøyaktige opplysninger</li>
+          <li>Slette dine opplysninger</li>
+          <li>Begrense behandlingen av dine opplysninger</li>
+          <li>Dataportabilitet</li>
+          <li>Trekke tilbake samtykke</li>
+        </ul>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">7. Informasjonskapsler (cookies)</h2>
+        <p class="text-dark-300 mb-4">
+          Vi bruker nødvendige informasjonskapsler for å sikre at tjenesten fungerer korrekt,
+          inkludert autentisering og øktadministrasjon. Vi bruker ikke sporings- eller
+          markedsføringscookies.
+        </p>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">8. Sikkerhet</h2>
+        <p class="text-dark-300 mb-4">
+          Vi tar sikkerheten til dataene dine på alvor og har implementert passende tekniske
+          og organisatoriske tiltak for å beskytte mot uautorisert tilgang, endring eller
+          ødeleggelse av data.
+        </p>
+
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">9. Kontakt oss</h2>
+        <p class="text-dark-300 mb-4">
+          Har du spørsmål om vår behandling av personopplysninger, kan du kontakte oss på:
+        </p>
+        <p class="text-dark-300">
+          E-post: <a href="mailto:personvern@skyplanner.no" class="text-primary-400 hover:text-primary-300">personvern@skyplanner.no</a>
+        </p>
+      </GlassCard>
+    </div>
+  </section>
+</BaseLayout>

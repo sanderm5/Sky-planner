@@ -1,0 +1,103 @@
+---
+import '../styles/global.css';
+import Sidebar from '../components/dashboard/Sidebar.astro';
+import DashboardHeader from '../components/dashboard/DashboardHeader.astro';
+
+interface Props {
+  title: string;
+  user: {
+    id: number;
+    navn: string;
+    epost: string;
+  };
+  organization: {
+    id: number;
+    navn: string;
+    slug: string;
+    plan_type: string;
+    logo_url?: string;
+  };
+  currentPath: string;
+}
+
+const { title, user, organization, currentPath } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="nb" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Skyplanner Dashboard" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <title>{title} | Skyplanner</title>
+</head>
+<body class="min-h-screen bg-dark-950">
+  <div class="flex min-h-screen">
+    <!-- Sidebar -->
+    <Sidebar
+      organization={organization}
+      currentPath={currentPath}
+    />
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col lg:ml-64">
+      <!-- Header -->
+      <DashboardHeader
+        user={user}
+        organization={organization}
+      />
+
+      <!-- Page Content -->
+      <main class="flex-1 p-6 lg:p-8">
+        <div class="max-w-7xl mx-auto">
+          <slot />
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Mobile Sidebar Overlay -->
+  <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden"></div>
+
+  <script>
+    // Mobile sidebar toggle
+    const menuToggle = document.getElementById('menu-toggle');
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    const closeSidebar = document.getElementById('close-sidebar');
+
+    function openSidebar() {
+      sidebar?.classList.remove('-translate-x-full');
+      overlay?.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function closeSidebarFn() {
+      sidebar?.classList.add('-translate-x-full');
+      overlay?.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    menuToggle?.addEventListener('click', openSidebar);
+    closeSidebar?.addEventListener('click', closeSidebarFn);
+    overlay?.addEventListener('click', closeSidebarFn);
+
+    // User dropdown toggle
+    const userMenuButton = document.getElementById('user-menu-button');
+    const userMenu = document.getElementById('user-menu');
+
+    userMenuButton?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      userMenu?.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', () => {
+      userMenu?.classList.add('hidden');
+    });
+  </script>
+</body>
+</html>

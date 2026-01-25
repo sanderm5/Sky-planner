@@ -1,0 +1,27 @@
+{
+  "name": "skyplanner-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sky Planner - Kundeadministrasjon og ruteplanlegging for servicebedrifter",
+  "author": "Effekt AS",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:app": "turbo run dev --filter=@skyplanner/app",
+    "dev:web": "turbo run dev --filter=@skyplanner/web",
+    "build": "turbo run build",
+    "build:app": "turbo run build --filter=@skyplanner/app",
+    "build:web": "turbo run build --filter=@skyplanner/web",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

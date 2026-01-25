@@ -1,0 +1,2308 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0f0f0f">
+  <meta name="view-transition" content="same-origin">
+  <title>Sky Planner | Kontrollsystem</title>
+  <link rel="icon" type="image/svg+xml" href="/skyplanner-logo.svg">
+  <link rel="icon" type="image/png" href="/logo.png">
+  <!-- CRITICAL: Set dark background and SPA view transition styles -->
+  <style>
+    html,body{background:#0f0f0f!important;overflow:hidden;height:100%;width:100%;}
+
+    /* === SHARED MAP (always visible, below app UI panels) === */
+    #sharedMapContainer {
+      position: fixed;
+      inset: 0;
+      z-index: 10; /* Below appView panels but markers/popups get elevated */
+    }
+    #sharedMapContainer #map {
+      width: 100%;
+      height: 100%;
+      background: #1a1a1a; /* Fallback while tiles load */
+    }
+    /* Elevate Leaflet interactive elements above appView */
+    #sharedMapContainer .leaflet-pane,
+    #sharedMapContainer .leaflet-control-container {
+      z-index: 200 !important;
+    }
+    #sharedMapContainer .leaflet-popup-pane {
+      z-index: 250 !important;
+    }
+
+    /* === LOGIN OVERLAY === */
+    #loginOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    #loginOverlay.hidden {
+      pointer-events: none;
+    }
+    #loginOverlay.hidden .login-side {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    #loginOverlay.hidden .login-map-overlay {
+      opacity: 0;
+    }
+    #loginOverlay.hidden .login-brand-content {
+      opacity: 0;
+      transform: translateY(-30px);
+    }
+
+    /* Gradient overlay on right side (over the map) */
+    .login-map-overlay {
+      position: absolute;
+      inset: 0;
+      left: 480px; /* After login form */
+      background: linear-gradient(to right, rgba(15, 15, 15, 0.95) 0%, rgba(15, 15, 15, 0.6) 30%, rgba(15, 15, 15, 0.3) 100%);
+      transition: opacity 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: none;
+    }
+
+    /* === APP VIEW (UI elements only, map is separate) === */
+    #appView {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      pointer-events: none;
+    }
+    /* Container must also be pointer-events: none to let map clicks through */
+    #appView > .container {
+      pointer-events: none;
+    }
+    /* Only sidebar and its contents are clickable */
+    #appView .sidebar {
+      pointer-events: auto;
+      position: relative;
+      z-index: 300; /* Above map markers (200) */
+    }
+    /* Filter panel positioned fixed to right side of viewport */
+    #appView .filter-panel {
+      pointer-events: auto;
+      position: fixed !important;
+      top: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      z-index: 300; /* Above map markers (200) */
+    }
+    /* Modals must be clickable */
+    #appView .modal {
+      pointer-events: auto;
+    }
+    #appView .modal.hidden {
+      pointer-events: none;
+    }
+    /* User bar must be clickable */
+    #appView .user-bar {
+      pointer-events: auto;
+    }
+    /* Route info panel must be clickable */
+    #appView .route-info {
+      pointer-events: auto;
+    }
+    /* Mobile route FAB must be clickable */
+    #appView .mobile-route-fab {
+      pointer-events: auto;
+    }
+    #appView.hidden .sidebar {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    #appView.hidden .filter-panel {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+
+    .login-brand-content {
+      position: absolute;
+      left: 480px;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 2;
+      text-align: center;
+      padding: 40px;
+      transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+      pointer-events: none;
+    }
+
+    .login-brand-logo {
+      width: 180px;
+      height: auto;
+      margin-bottom: 40px;
+      filter: drop-shadow(0 10px 40px rgba(249, 115, 22, 0.3));
+    }
+
+    .login-brand-title {
+      font-size: 38px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: #fff;
+      text-shadow: 0 2px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    .login-brand-subtitle {
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.8);
+      line-height: 1.7;
+      margin-bottom: 48px;
+      text-shadow: 0 1px 10px rgba(0, 0, 0, 0.5);
+    }
+
+    .login-features {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      max-width: 400px;
+      width: 100%;
+    }
+
+    .login-feature {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 24px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+    }
+
+    .login-feature-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+    }
+
+    .login-feature-text {
+      text-align: left;
+    }
+
+    .login-feature-text h4 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 2px;
+      color: white;
+    }
+
+    .login-feature-text p {
+      font-size: 12px;
+      color: #666;
+      margin: 0;
+    }
+
+    .login-contact {
+      margin-top: 40px;
+      text-align: center;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .login-contact-address {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.6);
+      margin-bottom: 8px;
+    }
+
+    .login-contact-links {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .login-contact-links a {
+      font-size: 13px;
+      color: #F97316;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .login-contact-links a:hover {
+      color: #fb923c;
+    }
+
+    .login-contact-divider {
+      color: rgba(255, 255, 255, 0.3);
+    }
+
+    .login-developer {
+      margin-top: 24px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    .login-developer a {
+      color: rgba(255, 255, 255, 0.6);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .login-developer a:hover {
+      color: #F97316;
+    }
+
+    .login-side {
+      width: 480px;
+      min-width: 480px;
+      background: #1a1a1a;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 60px;
+      border-right: 1px solid #333;
+      transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease-out;
+    }
+
+    .login-content {
+      width: 100%;
+      max-width: 340px;
+    }
+
+    .login-certifications {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 32px;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .login-cert-logo {
+      height: 60px;
+      width: auto;
+      object-fit: contain;
+      opacity: 0.9;
+    }
+
+    .login-form-logo {
+      display: block;
+      height: 48px;
+      width: auto;
+      margin: 0 auto 32px auto;
+    }
+
+    .login-header {
+      margin-bottom: 40px;
+    }
+
+    .login-header h1 {
+      font-size: 32px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: white;
+    }
+
+    .login-header p {
+      color: #a0a0a0;
+      font-size: 17px;
+      margin: 0;
+    }
+
+    .login-form-group {
+      margin-bottom: 24px;
+    }
+
+    .login-form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #a0a0a0;
+      margin-bottom: 8px;
+    }
+
+    .login-input-field {
+      width: 100%;
+      padding: 14px 16px;
+      background: #252525;
+      border: 1px solid #333;
+      border-radius: 10px;
+      color: white;
+      font-size: 15px;
+      font-family: inherit;
+      transition: all 0.2s ease;
+    }
+
+    .login-input-field::placeholder {
+      color: #666;
+    }
+
+    .login-input-field:focus {
+      outline: none;
+      border-color: #F97316;
+      box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15);
+    }
+
+    .login-options-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 32px;
+    }
+
+    .login-checkbox-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+    }
+
+    .login-checkbox-wrapper input {
+      width: 18px;
+      height: 18px;
+      accent-color: #F97316;
+      cursor: pointer;
+    }
+
+    .login-checkbox-wrapper span {
+      font-size: 14px;
+      color: #a0a0a0;
+    }
+
+    .login-forgot-link {
+      font-size: 14px;
+      color: #F97316;
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .login-forgot-link:hover {
+      color: #FB923C;
+    }
+
+    .login-btn {
+      width: 100%;
+      padding: 16px;
+      background: #F97316;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .login-btn:hover {
+      background: #EA580C;
+      transform: translateY(-1px);
+    }
+
+    .login-btn:disabled {
+      background: #333;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .login-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .login-spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: loginSpin 0.8s linear infinite;
+    }
+
+    @keyframes loginSpin {
+      to { transform: rotate(360deg); }
+    }
+
+    .login-error-message {
+      background: rgba(255, 59, 59, 0.1);
+      border: 1px solid rgba(255, 59, 59, 0.3);
+      color: #DC2626;
+      padding: 14px 16px;
+      border-radius: 10px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      display: none;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .login-error-message.show {
+      display: flex;
+    }
+
+    .login-error-message svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    .login-back-link {
+      margin-top: 24px;
+      text-align: center;
+    }
+
+    .login-back-link a {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #a0a0a0;
+      text-decoration: none;
+      font-size: 14px;
+      transition: color 0.2s ease;
+    }
+
+    .login-back-link a:hover {
+      color: #F97316;
+    }
+
+    .login-back-link svg {
+      flex-shrink: 0;
+    }
+
+    .login-footer {
+      margin-top: auto;
+      padding-top: 40px;
+      text-align: center;
+      color: #666;
+      font-size: 13px;
+    }
+
+    /* === RESPONSIVE LOGIN === */
+    @media (max-width: 1024px) {
+      .login-brand-content {
+        display: none;
+      }
+      .login-map-overlay {
+        display: none;
+      }
+      .login-side {
+        width: 100%;
+        min-width: unset;
+        border-right: none;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .login-side {
+        padding: 40px 24px;
+      }
+      .login-header h1 {
+        font-size: 24px;
+      }
+    }
+
+    /* === MOBILE APP VIEW OVERRIDES === */
+    @media (max-width: 768px) {
+      /* Filter panel becomes part of sidebar on mobile, not fixed */
+      #appView .filter-panel {
+        position: static !important;
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        z-index: auto !important;
+        transform: none !important;
+      }
+
+      /* Sidebar becomes bottom sheet */
+      #appView .sidebar {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        top: auto !important;
+        z-index: 1500 !important;
+      }
+
+      /* Modals must be above sidebar on mobile */
+      #appView .modal,
+      .modal-overlay {
+        z-index: 2000 !important;
+      }
+
+      /* Hide animations that conflict with mobile */
+      .sidebar.pre-animate,
+      .filter-panel.pre-animate {
+        transform: none !important;
+        opacity: 1 !important;
+      }
+
+      .sidebar.animate-in,
+      .filter-panel.animate-in {
+        animation: none !important;
+      }
+    }
+
+    /* Mobile landscape mode - limit sidebar height */
+    @media (max-width: 768px) and (orientation: landscape) {
+      #appView .sidebar {
+        max-height: 60vh !important;
+      }
+    }
+
+    /* === APP VIEW TRANSITION ANIMATIONS === */
+    .sidebar.animate-in {
+      animation: slideInLeft 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    .filter-panel.animate-in {
+      animation: slideInRight 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    .sidebar.pre-animate {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+
+    .filter-panel.pre-animate {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+
+    @keyframes slideInLeft {
+      from { transform: translateX(-100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes slideInRight {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Google Fonts - Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="style.css?v=20260124-ui-redesign" />
+</head>
+<body>
+  <!-- ========== SINGLE MAP (used for both login and app) ========== -->
+  <div id="sharedMapContainer">
+    <div id="map"></div>
+  </div>
+
+  <!-- ========== LOGIN OVERLAY ========== -->
+  <div id="loginOverlay">
+    <!-- Login Form Side (left) -->
+    <div class="login-side">
+      <div class="login-content">
+        <img src="/skyplanner-logo.svg" alt="Sky Planner" class="login-form-logo">
+        <div class="login-header">
+          <h1>Velkommen tilbake</h1>
+          <p>Logg inn for å fortsette til kontrollpanelet</p>
+        </div>
+
+        <div class="login-error-message" id="loginErrorMessage">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span id="loginErrorText"></span>
+        </div>
+
+        <form id="spaLoginForm">
+          <div class="login-form-group">
+            <label for="loginEmail">E-postadresse</label>
+            <input type="email" id="loginEmail" class="login-input-field" placeholder="navn@bedrift.no" required autocomplete="email">
+          </div>
+
+          <div class="login-form-group">
+            <label for="loginPassword">Passord</label>
+            <input type="password" id="loginPassword" class="login-input-field" placeholder="Skriv inn passord" required autocomplete="current-password">
+          </div>
+
+          <div class="login-options-row">
+            <label class="login-checkbox-wrapper">
+              <input type="checkbox" id="loginRememberMe" checked>
+              <span>Husk meg</span>
+            </label>
+            <a href="/nytt-passord.html" class="login-forgot-link">Glemt passord?</a>
+          </div>
+
+          <button type="submit" class="login-btn" id="spaLoginBtn">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"/>
+            </svg>
+            <span>Logg inn</span>
+          </button>
+        </form>
+
+        <div class="login-back-link" id="loginBackLinkContainer">
+          <a href="#" id="backToWebsiteLink">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+            </svg>
+            Tilbake til nettside
+          </a>
+        </div>
+
+        <div class="login-footer">
+          <p id="loginFooterCopyright"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gradient overlay over map (right side) -->
+    <div class="login-map-overlay"></div>
+
+    <!-- Brand content (centered on right side, over map) - Dynamically populated -->
+    <div class="login-brand-content">
+      <img src="/skyplanner-logo.svg" alt="Sky Planner" class="login-brand-logo" id="loginLogo">
+      <h1 class="login-brand-title" id="loginBrandTitle">Sky Planner</h1>
+      <p class="login-brand-subtitle" id="loginBrandSubtitle">Kontroll. Oversikt. Alltid.</p>
+
+      <div class="login-features" id="loginFeatures">
+        <!-- Fylles dynamisk av renderLoginFeatures() -->
+      </div>
+
+      <!-- Contact info - hidden by default, shown if configured -->
+      <div class="login-contact" id="loginContact" style="display: none;">
+        <p class="login-contact-address" id="loginAddress"></p>
+        <div class="login-contact-links" id="loginContactLinks"></div>
+      </div>
+      <div class="login-developer">
+        Utviklet av <a href="https://efffekt.no" target="_blank" rel="noopener">Efffekt AS</a>
+      </div>
+    </div>
+  </div><!-- End loginOverlay -->
+
+  <!-- ========== APP UI (overlays on top of shared map) ========== -->
+  <div id="appView" class="hidden">
+    <div class="container">
+    <aside class="sidebar" id="sidebar">
+      <!-- Header - Dynamically populated from config -->
+      <div class="sidebar-header">
+        <div class="header-content">
+          <img src="/skyplanner-logo.svg" alt="Sky Planner" class="header-logo" id="headerLogo">
+          <div class="header-text">
+            <h1 id="headerAppName">Sky Planner</h1>
+            <p class="company-name" id="headerCompanyName"></p>
+            <p class="year" id="headerYear"></p>
+          </div>
+        </div>
+        <button class="sidebar-toggle" id="sidebarToggle" title="Krympe/utvide sidebar">
+          <i class="fas fa-chevron-left"></i>
+        </button>
+      </div>
+
+      <!-- User info / Logout -->
+      <div class="user-bar" id="userBar" style="display: none;">
+        <span class="user-name" id="userNameDisplay"></span>
+        <div class="user-bar-actions">
+          <!-- Subscription countdown timer -->
+          <div class="subscription-timer" id="subscriptionTimer" style="display: none;">
+            <i class="fas fa-clock"></i>
+            <span id="subscriptionTimerText"></span>
+          </div>
+          <button class="theme-toggle-btn" id="themeToggleBtn" title="Bytt tema">
+            <i class="fas fa-sun theme-icon-light"></i>
+            <i class="fas fa-moon theme-icon-dark"></i>
+          </button>
+          <button class="settings-btn" id="settingsBtn" title="Innstillinger">
+            <i class="fas fa-cog"></i>
+          </button>
+          <button class="web-link-btn" id="webLinkBtn" title="Gå til dashboard" style="display: none;">
+            <i class="fas fa-arrow-left"></i>
+            <span>Dashboard</span>
+          </button>
+          <button class="logout-btn" id="logoutBtnMain" title="Logg ut">
+            <i class="fas fa-sign-out-alt"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Vertical Tab Navigation -->
+      <nav class="tab-navigation">
+        <button class="tab-item active" data-tab="dashboard">
+          <i class="fas fa-th-large"></i>
+          <span>Dashboard</span>
+        </button>
+        <button class="tab-item" data-tab="customers">
+          <i class="fas fa-users"></i>
+          <span>Kunder</span>
+        </button>
+        <button class="tab-item" data-tab="overdue">
+          <i class="fas fa-exclamation-triangle"></i>
+          <span>Forfalte</span>
+          <span class="tab-badge" id="overdueBadge" style="display: none;">0</span>
+        </button>
+        <button class="tab-item" data-tab="warnings">
+          <i class="fas fa-bell"></i>
+          <span>Kommende kontroller</span>
+          <span class="tab-badge" id="upcomingBadge" style="display: none;">0</span>
+        </button>
+        <button class="tab-item" data-tab="avhuking">
+          <i class="fas fa-clipboard-check"></i>
+          <span>Avhuking</span>
+          <span class="tab-badge avhuking-badge" id="avhukingBadge" style="display: none;">0</span>
+        </button>
+        <button class="tab-item" data-tab="routes">
+          <i class="fas fa-map"></i>
+          <span>Ruter</span>
+        </button>
+        <button class="tab-item" data-tab="calendar">
+          <i class="fas fa-calendar"></i>
+          <span>Kalender</span>
+        </button>
+        <button class="tab-item" data-tab="planner">
+          <i class="fas fa-list-check"></i>
+          <span>Planlegger</span>
+        </button>
+        <button class="tab-item" data-tab="statistikk">
+          <i class="fas fa-chart-line"></i>
+          <span>Statistikk</span>
+        </button>
+        <button class="tab-item" data-tab="missingdata">
+          <i class="fas fa-exclamation-circle"></i>
+          <span>Mangler data</span>
+          <span class="tab-badge missing-badge" id="missingDataBadge" style="display: none;">0</span>
+        </button>
+        <button class="tab-item admin-only" data-tab="admin" id="adminTab" style="display: none;">
+          <i class="fas fa-shield-alt"></i>
+          <span>Admin</span>
+        </button>
+      </nav>
+
+      <!-- Quick Stats i bunnen av sidebar -->
+      <div class="sidebar-quick-stats" id="sidebarQuickStats">
+        <div class="quick-stat-item">
+          <span class="quick-stat-value" id="quickStatKunder">0</span>
+          <span class="quick-stat-label">Kunder</span>
+        </div>
+        <div class="quick-stat-item quick-stat-warning">
+          <span class="quick-stat-value" id="quickStatForfalte">0</span>
+          <span class="quick-stat-label">Forfalte</span>
+        </div>
+        <div class="quick-stat-item quick-stat-upcoming">
+          <span class="quick-stat-value" id="quickStatKommende">0</span>
+          <span class="quick-stat-label">Kommende</span>
+        </div>
+        <div class="quick-stat-item quick-stat-ok">
+          <span class="quick-stat-value" id="quickStatOk">0</span>
+          <span class="quick-stat-label">OK</span>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <a href="https://efffekt.no" target="_blank" rel="noopener">Efffekt AS</a>
+      </div>
+    </aside>
+
+    <!-- Content Panel Overlay (for mobile) -->
+    <div class="content-panel-overlay" id="contentPanelOverlay"></div>
+
+    <!-- Content Panel - vises til høyre for menyen -->
+    <div class="content-panel" id="contentPanel">
+      <div class="content-panel-header">
+        <span class="panel-title" id="panelTitle">Dashboard</span>
+        <button class="content-panel-close" id="contentPanelClose" title="Lukk panel">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <!-- Tab Content Container -->
+      <div class="tab-content">
+        <!-- Tab: Dashboard -->
+        <div class="tab-pane active" id="tab-dashboard">
+          <div class="dashboard-container">
+            <!-- Quick Stats Row -->
+            <div class="dashboard-stats">
+              <div class="stat-card stat-total">
+                <div class="stat-icon"><i class="fas fa-users"></i></div>
+                <div class="stat-content">
+                  <span class="stat-value" id="dashTotalKunder">0</span>
+                  <span class="stat-label">Totalt kunder</span>
+                </div>
+              </div>
+              <div class="stat-card stat-overdue">
+                <div class="stat-icon"><i class="fas fa-exclamation-circle"></i></div>
+                <div class="stat-content">
+                  <span class="stat-value" id="dashForfalte">0</span>
+                  <span class="stat-label">Forfalte</span>
+                </div>
+              </div>
+              <div class="stat-card stat-upcoming">
+                <div class="stat-icon"><i class="fas fa-clock"></i></div>
+                <div class="stat-content">
+                  <span class="stat-value" id="dashKommende">0</span>
+                  <span class="stat-label">Innen 30 dager</span>
+                </div>
+              </div>
+              <div class="stat-card stat-completed">
+                <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                <div class="stat-content">
+                  <span class="stat-value" id="dashFullfort">0</span>
+                  <span class="stat-label">OK (90+ dager)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action Cards Row -->
+            <div class="dashboard-actions">
+              <div class="action-card" data-action="showOverdueTab">
+                <div class="action-icon overdue"><i class="fas fa-exclamation-triangle"></i></div>
+                <div class="action-content">
+                  <h4>Forfalte kontroller</h4>
+                  <p><span id="dashOverdueCount">0</span> kunder trenger kontroll</p>
+                </div>
+                <i class="fas fa-chevron-right"></i>
+              </div>
+              <div class="action-card" data-action="showRoutesTab">
+                <div class="action-icon route"><i class="fas fa-route"></i></div>
+                <div class="action-content">
+                  <h4>Planlegg rute</h4>
+                  <p>Optimaliser dagens servicetur</p>
+                </div>
+                <i class="fas fa-chevron-right"></i>
+              </div>
+              <div class="action-card" data-action="showCalendarTab">
+                <div class="action-icon calendar"><i class="fas fa-calendar-check"></i></div>
+                <div class="action-content">
+                  <h4>Kalender</h4>
+                  <p>Se avtaler og planlegg fremover</p>
+                </div>
+                <i class="fas fa-chevron-right"></i>
+              </div>
+            </div>
+
+            <!-- Category Overview -->
+            <div class="dashboard-categories">
+              <h4><i class="fas fa-pie-chart"></i> Kategori-fordeling</h4>
+              <div class="category-overview" id="dashCategoryOverview">
+                <!-- Filled dynamically -->
+              </div>
+            </div>
+
+            <!-- Area Quick Links -->
+            <div class="dashboard-areas">
+              <h4><i class="fas fa-map-marker-alt"></i> Områder</h4>
+              <div class="area-list" id="dashAreaList">
+                <!-- Filled dynamically -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Customers -->
+        <div class="tab-pane" id="tab-customers">
+          <div class="tab-header">
+            <h2>Kunder</h2>
+            <button id="addCustomerBtnTab" class="btn btn-primary btn-small">
+              <i class="fas fa-plus"></i> Ny kunde
+            </button>
+          </div>
+
+          <div class="customer-admin">
+            <!-- Search -->
+            <div class="customer-search">
+              <div class="search-input-wrapper">
+                <i class="fas fa-search"></i>
+                <input type="text" id="customerSearchInput" placeholder="Søk etter kunde...">
+              </div>
+            </div>
+
+            <!-- Kategori tabs - populated dynamically by ServiceTypeRegistry -->
+            <div class="kategori-tabs" id="kategoriTabs">
+              <!-- Fallback content, will be replaced by renderKategoriTabs() -->
+              <button class="kategori-tab active" data-kategori="alle">Alle</button>
+            </div>
+
+            <!-- Customer stats with toggle -->
+            <div class="customer-stats">
+              <span id="customerCountDisplay">0 kunder</span>
+              <button id="toggleCustomerList" class="toggle-list-btn" title="Vis/skjul liste">
+                <i class="fas fa-chevron-up"></i>
+              </button>
+            </div>
+
+            <!-- Customer list -->
+            <div id="customerAdminList" class="customer-admin-list">
+              <!-- Kunder lastes her -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Overdue -->
+        <div class="tab-pane" id="tab-overdue">
+          <div class="tab-header">
+            <h2>Forfalte kontroller</h2>
+            <span class="overdue-count-header" id="overdueCountHeader"></span>
+          </div>
+          <div class="overdue-filters">
+            <div class="filter-group">
+              <label for="overdueSortSelect">Sorter etter:</label>
+              <select id="overdueSortSelect">
+                <option value="days">Ferskeste først (minst dager)</option>
+                <option value="days-desc">Eldste først (flest dager)</option>
+                <option value="name">Navn A-Å</option>
+                <option value="category">Kategori</option>
+                <option value="area">Område</option>
+              </select>
+            </div>
+            <div class="overdue-actions">
+              <button id="showOverdueOnMapBtn" class="btn btn-secondary btn-small">
+                <i class="fas fa-map-marker-alt"></i> Vis på kart
+              </button>
+              <button id="createOverdueRouteBtn" class="btn btn-primary btn-small">
+                <i class="fas fa-route"></i> Lag rute
+              </button>
+            </div>
+          </div>
+          <div class="overdue-container" id="overdueContainer">
+            <!-- Forfalte kunder lastes her -->
+          </div>
+        </div>
+
+        <!-- Tab: Warnings -->
+        <div class="tab-pane" id="tab-warnings">
+          <div class="tab-header">
+            <h2>Kommende kontroller</h2>
+          </div>
+
+          <div class="warning-actions">
+            <button id="selectWarningsBtn" class="btn btn-secondary btn-small">
+              <i class="fas fa-check"></i>
+              Velg alle
+            </button>
+          </div>
+
+          <div id="warningsContainer" class="warnings-container">
+            <!-- Varsler lastes her -->
+          </div>
+        </div>
+
+        <!-- Tab: Avhuking -->
+        <div class="tab-pane" id="tab-avhuking">
+          <div class="tab-header">
+            <h2>Avhuking</h2>
+            <span class="avhuking-count-header" id="avhukingCountHeader">0 valgt</span>
+          </div>
+
+          <div class="avhuking-info">
+            <p><i class="fas fa-info-circle"></i> Velg kunder fra kartet med "Marker ferdig"-knappen, så vises de her.</p>
+          </div>
+
+          <div class="avhuking-actions">
+            <button id="clearAvhukingBtn" class="btn btn-secondary btn-small" disabled>
+              <i class="fas fa-times"></i> Tøm liste
+            </button>
+            <button id="completeAvhukingBtn" class="btn btn-success btn-small" disabled>
+              <i class="fas fa-check"></i> Marker alle som ferdig
+            </button>
+          </div>
+
+          <div class="avhuking-list" id="avhukingList">
+            <!-- Valgte kunder vises her -->
+            <div class="avhuking-empty">
+              <i class="fas fa-clipboard-list"></i>
+              <p>Ingen kunder valgt</p>
+              <span>Klikk på en kunde i kartet og velg "Marker ferdig"</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Routes -->
+        <div class="tab-pane" id="tab-routes">
+          <div class="tab-header">
+            <h2>Lagrede ruter</h2>
+          </div>
+
+          <div id="savedRoutesList" class="saved-routes-list">
+            <!-- Ruter lastes her -->
+          </div>
+        </div>
+
+        <!-- Tab: Calendar -->
+        <div class="tab-pane" id="tab-calendar">
+          <div class="tab-header">
+            <h2>Kalender</h2>
+          </div>
+
+          <div id="calendarContainer" class="calendar-container">
+            <!-- Kalender lastes her -->
+          </div>
+        </div>
+
+        <!-- Tab: Planner -->
+        <div class="tab-pane" id="tab-planner">
+          <div class="tab-header">
+            <h2>Planlegger</h2>
+          </div>
+
+          <div id="plannerContainer" class="planner-container">
+            <!-- Planlegger lastes her -->
+          </div>
+        </div>
+
+        <!-- Tab: Statistikk -->
+        <div class="tab-pane" id="tab-statistikk">
+          <div class="tab-header">
+            <h2>Statistikk & Trender</h2>
+          </div>
+
+          <div class="statistikk-container">
+            <!-- Overview Cards -->
+            <div class="stats-overview" id="statsOverview">
+              <div class="overview-card">
+                <div class="overview-icon"><i class="fas fa-users"></i></div>
+                <div class="overview-content">
+                  <span class="overview-value" id="statTotalKunder">0</span>
+                  <span class="overview-label">Totalt kunder</span>
+                </div>
+              </div>
+              <div class="overview-card status-overdue">
+                <div class="overview-icon"><i class="fas fa-exclamation-circle"></i></div>
+                <div class="overview-content">
+                  <span class="overview-value" id="statForfalte">0</span>
+                  <span class="overview-label">Forfalte</span>
+                </div>
+              </div>
+              <div class="overview-card status-soon">
+                <div class="overview-icon"><i class="fas fa-clock"></i></div>
+                <div class="overview-content">
+                  <span class="overview-value" id="statSnart">0</span>
+                  <span class="overview-label">Innen 30 dager</span>
+                </div>
+              </div>
+              <div class="overview-card status-good">
+                <div class="overview-icon"><i class="fas fa-check-circle"></i></div>
+                <div class="overview-content">
+                  <span class="overview-value" id="statOk">0</span>
+                  <span class="overview-label">I orden</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sesonganalyse -->
+            <div class="stats-section">
+              <h3><i class="fas fa-calendar-alt"></i> Sesonganalyse - Kontroller per måned</h3>
+              <p class="stats-description">Viser når kontroller forfaller gjennom året</p>
+              <div class="season-chart" id="seasonChart">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+
+            <!-- Kategori-fordeling -->
+            <div class="stats-section">
+              <h3><i class="fas fa-pie-chart"></i> Kategori-fordeling</h3>
+              <div class="category-stats" id="categoryStats">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+
+            <!-- Område-fordeling -->
+            <div class="stats-section">
+              <h3><i class="fas fa-map-marker-alt"></i> Kunder per område</h3>
+              <div class="area-stats" id="areaStats">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+
+            <!-- El-type fordeling -->
+            <div class="stats-section">
+              <h3><i class="fas fa-bolt"></i> El-kontroll typer</h3>
+              <div class="eltype-stats" id="eltypeStats">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+
+            <!-- Brann-system fordeling -->
+            <div class="stats-section">
+              <h3><i class="fas fa-fire"></i> Brannvarsling-systemer</h3>
+              <div class="brannsystem-stats" id="brannsystemStats">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Missing Data -->
+        <div class="tab-pane" id="tab-missingdata">
+          <div class="tab-header">
+            <h2>Mangler data</h2>
+          </div>
+
+          <div class="missing-data-container">
+            <p class="missing-data-intro">Kunder som mangler viktig informasjon:</p>
+
+            <!-- Mangler telefon -->
+            <div class="missing-section">
+              <div class="missing-header" data-toggle="missing-phone">
+                <i class="fas fa-phone-slash"></i>
+                <span>Mangler telefon</span>
+                <span class="missing-count" id="missingPhoneCount">0</span>
+                <i class="fas fa-chevron-down toggle-icon"></i>
+              </div>
+              <div class="missing-list collapsed" id="missingPhoneList">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+
+            <!-- Mangler e-post -->
+            <div class="missing-section">
+              <div class="missing-header" data-toggle="missing-email">
+                <i class="fas fa-envelope-open"></i>
+                <span>Mangler e-post</span>
+                <span class="missing-count" id="missingEmailCount">0</span>
+                <i class="fas fa-chevron-down toggle-icon"></i>
+              </div>
+              <div class="missing-list collapsed" id="missingEmailList">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+
+            <!-- Mangler koordinater -->
+            <div class="missing-section">
+              <div class="missing-header" data-toggle="missing-coords">
+                <i class="fas fa-map-marker-alt"></i>
+                <span>Mangler koordinater</span>
+                <span class="missing-count" id="missingCoordsCount">0</span>
+                <i class="fas fa-chevron-down toggle-icon"></i>
+              </div>
+              <div class="missing-list collapsed" id="missingCoordsList">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+
+            <!-- Mangler neste kontroll -->
+            <div class="missing-section">
+              <div class="missing-header" data-toggle="missing-control">
+                <i class="fas fa-calendar-times"></i>
+                <span>Mangler neste kontroll</span>
+                <span class="missing-count" id="missingControlCount">0</span>
+                <i class="fas fa-chevron-down toggle-icon"></i>
+              </div>
+              <div class="missing-list collapsed" id="missingControlList">
+                <!-- Genereres av JavaScript -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Admin (kun synlig for admin) -->
+        <div class="tab-pane" id="tab-admin">
+          <div class="tab-header">
+            <h2><i class="fas fa-shield-alt"></i> Admin</h2>
+          </div>
+
+          <!-- Team Members Section -->
+          <div class="admin-section" id="teamMembersSection">
+            <div class="section-header-with-actions">
+              <h3><i class="fas fa-users"></i> Teammedlemmer</h3>
+              <div class="section-actions">
+                <span class="quota-badge" id="teamQuotaBadge">0 / 5</span>
+                <button class="btn btn-primary btn-small" id="addTeamMemberBtn">
+                  <i class="fas fa-user-plus"></i> Legg til
+                </button>
+              </div>
+            </div>
+            <div class="team-members-container" id="teamMembersContainer">
+              <div class="team-members-list" id="teamMembersList">
+                <!-- Fylles med JavaScript -->
+              </div>
+              <div class="team-members-empty" id="teamMembersEmpty" style="display: none;">
+                <i class="fas fa-user-slash"></i>
+                <p>Ingen teammedlemmer ennå</p>
+                <button class="btn btn-primary" id="addFirstMemberBtn">
+                  <i class="fas fa-user-plus"></i> Legg til første medlem
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Login Stats -->
+          <div class="admin-stats" id="loginStats">
+            <div class="admin-stat-card">
+              <div class="stat-icon"><i class="fas fa-sign-in-alt"></i></div>
+              <div class="stat-content">
+                <span class="stat-value" id="statTotalLogins">0</span>
+                <span class="stat-label">Totalt innlogginger</span>
+              </div>
+            </div>
+            <div class="admin-stat-card success">
+              <div class="stat-icon"><i class="fas fa-check"></i></div>
+              <div class="stat-content">
+                <span class="stat-value" id="statSuccessLogins">0</span>
+                <span class="stat-label">Vellykkede</span>
+              </div>
+            </div>
+            <div class="admin-stat-card danger">
+              <div class="stat-icon"><i class="fas fa-times"></i></div>
+              <div class="stat-content">
+                <span class="stat-value" id="statFailedLogins">0</span>
+                <span class="stat-label">Mislykkede</span>
+              </div>
+            </div>
+            <div class="admin-stat-card info">
+              <div class="stat-icon"><i class="fas fa-clock"></i></div>
+              <div class="stat-content">
+                <span class="stat-value" id="statLast24h">0</span>
+                <span class="stat-label">Siste 24 timer</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Login Log Table -->
+          <div class="admin-section">
+            <h3><i class="fas fa-history"></i> Innloggingslogg</h3>
+            <div class="login-log-container" id="loginLogContainer">
+              <table class="login-log-table">
+                <thead>
+                  <tr>
+                    <th>Tidspunkt</th>
+                    <th>Bruker</th>
+                    <th>E-post</th>
+                    <th>Status</th>
+                    <th>IP</th>
+                    <th>Enhet</th>
+                  </tr>
+                </thead>
+                <tbody id="loginLogBody">
+                  <!-- Fylles med JavaScript -->
+                </tbody>
+              </table>
+            </div>
+            <button id="loadMoreLogins" class="btn btn-secondary btn-small" style="margin-top: 10px;">
+              <i class="fas fa-plus"></i> Last flere
+            </button>
+          </div>
+
+          <!-- Organization Fields Management -->
+          <div class="admin-section" id="fieldsManagementSection">
+            <div class="section-header-with-actions">
+              <h3><i class="fas fa-th-list"></i> Egendefinerte felt</h3>
+              <div class="section-actions">
+                <button class="btn btn-primary btn-small" id="addFieldBtn">
+                  <i class="fas fa-plus"></i> Nytt felt
+                </button>
+              </div>
+            </div>
+            <p class="admin-section-description">Administrer egendefinerte felt som vises i kunderegistrering.</p>
+            <div class="fields-list sortable-list" id="fieldsList">
+              <!-- Populated dynamically -->
+            </div>
+            <div class="fields-empty" id="fieldsEmpty" style="display: none;">
+              <i class="fas fa-th-list"></i>
+              <p>Ingen egendefinerte felt</p>
+              <button class="btn btn-primary" id="addFirstFieldBtn">
+                <i class="fas fa-plus"></i> Opprett første felt
+              </button>
+            </div>
+          </div>
+
+          <!-- Organization Categories Management -->
+          <div class="admin-section" id="categoriesManagementSection">
+            <div class="section-header-with-actions">
+              <h3><i class="fas fa-tags"></i> Tjenestekategorier</h3>
+              <div class="section-actions">
+                <button class="btn btn-primary btn-small" id="addCategoryBtn">
+                  <i class="fas fa-plus"></i> Ny kategori
+                </button>
+              </div>
+            </div>
+            <p class="admin-section-description">Administrer kategorier for kundetjenester.</p>
+            <div class="categories-list sortable-list" id="categoriesList">
+              <!-- Populated dynamically -->
+            </div>
+            <div class="categories-empty" id="categoriesEmpty" style="display: none;">
+              <i class="fas fa-tags"></i>
+              <p>Ingen kategorier</p>
+              <button class="btn btn-primary" id="addFirstCategoryBtn">
+                <i class="fas fa-plus"></i> Opprett første kategori
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <main class="map-container">
+      <!-- Map is now in #sharedMapContainer above, always visible -->
+
+      <!-- Filter Panel (Right Side) - Collapsible -->
+      <div id="filterPanel" class="filter-panel">
+        <!-- Collapse Toggle Tab -->
+        <button class="filter-panel-toggle" id="filterPanelToggle" title="Vis/skjul panel">
+          <i class="fas fa-chevron-left"></i>
+        </button>
+
+        <div class="filter-panel-inner">
+          <div class="filter-panel-header">
+            <h3><i class="fas fa-filter"></i> Kunder</h3>
+            <span class="customer-count" id="totalCustomerCount">0</span>
+          </div>
+
+          <div class="filter-panel-content">
+            <!-- Search Field -->
+            <div class="search-container">
+              <i class="fas fa-search search-icon"></i>
+              <input type="text" id="searchInput" placeholder="Søk..." class="search-input">
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="quick-actions">
+              <button id="addCustomerBtn" class="btn-icon" title="Ny kunde">
+                <i class="fas fa-plus"></i>
+              </button>
+              <button id="planRouteBtn" class="btn-icon" title="Planlegg rute" disabled>
+                <i class="fas fa-route"></i>
+              </button>
+              <button id="clearSelectionBtn" class="btn-icon" title="Tøm valg" disabled>
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+
+            <!-- Selection Info -->
+            <div class="selected-info">
+              <span id="selectedCount">0</span> valgt
+            </div>
+
+            <!-- Category Filter (Dynamic) -->
+            <div class="category-filter">
+              <div class="category-filter-title">Kategori</div>
+              <div class="category-filter-buttons" id="categoryFilterButtons">
+                <!-- Populated dynamically by renderFilterPanelCategories() -->
+              </div>
+            </div>
+
+            <!-- Driftskategori Filter (Dynamic, Collapsible) -->
+            <div class="category-filter" id="driftskategoriFilter">
+              <div class="category-filter-title clickable-header" id="driftFilterToggle">
+                <span>Driftskategori</span>
+                <i class="fas fa-chevron-right toggle-icon"></i>
+              </div>
+              <div class="category-filter-buttons drift-filter-buttons" id="driftFilterButtons" style="display: none;">
+                <!-- Populated dynamically by renderDriftskategoriFilter() -->
+              </div>
+            </div>
+
+            <!-- Dynamic Organization Field Filters -->
+            <div id="dynamicFieldFilters">
+              <!-- Populated dynamically by renderDynamicFieldFilters() -->
+            </div>
+
+            <!-- Color Legend -->
+            <div class="color-legend">
+              <div class="legend-title">Fargekoder</div>
+              <div class="legend-items">
+                <div class="legend-item">
+                  <span class="legend-dot overdue"></span>
+                  <span class="legend-text">Forfalt</span>
+                </div>
+                <div class="legend-item">
+                  <span class="legend-dot soon"></span>
+                  <span class="legend-text">Snart (0-30 dager)</span>
+                </div>
+                <div class="legend-item">
+                  <span class="legend-dot ok"></span>
+                  <span class="legend-text">OK (31-90 dager)</span>
+                </div>
+                <div class="legend-item">
+                  <span class="legend-dot good"></span>
+                  <span class="legend-text">God (90+ dager)</span>
+                </div>
+                <div class="legend-item">
+                  <span class="legend-dot unknown"></span>
+                  <span class="legend-text">Ikke registrert</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Customer List -->
+            <div class="customer-list-wrapper">
+              <div class="customer-list" id="customerList">
+                <!-- Kunder lastes her -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+      <div id="routeInfo" class="route-info hidden">
+        <h3>Planlagt rute</h3>
+        <div id="routeDetails"></div>
+        <button id="closeRouteInfo" class="btn btn-secondary">Lukk</button>
+      </div>
+
+      <!-- Mobile floating action button for route planning -->
+      <div id="mobileRouteBtn" class="mobile-route-fab hidden">
+        <button id="mobileRouteFabBtn" class="fab-button">
+          <i class="fas fa-route"></i>
+          <span id="mobileRouteCount">0</span>
+        </button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal for ny/rediger kunde -->
+  <div id="customerModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">Ny kunde</h2>
+        <button class="modal-close" id="closeCustomerModal">&times;</button>
+      </div>
+      <form id="customerForm">
+        <input type="hidden" id="customerId">
+
+        <div class="form-group">
+          <label for="navn">Navn *</label>
+          <input type="text" id="navn" required>
+        </div>
+
+        <div class="form-group">
+          <label for="adresse">Adresse *</label>
+          <div class="address-autocomplete-wrapper">
+            <input type="text" id="adresse" required autocomplete="off" placeholder="Begynn å skrive adresse...">
+            <div class="address-suggestions" id="addressSuggestions"></div>
+          </div>
+          <button type="button" id="geocodeBtn" class="btn btn-small">Finn koordinater</button>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="postnummer">Postnummer</label>
+            <div class="postnummer-wrapper">
+              <input type="text" id="postnummer" maxlength="4" placeholder="0000" autocomplete="off">
+              <span class="postnummer-status" id="postnummerStatus"></span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="poststed">Poststed</label>
+            <input type="text" id="poststed" placeholder="Fylles automatisk">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="telefon">Telefon</label>
+            <input type="tel" id="telefon">
+          </div>
+          <div class="form-group">
+            <label for="epost">E-post</label>
+            <input type="email" id="epost">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="kategori">Kategori</label>
+          <select id="kategori">
+            <!-- Populeres dynamisk av ServiceTypeRegistry -->
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="driftskategori">Driftskategori</label>
+          <select id="driftskategori">
+            <!-- Populeres dynamisk av ServiceTypeRegistry -->
+          </select>
+        </div>
+
+        <!-- Dynamic Service Sections Container -->
+        <!-- Populated by ServiceTypeRegistry.renderServiceSections() -->
+        <div id="dynamicServiceSections">
+          <!-- Will be populated dynamically when ServiceTypeRegistry is loaded -->
+        </div>
+
+        <!-- Legacy El-Kontroll felt (for backward compatibility during migration) -->
+        <div class="control-section legacy-section" id="elKontrollSection">
+          <div class="control-section-header">
+            <i class="fas fa-bolt"></i> El-Kontroll
+          </div>
+          <div class="form-group">
+            <label for="el_type">Type</label>
+            <select id="el_type">
+              <!-- Populeres dynamisk av ServiceTypeRegistry -->
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="siste_el_kontroll">Siste kontroll</label>
+              <input type="date" id="siste_el_kontroll">
+            </div>
+            <div class="form-group">
+              <label for="neste_el_kontroll">Neste kontroll</label>
+              <input type="date" id="neste_el_kontroll">
+            </div>
+            <div class="form-group">
+              <label for="el_kontroll_intervall">Intervall</label>
+              <select id="el_kontroll_intervall">
+                <!-- Populeres dynamisk av ServiceTypeRegistry -->
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Legacy Brannvarsling felt (for backward compatibility during migration) -->
+        <div class="control-section legacy-section" id="brannvarslingSection">
+          <div class="control-section-header">
+            <i class="fas fa-fire"></i> Brannvarsling
+          </div>
+          <div class="form-group">
+            <label for="brann_system">Brannsystem</label>
+            <select id="brann_system">
+              <!-- Populeres dynamisk av ServiceTypeRegistry -->
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="siste_brann_kontroll">Siste kontroll</label>
+              <input type="date" id="siste_brann_kontroll">
+            </div>
+            <div class="form-group">
+              <label for="neste_brann_kontroll">Neste kontroll</label>
+              <input type="date" id="neste_brann_kontroll">
+            </div>
+            <div class="form-group">
+              <label for="brann_kontroll_intervall">Intervall</label>
+              <select id="brann_kontroll_intervall">
+                <!-- Populeres dynamisk av ServiceTypeRegistry -->
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Skjulte legacy-felt for bakoverkompatibilitet -->
+        <input type="hidden" id="siste_kontroll">
+        <input type="hidden" id="neste_kontroll">
+        <input type="hidden" id="kontroll_intervall" value="12">
+
+        <div class="form-group">
+          <label for="notater">Notater</label>
+          <textarea id="notater" rows="3"></textarea>
+        </div>
+
+        <!-- Dynamic Organization Fields (populated from organization_fields table) -->
+        <div id="customFieldsSection" class="custom-fields-section hidden">
+          <div class="custom-fields-header">
+            <i class="fas fa-sliders-h"></i> Egendefinerte felt
+          </div>
+          <div id="customFieldsContainer">
+            <!-- Populated dynamically by loadOrganizationFields() -->
+          </div>
+        </div>
+
+        <!-- Email Settings -->
+        <div class="form-group email-settings">
+          <label for="emailAktiv">E-postvarsling</label>
+          <div class="email-toggle">
+            <input type="checkbox" id="emailAktiv" checked>
+            <label for="emailAktiv">Aktiver e-postvarsler for denne kunden</label>
+          </div>
+          <div class="email-options" id="emailOptions">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="forsteVarsel">Første varsel (dager før)</label>
+                <input type="number" id="forsteVarsel" value="30" min="1" max="90">
+              </div>
+              <div class="form-group">
+                <label for="paaminnelseEtter">Påminnelse (dager etter første)</label>
+                <input type="number" id="paaminnelseEtter" value="7" min="1" max="30">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group coordinates-section">
+          <div class="coord-header">
+            <span class="label-text">Koordinater</span>
+            <span class="geocode-quality-badge" id="geocodeQualityBadge"></span>
+          </div>
+          <div class="coord-inputs">
+            <div class="coord-field">
+              <label for="lat">Breddegrad</label>
+              <input type="number" id="lat" step="0.000001" placeholder="69.123456">
+            </div>
+            <div class="coord-field">
+              <label for="lng">Lengdegrad</label>
+              <input type="number" id="lng" step="0.000001" placeholder="17.654321">
+            </div>
+          </div>
+          <div class="coord-actions">
+            <button type="button" id="pickFromMapBtn" class="btn btn-small btn-secondary">
+              <i class="fas fa-map-marker-alt"></i> Velg på kart
+            </button>
+          </div>
+          <div class="geocode-warning" id="geocodeWarning" style="display: none;">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>Koordinatene er usikre. Vurder manuell justering.</span>
+          </div>
+        </div>
+
+        <!-- Kontaktlogg -->
+        <div class="kontaktlogg-section" id="kontaktloggSection" style="display: none;">
+          <div class="control-section-header">
+            <i class="fas fa-phone"></i> Kontaktlogg
+          </div>
+          <div class="kontaktlogg-add">
+            <select id="kontaktType">
+              <option value="Telefonsamtale">Telefonsamtale</option>
+              <option value="SMS">SMS</option>
+              <option value="E-post">E-post</option>
+              <option value="Besøk">Besøk</option>
+              <option value="Annet">Annet</option>
+            </select>
+            <input type="text" id="kontaktNotat" placeholder="Notat om kontakten...">
+            <button type="button" id="addKontaktBtn" class="btn btn-small btn-primary">
+              <i class="fas fa-plus"></i> Legg til
+            </button>
+          </div>
+          <div class="kontaktlogg-list" id="kontaktloggList">
+            <!-- Fylles med JavaScript -->
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" id="deleteCustomerBtn" class="btn btn-danger hidden">Slett</button>
+          <button type="button" id="cancelBtn" class="btn btn-secondary">Avbryt</button>
+          <button type="submit" class="btn btn-primary">Lagre</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- OpenRouteService API-nøkkel modal -->
+  <div id="apiKeyModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>OpenRouteService API-nøkkel</h2>
+        <button class="modal-close" id="closeApiKeyModal">&times;</button>
+      </div>
+      <p>For ruteplanlegging trenger du en gratis API-nøkkel fra OpenRouteService.</p>
+      <ol>
+        <li>Gå til <a href="https://openrouteservice.org/dev/#/signup" target="_blank">openrouteservice.org</a></li>
+        <li>Registrer deg (gratis)</li>
+        <li>Kopier API-nøkkelen din</li>
+      </ol>
+      <div class="form-group">
+        <label for="apiKey">API-nøkkel</label>
+        <input type="text" id="apiKey" placeholder="Din API-nøkkel">
+      </div>
+      <div class="form-actions">
+        <button id="saveApiKey" class="btn btn-primary">Lagre</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lagre rute modal -->
+  <div id="saveRouteModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Lagre rute</h2>
+        <button class="modal-close" id="closeSaveRouteModal">&times;</button>
+      </div>
+      <div class="form-group">
+        <label for="ruteNavn">Navn på rute *</label>
+        <input type="text" id="ruteNavn" placeholder="F.eks. Lofoten-tur">
+      </div>
+      <div class="form-group">
+        <label for="ruteBeskrivelse">Beskrivelse</label>
+        <textarea id="ruteBeskrivelse" rows="2" placeholder="Valgfri beskrivelse..."></textarea>
+      </div>
+      <div class="form-group">
+        <label for="ruteDato">Planlagt dato</label>
+        <input type="date" id="ruteDato">
+      </div>
+      <div class="form-actions">
+        <button id="cancelSaveRoute" class="btn btn-secondary">Avbryt</button>
+        <button id="saveRouteSubmit" class="btn btn-primary">Lagre</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Avtale modal -->
+  <div id="avtaleModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="avtaleModalTitle">Ny avtale</h2>
+        <button class="modal-close" id="closeAvtaleModal">&times;</button>
+      </div>
+      <form id="avtaleForm">
+        <input type="hidden" id="avtaleId">
+        <div class="form-group">
+          <label for="avtaleKundeSearch">Kunde *</label>
+          <div class="kunde-search-wrapper">
+            <input type="text" id="avtaleKundeSearch" placeholder="Søk etter kunde..." autocomplete="off">
+            <input type="hidden" id="avtaleKunde" required>
+            <div class="kunde-search-results" id="avtaleKundeResults"></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="avtaleDato">Dato *</label>
+            <input type="date" id="avtaleDato" required>
+          </div>
+          <div class="form-group">
+            <label for="avtaleKlokkeslett">Klokkeslett</label>
+            <input type="time" id="avtaleKlokkeslett">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="avtaleType">Type</label>
+          <select id="avtaleType">
+            <!-- Populated dynamically by ServiceTypeRegistry -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="avtaleBeskrivelse">Beskrivelse / notater</label>
+          <textarea id="avtaleBeskrivelse" rows="2" placeholder="Valgfri beskrivelse..."></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="deleteAvtaleBtn" class="btn btn-danger" style="display: none;">Slett</button>
+          <button type="button" id="cancelAvtale" class="btn btn-secondary">Avbryt</button>
+          <button type="submit" class="btn btn-primary">Lagre avtale</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Team Member Modal -->
+  <div id="teamMemberModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="teamMemberModalTitle">Nytt teammedlem</h2>
+        <button class="modal-close" id="closeTeamMemberModal">&times;</button>
+      </div>
+      <form id="teamMemberForm">
+        <input type="hidden" id="teamMemberId">
+        <div class="form-group">
+          <label for="memberNavn">Navn *</label>
+          <input type="text" id="memberNavn" required placeholder="Fullt navn">
+        </div>
+        <div class="form-group">
+          <label for="memberEpost">E-post *</label>
+          <input type="email" id="memberEpost" required placeholder="bruker@eksempel.no">
+        </div>
+        <div class="form-group" id="passwordGroup">
+          <label for="memberPassord">Passord *</label>
+          <input type="password" id="memberPassord" placeholder="Minst 8 tegn" minlength="8">
+          <small class="form-hint">Minst 8 tegn. La stå tom for å beholde eksisterende passord ved redigering.</small>
+        </div>
+        <div class="form-group">
+          <label for="memberTelefon">Telefon</label>
+          <input type="tel" id="memberTelefon" placeholder="Valgfritt">
+        </div>
+        <div class="form-group">
+          <label for="memberRolle">Rolle</label>
+          <select id="memberRolle">
+            <option value="medlem">Medlem</option>
+            <option value="admin">Administrator</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="deleteTeamMemberBtn" class="btn btn-danger" style="display: none;">Slett</button>
+          <button type="button" id="cancelTeamMember" class="btn btn-secondary">Avbryt</button>
+          <button type="submit" class="btn btn-primary">Lagre</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Field Modal -->
+  <div id="fieldModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="fieldModalTitle">Nytt felt</h2>
+        <button class="modal-close" id="closeFieldModal">&times;</button>
+      </div>
+      <form id="fieldForm">
+        <input type="hidden" id="fieldId">
+        <div class="form-group">
+          <label for="fieldDisplayName">Visningsnavn *</label>
+          <input type="text" id="fieldDisplayName" required placeholder="F.eks. Antall enheter">
+        </div>
+        <div class="form-group">
+          <label for="fieldName">Feltnavn (system) *</label>
+          <input type="text" id="fieldName" required placeholder="antall_enheter" pattern="[a-z0-9_]+" title="Kun små bokstaver, tall og underscore">
+          <small class="form-hint">Brukes internt. Kun små bokstaver og underscore.</small>
+        </div>
+        <div class="form-group">
+          <label for="fieldType">Felttype</label>
+          <select id="fieldType">
+            <option value="text">Tekst</option>
+            <option value="select">Rullegardin (velg fra liste)</option>
+            <option value="number">Tall</option>
+            <option value="date">Dato</option>
+          </select>
+        </div>
+
+        <!-- Options section for select type -->
+        <div class="form-group" id="fieldOptionsSection" style="display: none;">
+          <label>Alternativer</label>
+          <div id="fieldOptionsList" class="options-list">
+            <!-- Populated dynamically -->
+          </div>
+          <button type="button" id="addFieldOptionBtn" class="btn btn-secondary btn-small">
+            <i class="fas fa-plus"></i> Legg til alternativ
+          </button>
+        </div>
+
+        <div class="form-row toggle-row">
+          <div class="toggle-group">
+            <label class="toggle">
+              <input type="checkbox" id="fieldFilterable">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">Vis som filter</span>
+          </div>
+          <div class="toggle-group">
+            <label class="toggle">
+              <input type="checkbox" id="fieldRequired">
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">Obligatorisk</span>
+          </div>
+          <div class="toggle-group">
+            <label class="toggle">
+              <input type="checkbox" id="fieldVisible" checked>
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">Synlig</span>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" id="deleteFieldBtn" class="btn btn-danger" style="display: none;">Slett</button>
+          <button type="button" id="cancelField" class="btn btn-secondary">Avbryt</button>
+          <button type="submit" class="btn btn-primary">Lagre</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Category Modal -->
+  <div id="categoryModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="categoryModalTitle">Ny kategori</h2>
+        <button class="modal-close" id="closeCategoryModal">&times;</button>
+      </div>
+      <form id="categoryForm">
+        <input type="hidden" id="categoryId">
+        <div class="form-group">
+          <label for="categoryName">Navn *</label>
+          <input type="text" id="categoryName" required placeholder="F.eks. El-Kontroll">
+        </div>
+        <div class="form-group">
+          <label for="categorySlug">URL-vennlig navn *</label>
+          <input type="text" id="categorySlug" required placeholder="el-kontroll" pattern="[a-z0-9-]+">
+          <small class="form-hint">Genereres automatisk fra navnet.</small>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="categoryIcon">Ikon</label>
+            <select id="categoryIcon">
+              <option value="fa-bolt">Bolt (El)</option>
+              <option value="fa-fire">Brann</option>
+              <option value="fa-wrench">Verktoy</option>
+              <option value="fa-cog">Tannhjul</option>
+              <option value="fa-tag" selected>Tag</option>
+              <option value="fa-tools">Verktoy</option>
+              <option value="fa-shield-alt">Skjold</option>
+              <option value="fa-check-circle">Sjekk</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="categoryColor">Farge</label>
+            <input type="color" id="categoryColor" value="#6B7280">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="categoryInterval">Standard kontrollintervall (mndr)</label>
+          <input type="number" id="categoryInterval" value="12" min="1" max="60">
+        </div>
+        <div class="form-actions">
+          <button type="button" id="deleteCategoryBtn" class="btn btn-danger" style="display: none;">Slett</button>
+          <button type="button" id="cancelCategory" class="btn btn-secondary">Avbryt</button>
+          <button type="submit" class="btn btn-primary">Lagre</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-content settings-modal-content">
+      <div class="modal-header">
+        <h2><i class="fas fa-cog"></i> Innstillinger</h2>
+        <button class="modal-close" id="closeSettingsModal">&times;</button>
+      </div>
+
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-settings-tab="bransje">
+          <i class="fas fa-briefcase"></i> Bransje
+        </button>
+        <button class="settings-tab" data-settings-tab="visning">
+          <i class="fas fa-eye"></i> Visning
+        </button>
+        <button class="settings-tab" data-settings-tab="kart">
+          <i class="fas fa-map"></i> Kart
+        </button>
+        <button class="settings-tab" data-settings-tab="import">
+          <i class="fas fa-file-import"></i> Import
+        </button>
+      </div>
+
+      <div class="settings-content">
+        <!-- Bransje Tab -->
+        <div class="settings-pane active" id="settings-bransje">
+          <h3>Velg bransje</h3>
+          <p class="settings-description">Bransjen bestemmer hvilke tjenester og kategorier som er tilgjengelige i systemet.</p>
+          <div class="industry-select-grid" id="industrySelectGrid">
+            <!-- Fylles dynamisk fra API -->
+          </div>
+          <div class="current-industry" id="currentIndustryInfo">
+            <i class="fas fa-info-circle"></i>
+            <span>Gjeldende bransje: <strong id="currentIndustryName">Laster...</strong></span>
+          </div>
+        </div>
+
+        <!-- Visning Tab -->
+        <div class="settings-pane" id="settings-visning">
+          <h3>Visningsinnstillinger</h3>
+
+          <div class="form-group">
+            <label for="settingsDefaultCategory">Standard kategori-filter</label>
+            <select id="settingsDefaultCategory">
+              <option value="all">Alle kategorier</option>
+              <!-- Fylles dynamisk -->
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Synlige kolonner i kundeliste</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="colTelefon" checked>
+                <span>Telefon</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="colEpost" checked>
+                <span>E-post</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="colNesteKontroll" checked>
+                <span>Neste kontroll</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="colKategori" checked>
+                <span>Kategori</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="colPoststed" checked>
+                <span>Poststed</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="settingsWarningDays">Varslingsdager (kommende kontroller)</label>
+            <select id="settingsWarningDays">
+              <option value="14">14 dager</option>
+              <option value="30" selected>30 dager</option>
+              <option value="60">60 dager</option>
+              <option value="90">90 dager</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Kart Tab -->
+        <div class="settings-pane" id="settings-kart">
+          <h3>Kartinnstillinger</h3>
+
+          <div class="form-group">
+            <label for="settingsMapMode">Standard kartmodus</label>
+            <select id="settingsMapMode">
+              <option value="satellite">Satellitt</option>
+              <option value="dark">Mørkt tema</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="settingsMapZoom">Standard zoom-nivå</label>
+            <div class="range-with-value">
+              <input type="range" id="settingsMapZoom" min="4" max="12" value="6">
+              <span id="settingsMapZoomValue">6</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="settingsMarkerSize">Markørstørrelse</label>
+            <select id="settingsMarkerSize">
+              <option value="small">Liten</option>
+              <option value="medium" selected>Medium</option>
+              <option value="large">Stor</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Import Tab - Enhanced Wizard -->
+        <div class="settings-pane" id="settings-import">
+          <h3>Importer kunder fra Excel/CSV</h3>
+
+          <!-- Step Indicator -->
+          <div class="import-steps-indicator">
+            <div class="step-item active" data-step="1">
+              <span class="step-number">1</span>
+              <span class="step-label">Last opp</span>
+            </div>
+            <div class="step-item" data-step="2">
+              <span class="step-number">2</span>
+              <span class="step-label">Kolonner</span>
+            </div>
+            <div class="step-item" data-step="3">
+              <span class="step-number">3</span>
+              <span class="step-label">Forhåndsvis</span>
+            </div>
+            <div class="step-item" data-step="4">
+              <span class="step-number">4</span>
+              <span class="step-label">Ferdig</span>
+            </div>
+          </div>
+
+          <!-- Step 1: File Upload -->
+          <div class="import-step" id="importStep1">
+            <p class="settings-description">Last opp en Excel- eller CSV-fil for å importere kunder.</p>
+            <div class="import-dropzone" id="importDropzone">
+              <i class="fas fa-cloud-upload-alt"></i>
+              <p>Dra og slipp fil her, eller klikk for å velge</p>
+              <span class="import-formats">Støttede formater: .xlsx, .xls, .csv (maks 10MB)</span>
+              <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" hidden>
+            </div>
+          </div>
+
+          <!-- Step 2: Column Mapping -->
+          <div class="import-step hidden" id="importStep2">
+            <h4><i class="fas fa-columns"></i> Kolonnemapping</h4>
+            <p class="settings-description">Match Excel-kolonner til database-felt. Systemet har automatisk gjenkjent noen kolonner.</p>
+
+            <div class="column-mapping-container" id="columnMappingContainer">
+              <!-- Populated dynamically -->
+            </div>
+
+            <div class="import-actions">
+              <button type="button" class="btn btn-secondary" id="backToStep1Btn">
+                <i class="fas fa-arrow-left"></i> Tilbake
+              </button>
+              <button type="button" class="btn btn-primary" id="proceedToStep3Btn">
+                Fortsett <i class="fas fa-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 3: Preview & Category Mapping -->
+          <div class="import-step hidden" id="importStep3">
+            <h4><i class="fas fa-search"></i> Forhåndsvisning</h4>
+
+            <!-- Summary Cards -->
+            <div class="import-summary">
+              <div class="summary-card new">
+                <i class="fas fa-plus-circle"></i>
+                <span class="count" id="newCount">0</span>
+                <span class="label">Nye kunder</span>
+              </div>
+              <div class="summary-card update">
+                <i class="fas fa-sync-alt"></i>
+                <span class="count" id="updateCount">0</span>
+                <span class="label">Oppdateres</span>
+              </div>
+              <div class="summary-card warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span class="count" id="warningCount">0</span>
+                <span class="label">Advarsler</span>
+              </div>
+              <div class="summary-card error">
+                <i class="fas fa-times-circle"></i>
+                <span class="count" id="errorCount">0</span>
+                <span class="label">Feil (hoppes over)</span>
+              </div>
+            </div>
+
+            <!-- Unknown Categories -->
+            <div class="category-mapping hidden" id="categoryMappingSection">
+              <h5><i class="fas fa-tags"></i> Ukjente kategorier funnet</h5>
+              <p class="settings-description">Velg riktig kategori for disse verdiene:</p>
+              <div class="category-mapping-list" id="categoryMappingList">
+                <!-- Populated dynamically -->
+              </div>
+            </div>
+
+            <!-- Dynamic Schema Suggestions -->
+            <div class="dynamic-schema-section hidden" id="dynamicSchemaSection">
+              <h5><i class="fas fa-magic"></i> Nye kategorier og felt oppdaget</h5>
+              <p class="settings-description">Excel-filen inneholder data som kan brukes til å utvide systemet:</p>
+
+              <!-- New Categories -->
+              <div class="schema-subsection hidden" id="newCategoriesSection">
+                <h6><i class="fas fa-folder-plus"></i> Nye kategorier</h6>
+                <div class="schema-items-list" id="newCategoriesList">
+                  <!-- Populated dynamically -->
+                </div>
+              </div>
+
+              <!-- New Fields -->
+              <div class="schema-subsection hidden" id="newFieldsSection">
+                <h6><i class="fas fa-plus-square"></i> Nye felt</h6>
+                <div class="schema-items-list" id="newFieldsList">
+                  <!-- Populated dynamically -->
+                </div>
+              </div>
+
+              <!-- New Field Values -->
+              <div class="schema-subsection hidden" id="newFieldValuesSection">
+                <h6><i class="fas fa-list-ul"></i> Nye verdier for eksisterende felt</h6>
+                <div class="schema-items-list" id="newFieldValuesList">
+                  <!-- Populated dynamically -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Preview Table -->
+            <div class="preview-table-wrapper">
+              <table class="preview-table" id="previewTable">
+                <thead id="previewTableHead"></thead>
+                <tbody id="previewTableBody"></tbody>
+              </table>
+            </div>
+
+            <!-- Pagination -->
+            <div class="preview-pagination" id="previewPagination">
+              <button type="button" class="btn btn-sm" id="prevPageBtn" disabled>
+                <i class="fas fa-chevron-left"></i>
+              </button>
+              <span id="pageInfo">Side 1 av 1</span>
+              <button type="button" class="btn btn-sm" id="nextPageBtn" disabled>
+                <i class="fas fa-chevron-right"></i>
+              </button>
+            </div>
+
+            <!-- Geocoding Option -->
+            <div class="import-option">
+              <label class="checkbox-label">
+                <input type="checkbox" id="geocodeAfterImport" checked>
+                <span>Geokod adresser etter import (for kartvisning)</span>
+              </label>
+            </div>
+
+            <div class="import-actions">
+              <button type="button" class="btn btn-secondary" id="backToStep2Btn">
+                <i class="fas fa-arrow-left"></i> Tilbake
+              </button>
+              <button type="button" class="btn btn-primary" id="startImportBtn">
+                <i class="fas fa-file-import"></i> Importer <span id="importCountLabel">0</span> kunder
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 4: Progress & Result -->
+          <div class="import-step hidden" id="importStep4">
+            <!-- Progress (shown during import) -->
+            <div class="import-progress" id="importProgress">
+              <h4><i class="fas fa-spinner fa-spin"></i> Importerer...</h4>
+              <div class="progress-bar">
+                <div class="progress-fill" id="importProgressFill"></div>
+              </div>
+              <p class="progress-text" id="importProgressText">Forbereder import...</p>
+            </div>
+
+            <!-- Result (shown after import) -->
+            <div class="import-result hidden" id="importResult">
+              <div class="result-icon" id="resultIcon">
+                <i class="fas fa-check-circle"></i>
+              </div>
+              <h4 id="importResultTitle">Import fullført!</h4>
+
+              <div class="result-stats">
+                <div class="result-stat">
+                  <span class="stat-value" id="resultCreated">0</span>
+                  <span class="stat-label">Nye kunder</span>
+                </div>
+                <div class="result-stat">
+                  <span class="stat-value" id="resultUpdated">0</span>
+                  <span class="stat-label">Oppdatert</span>
+                </div>
+                <div class="result-stat">
+                  <span class="stat-value" id="resultSkipped">0</span>
+                  <span class="stat-label">Hoppet over</span>
+                </div>
+              </div>
+
+              <div class="result-errors hidden" id="resultErrors">
+                <h5><i class="fas fa-exclamation-triangle"></i> Feil under import</h5>
+                <ul id="errorList"></ul>
+              </div>
+
+              <div class="result-note" id="resultNote"></div>
+
+              <button type="button" class="btn btn-primary" id="closeImportResultBtn">
+                <i class="fas fa-check"></i> Ferdig
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="cancelSettingsBtn">Avbryt</button>
+        <button type="button" class="btn btn-primary" id="saveSettingsBtn">
+          <i class="fas fa-save"></i> Lagre innstillinger
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map Legend -->
+  <div class="map-legend" id="mapLegend">
+    <button class="legend-toggle" id="legendToggle" title="Vis/skjul forklaring">
+      <i class="fas fa-info-circle"></i>
+    </button>
+    <div class="legend-content">
+      <h4>Kategorier</h4>
+      <div class="legend-items" id="legendItems">
+        <!-- Fylles dynamisk -->
+      </div>
+      <div class="legend-status">
+        <h5>Kontrollstatus</h5>
+        <div class="legend-item"><span class="legend-color status-forfalt"></span> Forfalt</div>
+        <div class="legend-item"><span class="legend-color status-snart"></span> Snart (30 dager)</div>
+        <div class="legend-item"><span class="legend-color status-ok"></span> OK (31-90 dager)</div>
+        <div class="legend-item"><span class="legend-color status-god"></span> God (90+ dager)</div>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- End of appView -->
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="app.js?v=20260124-fix2"></script>
+</body>
+</html>
+<!-- redeploy Sat Dec 27 17:54:50 CET 2025 -->

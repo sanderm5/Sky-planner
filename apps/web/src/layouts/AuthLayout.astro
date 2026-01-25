@@ -1,0 +1,59 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="nb" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Skyplanner - Logg inn eller opprett konto" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <title>{title} | Skyplanner</title>
+</head>
+<body class="min-h-screen flex flex-col">
+  <!-- Background Effects -->
+  <div class="fixed inset-0 -z-10">
+    <div class="absolute top-0 left-1/4 w-96 h-96 bg-primary-500/20 rounded-full filter blur-[128px]"></div>
+    <div class="absolute bottom-0 right-1/4 w-96 h-96 bg-accent-purple/15 rounded-full filter blur-[128px]"></div>
+  </div>
+
+  <main class="flex-1 flex items-center justify-center py-12 px-4">
+    <div class="w-full max-w-md">
+      <!-- Logo -->
+      <div class="text-center mb-8">
+        <a href="/" class="inline-flex items-center gap-2 group">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center shadow-glow">
+            <svg class="w-6 h-6" viewBox="0 0 32 32" fill="none">
+              <rect x="5" y="18" width="5" height="10" rx="1" fill="white" opacity="0.5"/>
+              <rect x="13" y="12" width="5" height="16" rx="1" fill="white" opacity="0.75"/>
+              <rect x="21" y="6" width="5" height="22" rx="1" fill="white"/>
+              <path d="M6 16L15 9L24 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 3"/>
+            </svg>
+          </div>
+          <span class="text-2xl font-bold text-white group-hover:text-primary-400 transition-colors">Skyplanner</span>
+        </a>
+      </div>
+
+      <!-- Content -->
+      <slot />
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="py-6 text-center">
+    <p class="text-sm text-dark-500">
+      &copy; {new Date().getFullYear()} Skyplanner. Alle rettigheter reservert.
+    </p>
+  </footer>
+</body>
+</html>

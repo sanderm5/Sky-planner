@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glemt passord | Sky Planner</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="auth-pages.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="logo.png" alt="" id="pageLogo" style="display: none;">
+      <h1>Glemt passord</h1>
+      <p>Vi sender deg en lenke for å tilbakestille passordet</p>
+    </div>
+
+    <div class="card">
+      <!-- Request form -->
+      <div id="requestView">
+        <div class="info-box">
+          <i class="fas fa-info-circle"></i>
+          Du vil motta en e-post med en lenke for å velge nytt passord.
+        </div>
+
+        <div class="message" id="message"></div>
+
+        <form id="requestForm">
+          <div class="form-group">
+            <label for="email">E-postadresse</label>
+            <input type="email" id="email" placeholder="din@epost.no" required>
+          </div>
+          <button type="submit" class="btn" id="submitBtn">
+            <i class="fas fa-paper-plane"></i> Send tilbakestillingslenke
+          </button>
+        </form>
+      </div>
+
+      <!-- Success view -->
+      <div id="successView" class="success-view">
+        <i class="fas fa-check-circle"></i>
+        <h2>Sjekk e-posten din</h2>
+        <p>Hvis kontoen finnes, har vi sendt deg en lenke for å tilbakestille passordet. Sjekk også spam-mappen.</p>
+        <a href="/" class="btn">Tilbake til innlogging</a>
+      </div>
+    </div>
+
+    <div class="back-link">
+      <a href="/"><i class="fas fa-arrow-left"></i> Tilbake til innlogging</a>
+    </div>
+
+    <div class="developer-credit">
+      Utviklet av <a href="https://efffekt.no" target="_blank" rel="noopener">Efffekt AS</a>
+    </div>
+  </div>
+
+  <script>
+    function showMessage(text, type) {
+      const msg = document.getElementById('message');
+      msg.textContent = text;
+      msg.className = 'message ' + type;
+      msg.style.display = 'block';
+    }
+
+    document.getElementById('requestForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      const email = document.getElementById('email').value.trim();
+      const btn = document.getElementById('submitBtn');
+
+      if (!email) {
+        showMessage('Vennligst skriv inn e-postadressen din', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+
+      try {
+        const response = await fetch('/api/auth/request-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ epost: email })
+        });
+
+        const data = await response.json();
+
+        // Always show success to prevent email enumeration
+        document.getElementById('requestView').style.display = 'none';
+        document.getElementById('successView').style.display = 'block';
+
+      } catch (error) {
+        showMessage('Noe gikk galt. Prøv igjen senere.', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-paper-plane"></i> Send tilbakestillingslenke';
+      }
+    });
+  </script>
+</body>
+</html>

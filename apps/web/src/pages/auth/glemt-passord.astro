@@ -1,0 +1,100 @@
+---
+import AuthLayout from '../../layouts/AuthLayout.astro';
+import GlassCard from '../../components/ui/GlassCard.astro';
+---
+
+<AuthLayout title="Glemt passord">
+  <GlassCard>
+    <div class="text-center mb-8">
+      <h1 class="text-2xl font-bold text-white mb-2">Glemt passord?</h1>
+      <p class="text-dark-400">Skriv inn e-postadressen din, så sender vi deg en lenke for å tilbakestille passordet.</p>
+    </div>
+
+    <form id="reset-form" class="space-y-6">
+      <div id="error-message" class="form-error hidden"></div>
+      <div id="success-message" class="form-success hidden"></div>
+
+      <div>
+        <label for="epost" class="input-label">E-postadresse</label>
+        <input
+          id="epost"
+          type="email"
+          required
+          autocomplete="email"
+          class="input"
+          placeholder="din@epost.no"
+        />
+      </div>
+
+      <button type="submit" class="btn-primary w-full">
+        <span id="btn-text">Send tilbakestillingslenke</span>
+        <span id="btn-loading" class="hidden">Sender...</span>
+      </button>
+    </form>
+
+    <div class="mt-6 text-center">
+      <a href="/auth/login" class="text-sm text-primary-400 hover:text-primary-300">
+        Tilbake til innlogging
+      </a>
+    </div>
+  </GlassCard>
+</AuthLayout>
+
+<style>
+  .form-success {
+    padding: 0.75rem 1rem;
+    background-color: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 0.5rem;
+    color: #10b981;
+    font-size: 0.875rem;
+  }
+</style>
+
+<script>
+  const form = document.getElementById('reset-form') as HTMLFormElement;
+  const errorDiv = document.getElementById('error-message');
+  const successDiv = document.getElementById('success-message');
+  const btnText = document.getElementById('btn-text');
+  const btnLoading = document.getElementById('btn-loading');
+
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const epost = (document.getElementById('epost') as HTMLInputElement).value;
+
+    btnText?.classList.add('hidden');
+    btnLoading?.classList.remove('hidden');
+    errorDiv?.classList.add('hidden');
+    successDiv?.classList.add('hidden');
+
+    try {
+      const response = await fetch('/api/auth/glemt-passord', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ epost }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Noe gikk galt');
+      }
+
+      // Always show success message (security: don't reveal if email exists)
+      if (successDiv) {
+        successDiv.textContent = 'Hvis denne e-postadressen er registrert, vil du motta en e-post med instruksjoner for å tilbakestille passordet.';
+        successDiv.classList.remove('hidden');
+      }
+      form.reset();
+    } catch (err) {
+      if (errorDiv) {
+        errorDiv.textContent = err instanceof Error ? err.message : 'Noe gikk galt';
+        errorDiv.classList.remove('hidden');
+      }
+    } finally {
+      btnText?.classList.remove('hidden');
+      btnLoading?.classList.add('hidden');
+    }
+  });
+</script>

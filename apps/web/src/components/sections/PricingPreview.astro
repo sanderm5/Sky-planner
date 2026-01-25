@@ -1,0 +1,88 @@
+---
+import Badge from '../ui/Badge.astro';
+
+const plans = [
+  {
+    name: 'Standard',
+    price: '499',
+    description: 'For mindre bedrifter',
+    featured: false,
+    highlights: ['Opptil 200 kunder', 'Opptil 5 brukere', 'Ruteoptimalisering', 'Automatiske varsler'],
+  },
+  {
+    name: 'Premium',
+    price: '999',
+    description: 'For voksende bedrifter',
+    featured: true,
+    highlights: ['Opptil 500 kunder', 'Opptil 10 brukere', 'Alt i Standard', 'API-tilgang + Prioritert support'],
+  },
+];
+---
+
+<section class="section">
+  <div class="container-wide">
+    <div class="text-center mb-12">
+      <Badge class="mb-4" data-animate="fade-up">14 dagers gratis prøveperiode</Badge>
+      <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4" data-animate="fade-up" data-animate-delay="100">
+        Enkel og transparent prising
+      </h2>
+      <p class="text-lg text-dark-300 max-w-2xl mx-auto" data-animate="fade-up" data-animate-delay="200">
+        Velg planen som passer din bedrift. Ingen skjulte kostnader.
+      </p>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto" data-animate-stagger>
+      {plans.map((plan) => (
+        <div class:list={[
+          'glass-card p-6 sm:p-8 relative',
+          plan.featured && 'ring-2 ring-primary-500'
+        ]} data-animate="fade-up">
+          {plan.featured && (
+            <div class="absolute -top-3 left-1/2 -translate-x-1/2">
+              <Badge variant="success">Mest populær</Badge>
+            </div>
+          )}
+
+          <div class="text-center mb-6">
+            <h3 class="text-xl font-bold text-white mb-1">{plan.name}</h3>
+            <p class="text-dark-400 text-sm mb-4">{plan.description}</p>
+            <div class="flex items-baseline justify-center gap-1">
+              <span class="text-4xl font-bold text-white">{plan.price}</span>
+              <span class="text-dark-400">kr/mnd</span>
+            </div>
+          </div>
+
+          <ul class="space-y-3 mb-6">
+            {plan.highlights.map((feature) => (
+              <li class="flex items-center gap-2 text-dark-200">
+                <svg class="w-5 h-5 text-secondary-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                </svg>
+                {feature}
+              </li>
+            ))}
+          </ul>
+
+          <a
+            href={`/auth/registrer?plan=${plan.name.toLowerCase()}`}
+            class:list={[
+              'block w-full text-center py-3 rounded-xl font-semibold transition-all',
+              plan.featured ? 'btn-primary' : 'btn-secondary'
+            ]}
+          >
+            Kom i gang
+          </a>
+        </div>
+      ))}
+    </div>
+
+    <div class="text-center mt-8" data-animate="fade-up">
+      <a href="/priser" class="text-primary-400 hover:text-primary-300 font-medium inline-flex items-center gap-2">
+        Se full prisoversikt og sammenligning
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+        </svg>
+      </a>
+    </div>
+  </div>
+</section>

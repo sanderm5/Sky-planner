@@ -1,0 +1,1770 @@
+/**
+ * Database service abstraction
+ * Supports both SQLite and Supabase backends
+ */
+
+import { dbLogger } from './logger';
+import { getConfig } from '../config/env';
+import type { Kunde, Organization, Rute, Avtale, Kontaktlogg, EmailInnstilling, EmailVarsel } from '../types';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+// Database types
+type DatabaseType = 'sqlite' | 'supabase';
+
+// SQLite database type (better-sqlite3)
+type SqliteDatabase = {
+  prepare(sql: string): {
+    run(...params: unknown[]): { lastInsertRowid: number | bigint; changes: number };
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+  };
+  exec(sql: string): void;
+  transaction<T>(fn: () => T): () => T;
+};
+
+// Supabase service interface
+interface SupabaseService {
+  getAllKunder(): Promise<Kunde[]>;
+  getAllKunderByTenant(organizationId: number): Promise<Kunde[]>;
+  getKundeById(id: number): Promise<Kunde | null>;
+  getKundeByIdAndTenant(id: number, organizationId: number): Promise<Kunde | null>;
+  createKunde(data: Partial<Kunde>): Promise<Kunde>;
+  updateKunde(id: number, data: Partial<Kunde>): Promise<Kunde | null>;
+  deleteKunde(id: number): Promise<boolean>;
+  getKontrollVarsler(dager: number): Promise<Kunde[]>;
+  getKunderByOmrade(omrade: string): Promise<Kunde[]>;
+
+  getKlientByEpost(epost: string): Promise<KlientRecord | null>;
+  getBrukerByEpost(epost: string): Promise<BrukerRecord | null>;
+  updateKlientLastLogin(id: number): Promise<void>;
+  updateBrukerLastLogin(id: number): Promise<void>;
+  getOrganizationById(id: number): Promise<Organization | null>;
+}
+
+interface KlientRecord {
+  id: number;
+  navn: string;
+  epost: string;
+  passord_hash: string;
+  telefon?: string;
+  adresse?: string;
+  postnummer?: string;
+  poststed?: string;
+  rolle?: string;
+  organization_id?: number;
+  aktiv: boolean;
+}
+
+interface BrukerRecord {
+  id: number;
+  navn: string;
+  epost: string;
+  passord_hash: string;
+  rolle?: string;
+  organization_id?: number;
+  aktiv: boolean;
+}
+
+interface RefreshTokenRecord {
+  id: number;
+  token_hash: string;
+  user_id: number;
+  user_type: 'klient' | 'bruker';
+  device_info?: string;
+  ip_address?: string;
+  expires_at: string;
+  created_at: string;
+  revoked_at?: string;
+  replaced_by?: string;
+}
+
+// Database service singleton
+class DatabaseService {
+  private type: DatabaseType;
+  private sqlite: SqliteDatabase | null = null;
+  private supabase: SupabaseService | null = null;
+
+  constructor() {
+    const config = getConfig();
+    this.type = config.DATABASE_TYPE;
+
+    dbLogger.info({ type: this.type }, 'Initializing database service');
+  }
+
+  /**
+   * Validate that organizationId is provided and valid for tenant-scoped operations.
+   * This prevents unauthorized cross-tenant data access.
+   * @throws Error if organizationId is missing or invalid
+   */
+  private validateTenantContext(organizationId: number | undefined, operation: string): asserts organizationId is number {
+    if (organizationId === undefined || organizationId === null) {
+      dbLogger.error({ operation }, 'SECURITY: Tenant context missing - operation blocked');
+      throw new Error(`Organization ID is required for ${operation}`);
+    }
+    if (typeof organizationId !== 'number' || organizationId <= 0 || !Number.isInteger(organizationId)) {
+      dbLogger.error({ operation, organizationId }, 'SECURITY: Invalid organization ID - operation blocked');
+      throw new Error(`Invalid organization ID for ${operation}`);
+    }
+  }
+
+  /**
+   * Initialize the database connection
+   */
+  async init(): Promise<void> {
+    if (this.type === 'supabase') {
+      // Dynamic import for Supabase service (JS module without types)
+      const supabaseModule = await import('../../supabase-service.js') as unknown as SupabaseService;
+      this.supabase = supabaseModule;
+      dbLogger.info('Supabase service loaded');
+    } else {
+      // Dynamic import for SQLite
+      const Database = (await import('better-sqlite3')).default;
+      const dbPath = process.env.DATABASE_PATH || './kunder.db';
+      this.sqlite = new Database(dbPath) as unknown as SqliteDatabase;
+      dbLogger.info({ path: dbPath }, 'SQLite database loaded');
+
+      // Initialize tables
+      this.initSqliteTables();
+    }
+  }
+
+  /**
+   * Initialize SQLite tables
+   */
+  private initSqliteTables(): void {
+    if (!this.sqlite) return;
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS kunder (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        navn TEXT NOT NULL,
+        adresse TEXT NOT NULL,
+        postnummer TEXT,
+        poststed TEXT,
+        telefon TEXT,
+        epost TEXT,
+        lat REAL,
+        lng REAL,
+        siste_kontroll DATE,
+        neste_kontroll DATE,
+        kontroll_intervall_mnd INTEGER DEFAULT 12,
+        notater TEXT,
+        kategori TEXT DEFAULT 'El-Kontroll',
+        el_type TEXT,
+        brann_system TEXT,
+        brann_driftstype TEXT,
+        siste_el_kontroll DATE,
+        neste_el_kontroll DATE,
+        el_kontroll_intervall INTEGER DEFAULT 36,
+        siste_brann_kontroll DATE,
+        neste_brann_kontroll DATE,
+        brann_kontroll_intervall INTEGER DEFAULT 12,
+        organization_id INTEGER,
+        opprettet DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS klient (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        navn TEXT NOT NULL,
+        epost TEXT NOT NULL UNIQUE,
+        passord_hash TEXT NOT NULL,
+        telefon TEXT,
+        adresse TEXT,
+        postnummer TEXT,
+        poststed TEXT,
+        rolle TEXT DEFAULT 'klient',
+        organization_id INTEGER,
+        aktiv INTEGER DEFAULT 1,
+        sist_innlogget DATETIME,
+        opprettet DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS login_logg (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        epost TEXT NOT NULL,
+        bruker_navn TEXT,
+        bruker_type TEXT,
+        status TEXT NOT NULL,
+        ip_adresse TEXT,
+        user_agent TEXT,
+        feil_melding TEXT,
+        tidspunkt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS organizations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        navn TEXT NOT NULL,
+        slug TEXT NOT NULL UNIQUE,
+        logo_url TEXT,
+        primary_color TEXT,
+        secondary_color TEXT,
+        brand_title TEXT,
+        brand_subtitle TEXT,
+        plan_type TEXT DEFAULT 'standard',
+        max_kunder INTEGER DEFAULT 200,
+        max_brukere INTEGER DEFAULT 5,
+        aktiv INTEGER DEFAULT 1,
+        onboarding_stage TEXT DEFAULT 'not_started',
+        onboarding_completed INTEGER DEFAULT 0,
+        industry_template_id INTEGER,
+        map_center_lat REAL,
+        map_center_lng REAL,
+        map_zoom INTEGER DEFAULT 10,
+        route_start_lat REAL,
+        route_start_lng REAL,
+        company_address TEXT,
+        company_postnummer TEXT,
+        company_poststed TEXT,
+        opprettet DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Migration: Add new columns to existing organizations table
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN onboarding_stage TEXT DEFAULT 'not_started'`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN onboarding_completed INTEGER DEFAULT 0`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN industry_template_id INTEGER`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN map_zoom INTEGER DEFAULT 10`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN route_start_lat REAL`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN route_start_lng REAL`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN company_address TEXT`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN company_postnummer TEXT`);
+    } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN company_poststed TEXT`);
+    } catch { /* Column may already exist */ }
+
+    // Ruter tables
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS ruter (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        navn TEXT NOT NULL,
+        beskrivelse TEXT,
+        planlagt_dato DATE,
+        total_distanse REAL,
+        total_tid INTEGER,
+        status TEXT DEFAULT 'planlagt',
+        organization_id INTEGER,
+        opprettet DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS rute_kunder (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rute_id INTEGER NOT NULL,
+        kunde_id INTEGER NOT NULL,
+        rekkefolge INTEGER,
+        organization_id INTEGER,
+        FOREIGN KEY (rute_id) REFERENCES ruter(id) ON DELETE CASCADE,
+        FOREIGN KEY (kunde_id) REFERENCES kunder(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Avtaler table
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS avtaler (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kunde_id INTEGER,
+        dato DATE NOT NULL,
+        klokkeslett TEXT,
+        type TEXT DEFAULT 'El-Kontroll',
+        beskrivelse TEXT,
+        status TEXT DEFAULT 'planlagt',
+        opprettet_av TEXT,
+        organization_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (kunde_id) REFERENCES kunder(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Kontaktlogg table
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS kontaktlogg (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kunde_id INTEGER NOT NULL,
+        dato DATETIME DEFAULT CURRENT_TIMESTAMP,
+        type TEXT DEFAULT 'Telefonsamtale',
+        notat TEXT,
+        opprettet_av TEXT,
+        organization_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (kunde_id) REFERENCES kunder(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Email tables
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS email_innstillinger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kunde_id INTEGER UNIQUE NOT NULL,
+        email_aktiv INTEGER DEFAULT 1,
+        forste_varsel_dager INTEGER DEFAULT 30,
+        paaminnelse_etter_dager INTEGER DEFAULT 7,
+        FOREIGN KEY (kunde_id) REFERENCES kunder(id) ON DELETE CASCADE
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS email_varsler (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kunde_id INTEGER,
+        epost TEXT,
+        emne TEXT,
+        melding TEXT,
+        type TEXT,
+        status TEXT DEFAULT 'pending',
+        sendt_dato DATETIME,
+        feil_melding TEXT,
+        opprettet DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (kunde_id) REFERENCES kunder(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Refresh tokens table for JWT refresh token flow
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_id INTEGER NOT NULL,
+        user_type TEXT NOT NULL,
+        device_info TEXT,
+        ip_address TEXT,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        revoked_at DATETIME,
+        replaced_by TEXT
+      )
+    `);
+
+    // Create index for faster token lookups
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash)
+    `);
+
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id, user_type)
+    `);
+
+    // Token blacklist table for persisted logout tokens
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS token_blacklist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        jti TEXT NOT NULL UNIQUE,
+        user_id INTEGER NOT NULL,
+        user_type TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        revoked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        reason TEXT DEFAULT 'logout'
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_token_blacklist_jti ON token_blacklist(jti)
+    `);
+
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires ON token_blacklist(expires_at)
+    `);
+
+    // Performance indexes for multi-tenant queries
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_kunder_org_id ON kunder(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_kunder_org_kategori ON kunder(organization_id, kategori);
+      CREATE INDEX IF NOT EXISTS idx_kunder_org_poststed ON kunder(organization_id, poststed);
+      CREATE INDEX IF NOT EXISTS idx_kunder_org_el_kontroll ON kunder(organization_id, neste_el_kontroll);
+      CREATE INDEX IF NOT EXISTS idx_kunder_org_brann_kontroll ON kunder(organization_id, neste_brann_kontroll);
+      CREATE INDEX IF NOT EXISTS idx_email_varsler_kunde ON email_varsler(kunde_id, type, status);
+      CREATE INDEX IF NOT EXISTS idx_email_varsler_status ON email_varsler(status);
+      CREATE INDEX IF NOT EXISTS idx_kontaktlogg_kunde_org ON kontaktlogg(kunde_id, organization_id);
+      CREATE INDEX IF NOT EXISTS idx_ruter_org_id ON ruter(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_rute_kunder_rute ON rute_kunder(rute_id);
+      CREATE INDEX IF NOT EXISTS idx_avtaler_org_id ON avtaler(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_avtaler_org_dato ON avtaler(organization_id, dato);
+      CREATE INDEX IF NOT EXISTS idx_org_slug ON organizations(slug);
+    `);
+
+    dbLogger.info('SQLite tables initialized');
+  }
+
+  // ============ KUNDER METHODS ============
+
+  /**
+   * Get all customers for an organization.
+   * SECURITY: organizationId is required to prevent cross-tenant data access.
+   */
+  async getAllKunder(organizationId: number): Promise<Kunde[]> {
+    this.validateTenantContext(organizationId, 'getAllKunder');
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getAllKunderByTenant(organizationId);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = 'SELECT * FROM kunder WHERE organization_id = ? ORDER BY navn COLLATE NOCASE';
+    return this.sqlite.prepare(sql).all(organizationId) as Kunde[];
+  }
+
+  /**
+   * Get customers with pagination support
+   * Returns { data, total, limit, offset } for paginated responses
+   */
+  async getAllKunderPaginated(
+    organizationId: number,
+    options: { limit?: number; offset?: number; search?: string; kategori?: string } = {}
+  ): Promise<{ data: Kunde[]; total: number; limit: number; offset: number }> {
+    const { limit = 100, offset = 0, search, kategori } = options;
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Build WHERE conditions
+    const conditions: string[] = ['organization_id = ?'];
+    const params: (string | number)[] = [organizationId];
+
+    if (search) {
+      conditions.push('(navn LIKE ? OR adresse LIKE ? OR poststed LIKE ?)');
+      const searchPattern = `%${search}%`;
+      params.push(searchPattern, searchPattern, searchPattern);
+    }
+
+    if (kategori) {
+      conditions.push('kategori = ?');
+      params.push(kategori);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    // Get total count
+    const countSql = `SELECT COUNT(*) as total FROM kunder WHERE ${whereClause}`;
+    const countResult = this.sqlite.prepare(countSql).get(...params) as { total: number };
+    const total = countResult.total;
+
+    // Get paginated data
+    const dataSql = `
+      SELECT * FROM kunder
+      WHERE ${whereClause}
+      ORDER BY navn COLLATE NOCASE
+      LIMIT ? OFFSET ?
+    `;
+    const data = this.sqlite.prepare(dataSql).all(...params, limit, offset) as Kunde[];
+
+    return { data, total, limit, offset };
+  }
+
+  /**
+   * Get a customer by ID within an organization.
+   * SECURITY: organizationId is required to prevent cross-tenant data access.
+   */
+  async getKundeById(id: number, organizationId: number): Promise<Kunde | null> {
+    this.validateTenantContext(organizationId, 'getKundeById');
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getKundeByIdAndTenant(id, organizationId);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = 'SELECT * FROM kunder WHERE id = ? AND organization_id = ?';
+    const result = this.sqlite.prepare(sql).get(id, organizationId);
+
+    return (result as Kunde) || null;
+  }
+
+  async createKunde(data: Partial<Kunde>): Promise<Kunde> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.createKunde(data);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const stmt = this.sqlite.prepare(`
+      INSERT INTO kunder (
+        navn, adresse, postnummer, poststed, telefon, epost, lat, lng, notater, kategori,
+        siste_el_kontroll, neste_el_kontroll, el_kontroll_intervall,
+        siste_brann_kontroll, neste_brann_kontroll, brann_kontroll_intervall,
+        el_type, brann_system, brann_driftstype, organization_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      data.navn,
+      data.adresse,
+      data.postnummer,
+      data.poststed,
+      data.telefon,
+      data.epost,
+      data.lat,
+      data.lng,
+      data.notater,
+      data.kategori || 'El-Kontroll',
+      data.siste_el_kontroll,
+      data.neste_el_kontroll,
+      data.el_kontroll_intervall || 36,
+      data.siste_brann_kontroll,
+      data.neste_brann_kontroll,
+      data.brann_kontroll_intervall || 12,
+      data.el_type,
+      data.brann_system,
+      data.brann_driftstype,
+      data.organization_id
+    );
+
+    return { ...data, id: Number(result.lastInsertRowid) } as Kunde;
+  }
+
+  /**
+   * Update a customer within an organization.
+   * SECURITY: organizationId is required to prevent cross-tenant data modification.
+   */
+  async updateKunde(id: number, data: Partial<Kunde>, organizationId: number): Promise<Kunde | null> {
+    this.validateTenantContext(organizationId, 'updateKunde');
+
+    // First check if kunde exists in this organization
+    const existing = await this.getKundeById(id, organizationId);
+    if (!existing) return null;
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.updateKunde(id, data);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Build dynamic UPDATE query
+    const fields: string[] = [];
+    const values: unknown[] = [];
+
+    const updateableFields = [
+      'navn', 'adresse', 'postnummer', 'poststed', 'telefon', 'epost',
+      'lat', 'lng', 'notater', 'kategori', 'el_type', 'brann_system', 'brann_driftstype',
+      'siste_el_kontroll', 'neste_el_kontroll', 'el_kontroll_intervall',
+      'siste_brann_kontroll', 'neste_brann_kontroll', 'brann_kontroll_intervall',
+    ];
+
+    for (const field of updateableFields) {
+      if (field in data) {
+        fields.push(`${field} = ?`);
+        values.push((data as Record<string, unknown>)[field]);
+      }
+    }
+
+    if (fields.length === 0) {
+      return existing;
+    }
+
+    values.push(id, organizationId);
+
+    const sql = `UPDATE kunder SET ${fields.join(', ')} WHERE id = ? AND organization_id = ?`;
+    this.sqlite.prepare(sql).run(...values);
+
+    return this.getKundeById(id, organizationId);
+  }
+
+  /**
+   * Delete a customer within an organization.
+   * SECURITY: organizationId is required to prevent cross-tenant data deletion.
+   */
+  async deleteKunde(id: number, organizationId: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'deleteKunde');
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.deleteKunde(id);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = 'DELETE FROM kunder WHERE id = ? AND organization_id = ?';
+    const result = this.sqlite.prepare(sql).run(id, organizationId);
+
+    return result.changes > 0;
+  }
+
+  /**
+   * Get customers by area within an organization.
+   * SECURITY: organizationId is required to prevent cross-tenant data access.
+   */
+  async getKunderByOmrade(omrade: string, organizationId: number): Promise<Kunde[]> {
+    this.validateTenantContext(organizationId, 'getKunderByOmrade');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const kunder = await this.supabase.getKunderByOmrade(omrade);
+      return kunder.filter(k => k.organization_id === organizationId);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = organizationId
+      ? 'SELECT * FROM kunder WHERE organization_id = ? AND (poststed LIKE ? OR adresse LIKE ?) ORDER BY navn COLLATE NOCASE'
+      : 'SELECT * FROM kunder WHERE poststed LIKE ? OR adresse LIKE ? ORDER BY navn COLLATE NOCASE';
+
+    const pattern = `%${omrade}%`;
+    return (organizationId
+      ? this.sqlite.prepare(sql).all(organizationId, pattern, pattern)
+      : this.sqlite.prepare(sql).all(pattern, pattern)) as Kunde[];
+  }
+
+  async getKontrollVarsler(dager: number, organizationId?: number): Promise<Kunde[]> {
+    if (this.type === 'supabase' && this.supabase) {
+      const kunder = await this.supabase.getKontrollVarsler(dager);
+      return organizationId ? kunder.filter(k => k.organization_id === organizationId) : kunder;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Complex query to get customers needing control
+    const baseCondition = organizationId ? 'organization_id = ? AND' : '';
+    const params = organizationId ? [organizationId, dager, dager, dager, dager] : [dager, dager, dager, dager];
+
+    const sql = `
+      SELECT * FROM kunder
+      WHERE ${baseCondition} kategori IN ('El-Kontroll', 'Brannvarsling', 'El-Kontroll + Brannvarsling')
+        AND (
+          (kategori IN ('El-Kontroll', 'El-Kontroll + Brannvarsling') AND
+            (neste_el_kontroll <= date('now', '+' || ? || ' days')
+            OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NOT NULL
+                AND date(siste_el_kontroll, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') <= date('now', '+' || ? || ' days'))
+            OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NULL)))
+          OR (kategori IN ('Brannvarsling', 'El-Kontroll + Brannvarsling') AND
+            (neste_brann_kontroll <= date('now', '+' || ? || ' days')
+            OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NOT NULL
+                AND date(siste_brann_kontroll, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') <= date('now', '+' || ? || ' days'))
+            OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NULL)))
+        )
+      ORDER BY navn COLLATE NOCASE
+    `;
+
+    return this.sqlite.prepare(sql).all(...params) as Kunde[];
+  }
+
+  async bulkCompleteKontroll(
+    kundeIds: number[],
+    type: 'el' | 'brann' | 'begge',
+    dato: string,
+    organizationId?: number
+  ): Promise<number> {
+    if (!this.sqlite) throw new Error('Database not initialized (bulk complete not supported in Supabase yet)');
+
+    if (kundeIds.length === 0) return 0;
+
+    // OPTIMIZED: Batch fetch all customers in ONE query to verify ownership and get intervals
+    const placeholders = kundeIds.map(() => '?').join(',');
+    const fetchSql = organizationId
+      ? `SELECT id, el_kontroll_intervall FROM kunder WHERE id IN (${placeholders}) AND organization_id = ?`
+      : `SELECT id, el_kontroll_intervall FROM kunder WHERE id IN (${placeholders})`;
+
+    const params = organizationId ? [...kundeIds, organizationId] : kundeIds;
+    const validKunder = this.sqlite.prepare(fetchSql).all(...params) as Array<{ id: number; el_kontroll_intervall: number | null }>;
+
+    if (validKunder.length === 0) return 0;
+
+    // Build a map of id -> interval for quick lookup
+    const intervalMap = new Map<number, number>();
+    for (const k of validKunder) {
+      intervalMap.set(k.id, k.el_kontroll_intervall || 36);
+    }
+
+    // OPTIMIZED: Use transaction for all updates
+    const transaction = this.sqlite.transaction(() => {
+      let updated = 0;
+
+      // Prepare statements outside the loop
+      const updateElStmt = this.sqlite!.prepare(`
+        UPDATE kunder SET siste_el_kontroll = ?, neste_el_kontroll = ? WHERE id = ?
+      `);
+      const updateBrannStmt = this.sqlite!.prepare(`
+        UPDATE kunder SET siste_brann_kontroll = ?, neste_brann_kontroll = ? WHERE id = ?
+      `);
+      const updateBothStmt = this.sqlite!.prepare(`
+        UPDATE kunder SET siste_el_kontroll = ?, neste_el_kontroll = ?, siste_brann_kontroll = ?, neste_brann_kontroll = ? WHERE id = ?
+      `);
+
+      for (const kunde of validKunder) {
+        const elInterval = intervalMap.get(kunde.id) || 36;
+
+        if (type === 'begge') {
+          // Calculate both next dates
+          const nextElDate = new Date(dato);
+          nextElDate.setMonth(nextElDate.getMonth() + elInterval);
+          const nextBrannDate = new Date(dato);
+          nextBrannDate.setMonth(nextBrannDate.getMonth() + 12);
+
+          const result = updateBothStmt.run(
+            dato,
+            nextElDate.toISOString().split('T')[0],
+            dato,
+            nextBrannDate.toISOString().split('T')[0],
+            kunde.id
+          );
+          if (result.changes > 0) updated++;
+        } else if (type === 'el') {
+          const nextDate = new Date(dato);
+          nextDate.setMonth(nextDate.getMonth() + elInterval);
+
+          const result = updateElStmt.run(dato, nextDate.toISOString().split('T')[0], kunde.id);
+          if (result.changes > 0) updated++;
+        } else if (type === 'brann') {
+          const nextDate = new Date(dato);
+          nextDate.setMonth(nextDate.getMonth() + 12);
+
+          const result = updateBrannStmt.run(dato, nextDate.toISOString().split('T')[0], kunde.id);
+          if (result.changes > 0) updated++;
+        }
+      }
+
+      return updated;
+    });
+
+    return transaction();
+  }
+
+  // ============ AUTH METHODS ============
+
+  async getKlientByEpost(epost: string): Promise<KlientRecord | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getKlientByEpost(epost);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite
+      .prepare('SELECT * FROM klient WHERE LOWER(epost) = LOWER(?) AND aktiv = 1')
+      .get(epost);
+
+    return (result as KlientRecord) || null;
+  }
+
+  async getBrukerByEpost(epost: string): Promise<BrukerRecord | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getBrukerByEpost(epost);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    try {
+      const result = this.sqlite
+        .prepare('SELECT * FROM brukere WHERE LOWER(epost) = LOWER(?) AND aktiv = 1')
+        .get(epost);
+      return (result as BrukerRecord) || null;
+    } catch {
+      // brukere table might not exist
+      return null;
+    }
+  }
+
+  async updateKlientLastLogin(id: number): Promise<void> {
+    if (this.type === 'supabase' && this.supabase) {
+      await this.supabase.updateKlientLastLogin(id);
+      return;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    this.sqlite
+      .prepare('UPDATE klient SET sist_innlogget = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(id);
+  }
+
+  async updateBrukerLastLogin(id: number): Promise<void> {
+    if (this.type === 'supabase' && this.supabase) {
+      await this.supabase.updateBrukerLastLogin(id);
+      return;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    this.sqlite
+      .prepare('UPDATE brukere SET sist_innlogget = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(id);
+  }
+
+  async getOrganizationById(id: number): Promise<Organization | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getOrganizationById(id);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite
+      .prepare('SELECT * FROM organizations WHERE id = ? AND aktiv = 1')
+      .get(id);
+
+    return (result as Organization) || null;
+  }
+
+  async getIndustryTemplateById(id: number): Promise<{ id: number; name: string; slug: string; icon?: string; color?: string; description?: string } | null> {
+    if (this.type === 'supabase') {
+      // For Supabase, query directly using the Supabase client
+      try {
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabaseUrl = process.env.SUPABASE_URL || '';
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+        const supabase = createClient(supabaseUrl, supabaseKey);
+
+        const { data, error } = await supabase
+          .from('industry_templates')
+          .select('id, name, slug, icon, color, description')
+          .eq('id', id)
+          .single();
+
+        if (error || !data) return null;
+        return data;
+      } catch {
+        return null;
+      }
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite
+      .prepare('SELECT id, name, slug, icon, color, description FROM industry_templates WHERE id = ? AND aktiv = 1')
+      .get(id);
+
+    return (result as { id: number; name: string; slug: string; icon?: string; color?: string; description?: string }) || null;
+  }
+
+  async logLoginAttempt(data: {
+    epost: string;
+    bruker_navn?: string;
+    bruker_type?: string;
+    status: string;
+    ip_adresse: string;
+    user_agent: string;
+    feil_melding?: string;
+  }): Promise<void> {
+    if (!this.sqlite) {
+      // For Supabase, log to console for now (could add Supabase logging)
+      dbLogger.info({ ...data }, 'Login attempt');
+      return;
+    }
+
+    this.sqlite
+      .prepare(`
+        INSERT INTO login_logg (epost, bruker_navn, bruker_type, status, ip_adresse, user_agent, feil_melding)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        data.epost,
+        data.bruker_navn,
+        data.bruker_type,
+        data.status,
+        data.ip_adresse,
+        data.user_agent,
+        data.feil_melding
+      );
+  }
+
+  // ============ REFRESH TOKEN METHODS ============
+
+  async storeRefreshToken(data: {
+    tokenHash: string;
+    userId: number;
+    userType: 'klient' | 'bruker';
+    deviceInfo?: string;
+    ipAddress?: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    if (!this.sqlite) {
+      dbLogger.warn('Refresh tokens not supported in Supabase yet');
+      return;
+    }
+
+    this.sqlite.prepare(`
+      INSERT INTO refresh_tokens (token_hash, user_id, user_type, device_info, ip_address, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      data.tokenHash,
+      data.userId,
+      data.userType,
+      data.deviceInfo,
+      data.ipAddress,
+      data.expiresAt.toISOString()
+    );
+  }
+
+  async getRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
+    if (!this.sqlite) return null;
+
+    const result = this.sqlite.prepare(`
+      SELECT * FROM refresh_tokens WHERE token_hash = ?
+    `).get(tokenHash);
+
+    return (result as RefreshTokenRecord) || null;
+  }
+
+  async revokeRefreshToken(tokenHash: string, replacedBy?: string): Promise<boolean> {
+    if (!this.sqlite) return false;
+
+    const sql = replacedBy
+      ? `UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP, replaced_by = ? WHERE token_hash = ? AND revoked_at IS NULL`
+      : `UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND revoked_at IS NULL`;
+
+    const result = replacedBy
+      ? this.sqlite.prepare(sql).run(replacedBy, tokenHash)
+      : this.sqlite.prepare(sql).run(tokenHash);
+
+    return result.changes > 0;
+  }
+
+  async revokeAllUserRefreshTokens(userId: number, userType: 'klient' | 'bruker'): Promise<number> {
+    if (!this.sqlite) return 0;
+
+    const result = this.sqlite.prepare(`
+      UPDATE refresh_tokens
+      SET revoked_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND user_type = ? AND revoked_at IS NULL
+    `).run(userId, userType);
+
+    return result.changes;
+  }
+
+  async cleanupExpiredRefreshTokens(): Promise<number> {
+    if (!this.sqlite) return 0;
+
+    const result = this.sqlite.prepare(`
+      DELETE FROM refresh_tokens
+      WHERE expires_at < datetime('now')
+        OR (revoked_at IS NOT NULL AND revoked_at < datetime('now', '-7 days'))
+    `).run();
+
+    return result.changes;
+  }
+
+  async isRefreshTokenRevoked(tokenHash: string): Promise<boolean> {
+    if (!this.sqlite) return true;
+
+    const result = this.sqlite.prepare(`
+      SELECT revoked_at, expires_at FROM refresh_tokens WHERE token_hash = ?
+    `).get(tokenHash) as { revoked_at: string | null; expires_at: string } | undefined;
+
+    if (!result) return true;
+    if (result.revoked_at) return true;
+    if (new Date(result.expires_at) < new Date()) return true;
+
+    return false;
+  }
+
+  async detectRefreshTokenReuse(tokenHash: string): Promise<boolean> {
+    if (!this.sqlite) return false;
+
+    // Check if this token was already used (has a replaced_by value or is revoked)
+    const result = this.sqlite.prepare(`
+      SELECT id, replaced_by, revoked_at FROM refresh_tokens WHERE token_hash = ?
+    `).get(tokenHash) as { id: number; replaced_by: string | null; revoked_at: string | null } | undefined;
+
+    // If token doesn't exist or has been replaced/revoked, it's potentially reuse
+    return result?.replaced_by !== null || result?.revoked_at !== null;
+  }
+
+  async getActiveRefreshTokenCount(userId: number, userType: 'klient' | 'bruker'): Promise<number> {
+    if (!this.sqlite) return 0;
+
+    const result = this.sqlite.prepare(`
+      SELECT COUNT(*) as count FROM refresh_tokens
+      WHERE user_id = ? AND user_type = ? AND revoked_at IS NULL AND expires_at > datetime('now')
+    `).get(userId, userType) as { count: number };
+
+    return result?.count || 0;
+  }
+
+  // ============ TOKEN BLACKLIST METHODS ============
+
+  async addToTokenBlacklist(data: {
+    jti: string;
+    userId: number;
+    userType: 'klient' | 'bruker';
+    expiresAt: number;
+    reason?: string;
+  }): Promise<void> {
+    if (!this.sqlite) {
+      dbLogger.warn('Token blacklist not supported in Supabase yet');
+      return;
+    }
+
+    try {
+      this.sqlite.prepare(`
+        INSERT OR REPLACE INTO token_blacklist (jti, user_id, user_type, expires_at, reason)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        data.jti,
+        data.userId,
+        data.userType,
+        data.expiresAt,
+        data.reason || 'logout'
+      );
+    } catch (error) {
+      dbLogger.error({ error, jti: data.jti }, 'Failed to add token to blacklist');
+    }
+  }
+
+  async isTokenInBlacklist(jti: string): Promise<boolean> {
+    if (!this.sqlite) return false;
+
+    try {
+      const result = this.sqlite.prepare(`
+        SELECT 1 FROM token_blacklist WHERE jti = ?
+      `).get(jti);
+
+      return !!result;
+    } catch {
+      return false;
+    }
+  }
+
+  async cleanupExpiredBlacklistTokens(): Promise<number> {
+    if (!this.sqlite) return 0;
+
+    const now = Math.floor(Date.now() / 1000);
+
+    try {
+      const result = this.sqlite.prepare(`
+        DELETE FROM token_blacklist WHERE expires_at < ?
+      `).run(now);
+
+      return result.changes;
+    } catch (error) {
+      dbLogger.error({ error }, 'Failed to cleanup expired blacklist tokens');
+      return 0;
+    }
+  }
+
+  async getBlacklistStats(): Promise<{ total: number; expiredRemoved?: number }> {
+    if (!this.sqlite) return { total: 0 };
+
+    try {
+      const result = this.sqlite.prepare(`
+        SELECT COUNT(*) as total FROM token_blacklist
+      `).get() as { total: number };
+
+      return { total: result?.total || 0 };
+    } catch {
+      return { total: 0 };
+    }
+  }
+
+  // ============ ORGANIZATION LIMITS ============
+
+  async getOrganizationLimits(organizationId: number): Promise<{ max_kunder: number; current_count: number } | null> {
+    const org = await this.getOrganizationById(organizationId);
+    if (!org) return null;
+
+    const kunder = await this.getAllKunder(organizationId);
+
+    return {
+      max_kunder: org.max_kunder || 200,
+      current_count: kunder.length,
+    };
+  }
+
+  async countOrganizationUsers(organizationId: number): Promise<number> {
+    if (!this.sqlite) return 0;
+
+    const result = this.sqlite.prepare(`
+      SELECT COUNT(*) as count FROM klient
+      WHERE organization_id = ? AND aktiv = 1
+    `).get(organizationId) as { count: number };
+
+    return result?.count || 0;
+  }
+
+  async getOrganizationUserLimits(organizationId: number): Promise<{ max_brukere: number; current_count: number } | null> {
+    const org = await this.getOrganizationById(organizationId);
+    if (!org) return null;
+
+    const currentCount = await this.countOrganizationUsers(organizationId);
+
+    return {
+      max_brukere: org.max_brukere || 5,
+      current_count: currentCount,
+    };
+  }
+
+  // ============ TEAM MEMBER METHODS ============
+
+  async getTeamMembers(organizationId: number): Promise<KlientRecord[]> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    return this.sqlite.prepare(`
+      SELECT id, navn, epost, telefon, rolle, aktiv, sist_innlogget, opprettet
+      FROM klient
+      WHERE organization_id = ?
+      ORDER BY navn COLLATE NOCASE
+    `).all(organizationId) as KlientRecord[];
+  }
+
+  async createTeamMember(data: {
+    navn: string;
+    epost: string;
+    passord_hash: string;
+    telefon?: string;
+    rolle?: string;
+    organization_id: number;
+  }): Promise<KlientRecord> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const stmt = this.sqlite.prepare(`
+      INSERT INTO klient (navn, epost, passord_hash, telefon, rolle, organization_id, aktiv)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `);
+
+    const result = stmt.run(
+      data.navn,
+      data.epost,
+      data.passord_hash,
+      data.telefon || null,
+      data.rolle || 'medlem',
+      data.organization_id
+    );
+
+    const member = this.sqlite.prepare('SELECT * FROM klient WHERE id = ?').get(result.lastInsertRowid);
+    return member as KlientRecord;
+  }
+
+  async updateTeamMember(
+    id: number,
+    organizationId: number,
+    data: { navn?: string; telefon?: string; rolle?: string; aktiv?: boolean }
+  ): Promise<KlientRecord | null> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Verify member belongs to organization
+    const existing = this.sqlite.prepare(`
+      SELECT * FROM klient WHERE id = ? AND organization_id = ?
+    `).get(id, organizationId) as KlientRecord | undefined;
+
+    if (!existing) return null;
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+
+    if (data.navn !== undefined) {
+      fields.push('navn = ?');
+      values.push(data.navn);
+    }
+    if (data.telefon !== undefined) {
+      fields.push('telefon = ?');
+      values.push(data.telefon);
+    }
+    if (data.rolle !== undefined) {
+      fields.push('rolle = ?');
+      values.push(data.rolle);
+    }
+    if (data.aktiv !== undefined) {
+      fields.push('aktiv = ?');
+      values.push(data.aktiv ? 1 : 0);
+    }
+
+    if (fields.length === 0) return existing;
+
+    values.push(id, organizationId);
+    this.sqlite.prepare(`
+      UPDATE klient SET ${fields.join(', ')} WHERE id = ? AND organization_id = ?
+    `).run(...values);
+
+    return this.sqlite.prepare('SELECT * FROM klient WHERE id = ?').get(id) as KlientRecord;
+  }
+
+  async deleteTeamMember(id: number, organizationId: number): Promise<boolean> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare(`
+      DELETE FROM klient WHERE id = ? AND organization_id = ?
+    `).run(id, organizationId);
+
+    return result.changes > 0;
+  }
+
+  async getTeamMemberByEpost(epost: string, organizationId: number): Promise<KlientRecord | null> {
+    if (!this.sqlite) return null;
+
+    const result = this.sqlite.prepare(`
+      SELECT * FROM klient WHERE LOWER(epost) = LOWER(?) AND organization_id = ?
+    `).get(epost, organizationId);
+
+    return (result as KlientRecord) || null;
+  }
+
+  // ============ ONBOARDING METHODS ============
+
+  async getOnboardingStatus(organizationId: number): Promise<{
+    stage: string;
+    completed: boolean;
+    industry_template_id: number | null;
+  } | null> {
+    if (!this.sqlite) return null;
+
+    const result = this.sqlite.prepare(`
+      SELECT onboarding_stage, onboarding_completed, industry_template_id
+      FROM organizations WHERE id = ?
+    `).get(organizationId) as {
+      onboarding_stage: string;
+      onboarding_completed: number;
+      industry_template_id: number | null;
+    } | undefined;
+
+    if (!result) return null;
+
+    return {
+      stage: result.onboarding_stage || 'not_started',
+      completed: !!result.onboarding_completed,
+      industry_template_id: result.industry_template_id,
+    };
+  }
+
+  async updateOnboardingStage(
+    organizationId: number,
+    stage: string,
+    additionalData?: Partial<{
+      onboarding_completed: boolean;
+      industry_template_id: number;
+      company_address: string;
+      company_postnummer: string;
+      company_poststed: string;
+      map_center_lat: number;
+      map_center_lng: number;
+      map_zoom: number;
+      route_start_lat: number;
+      route_start_lng: number;
+    }>
+  ): Promise<boolean> {
+    if (!this.sqlite) return false;
+
+    const fields: string[] = ['onboarding_stage = ?'];
+    const values: unknown[] = [stage];
+
+    if (additionalData) {
+      if (additionalData.onboarding_completed !== undefined) {
+        fields.push('onboarding_completed = ?');
+        values.push(additionalData.onboarding_completed ? 1 : 0);
+      }
+      if (additionalData.industry_template_id !== undefined) {
+        fields.push('industry_template_id = ?');
+        values.push(additionalData.industry_template_id);
+      }
+      if (additionalData.company_address !== undefined) {
+        fields.push('company_address = ?');
+        values.push(additionalData.company_address);
+      }
+      if (additionalData.company_postnummer !== undefined) {
+        fields.push('company_postnummer = ?');
+        values.push(additionalData.company_postnummer);
+      }
+      if (additionalData.company_poststed !== undefined) {
+        fields.push('company_poststed = ?');
+        values.push(additionalData.company_poststed);
+      }
+      if (additionalData.map_center_lat !== undefined) {
+        fields.push('map_center_lat = ?');
+        values.push(additionalData.map_center_lat);
+      }
+      if (additionalData.map_center_lng !== undefined) {
+        fields.push('map_center_lng = ?');
+        values.push(additionalData.map_center_lng);
+      }
+      if (additionalData.map_zoom !== undefined) {
+        fields.push('map_zoom = ?');
+        values.push(additionalData.map_zoom);
+      }
+      if (additionalData.route_start_lat !== undefined) {
+        fields.push('route_start_lat = ?');
+        values.push(additionalData.route_start_lat);
+      }
+      if (additionalData.route_start_lng !== undefined) {
+        fields.push('route_start_lng = ?');
+        values.push(additionalData.route_start_lng);
+      }
+    }
+
+    values.push(organizationId);
+
+    try {
+      const result = this.sqlite.prepare(`
+        UPDATE organizations SET ${fields.join(', ')} WHERE id = ?
+      `).run(...values);
+
+      return result.changes > 0;
+    } catch (error) {
+      dbLogger.error({ error, organizationId, stage }, 'Failed to update onboarding stage');
+      return false;
+    }
+  }
+
+  async completeOnboarding(organizationId: number): Promise<boolean> {
+    return this.updateOnboardingStage(organizationId, 'completed', { onboarding_completed: true });
+  }
+
+  // ============ RUTER METHODS ============
+
+  async getAllRuter(organizationId?: number): Promise<(Rute & { antall_kunder: number })[]> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = organizationId
+      ? `SELECT r.*, (SELECT COUNT(*) FROM rute_kunder WHERE rute_id = r.id) as antall_kunder
+         FROM ruter r WHERE r.organization_id = ?
+         ORDER BY r.planlagt_dato DESC, r.opprettet DESC`
+      : `SELECT r.*, (SELECT COUNT(*) FROM rute_kunder WHERE rute_id = r.id) as antall_kunder
+         FROM ruter r ORDER BY r.planlagt_dato DESC, r.opprettet DESC`;
+
+    return (organizationId
+      ? this.sqlite.prepare(sql).all(organizationId)
+      : this.sqlite.prepare(sql).all()) as (Rute & { antall_kunder: number })[];
+  }
+
+  async getRuteById(id: number, organizationId?: number): Promise<Rute | null> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = organizationId
+      ? 'SELECT * FROM ruter WHERE id = ? AND organization_id = ?'
+      : 'SELECT * FROM ruter WHERE id = ?';
+
+    const result = organizationId
+      ? this.sqlite.prepare(sql).get(id, organizationId)
+      : this.sqlite.prepare(sql).get(id);
+
+    return (result as Rute) || null;
+  }
+
+  async createRute(data: Partial<Rute> & { kunde_ids?: number[] }): Promise<Rute> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const stmt = this.sqlite.prepare(`
+      INSERT INTO ruter (navn, beskrivelse, planlagt_dato, total_distanse, total_tid, organization_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      data.navn,
+      data.beskrivelse,
+      data.planlagt_dato,
+      data.total_distanse,
+      data.total_tid,
+      data.organization_id
+    );
+
+    return { ...data, id: Number(result.lastInsertRowid), status: 'planlagt' } as Rute;
+  }
+
+  async updateRute(id: number, data: Partial<Rute>, organizationId?: number): Promise<Rute | null> {
+    const existing = await this.getRuteById(id, organizationId);
+    if (!existing) return null;
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+
+    const updateableFields = ['navn', 'beskrivelse', 'planlagt_dato', 'status', 'total_distanse', 'total_tid'];
+
+    for (const field of updateableFields) {
+      if (field in data) {
+        fields.push(`${field} = ?`);
+        values.push((data as Record<string, unknown>)[field]);
+      }
+    }
+
+    if (fields.length === 0) return existing;
+
+    values.push(id);
+    const sql = `UPDATE ruter SET ${fields.join(', ')} WHERE id = ?`;
+    this.sqlite.prepare(sql).run(...values);
+
+    return this.getRuteById(id, organizationId);
+  }
+
+  async deleteRute(id: number, organizationId?: number): Promise<boolean> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Delete rute_kunder first (cascade might not work in all SQLite versions)
+    this.sqlite.prepare('DELETE FROM rute_kunder WHERE rute_id = ?').run(id);
+
+    const sql = organizationId
+      ? 'DELETE FROM ruter WHERE id = ? AND organization_id = ?'
+      : 'DELETE FROM ruter WHERE id = ?';
+
+    const result = organizationId
+      ? this.sqlite.prepare(sql).run(id, organizationId)
+      : this.sqlite.prepare(sql).run(id);
+
+    return result.changes > 0;
+  }
+
+  async getRuteKunder(ruteId: number): Promise<(Kunde & { rekkefolge: number })[]> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    return this.sqlite.prepare(`
+      SELECT k.*, rk.rekkefolge
+      FROM rute_kunder rk
+      JOIN kunder k ON k.id = rk.kunde_id
+      WHERE rk.rute_id = ?
+      ORDER BY rk.rekkefolge
+    `).all(ruteId) as (Kunde & { rekkefolge: number })[];
+  }
+
+  async setRuteKunder(ruteId: number, kundeIds: number[], organizationId?: number): Promise<void> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Clear existing
+    this.sqlite.prepare('DELETE FROM rute_kunder WHERE rute_id = ?').run(ruteId);
+
+    // Insert new
+    const insertStmt = this.sqlite.prepare(`
+      INSERT INTO rute_kunder (rute_id, kunde_id, rekkefolge, organization_id)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    kundeIds.forEach((kundeId, index) => {
+      insertStmt.run(ruteId, kundeId, index + 1, organizationId);
+    });
+  }
+
+  async completeRute(
+    id: number,
+    dato: string,
+    kontrollType: 'el' | 'brann' | 'both',
+    organizationId?: number
+  ): Promise<{ success: boolean; oppdaterte_kunder: number }> {
+    const rute = await this.getRuteById(id, organizationId);
+    if (!rute) return { success: false, oppdaterte_kunder: 0 };
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const kunder = await this.getRuteKunder(id);
+
+    const updateStmt = this.sqlite.prepare(`
+      UPDATE kunder SET
+        siste_el_kontroll = CASE WHEN ? IN ('el', 'both') THEN ? ELSE siste_el_kontroll END,
+        neste_el_kontroll = CASE WHEN ? IN ('el', 'both') THEN date(?, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') ELSE neste_el_kontroll END,
+        siste_brann_kontroll = CASE WHEN ? IN ('brann', 'both') THEN ? ELSE siste_brann_kontroll END,
+        neste_brann_kontroll = CASE WHEN ? IN ('brann', 'both') THEN date(?, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') ELSE neste_brann_kontroll END,
+        siste_kontroll = ?,
+        neste_kontroll = date(?, '+' || COALESCE(kontroll_intervall_mnd, 12) || ' months')
+      WHERE id = ?
+    `);
+
+    for (const kunde of kunder) {
+      updateStmt.run(
+        kontrollType, dato,
+        kontrollType, dato,
+        kontrollType, dato,
+        kontrollType, dato,
+        dato,
+        dato,
+        kunde.id
+      );
+    }
+
+    this.sqlite.prepare('UPDATE ruter SET status = ? WHERE id = ?').run('fullført', id);
+
+    return { success: true, oppdaterte_kunder: kunder.length };
+  }
+
+  // ============ AVTALER METHODS ============
+
+  async getAllAvtaler(organizationId?: number, start?: string, end?: string): Promise<(Avtale & { kunde_navn?: string })[]> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    let sql = `
+      SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
+      FROM avtaler a
+      LEFT JOIN kunder k ON a.kunde_id = k.id
+    `;
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    if (organizationId) {
+      conditions.push('a.organization_id = ?');
+      params.push(organizationId);
+    }
+    if (start) {
+      conditions.push('a.dato >= ?');
+      params.push(start);
+    }
+    if (end) {
+      conditions.push('a.dato <= ?');
+      params.push(end);
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    sql += ' ORDER BY a.dato, a.klokkeslett';
+
+    return this.sqlite.prepare(sql).all(...params) as (Avtale & { kunde_navn?: string })[];
+  }
+
+  async getAvtaleById(id: number, organizationId?: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = organizationId
+      ? `SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
+         FROM avtaler a LEFT JOIN kunder k ON a.kunde_id = k.id
+         WHERE a.id = ? AND a.organization_id = ?`
+      : `SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
+         FROM avtaler a LEFT JOIN kunder k ON a.kunde_id = k.id
+         WHERE a.id = ?`;
+
+    const result = organizationId
+      ? this.sqlite.prepare(sql).get(id, organizationId)
+      : this.sqlite.prepare(sql).get(id);
+
+    return (result as (Avtale & { kunde_navn?: string })) || null;
+  }
+
+  async createAvtale(data: Partial<Avtale>): Promise<Avtale & { kunde_navn?: string }> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const stmt = this.sqlite.prepare(`
+      INSERT INTO avtaler (kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av, organization_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      data.kunde_id,
+      data.dato,
+      data.klokkeslett,
+      data.type || 'El-Kontroll',
+      data.beskrivelse,
+      data.status || 'planlagt',
+      data.opprettet_av,
+      data.organization_id
+    );
+
+    const avtale = await this.getAvtaleById(Number(result.lastInsertRowid));
+    return avtale!;
+  }
+
+  async updateAvtale(id: number, data: Partial<Avtale>, organizationId?: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
+    const existing = await this.getAvtaleById(id, organizationId);
+    if (!existing) return null;
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const fields: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+    const values: unknown[] = [];
+
+    const updateableFields = ['kunde_id', 'dato', 'klokkeslett', 'type', 'beskrivelse', 'status'];
+
+    for (const field of updateableFields) {
+      if (field in data) {
+        fields.push(`${field} = ?`);
+        values.push((data as Record<string, unknown>)[field]);
+      }
+    }
+
+    values.push(id);
+    const sql = `UPDATE avtaler SET ${fields.join(', ')} WHERE id = ?`;
+    this.sqlite.prepare(sql).run(...values);
+
+    return this.getAvtaleById(id, organizationId);
+  }
+
+  async deleteAvtale(id: number, organizationId?: number): Promise<boolean> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = organizationId
+      ? 'DELETE FROM avtaler WHERE id = ? AND organization_id = ?'
+      : 'DELETE FROM avtaler WHERE id = ?';
+
+    const result = organizationId
+      ? this.sqlite.prepare(sql).run(id, organizationId)
+      : this.sqlite.prepare(sql).run(id);
+
+    return result.changes > 0;
+  }
+
+  async completeAvtale(id: number, organizationId?: number): Promise<boolean> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = organizationId
+      ? `UPDATE avtaler SET status = 'fullført', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND organization_id = ?`
+      : `UPDATE avtaler SET status = 'fullført', updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+
+    const result = organizationId
+      ? this.sqlite.prepare(sql).run(id, organizationId)
+      : this.sqlite.prepare(sql).run(id);
+
+    return result.changes > 0;
+  }
+
+  // ============ KONTAKTLOGG METHODS ============
+
+  async getKontaktloggByKunde(kundeId: number, organizationId: number): Promise<Kontaktlogg[]> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Sikkerhet: Alltid filtrer på organization_id for å forhindre data-lekkasje
+    return this.sqlite.prepare(`
+      SELECT * FROM kontaktlogg
+      WHERE kunde_id = ? AND organization_id = ?
+      ORDER BY dato DESC
+    `).all(kundeId, organizationId) as Kontaktlogg[];
+  }
+
+  async createKontaktlogg(data: Partial<Kontaktlogg> & { kunde_id: number; organization_id?: number }): Promise<Kontaktlogg> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const stmt = this.sqlite.prepare(`
+      INSERT INTO kontaktlogg (kunde_id, dato, type, notat, opprettet_av, organization_id)
+      VALUES (?, datetime('now'), ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      data.kunde_id,
+      data.type || 'Telefonsamtale',
+      data.notat,
+      data.opprettet_av,
+      data.organization_id
+    );
+
+    const kontakt = this.sqlite.prepare('SELECT * FROM kontaktlogg WHERE id = ?').get(result.lastInsertRowid);
+    return kontakt as Kontaktlogg;
+  }
+
+  async deleteKontaktlogg(id: number, organizationId?: number): Promise<boolean> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = organizationId
+      ? 'DELETE FROM kontaktlogg WHERE id = ? AND organization_id = ?'
+      : 'DELETE FROM kontaktlogg WHERE id = ?';
+
+    const result = organizationId
+      ? this.sqlite.prepare(sql).run(id, organizationId)
+      : this.sqlite.prepare(sql).run(id);
+
+    return result.changes > 0;
+  }
+
+  // ============ EMAIL METHODS ============
+
+  async getEmailInnstillinger(kundeId: number): Promise<EmailInnstilling | null> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare('SELECT * FROM email_innstillinger WHERE kunde_id = ?').get(kundeId);
+    return (result as EmailInnstilling) || null;
+  }
+
+  async updateEmailInnstillinger(kundeId: number, data: Partial<EmailInnstilling>): Promise<void> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const existing = this.sqlite.prepare('SELECT id FROM email_innstillinger WHERE kunde_id = ?').get(kundeId);
+
+    if (existing) {
+      this.sqlite.prepare(`
+        UPDATE email_innstillinger
+        SET email_aktiv = ?, forste_varsel_dager = ?, paaminnelse_etter_dager = ?
+        WHERE kunde_id = ?
+      `).run(
+        data.email_aktiv !== undefined ? (data.email_aktiv ? 1 : 0) : 1,
+        data.forste_varsel_dager || 30,
+        data.paaminnelse_etter_dager || 7,
+        kundeId
+      );
+    } else {
+      this.sqlite.prepare(`
+        INSERT INTO email_innstillinger (kunde_id, email_aktiv, forste_varsel_dager, paaminnelse_etter_dager)
+        VALUES (?, ?, ?, ?)
+      `).run(
+        kundeId,
+        data.email_aktiv !== undefined ? (data.email_aktiv ? 1 : 0) : 1,
+        data.forste_varsel_dager || 30,
+        data.paaminnelse_etter_dager || 7
+      );
+    }
+  }
+
+  async getEmailHistorikk(organizationId: number, kundeId?: number | null, limit = 100): Promise<EmailVarsel[]> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Sikkerhet: Alltid filtrer på organization_id for å forhindre data-lekkasje
+    if (kundeId) {
+      return this.sqlite.prepare(`
+        SELECT ev.* FROM email_varsler ev
+        JOIN kunder k ON ev.kunde_id = k.id
+        WHERE ev.kunde_id = ? AND k.organization_id = ?
+        ORDER BY ev.opprettet DESC LIMIT ?
+      `).all(kundeId, organizationId, limit) as EmailVarsel[];
+    }
+
+    return this.sqlite.prepare(`
+      SELECT ev.* FROM email_varsler ev
+      JOIN kunder k ON ev.kunde_id = k.id
+      WHERE k.organization_id = ?
+      ORDER BY ev.opprettet DESC LIMIT ?
+    `).all(organizationId, limit) as EmailVarsel[];
+  }
+
+  async getEmailStats(organizationId: number): Promise<{ pending: number; sent: number; failed: number }> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Sikkerhet: Kun tell e-poster for denne organisasjonen
+    const stats = this.sqlite.prepare(`
+      SELECT
+        SUM(CASE WHEN ev.status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN ev.status = 'sent' THEN 1 ELSE 0 END) as sent,
+        SUM(CASE WHEN ev.status = 'failed' THEN 1 ELSE 0 END) as failed
+      FROM email_varsler ev
+      JOIN kunder k ON ev.kunde_id = k.id
+      WHERE k.organization_id = ?
+    `).get(organizationId) as { pending: number | null; sent: number | null; failed: number | null } | undefined;
+
+    return {
+      pending: stats?.pending || 0,
+      sent: stats?.sent || 0,
+      failed: stats?.failed || 0,
+    };
+  }
+
+  async getUpcomingEmails(organizationId: number, daysAhead: number): Promise<(Kunde & { dager_til_kontroll: number })[]> {
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Sikkerhet: Kun hent kunder for denne organisasjonen
+    return this.sqlite.prepare(`
+      SELECT k.*,
+        CAST(julianday(COALESCE(k.neste_el_kontroll, k.neste_brann_kontroll, k.neste_kontroll)) - julianday('now') AS INTEGER) as dager_til_kontroll
+      FROM kunder k
+      WHERE k.organization_id = ?
+        AND k.epost IS NOT NULL
+        AND k.epost != ''
+        AND (
+          (k.neste_el_kontroll IS NOT NULL AND k.neste_el_kontroll <= date('now', '+' || ? || ' days'))
+          OR (k.neste_brann_kontroll IS NOT NULL AND k.neste_brann_kontroll <= date('now', '+' || ? || ' days'))
+          OR (k.neste_kontroll IS NOT NULL AND k.neste_kontroll <= date('now', '+' || ? || ' days'))
+        )
+      ORDER BY dager_til_kontroll ASC
+    `).all(organizationId, daysAhead, daysAhead, daysAhead) as (Kunde & { dager_til_kontroll: number })[];
+  }
+}
+
+// Singleton instance
+let instance: DatabaseService | null = null;
+
+export async function getDatabase(): Promise<DatabaseService> {
+  if (!instance) {
+    instance = new DatabaseService();
+    await instance.init();
+  }
+  return instance;
+}
+
+export default DatabaseService;

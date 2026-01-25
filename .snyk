@@ -1,0 +1,54 @@
+# Snyk (https://snyk.io) policy file, patches or ignores known vulnerabilities.
+version: v1.25.1
+# ignores vulnerabilities until expiry date; change duration by modifying expiry date
+ignore:
+  SNYK-CODE-0000:
+    - '*':
+        reason: 'Email templates use plain text, not HTML rendered in browser'
+        expires: 2027-01-01T00:00:00.000Z
+  7fcc5aea-2add-4d06-ab02-e8c71dac0aef:
+    - '*':
+        reason: 'False positive - email is plain text, not HTML'
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:52:54.690Z
+  ae911576-926b-48be-95c5-c2775d91f56a:
+    - '*':
+        reason: False positive - email is plain text
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:10.523Z
+  7ab68c92-8785-4135-a032-0bcdac78fc65:
+    - '*':
+        reason: False positive - email is plain text
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:13.211Z
+  7aa1def5-b93f-4aeb-8ca2-7bbce781237e:
+    - '*':
+        reason: False positive - email is plain text
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:16.084Z
+  56aff10d-8ae7-4d6a-aaa6-987c7673685b:
+    - '*':
+        reason: False positive - email is plain text
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:18.931Z
+  a7d4dd0a-56c8-427d-b9ec-016ecb2c49c8:
+    - '*':
+        reason: Dev fallback only - production uses env variable
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:35.043Z
+  cd94430e-ecd1-449b-bc96-93543bcc41de:
+    - '*':
+        reason: Admin setup script - not production code
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:37.609Z
+  8ac6fc8a-b67c-42c8-b3c1-49745c7bd5ed:
+    - '*':
+        reason: Local dev server - production uses HTTPS via Vercel
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:40.379Z
+  1726bcf0-144a-4ee1-9464-2dbb6f0c0fe6:
+    - '*':
+        reason: Security test file - not production code
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-01-03T12:53:43.162Z
+patch: {}
