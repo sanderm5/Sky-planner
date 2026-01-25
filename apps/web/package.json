@@ -15,6 +15,7 @@
   "dependencies": {
     "@astrojs/node": "^9.4.5",
     "@astrojs/tailwind": "^5.1.2",
+    "@astrojs/vercel": "^9.0.4",
     "@skyplanner/auth": "workspace:*",
     "@skyplanner/database": "workspace:*",
     "astro": "^5.16.3",
