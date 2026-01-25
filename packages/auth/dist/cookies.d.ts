@@ -14,8 +14,9 @@ export declare function getCookieConfig(isProduction: boolean, customDomain?: st
 /**
  * Gets refresh token cookie configuration
  * Longer expiration for remember-me functionality
+ * Uses 'lax' sameSite for cross-subdomain SSO compatibility
  */
-export declare function getRefreshCookieConfig(isProduction: boolean): CookieOptions;
+export declare function getRefreshCookieConfig(isProduction: boolean, customDomain?: string): CookieOptions;
 /**
  * Extracts token from cookie header string
  * Works with both Express (parsed cookies) and raw cookie header
@@ -27,6 +28,7 @@ export declare function extractTokenFromCookies(cookies: string | Record<string,
 export declare function buildSetCookieHeader(token: string, options: CookieOptions['options']): string;
 /**
  * Builds a Set-Cookie header to clear/logout
+ * Uses the same domain logic as other cookie functions
  */
 export declare function buildClearCookieHeader(isProduction: boolean): string;
 //# sourceMappingURL=cookies.d.ts.map

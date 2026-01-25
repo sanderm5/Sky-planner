@@ -78,9 +78,41 @@ export async function blacklistToken(
   }
 }
 
+// Retry configuration for database operations
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 100;
+
+/**
+ * Simple retry helper for database operations
+ */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < MAX_RETRIES) {
+        logger.warn(
+          { attempt, maxRetries: MAX_RETRIES, error: lastError.message },
+          `${operationName} failed, retrying...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 /**
  * Check if a token is blacklisted
  * First checks cache, then database if not found
+ * Includes retry logic for transient database failures
  * @param tokenId - The JWT ID (jti) or hash to check
  * @returns true if the token is blacklisted
  */
@@ -95,10 +127,12 @@ export async function isTokenBlacklisted(tokenId: string): Promise<boolean> {
     return true;
   }
 
-  // Check database (slow path, but catches tokens from before restart)
+  // Check database with retry (slow path, but catches tokens from before restart)
   try {
-    const db = await getDatabase();
-    const inDb = await db.isTokenInBlacklist(tokenId);
+    const inDb = await withRetry(async () => {
+      const db = await getDatabase();
+      return db.isTokenInBlacklist(tokenId);
+    }, 'Token blacklist check');
 
     if (inDb) {
       // Add to cache for future fast lookups
@@ -110,10 +144,10 @@ export async function isTokenBlacklisted(tokenId: string): Promise<boolean> {
 
     return inDb;
   } catch (error) {
-    logger.error({ error, tokenId }, 'Failed to check database blacklist');
-    // If database check fails, return false (allow the token)
-    // This is a trade-off: we prioritize availability over security in edge cases
-    return false;
+    logger.error({ error, tokenId }, 'Failed to check database blacklist after retries');
+    // SECURITY: Fail-closed - deny token if we can't verify blacklist status
+    // This prioritizes security over availability
+    return true;
   }
 }
 

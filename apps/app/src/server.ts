@@ -102,6 +102,12 @@ app.use(
         workerSrc: ["'self'", 'blob:'],
       },
     },
+    // HSTS: Enforce HTTPS for 1 year, include subdomains, preload-ready
+    hsts: {
+      maxAge: 31536000, // 1 year in seconds
+      includeSubDomains: true,
+      preload: true,
+    },
   })
 );
 

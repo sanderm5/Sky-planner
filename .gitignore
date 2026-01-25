@@ -90,3 +90,5 @@ apps/web/dist/
 
 # Next.js build cache (legacy)
 .next/
+.vercel
+.env*.local

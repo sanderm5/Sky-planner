@@ -5,13 +5,34 @@
 export const AUTH_COOKIE_NAME = 'skyplanner_session';
 export const REFRESH_COOKIE_NAME = 'skyplanner_refresh';
 /**
+ * Gets the cookie domain based on environment
+ *
+ * Behavior:
+ * - If COOKIE_DOMAIN env var is set: Use that value (for cross-subdomain SSO)
+ * - If COOKIE_DOMAIN is not set: Return undefined (browser uses current domain)
+ * - In development: Use 'localhost'
+ *
+ * This allows the app to work on any domain (Railway, custom, etc.)
+ * Set COOKIE_DOMAIN=.skyplanner.no when you have your domain configured
+ */
+function getCookieDomain(isProduction, customDomain) {
+    if (customDomain)
+        return customDomain;
+    // Check for environment variable (supports cross-subdomain SSO when set)
+    const envDomain = typeof process === 'object' && process.env ? process.env.COOKIE_DOMAIN : undefined;
+    if (envDomain)
+        return envDomain;
+    // In development, use localhost. In production without COOKIE_DOMAIN, return undefined
+    // (browser will use the current domain automatically)
+    return isProduction ? undefined : 'localhost';
+}
+/**
  * Gets cookie configuration for the current environment
  * In production, cookies are set on .skyplanner.no to enable SSO
  * In development, cookies are set on localhost
  */
 export function getCookieConfig(isProduction, customDomain) {
-    // Don't set domain for Vercel deployments - let browser use current domain
-    const domain = customDomain || (isProduction ? undefined : 'localhost');
+    const domain = getCookieDomain(isProduction, customDomain);
     return {
         name: AUTH_COOKIE_NAME,
         options: {
@@ -27,16 +48,18 @@ export function getCookieConfig(isProduction, customDomain) {
 /**
  * Gets refresh token cookie configuration
  * Longer expiration for remember-me functionality
+ * Uses 'lax' sameSite for cross-subdomain SSO compatibility
  */
-export function getRefreshCookieConfig(isProduction) {
+export function getRefreshCookieConfig(isProduction, customDomain) {
+    const domain = getCookieDomain(isProduction, customDomain);
     return {
         name: REFRESH_COOKIE_NAME,
         options: {
-            domain: isProduction ? '.skyplanner.no' : 'localhost',
+            domain,
             path: '/',
             httpOnly: true,
             secure: isProduction,
-            sameSite: 'strict',
+            sameSite: 'lax', // Must be 'lax' for cross-subdomain SSO to work
             maxAge: 60 * 60 * 24 * 90, // 90 days
         },
     };
@@ -74,9 +97,11 @@ export function buildSetCookieHeader(token, options) {
 }
 /**
  * Builds a Set-Cookie header to clear/logout
+ * Uses the same domain logic as other cookie functions
  */
 export function buildClearCookieHeader(isProduction) {
-    const domain = isProduction ? '.skyplanner.no' : 'localhost';
-    return `${AUTH_COOKIE_NAME}=; Path=/; Domain=${domain}; Max-Age=0`;
+    const domain = getCookieDomain(isProduction);
+    const domainPart = domain ? `Domain=${domain}; ` : '';
+    return `${AUTH_COOKIE_NAME}=; Path=/; ${domainPart}Max-Age=0`;
 }
 //# sourceMappingURL=cookies.js.map
