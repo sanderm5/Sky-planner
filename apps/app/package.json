@@ -6,9 +6,9 @@
   "description": "Sky Planner applikasjon - Backend og frontend",
   "main": "dist/server.js",
   "scripts": {
-    "start": "tsx dist/server.js",
+    "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc && npm run build:frontend",
+    "build": "tsup && npm run build:frontend",
     "build:frontend": "npm run minify:js && npm run minify:css",
     "minify:js": "terser public/app.js -c -m -o public/app.min.js",
     "minify:css": "cleancss -o public/style.min.css public/style.css",
@@ -22,7 +22,6 @@
     "@skyplanner/auth": "workspace:*",
     "@skyplanner/database": "workspace:*",
     "@supabase/supabase-js": "^2.89.0",
-    "tsx": "^4.21.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -35,6 +34,7 @@
     "nodemailer": "^7.0.11",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
+    "tsx": "^4.21.0",
     "uuid": "^9.0.0",
     "xlsx": "^0.18.5"
   },
@@ -56,6 +56,7 @@
     "clean-css-cli": "^5.6.3",
     "eslint": "^8.57.0",
     "terser": "^5.44.1",
+    "tsup": "^8.5.1",
     "typescript": "^5.3.3",
     "vitest": "^1.2.0"
   }
