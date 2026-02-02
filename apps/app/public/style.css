@@ -312,7 +312,7 @@ a:hover {
 }
 
 .content-panel.closed {
-  display: none;
+  display: none !important;
 }
 
 /* Animation states for login/logout */
@@ -334,6 +334,9 @@ a:hover {
   background: var(--color-bg-tertiary);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 10;
 }
 
 .content-panel-header .panel-title {
@@ -782,7 +785,10 @@ a:hover {
   height: 100% !important;
   min-height: 0 !important;
   overflow-y: auto !important;
-  display: block !important;
+}
+
+#tab-planner:not(.active) {
+  display: none !important;
 }
 
 /* Disse fanene trenger fast høyde for å kunne scrolle */
