@@ -602,9 +602,21 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-  <link rel="stylesheet" href="style.css?v=20260124-ui-redesign" />
+  <link rel="stylesheet" href="style.css?v=20260202-area" />
 </head>
 <body>
+  <!-- ========== IMPERSONATION BANNER (super-admin only) ========== -->
+  <div id="impersonationBanner" class="impersonation-banner" style="display: none;">
+    <div class="impersonation-content">
+      <i class="fas fa-user-secret"></i>
+      <span>Du ser appen som: <strong id="impersonatingOrgName"></strong></span>
+    </div>
+    <button class="impersonation-exit" onclick="stopImpersonation()">
+      <i class="fas fa-arrow-left"></i>
+      Tilbake til Admin
+    </button>
+  </div>
+
   <!-- ========== SINGLE MAP (used for both login and app) ========== -->
   <div id="sharedMapContainer">
     <div id="map"></div>
@@ -654,15 +666,6 @@
             <span>Logg inn</span>
           </button>
         </form>
-
-        <div class="login-back-link" id="loginBackLinkContainer">
-          <a href="#" id="backToWebsiteLink">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-            </svg>
-            Tilbake til nettside
-          </a>
-        </div>
 
         <div class="login-footer">
           <p id="loginFooterCopyright"></p>
@@ -729,10 +732,6 @@
           <button class="settings-btn" id="settingsBtn" title="Innstillinger">
             <i class="fas fa-cog"></i>
           </button>
-          <button class="web-link-btn" id="webLinkBtn" title="Gå til dashboard" style="display: none;">
-            <i class="fas fa-arrow-left"></i>
-            <span>Dashboard</span>
-          </button>
           <button class="logout-btn" id="logoutBtnMain" title="Logg ut">
             <i class="fas fa-sign-out-alt"></i>
           </button>
@@ -773,8 +772,8 @@
           <span>Kalender</span>
         </button>
         <button class="tab-item" data-tab="planner">
-          <i class="fas fa-list-check"></i>
-          <span>Planlegger</span>
+          <i class="fas fa-route"></i>
+          <span>Ruteplanlegger</span>
         </button>
         <button class="tab-item" data-tab="statistikk">
           <i class="fas fa-chart-line"></i>
@@ -820,7 +819,7 @@
     <div class="content-panel-overlay" id="contentPanelOverlay"></div>
 
     <!-- Content Panel - vises til høyre for menyen -->
-    <div class="content-panel" id="contentPanel">
+    <div class="content-panel" id="contentPanel" style="display: flex; flex-direction: column; height: 100vh;">
       <div class="content-panel-header">
         <span class="panel-title" id="panelTitle">Dashboard</span>
         <button class="content-panel-close" id="contentPanelClose" title="Lukk panel">
@@ -828,7 +827,7 @@
         </button>
       </div>
       <!-- Tab Content Container -->
-      <div class="tab-content">
+      <div class="tab-content" style="flex: 1; overflow-y: auto; min-height: 0;">
         <!-- Tab: Dashboard -->
         <div class="tab-pane active" id="tab-dashboard">
           <div class="dashboard-container">
@@ -907,6 +906,7 @@
                 <!-- Filled dynamically -->
               </div>
             </div>
+
           </div>
         </div>
 
@@ -1050,14 +1050,48 @@
           </div>
         </div>
 
-        <!-- Tab: Planner -->
+        <!-- Tab: Planner / Ruteplanlegger -->
         <div class="tab-pane" id="tab-planner">
           <div class="tab-header">
-            <h2>Planlegger</h2>
+            <h2><i class="fas fa-route"></i> Ruteplanlegger</h2>
+            <p class="tab-description">Finn effektive ruteklynger basert på geografisk nærhet og kontrollbehov</p>
           </div>
 
           <div id="plannerContainer" class="planner-container">
-            <!-- Planlegger lastes her -->
+            <!-- Innstillinger panel -->
+            <div class="planner-settings-panel">
+              <h3><i class="fas fa-sliders-h"></i> Innstillinger</h3>
+
+              <div class="setting-row">
+                <label for="smartDaysAhead">Dager fremover</label>
+                <input type="range" id="smartDaysAhead" min="7" max="180" value="60" oninput="document.getElementById('smartDaysAheadValue').textContent = this.value + ' dager'">
+                <span class="setting-value" id="smartDaysAheadValue">60 dager</span>
+              </div>
+
+              <div class="setting-row">
+                <label for="smartMaxCustomers">Maks kunder</label>
+                <input type="range" id="smartMaxCustomers" min="3" max="30" value="15" oninput="document.getElementById('smartMaxCustomersValue').textContent = this.value + ' kunder'">
+                <span class="setting-value" id="smartMaxCustomersValue">15 kunder</span>
+              </div>
+
+              <div class="setting-row">
+                <label for="smartClusterRadius">Klyngeradius</label>
+                <input type="range" id="smartClusterRadius" min="1" max="20" value="5" oninput="document.getElementById('smartClusterRadiusValue').textContent = this.value + ' km'">
+                <span class="setting-value" id="smartClusterRadiusValue">5 km</span>
+              </div>
+
+              <button class="btn btn-primary" onclick="renderSmartRecommendations()">
+                <i class="fas fa-sync-alt"></i> Oppdater anbefalinger
+              </button>
+            </div>
+
+            <!-- Anbefalinger grid -->
+            <div class="planner-recommendations">
+              <h3><i class="fas fa-lightbulb"></i> Anbefalte ruteklynger</h3>
+              <div id="smartRecommendations" class="recommendations-grid">
+                <!-- Fylles dynamisk av SmartRouteEngine -->
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1339,6 +1373,161 @@
               </button>
             </div>
           </div>
+
+          <!-- Super Admin Section (kun synlig for super-admins) -->
+          <div class="admin-section super-admin-section" id="superAdminSection" style="display: none;">
+            <div class="super-admin-banner">
+              <i class="fas fa-crown"></i>
+              <span>Super Admin - Tilgang til alle organisasjoner</span>
+            </div>
+
+            <!-- Global Statistics -->
+            <div class="admin-subsection">
+              <h3><i class="fas fa-chart-bar"></i> Global statistikk</h3>
+              <div class="admin-stats" id="globalStats">
+                <div class="admin-stat-card">
+                  <div class="stat-icon"><i class="fas fa-building"></i></div>
+                  <div class="stat-content">
+                    <span class="stat-value" id="statTotalOrgs">0</span>
+                    <span class="stat-label">Organisasjoner</span>
+                  </div>
+                </div>
+                <div class="admin-stat-card">
+                  <div class="stat-icon"><i class="fas fa-users"></i></div>
+                  <div class="stat-content">
+                    <span class="stat-value" id="statGlobalKunder">0</span>
+                    <span class="stat-label">Kunder totalt</span>
+                  </div>
+                </div>
+                <div class="admin-stat-card">
+                  <div class="stat-icon"><i class="fas fa-user-tie"></i></div>
+                  <div class="stat-content">
+                    <span class="stat-value" id="statGlobalBrukere">0</span>
+                    <span class="stat-label">Brukere totalt</span>
+                  </div>
+                </div>
+                <div class="admin-stat-card success">
+                  <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                  <div class="stat-content">
+                    <span class="stat-value" id="statActiveOrgs">0</span>
+                    <span class="stat-label">Aktive org.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Organization List -->
+            <div class="admin-subsection">
+              <h3><i class="fas fa-building"></i> Alle organisasjoner</h3>
+              <div class="org-search-container">
+                <input type="text" id="orgSearchInput" placeholder="Søk organisasjoner..." class="search-input">
+              </div>
+              <div class="org-list-container" id="orgListContainer">
+                <table class="org-table">
+                  <thead>
+                    <tr>
+                      <th>Navn</th>
+                      <th>Plan</th>
+                      <th>Status</th>
+                      <th>Kunder</th>
+                      <th>Brukere</th>
+                      <th>Opprettet</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="orgListBody">
+                    <!-- Fylles med JavaScript -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Selected Organization Details -->
+            <div class="admin-subsection" id="selectedOrgSection" style="display: none;">
+              <div class="section-header-with-actions">
+                <h3><i class="fas fa-building"></i> <span id="selectedOrgName">-</span></h3>
+                <div class="section-actions">
+                  <button class="btn btn-secondary btn-small" id="closeOrgDetailsBtn">
+                    <i class="fas fa-times"></i> Lukk
+                  </button>
+                </div>
+              </div>
+
+              <!-- Organization Info -->
+              <div class="org-info-grid" id="selectedOrgInfo">
+                <div class="org-info-item">
+                  <label>Slug:</label>
+                  <span id="orgInfoSlug">-</span>
+                </div>
+                <div class="org-info-item">
+                  <label>Plan:</label>
+                  <span id="orgInfoPlan">-</span>
+                </div>
+                <div class="org-info-item">
+                  <label>Abonnement:</label>
+                  <span id="orgInfoSubscription">-</span>
+                </div>
+                <div class="org-info-item">
+                  <label>Bransjemal:</label>
+                  <span id="orgInfoIndustry">-</span>
+                </div>
+              </div>
+
+              <!-- Organization Tabs -->
+              <div class="org-detail-tabs">
+                <button class="org-tab-btn active" data-tab="customers">
+                  <i class="fas fa-users"></i> Kunder (<span id="orgCustomerCount">0</span>)
+                </button>
+                <button class="org-tab-btn" data-tab="users">
+                  <i class="fas fa-user-tie"></i> Brukere (<span id="orgUserCount">0</span>)
+                </button>
+              </div>
+
+              <!-- Customers Tab -->
+              <div class="org-tab-content" id="orgCustomersTab">
+                <div class="org-tab-actions">
+                  <button class="btn btn-primary btn-small" id="addOrgCustomerBtn">
+                    <i class="fas fa-plus"></i> Ny kunde
+                  </button>
+                </div>
+                <div class="org-customers-list" id="orgCustomersList">
+                  <table class="org-table">
+                    <thead>
+                      <tr>
+                        <th>Navn</th>
+                        <th>Adresse</th>
+                        <th>Telefon</th>
+                        <th>E-post</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="orgCustomersBody">
+                      <!-- Fylles med JavaScript -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Users Tab -->
+              <div class="org-tab-content" id="orgUsersTab" style="display: none;">
+                <div class="org-users-list" id="orgUsersList">
+                  <table class="org-table">
+                    <thead>
+                      <tr>
+                        <th>Navn</th>
+                        <th>E-post</th>
+                        <th>Sist innlogget</th>
+                        <th>Opprettet</th>
+                      </tr>
+                    </thead>
+                    <tbody id="orgUsersBody">
+                      <!-- Fylles med JavaScript -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1392,6 +1581,17 @@
               </div>
             </div>
 
+            <!-- Kundetype Filter (Landbruk, Næring, Bolig, etc.) -->
+            <div class="category-filter" id="elTypeFilter">
+              <div class="category-filter-title clickable-header" id="elTypeFilterToggle">
+                <span>Kundetype</span>
+                <i class="fas fa-chevron-right toggle-icon"></i>
+              </div>
+              <div class="category-filter-buttons eltype-filter-buttons" id="elTypeFilterButtons" style="display: none;">
+                <!-- Populated dynamically by renderElTypeFilter() -->
+              </div>
+            </div>
+
             <!-- Driftskategori Filter (Dynamic, Collapsible) -->
             <div class="category-filter" id="driftskategoriFilter">
               <div class="category-filter-title clickable-header" id="driftFilterToggle">
@@ -1400,6 +1600,17 @@
               </div>
               <div class="category-filter-buttons drift-filter-buttons" id="driftFilterButtons" style="display: none;">
                 <!-- Populated dynamically by renderDriftskategoriFilter() -->
+              </div>
+            </div>
+
+            <!-- Brannsystem Filter (Dynamic, Collapsible) -->
+            <div class="category-filter" id="brannsystemFilter">
+              <div class="category-filter-title clickable-header" id="brannsystemFilterToggle">
+                <span>Brannsystem</span>
+                <i class="fas fa-chevron-right toggle-icon"></i>
+              </div>
+              <div class="category-filter-buttons brannsystem-filter-buttons" id="brannsystemFilterButtons" style="display: none;">
+                <!-- Populated dynamically by renderBrannsystemFilter() -->
               </div>
             </div>
 
@@ -1956,10 +2167,7 @@
       </div>
 
       <div class="settings-tabs">
-        <button class="settings-tab active" data-settings-tab="bransje">
-          <i class="fas fa-briefcase"></i> Bransje
-        </button>
-        <button class="settings-tab" data-settings-tab="visning">
+        <button class="settings-tab active" data-settings-tab="visning">
           <i class="fas fa-eye"></i> Visning
         </button>
         <button class="settings-tab" data-settings-tab="kart">
@@ -1971,21 +2179,8 @@
       </div>
 
       <div class="settings-content">
-        <!-- Bransje Tab -->
-        <div class="settings-pane active" id="settings-bransje">
-          <h3>Velg bransje</h3>
-          <p class="settings-description">Bransjen bestemmer hvilke tjenester og kategorier som er tilgjengelige i systemet.</p>
-          <div class="industry-select-grid" id="industrySelectGrid">
-            <!-- Fylles dynamisk fra API -->
-          </div>
-          <div class="current-industry" id="currentIndustryInfo">
-            <i class="fas fa-info-circle"></i>
-            <span>Gjeldende bransje: <strong id="currentIndustryName">Laster...</strong></span>
-          </div>
-        </div>
-
         <!-- Visning Tab -->
-        <div class="settings-pane" id="settings-visning">
+        <div class="settings-pane active" id="settings-visning">
           <h3>Visningsinnstillinger</h3>
 
           <div class="form-group">
@@ -2063,208 +2258,19 @@
           </div>
         </div>
 
-        <!-- Import Tab - Enhanced Wizard -->
+        <!-- Import Tab - Deaktivert -->
         <div class="settings-pane" id="settings-import">
-          <h3>Importer kunder fra Excel/CSV</h3>
-
-          <!-- Step Indicator -->
-          <div class="import-steps-indicator">
-            <div class="step-item active" data-step="1">
-              <span class="step-number">1</span>
-              <span class="step-label">Last opp</span>
-            </div>
-            <div class="step-item" data-step="2">
-              <span class="step-number">2</span>
-              <span class="step-label">Kolonner</span>
-            </div>
-            <div class="step-item" data-step="3">
-              <span class="step-number">3</span>
-              <span class="step-label">Forhåndsvis</span>
-            </div>
-            <div class="step-item" data-step="4">
-              <span class="step-number">4</span>
-              <span class="step-label">Ferdig</span>
-            </div>
-          </div>
-
-          <!-- Step 1: File Upload -->
-          <div class="import-step" id="importStep1">
-            <p class="settings-description">Last opp en Excel- eller CSV-fil for å importere kunder.</p>
-            <div class="import-dropzone" id="importDropzone">
-              <i class="fas fa-cloud-upload-alt"></i>
-              <p>Dra og slipp fil her, eller klikk for å velge</p>
-              <span class="import-formats">Støttede formater: .xlsx, .xls, .csv (maks 10MB)</span>
-              <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" hidden>
-            </div>
-          </div>
-
-          <!-- Step 2: Column Mapping -->
-          <div class="import-step hidden" id="importStep2">
-            <h4><i class="fas fa-columns"></i> Kolonnemapping</h4>
-            <p class="settings-description">Match Excel-kolonner til database-felt. Systemet har automatisk gjenkjent noen kolonner.</p>
-
-            <div class="column-mapping-container" id="columnMappingContainer">
-              <!-- Populated dynamically -->
-            </div>
-
-            <div class="import-actions">
-              <button type="button" class="btn btn-secondary" id="backToStep1Btn">
-                <i class="fas fa-arrow-left"></i> Tilbake
-              </button>
-              <button type="button" class="btn btn-primary" id="proceedToStep3Btn">
-                Fortsett <i class="fas fa-arrow-right"></i>
-              </button>
-            </div>
-          </div>
-
-          <!-- Step 3: Preview & Category Mapping -->
-          <div class="import-step hidden" id="importStep3">
-            <h4><i class="fas fa-search"></i> Forhåndsvisning</h4>
-
-            <!-- Summary Cards -->
-            <div class="import-summary">
-              <div class="summary-card new">
-                <i class="fas fa-plus-circle"></i>
-                <span class="count" id="newCount">0</span>
-                <span class="label">Nye kunder</span>
-              </div>
-              <div class="summary-card update">
-                <i class="fas fa-sync-alt"></i>
-                <span class="count" id="updateCount">0</span>
-                <span class="label">Oppdateres</span>
-              </div>
-              <div class="summary-card warning">
-                <i class="fas fa-exclamation-triangle"></i>
-                <span class="count" id="warningCount">0</span>
-                <span class="label">Advarsler</span>
-              </div>
-              <div class="summary-card error">
-                <i class="fas fa-times-circle"></i>
-                <span class="count" id="errorCount">0</span>
-                <span class="label">Feil (hoppes over)</span>
-              </div>
-            </div>
-
-            <!-- Unknown Categories -->
-            <div class="category-mapping hidden" id="categoryMappingSection">
-              <h5><i class="fas fa-tags"></i> Ukjente kategorier funnet</h5>
-              <p class="settings-description">Velg riktig kategori for disse verdiene:</p>
-              <div class="category-mapping-list" id="categoryMappingList">
-                <!-- Populated dynamically -->
-              </div>
-            </div>
-
-            <!-- Dynamic Schema Suggestions -->
-            <div class="dynamic-schema-section hidden" id="dynamicSchemaSection">
-              <h5><i class="fas fa-magic"></i> Nye kategorier og felt oppdaget</h5>
-              <p class="settings-description">Excel-filen inneholder data som kan brukes til å utvide systemet:</p>
-
-              <!-- New Categories -->
-              <div class="schema-subsection hidden" id="newCategoriesSection">
-                <h6><i class="fas fa-folder-plus"></i> Nye kategorier</h6>
-                <div class="schema-items-list" id="newCategoriesList">
-                  <!-- Populated dynamically -->
-                </div>
-              </div>
-
-              <!-- New Fields -->
-              <div class="schema-subsection hidden" id="newFieldsSection">
-                <h6><i class="fas fa-plus-square"></i> Nye felt</h6>
-                <div class="schema-items-list" id="newFieldsList">
-                  <!-- Populated dynamically -->
-                </div>
-              </div>
-
-              <!-- New Field Values -->
-              <div class="schema-subsection hidden" id="newFieldValuesSection">
-                <h6><i class="fas fa-list-ul"></i> Nye verdier for eksisterende felt</h6>
-                <div class="schema-items-list" id="newFieldValuesList">
-                  <!-- Populated dynamically -->
-                </div>
-              </div>
-            </div>
-
-            <!-- Preview Table -->
-            <div class="preview-table-wrapper">
-              <table class="preview-table" id="previewTable">
-                <thead id="previewTableHead"></thead>
-                <tbody id="previewTableBody"></tbody>
-              </table>
-            </div>
-
-            <!-- Pagination -->
-            <div class="preview-pagination" id="previewPagination">
-              <button type="button" class="btn btn-sm" id="prevPageBtn" disabled>
-                <i class="fas fa-chevron-left"></i>
-              </button>
-              <span id="pageInfo">Side 1 av 1</span>
-              <button type="button" class="btn btn-sm" id="nextPageBtn" disabled>
-                <i class="fas fa-chevron-right"></i>
-              </button>
-            </div>
-
-            <!-- Geocoding Option -->
-            <div class="import-option">
-              <label class="checkbox-label">
-                <input type="checkbox" id="geocodeAfterImport" checked>
-                <span>Geokod adresser etter import (for kartvisning)</span>
-              </label>
-            </div>
-
-            <div class="import-actions">
-              <button type="button" class="btn btn-secondary" id="backToStep2Btn">
-                <i class="fas fa-arrow-left"></i> Tilbake
-              </button>
-              <button type="button" class="btn btn-primary" id="startImportBtn">
-                <i class="fas fa-file-import"></i> Importer <span id="importCountLabel">0</span> kunder
-              </button>
-            </div>
-          </div>
-
-          <!-- Step 4: Progress & Result -->
-          <div class="import-step hidden" id="importStep4">
-            <!-- Progress (shown during import) -->
-            <div class="import-progress" id="importProgress">
-              <h4><i class="fas fa-spinner fa-spin"></i> Importerer...</h4>
-              <div class="progress-bar">
-                <div class="progress-fill" id="importProgressFill"></div>
-              </div>
-              <p class="progress-text" id="importProgressText">Forbereder import...</p>
-            </div>
-
-            <!-- Result (shown after import) -->
-            <div class="import-result hidden" id="importResult">
-              <div class="result-icon" id="resultIcon">
-                <i class="fas fa-check-circle"></i>
-              </div>
-              <h4 id="importResultTitle">Import fullført!</h4>
-
-              <div class="result-stats">
-                <div class="result-stat">
-                  <span class="stat-value" id="resultCreated">0</span>
-                  <span class="stat-label">Nye kunder</span>
-                </div>
-                <div class="result-stat">
-                  <span class="stat-value" id="resultUpdated">0</span>
-                  <span class="stat-label">Oppdatert</span>
-                </div>
-                <div class="result-stat">
-                  <span class="stat-value" id="resultSkipped">0</span>
-                  <span class="stat-label">Hoppet over</span>
-                </div>
-              </div>
-
-              <div class="result-errors hidden" id="resultErrors">
-                <h5><i class="fas fa-exclamation-triangle"></i> Feil under import</h5>
-                <ul id="errorList"></ul>
-              </div>
-
-              <div class="result-note" id="resultNote"></div>
-
-              <button type="button" class="btn btn-primary" id="closeImportResultBtn">
-                <i class="fas fa-check"></i> Ferdig
-              </button>
-            </div>
+          <h3>Importer kundedata</h3>
+          <div class="import-disabled-notice" style="text-align: center; padding: 40px 20px;">
+            <i class="fas fa-file-excel" style="font-size: 48px; color: var(--text-tertiary); margin-bottom: 20px;"></i>
+            <h4>Import er deaktivert</h4>
+            <p class="settings-description" style="max-width: 400px; margin: 16px auto;">
+              For import av kundedata fra Excel eller andre systemer, vennligst send filen til oss
+              så legger vi inn dataene for deg.
+            </p>
+            <p style="color: var(--text-secondary); margin-top: 16px;">
+              <i class="fas fa-envelope"></i> support@efffekt.no
+            </p>
           </div>
         </div>
       </div>
@@ -2302,7 +2308,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-  <script src="app.js?v=20260124-fix2"></script>
+  <script src="app.js?v=20260202-area"></script>
 </body>
 </html>
 <!-- redeploy Sat Dec 27 17:54:50 CET 2025 -->

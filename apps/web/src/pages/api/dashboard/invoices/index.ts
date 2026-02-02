@@ -14,7 +14,7 @@ export const GET: APIRoute = async ({ request }) => {
   }
 
   const stripe = new Stripe(STRIPE_SECRET_KEY, {
-    apiVersion: '2023-10-16',
+    apiVersion: '2024-12-18.acacia' as Stripe.LatestApiVersion,
   });
 
   const authResult = await requireApiAuth(request);

@@ -73,9 +73,14 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    // Check email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(epost)) {
+    // Check email format (robust validation)
+    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+    const isValidEmail = emailRegex.test(epost) &&
+      epost.length <= 254 &&
+      epost.split('@')[0].length <= 64 &&
+      (epost.split('@')[1]?.split('.').pop()?.length ?? 0) >= 2;
+
+    if (!isValidEmail) {
       return new Response(
         JSON.stringify({ error: 'Ugyldig e-postformat' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }

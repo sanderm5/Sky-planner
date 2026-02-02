@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f0f0f">
+  <title>Efffekt Admin Panel | Sky Planner</title>
+  <link rel="icon" type="image/svg+xml" href="/skyplanner-logo.svg">
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <!-- Loading state -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <p>Laster admin panel...</p>
+  </div>
+
+  <!-- Main admin layout -->
+  <div id="adminApp" class="admin-app" style="display: none;">
+    <!-- Header -->
+    <header class="admin-header">
+      <div class="header-left">
+        <img src="/skyplanner-logo.svg" alt="Sky Planner" class="header-logo">
+        <div class="header-title">
+          <h1>Efffekt Admin</h1>
+          <span class="header-subtitle">Super Admin Panel</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <span class="admin-user" id="adminUserName"></span>
+        <button class="btn-logout" id="logoutBtn">
+          <i class="fas fa-sign-out-alt"></i>
+          Logg ut
+        </button>
+      </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="admin-main">
+      <!-- Stats cards -->
+      <section class="stats-section">
+        <div class="stat-card">
+          <div class="stat-icon"><i class="fas fa-building"></i></div>
+          <div class="stat-content">
+            <span class="stat-value" id="statTotalOrgs">-</span>
+            <span class="stat-label">Bedrifter</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="fas fa-users"></i></div>
+          <div class="stat-content">
+            <span class="stat-value" id="statTotalCustomers">-</span>
+            <span class="stat-label">Kunder totalt</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="fas fa-credit-card"></i></div>
+          <div class="stat-content">
+            <span class="stat-value" id="statActiveSubscriptions">-</span>
+            <span class="stat-label">Aktive abonnement</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="fas fa-user-plus"></i></div>
+          <div class="stat-content">
+            <span class="stat-value" id="statTotalUsers">-</span>
+            <span class="stat-label">Brukere totalt</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Organizations section -->
+      <section class="orgs-section">
+        <div class="section-header">
+          <h2><i class="fas fa-building"></i> Alle bedrifter</h2>
+          <div class="section-actions">
+            <div class="search-box">
+              <i class="fas fa-search"></i>
+              <input type="search" id="orgSearchInput" placeholder="Sok etter bedrift...">
+            </div>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table class="admin-table" id="orgsTable">
+            <thead>
+              <tr>
+                <th>Bedrift</th>
+                <th>Kunder</th>
+                <th>Brukere</th>
+                <th>Plan</th>
+                <th>Status</th>
+                <th>Opprettet</th>
+                <th>Handlinger</th>
+              </tr>
+            </thead>
+            <tbody id="orgsTableBody">
+              <tr class="loading-row">
+                <td colspan="7">
+                  <div class="loading-spinner small"></div>
+                  <span>Laster bedrifter...</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- Organization details slide-out panel -->
+    <aside class="org-panel" id="orgPanel">
+      <div class="org-panel-header">
+        <h3 id="orgPanelTitle">Bedriftsdetaljer</h3>
+        <button class="btn-close" id="closePanelBtn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <div class="org-panel-content">
+        <!-- Organization info -->
+        <div class="org-info-section">
+          <div class="info-grid" id="orgInfoGrid">
+            <!-- Dynamically filled -->
+          </div>
+          <div class="org-actions">
+            <button class="btn-primary btn-impersonate" id="impersonateBtn">
+              <i class="fas fa-user-secret"></i>
+              Logg inn som denne bedriften
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="org-tabs">
+          <button class="tab-btn active" data-tab="customers">
+            <i class="fas fa-users"></i> Kunder
+          </button>
+          <button class="tab-btn" data-tab="users">
+            <i class="fas fa-user-cog"></i> Brukere
+          </button>
+        </div>
+
+        <!-- Customers tab -->
+        <div class="tab-content active" id="tab-customers">
+          <div class="tab-header">
+            <span id="customerCount">0 kunder</span>
+            <button class="btn-sm btn-add" id="addCustomerBtn">
+              <i class="fas fa-plus"></i> Legg til kunde
+            </button>
+          </div>
+          <div class="customers-list" id="customersList">
+            <!-- Dynamically filled -->
+          </div>
+        </div>
+
+        <!-- Users tab -->
+        <div class="tab-content" id="tab-users">
+          <div class="users-list" id="usersList">
+            <!-- Dynamically filled -->
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Add/Edit Customer Modal -->
+    <div class="modal" id="customerModal">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="customerModalTitle">Legg til kunde</h3>
+          <button class="btn-close" id="closeCustomerModal">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <form id="customerForm">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="kundeNavn">Navn *</label>
+              <input type="text" id="kundeNavn" name="navn" required>
+            </div>
+            <div class="form-group">
+              <label for="kundeAdresse">Adresse *</label>
+              <input type="text" id="kundeAdresse" name="adresse" required>
+            </div>
+            <div class="form-group">
+              <label for="kundePostnummer">Postnummer</label>
+              <input type="text" id="kundePostnummer" name="postnummer" maxlength="4">
+            </div>
+            <div class="form-group">
+              <label for="kundePoststed">Poststed</label>
+              <input type="text" id="kundePoststed" name="poststed">
+            </div>
+            <div class="form-group">
+              <label for="kundeTelefon">Telefon</label>
+              <input type="tel" id="kundeTelefon" name="telefon">
+            </div>
+            <div class="form-group">
+              <label for="kundeEpost">E-post</label>
+              <input type="email" id="kundeEpost" name="epost">
+            </div>
+            <div class="form-group">
+              <label for="kundeKontaktperson">Kontaktperson</label>
+              <input type="text" id="kundeKontaktperson" name="kontaktperson">
+            </div>
+            <div class="form-group full-width">
+              <label for="kundeNotater">Notater</label>
+              <textarea id="kundeNotater" name="notater" rows="3"></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" id="cancelCustomerBtn">Avbryt</button>
+            <button type="submit" class="btn-primary" id="saveCustomerBtn">Lagre</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

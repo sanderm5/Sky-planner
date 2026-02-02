@@ -2,7 +2,7 @@
  * Klient (account owner) database operations
  * Used for authentication and registration
  */
-import type { Klient, InsertKlient, UpdateKlient } from './types';
+import type { Klient, InsertKlient, UpdateKlient, PasswordResetToken, InsertPasswordResetToken } from './types';
 /**
  * Creates a new klient (account owner)
  */
@@ -31,4 +31,24 @@ export declare function isEmailRegistered(epost: string): Promise<boolean>;
  * Gets all klienter for an organization
  */
 export declare function getKlienterByOrganization(organizationId: number): Promise<Klient[]>;
+/**
+ * Creates a password reset token
+ */
+export declare function createPasswordResetToken(data: InsertPasswordResetToken): Promise<PasswordResetToken>;
+/**
+ * Gets a valid (not expired, not used) password reset token by hash
+ */
+export declare function getValidPasswordResetToken(tokenHash: string): Promise<PasswordResetToken | null>;
+/**
+ * Marks a password reset token as used
+ */
+export declare function markPasswordResetTokenUsed(tokenId: number): Promise<void>;
+/**
+ * Deletes expired password reset tokens (cleanup)
+ */
+export declare function deleteExpiredPasswordResetTokens(): Promise<number>;
+/**
+ * Gets the count of kunder (customers) for an organization
+ */
+export declare function getKundeCountByOrganization(organizationId: number): Promise<number>;
 //# sourceMappingURL=klienter.d.ts.map

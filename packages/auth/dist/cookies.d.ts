@@ -17,10 +17,6 @@ export declare function getCookieConfig(isProduction: boolean, customDomain?: st
  * Uses 'lax' sameSite for cross-subdomain SSO compatibility
  */
 export declare function getRefreshCookieConfig(isProduction: boolean, customDomain?: string): CookieOptions;
-/**
- * Extracts token from cookie header string
- * Works with both Express (parsed cookies) and raw cookie header
- */
 export declare function extractTokenFromCookies(cookies: string | Record<string, string>, cookieName?: string): string | null;
 /**
  * Builds a Set-Cookie header value for the auth token

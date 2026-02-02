@@ -4,8 +4,62 @@
 
 import type { ValidationError, CreateKundeRequest } from '../types/index.js';
 
-// Email regex pattern
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Email regex pattern - RFC 5322 compatible (simplified for practical use)
+// - Local part: letters, numbers, and common special chars
+// - Domain: letters, numbers, hyphens, with proper TLD (min 2 chars)
+const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+/**
+ * Validates email format using RFC 5322 compatible regex with additional checks
+ * Returns true if email is valid, false otherwise
+ */
+export function isValidEmail(email: string): boolean {
+  if (!email || typeof email !== 'string') {
+    return false;
+  }
+
+  // Basic regex check
+  if (!EMAIL_REGEX.test(email)) {
+    return false;
+  }
+
+  // Additional RFC constraints
+  if (email.length > 254) {
+    // Max email length per RFC
+    return false;
+  }
+
+  const atIndex = email.indexOf('@');
+  if (atIndex === -1) {
+    return false;
+  }
+
+  const localPart = email.substring(0, atIndex);
+  const domain = email.substring(atIndex + 1);
+
+  // Max local part length is 64 characters
+  if (localPart.length > 64) {
+    return false;
+  }
+
+  // Domain must have at least one dot and TLD must be at least 2 chars
+  const domainParts = domain.split('.');
+  if (domainParts.length < 2) {
+    return false;
+  }
+
+  const tld = domainParts.at(-1);
+  if (!tld || tld.length < 2) {
+    return false;
+  }
+
+  // No consecutive dots
+  if (email.includes('..')) {
+    return false;
+  }
+
+  return true;
+}
 
 // Date format YYYY-MM-DD
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -35,7 +89,7 @@ export function validateKunde(kunde: CreateKundeRequest): ValidationError[] | nu
   }
 
   // Optional field validation
-  if (kunde.epost && !EMAIL_REGEX.test(kunde.epost)) {
+  if (kunde.epost && !isValidEmail(kunde.epost)) {
     errors.push({
       field: 'epost',
       message: 'Ugyldig e-postformat',
@@ -126,7 +180,7 @@ export function validateLoginRequest(
 ): ValidationError[] | null {
   const errors: ValidationError[] = [];
 
-  if (!epost || !EMAIL_REGEX.test(epost)) {
+  if (!epost || !isValidEmail(epost)) {
     errors.push({
       field: 'epost',
       message: 'Ugyldig e-postformat',

@@ -13,8 +13,10 @@ let avtaler = [];
 let omrader = [];
 let currentFilter = 'alle';
 let showOnlyWarnings = false;
-let selectedCategory = 'all'; // 'all', 'El-Kontroll', 'Brannvarsling'
+let selectedCategory = 'all'; // 'all', 'El-Kontroll', 'Brannvarsling', 'El-Kontroll + Brannvarsling'
 let selectedDriftskategori = localStorage.getItem('selectedDriftskategori') || 'all'; // 'all', 'Storfe', 'Sau', 'Geit', 'Gris', 'Gartneri'
+let selectedBrannsystem = localStorage.getItem('selectedBrannsystem') || 'all'; // 'all', 'Elotec', 'ICAS', etc.
+let selectedElType = localStorage.getItem('selectedElType') || 'all'; // 'all', 'Landbruk', 'Næring', 'Bolig', etc.
 let currentCalendarMonth = new Date().getMonth();
 let currentCalendarYear = new Date().getFullYear();
 let bulkSelectedCustomers = new Set(); // For bulk "marker som ferdig" funksjon
@@ -25,6 +27,7 @@ let filterAbortController = null; // For å unngå race condition i applyFilters
 let organizationFields = [];
 let organizationCategories = [];
 let dynamicFieldFilters = {}; // { field_name: value or { min, max } or { from, to } }
+let teamMembersData = []; // Store team members for event delegation
 
 // SPA View State
 let currentView = 'login'; // 'login' or 'app'
@@ -38,6 +41,29 @@ let appConfig = {};
 
 // Authentication token
 let authToken = localStorage.getItem('authToken');
+
+// ========================================
+// TAB CLEANUP REGISTRY
+// Prevents memory leaks from accumulated event listeners
+// ========================================
+const tabCleanupFunctions = {
+  calendar: null,
+  overdue: null,
+  warnings: null,
+  planner: null,
+  customers: null,
+  statistikk: null,
+  missingdata: null,
+  admin: null
+};
+
+// Cleanup function runner
+function runTabCleanup(tabName) {
+  if (tabName && tabCleanupFunctions[tabName]) {
+    tabCleanupFunctions[tabName]();
+    tabCleanupFunctions[tabName] = null;
+  }
+}
 
 // ========================================
 // LOGGER UTILITY
@@ -621,6 +647,33 @@ class ServiceTypeRegistry {
       });
     }
 
+    // Fallback: Add default service types if none were loaded
+    if (this.serviceTypes.size === 0) {
+      this.serviceTypes.set('el-kontroll', {
+        id: 1,
+        name: 'El-Kontroll',
+        slug: 'el-kontroll',
+        icon: 'fa-bolt',
+        color: '#F59E0B',
+        defaultInterval: 12,
+        description: 'Elektrisk kontroll',
+        subtypes: [],
+        equipmentTypes: []
+      });
+      this.serviceTypes.set('brannvarsling', {
+        id: 2,
+        name: 'Brannvarsling',
+        slug: 'brannvarsling',
+        icon: 'fa-fire',
+        color: '#DC2626',
+        defaultInterval: 12,
+        description: 'Brannvarslingssystem',
+        subtypes: [],
+        equipmentTypes: []
+      });
+      Logger.log('Using default service types (El-Kontroll, Brannvarsling)');
+    }
+
     this.intervals = config.intervals || [];
     this.industryTemplate = config.industryTemplate || null;
     this.initialized = true;
@@ -774,16 +827,16 @@ class ServiceTypeRegistry {
 
     serviceTypes.forEach(st => {
       const isActive = activeCategory === st.slug || activeCategory === st.name;
-      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${st.slug}">
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${st.name}">
         ${this.getIcon(st)} ${st.name}
       </button>`;
     });
 
     // Add "Begge" tab for combined categories (backward compatibility)
-    if (serviceTypes.length === 2) {
-      const combinedSlug = serviceTypes.map(st => st.slug).join('-');
-      const isActive = activeCategory === combinedSlug || activeCategory === 'El-Kontroll + Brannvarsling';
-      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${combinedSlug}">
+    if (serviceTypes.length >= 2) {
+      const combinedName = serviceTypes.map(st => st.name).join(' + ');
+      const isActive = activeCategory === combinedName || activeCategory === 'El-Kontroll + Brannvarsling';
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${combinedName}">
         ${serviceTypes.map(st => this.getIcon(st)).join('')} Begge
       </button>`;
     }
@@ -807,7 +860,7 @@ class ServiceTypeRegistry {
     if (serviceTypes.length >= 2) {
       const combinedName = serviceTypes.map(st => st.name).join(' + ');
       const selected = selectedValue === combinedName ? 'selected' : '';
-      html += `<option value="${escapeHtml(combinedName)}" ${selected}>${escapeHtml(combinedName)}</option>`;
+      html += `<option value="${escapeHtml(combinedName)}" ${selected}>Begge (${escapeHtml(combinedName)})</option>`;
     }
 
     return html;
@@ -834,6 +887,26 @@ class ServiceTypeRegistry {
    */
   renderEquipmentOptions(serviceTypeSlug, selectedValue = '') {
     const st = this.getBySlug(serviceTypeSlug);
+
+    // Fallback for brannvarsling equipment types - grouped by brand
+    if (serviceTypeSlug === 'brannvarsling' && (!st || !st.equipmentTypes || st.equipmentTypes.length === 0)) {
+      const isSelected = (val) => selectedValue === val ? 'selected' : '';
+      let html = '<option value="">Ikke valgt</option>';
+      html += `<optgroup label="Elotec">`;
+      html += `<option value="Elotec" ${isSelected('Elotec')}>Elotec</option>`;
+      html += `<option value="ES 801" ${isSelected('ES 801')}>ES 801</option>`;
+      html += `<option value="ES 601" ${isSelected('ES 601')}>ES 601</option>`;
+      html += `<option value="2 x Elotec" ${isSelected('2 x Elotec')}>2 x Elotec</option>`;
+      html += `</optgroup>`;
+      html += `<optgroup label="ICAS">`;
+      html += `<option value="ICAS" ${isSelected('ICAS')}>ICAS</option>`;
+      html += `</optgroup>`;
+      html += `<optgroup label="Begge">`;
+      html += `<option value="Elotec + ICAS" ${isSelected('Elotec + ICAS')}>Elotec + ICAS</option>`;
+      html += `</optgroup>`;
+      return html;
+    }
+
     if (!st || !st.equipmentTypes || st.equipmentTypes.length === 0) return '';
 
     let html = '<option value="">Ikke valgt</option>';
@@ -871,7 +944,8 @@ class ServiceTypeRegistry {
     // Direct match with service type slug or name
     const st = this.getBySlug(categoryFilter);
     if (st) {
-      return kategori.includes(st.name);
+      // Exact match only - "Brannvarsling" should NOT match "El-Kontroll + Brannvarsling"
+      return kategori === st.name;
     }
 
     // Check for combined category (backward compatibility)
@@ -881,8 +955,8 @@ class ServiceTypeRegistry {
       return allMatched && kategori.includes('+');
     }
 
-    // Legacy direct string match
-    return kategori === categoryFilter || kategori.includes(categoryFilter);
+    // Legacy direct string match - exact match only
+    return kategori === categoryFilter;
   }
 
   /**
@@ -924,27 +998,54 @@ class ServiceTypeRegistry {
     const serviceTypes = this.getAll();
     const defaultSt = this.getDefaultServiceType();
 
-    if (!kategori) return defaultSt.slug;
+    // Helper to normalize category strings for comparison
+    const normalizeCategory = (str) => {
+      if (!str) return '';
+      return str.toLowerCase()
+        .replace(/[\s-]+/g, '')  // Remove spaces and hyphens
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, ''); // Remove accents
+    };
 
-    // Check each service type for exact match
-    for (const st of serviceTypes) {
-      if (kategori === st.name) {
-        return st.slug;
+    // Helper to find matching service type
+    const findServiceType = (categoryName) => {
+      const normalizedCat = normalizeCategory(categoryName);
+      for (const st of serviceTypes) {
+        if (normalizedCat === normalizeCategory(st.name) ||
+            normalizedCat === normalizeCategory(st.slug)) {
+          return st;
+        }
       }
-    }
+      for (const st of serviceTypes) {
+        if (normalizedCat.includes(normalizeCategory(st.slug)) ||
+            normalizeCategory(st.slug).includes(normalizedCat)) {
+          return st;
+        }
+      }
+      return null;
+    };
+
+    if (!kategori) return defaultSt.slug;
 
     // Combined category (contains '+')
     if (kategori.includes('+')) {
       const parts = kategori.split('+').map(p => p.trim());
-      const allKnown = parts.every(part => serviceTypes.some(st => st.name === part));
-      return allKnown ? 'combined' : defaultSt.slug;
+      const matchedTypes = parts.map(part => findServiceType(part)).filter(Boolean);
+      return matchedTypes.length > 0 ? 'combined' : defaultSt.slug;
     }
 
-    // Partial match - check if category contains service type slug or name
-    for (const st of serviceTypes) {
-      if (kategori.toLowerCase().includes(st.slug.toLowerCase()) ||
-          kategori.toLowerCase().includes(st.name.toLowerCase())) {
-        return st.slug;
+    // Single category - use normalized matching
+    const matchedSt = findServiceType(kategori);
+    if (matchedSt) {
+      return matchedSt.slug;
+    }
+
+    // Fallback: check svgIcons directly for known categories
+    const normalizedKat = normalizeCategory(kategori);
+    for (const slug of Object.keys(svgIcons)) {
+      if (normalizedKat.includes(normalizeCategory(slug)) ||
+          normalizeCategory(slug).includes(normalizedKat)) {
+        return slug;
       }
     }
 
@@ -960,6 +1061,16 @@ class ServiceTypeRegistry {
     const serviceTypes = this.getAll();
     const defaultSt = this.getDefaultServiceType();
 
+    // Helper to normalize category strings for comparison
+    // "El-Kontroll" -> "elkontroll", "Brannvarsling" -> "brannvarsling"
+    const normalizeCategory = (str) => {
+      if (!str) return '';
+      return str.toLowerCase()
+        .replace(/[\s-]+/g, '')  // Remove spaces and hyphens
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, ''); // Remove accents
+    };
+
     // Helper to get SVG or fallback to FontAwesome
     const getIconHtml = (st) => {
       if (svgIcons[st.slug]) {
@@ -968,33 +1079,50 @@ class ServiceTypeRegistry {
       return `<i class="fas ${st.icon}"></i>`;
     };
 
+    // Helper to find matching service type using normalized comparison
+    const findServiceType = (categoryName) => {
+      const normalizedCat = normalizeCategory(categoryName);
+      // First: exact normalized match
+      for (const st of serviceTypes) {
+        if (normalizedCat === normalizeCategory(st.name) ||
+            normalizedCat === normalizeCategory(st.slug)) {
+          return st;
+        }
+      }
+      // Second: partial normalized match
+      for (const st of serviceTypes) {
+        if (normalizedCat.includes(normalizeCategory(st.slug)) ||
+            normalizeCategory(st.slug).includes(normalizedCat)) {
+          return st;
+        }
+      }
+      return null;
+    };
+
     if (!kategori) return getIconHtml(defaultSt);
 
     // Check for combined category (contains '+')
     if (kategori.includes('+')) {
       const parts = kategori.split('+').map(p => p.trim());
-      const allKnown = parts.every(part => serviceTypes.some(st => st.name === part));
-      if (!allKnown) {
-        return getIconHtml(defaultSt);
-      }
-      if (serviceTypes.length > 0) {
-        return serviceTypes.map(st => getIconHtml(st)).join('');
+      const matchedTypes = parts.map(part => findServiceType(part)).filter(Boolean);
+      if (matchedTypes.length > 0) {
+        return matchedTypes.map(st => getIconHtml(st)).join('');
       }
       return getIconHtml(defaultSt);
     }
 
-    // Single service type - check registry for exact match
-    for (const st of serviceTypes) {
-      if (kategori === st.name) {
-        return getIconHtml(st);
-      }
+    // Single service type - use normalized matching
+    const matchedSt = findServiceType(kategori);
+    if (matchedSt) {
+      return getIconHtml(matchedSt);
     }
 
-    // Partial match - check if category contains service type slug or name
-    for (const st of serviceTypes) {
-      if (kategori.toLowerCase().includes(st.slug.toLowerCase()) ||
-          kategori.toLowerCase().includes(st.name.toLowerCase())) {
-        return getIconHtml(st);
+    // Fallback: check svgIcons directly for known categories
+    const normalizedKat = normalizeCategory(kategori);
+    for (const slug of Object.keys(svgIcons)) {
+      if (normalizedKat.includes(normalizeCategory(slug)) ||
+          normalizeCategory(slug).includes(normalizedKat)) {
+        return `<span class="marker-svg-icon">${svgIcons[slug]}</span>`;
       }
     }
 
@@ -1008,8 +1136,8 @@ class ServiceTypeRegistry {
   renderDriftsOptions(selectedValue = '') {
     const brannService = this.getBySlug('brannvarsling');
     if (!brannService || !brannService.subtypes || brannService.subtypes.length === 0) {
-      // Fallback to default options
-      const defaults = ['Storfe', 'Sau', 'Storfe/Sau', 'Geit', 'Gris', 'Gartneri'];
+      // Fallback to default options - includes all common driftstyper
+      const defaults = ['Storfe', 'Sau', 'Storfe/Sau', 'Geit', 'Gris', 'Svin', 'Gartneri', 'Korn', 'Fjærfeoppdrett', 'Sau/Geit'];
       let html = '<option value="">Ingen / Ikke valgt</option>';
       defaults.forEach(d => {
         const selected = selectedValue === d ? 'selected' : '';
@@ -1318,8 +1446,10 @@ class ServiceTypeRegistry {
     );
     if (service?.equipment_name) return service.equipment_name;
 
-    // Fallback to legacy fields
-    if (serviceType.slug === 'brannvarsling' && customer.brann_system) return customer.brann_system;
+    // Fallback to legacy fields - use normalized value for brannvarsling
+    if (serviceType.slug === 'brannvarsling' && customer.brann_system) {
+      return normalizeBrannsystem(customer.brann_system);
+    }
 
     // Check custom_data
     const customData = this.parseCustomData(customer.custom_data);
@@ -1443,43 +1573,51 @@ function renderFilterPanelCategories() {
 /**
  * Render driftskategori filter buttons dynamically based on selected category
  */
+/**
+ * Normalize driftstype values for consistency
+ */
+function normalizeDriftstype(driftstype) {
+  if (!driftstype) return null;
+  const d = driftstype.trim();
+
+  // Normalize common variations
+  if (d.toLowerCase() === 'gartn' || d.toLowerCase() === 'gartneri') return 'Gartneri';
+  if (d.toLowerCase() === 'sau / geit' || d.toLowerCase() === 'sau/geit') return 'Sau/Geit';
+  if (d.toLowerCase() === 'storfe/sau' || d.toLowerCase() === 'storfe+sau') return 'Storfe/Sau';
+  if (d.toLowerCase() === 'fjørfe' || d.toLowerCase() === 'fjærfeoppdrett') return 'Fjørfe';
+  if (d.toLowerCase() === 'svin' || d.toLowerCase() === 'gris') return 'Gris';
+  if (d.toLowerCase() === 'ingen' || d.startsWith('Utf:')) return null; // Skip invalid
+
+  return d;
+}
+
 function renderDriftskategoriFilter() {
   const container = document.getElementById('driftFilterButtons');
   if (!container) return;
 
-  // Get subtypes based on selected category (not just brannvarsling)
-  let subtypes = [];
-
-  if (selectedCategory === 'all') {
-    // When "Alle" is selected, aggregate subtypes from all service types
-    const allServiceTypes = serviceTypeRegistry.getAll();
-    const subtypeMap = new Map(); // Deduplicate by name
-    allServiceTypes.forEach(st => {
-      if (st.subtypes && st.subtypes.length > 0) {
-        st.subtypes.forEach(sub => {
-          if (!subtypeMap.has(sub.name)) {
-            subtypeMap.set(sub.name, sub);
-          }
-        });
+  // Get unique driftstype values from actual customer data
+  const counts = {};
+  customers.forEach(c => {
+    if (c.brann_driftstype && c.brann_driftstype.trim()) {
+      const normalized = normalizeDriftstype(c.brann_driftstype);
+      if (normalized) {
+        counts[normalized] = (counts[normalized] || 0) + 1;
       }
-    });
-    subtypes = Array.from(subtypeMap.values());
-  } else {
-    // Find the service type matching selectedCategory
-    const serviceType = serviceTypeRegistry.getAll().find(
-      st => st.name === selectedCategory || st.slug === selectedCategory
-    );
-    subtypes = serviceType?.subtypes || [];
-  }
+    }
+  });
 
-  // Hide filter container if no subtypes available
+  // Sort by count (most common first)
+  const driftstyper = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name, count }));
+
+  // Hide filter container if no driftstype values
   const filterContainer = container.parentElement;
   if (filterContainer) {
-    filterContainer.style.display = subtypes.length > 0 ? 'block' : 'none';
+    filterContainer.style.display = driftstyper.length > 0 ? 'block' : 'none';
   }
 
-  // If no subtypes, clear container and return
-  if (subtypes.length === 0) {
+  if (driftstyper.length === 0) {
     container.innerHTML = '';
     return;
   }
@@ -1491,16 +1629,181 @@ function renderDriftskategoriFilter() {
     </button>
   `;
 
-  // Use dynamic subtypes from registry
-  subtypes.forEach(sub => {
-    const isActive = selectedDriftskategori === sub.name;
+  // Add button for each driftstype
+  driftstyper.forEach(({ name, count }) => {
+    const isActive = selectedDriftskategori === name;
     html += `
-      <button class="category-btn drift-btn ${isActive ? 'active' : ''}" data-drift="${sub.name}">${sub.name}</button>
+      <button class="category-btn drift-btn ${isActive ? 'active' : ''}" data-drift="${escapeHtml(name)}">${escapeHtml(name)} (${count})</button>
     `;
   });
 
   container.innerHTML = html;
   attachDriftFilterHandlers();
+}
+
+/**
+ * Normalize brannsystem value to main category
+ * ES 801, ES 601, "2 x Elotec" etc. → "Elotec"
+ * "Icas" → "ICAS"
+ * "Elotec + ICAS" etc. → "Begge"
+ */
+function normalizeBrannsystem(system) {
+  if (!system) return null;
+  const s = system.trim().toLowerCase();
+
+  // Check for "both" systems
+  if (s.includes('elotec') && s.includes('icas')) return 'Begge';
+  if (s.includes('es 801') && s.includes('icas')) return 'Begge';
+
+  // Elotec variants (including ES 801, ES 601 which are Elotec models)
+  if (s.includes('elotec') || s.startsWith('es 8') || s.startsWith('es 6') || s === '2 x elotec') return 'Elotec';
+
+  // ICAS variants
+  if (s.includes('icas')) return 'ICAS';
+
+  // Other systems
+  return 'Annet';
+}
+
+/**
+ * Render brannsystem filter buttons
+ */
+function renderBrannsystemFilter() {
+  const container = document.getElementById('brannsystemFilterButtons');
+  if (!container) return;
+
+  // Count customers per normalized brannsystem category
+  const counts = { 'Elotec': 0, 'ICAS': 0, 'Begge': 0, 'Annet': 0 };
+  customers.forEach(c => {
+    if (c.brann_system && c.brann_system.trim()) {
+      const normalized = normalizeBrannsystem(c.brann_system);
+      if (normalized) counts[normalized]++;
+    }
+  });
+
+  // Only show categories with customers
+  const categories = Object.entries(counts).filter(([_, count]) => count > 0);
+
+  // Hide filter container if no brannsystem values
+  const filterContainer = container.parentElement;
+  if (filterContainer) {
+    filterContainer.style.display = categories.length > 0 ? 'block' : 'none';
+  }
+
+  if (categories.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Start with "Alle" button
+  let html = `
+    <button class="category-btn brannsystem-btn ${selectedBrannsystem === 'all' ? 'active' : ''}" data-brannsystem="all">
+      <i class="fas fa-list"></i> Alle
+    </button>
+  `;
+
+  // Add button for each category
+  categories.forEach(([category, count]) => {
+    const isActive = selectedBrannsystem === category;
+    html += `
+      <button class="category-btn brannsystem-btn ${isActive ? 'active' : ''}" data-brannsystem="${escapeHtml(category)}">${escapeHtml(category)} (${count})</button>
+    `;
+  });
+
+  container.innerHTML = html;
+  attachBrannsystemFilterHandlers();
+}
+
+/**
+ * Attach click handlers to brannsystem filter buttons
+ */
+function attachBrannsystemFilterHandlers() {
+  const container = document.getElementById('brannsystemFilterButtons');
+  if (!container) return;
+
+  container.querySelectorAll('.brannsystem-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      // Remove active from all
+      container.querySelectorAll('.brannsystem-btn').forEach(b => b.classList.remove('active'));
+      // Add active to clicked
+      btn.classList.add('active');
+      // Update selected brannsystem
+      selectedBrannsystem = btn.dataset.brannsystem;
+      // Save to localStorage
+      localStorage.setItem('selectedBrannsystem', selectedBrannsystem);
+      // Apply filter
+      applyFilters();
+    });
+  });
+}
+
+/**
+ * Render kundetype (el_type) filter buttons
+ */
+function renderElTypeFilter() {
+  const container = document.getElementById('elTypeFilterButtons');
+  if (!container) return;
+
+  // Count customers per el_type
+  const counts = {};
+  customers.forEach(c => {
+    if (c.el_type && c.el_type.trim()) {
+      const type = c.el_type.trim();
+      counts[type] = (counts[type] || 0) + 1;
+    }
+  });
+
+  // Sort by count
+  const types = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name, count }));
+
+  // Hide filter container if no values
+  const filterContainer = container.parentElement;
+  if (filterContainer) {
+    filterContainer.style.display = types.length > 0 ? 'block' : 'none';
+  }
+
+  if (types.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Start with "Alle" button
+  let html = `
+    <button class="category-btn eltype-btn ${selectedElType === 'all' ? 'active' : ''}" data-eltype="all">
+      <i class="fas fa-list"></i> Alle
+    </button>
+  `;
+
+  // Add button for each type
+  types.forEach(({ name, count }) => {
+    const isActive = selectedElType === name;
+    html += `
+      <button class="category-btn eltype-btn ${isActive ? 'active' : ''}" data-eltype="${escapeHtml(name)}">${escapeHtml(name)} (${count})</button>
+    `;
+  });
+
+  container.innerHTML = html;
+  attachElTypeFilterHandlers();
+}
+
+/**
+ * Attach click handlers to el_type filter buttons
+ */
+function attachElTypeFilterHandlers() {
+  const container = document.getElementById('elTypeFilterButtons');
+  if (!container) return;
+
+  container.querySelectorAll('.eltype-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('.eltype-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedElType = btn.dataset.eltype;
+      localStorage.setItem('selectedElType', selectedElType);
+      applyFilters();
+    });
+  });
 }
 
 /**
@@ -1926,6 +2229,1056 @@ function renderDashboardAreas() {
   });
 }
 
+// ========================================
+// SMART ROUTE ENGINE
+// Geografisk klynging med effektivitetsberegning
+// ========================================
+
+const SmartRouteEngine = {
+  // Bruker-konfigurerbare parametere
+  params: {
+    daysAhead: parseInt(localStorage.getItem('smartRoute_daysAhead')) || 60,
+    maxCustomersPerRoute: parseInt(localStorage.getItem('smartRoute_maxCustomers')) || 15,
+    maxDrivingTimeMinutes: parseInt(localStorage.getItem('smartRoute_maxDrivingTime')) || 480,
+    minClusterSize: 3,
+    clusterRadiusKm: parseFloat(localStorage.getItem('smartRoute_clusterRadius')) || 5,
+    serviceTimeMinutes: 30
+  },
+
+  // State
+  clusters: [],
+  selectedClusterId: null,
+  clusterLayer: null,
+  showAllRecommendations: false,
+
+  // Lagre parametere til localStorage
+  saveParams() {
+    localStorage.setItem('smartRoute_daysAhead', this.params.daysAhead);
+    localStorage.setItem('smartRoute_maxCustomers', this.params.maxCustomersPerRoute);
+    localStorage.setItem('smartRoute_maxDrivingTime', this.params.maxDrivingTimeMinutes);
+    localStorage.setItem('smartRoute_clusterRadius', this.params.clusterRadiusKm);
+  },
+
+  // Haversine-avstand mellom to punkter (km)
+  haversineDistance(lat1, lng1, lat2, lng2) {
+    // Valider at alle koordinater er gyldige tall
+    if (!Number.isFinite(lat1) || !Number.isFinite(lng1) ||
+        !Number.isFinite(lat2) || !Number.isFinite(lng2)) {
+      return Infinity; // Ugyldig avstand - vil bli filtrert ut
+    }
+    const R = 6371; // Jordens radius i km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  },
+
+  // Beregn sentroid for en gruppe kunder
+  getCentroid(customerList) {
+    if (customerList.length === 0) return null;
+    const sumLat = customerList.reduce((sum, c) => sum + c.lat, 0);
+    const sumLng = customerList.reduce((sum, c) => sum + c.lng, 0);
+    return {
+      lat: sumLat / customerList.length,
+      lng: sumLng / customerList.length
+    };
+  },
+
+  // Beregn bounding box for en gruppe kunder
+  getBoundingBox(customerList) {
+    const lats = customerList.map(c => c.lat);
+    const lngs = customerList.map(c => c.lng);
+    return {
+      minLat: Math.min(...lats),
+      maxLat: Math.max(...lats),
+      minLng: Math.min(...lngs),
+      maxLng: Math.max(...lngs)
+    };
+  },
+
+  // Filtrer kunder som trenger kontroll
+  getCustomersNeedingControl() {
+    // Sjekk at customers array er tilgjengelig og gyldig
+    if (!customers || !Array.isArray(customers) || customers.length === 0) {
+      return [];
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const futureDate = new Date(today);
+    futureDate.setDate(futureDate.getDate() + this.params.daysAhead);
+
+    return customers.filter(c => {
+      if (!c) return false; // Hopp over null/undefined kunder
+      if (!Number.isFinite(c.lat) || !Number.isFinite(c.lng)) return false; // Må ha gyldige koordinater
+      const nextDate = getNextControlDate(c);
+      if (!nextDate || !(nextDate instanceof Date) || isNaN(nextDate.getTime())) return false;
+      return nextDate <= futureDate;
+    });
+  },
+
+  // DBSCAN-klynging
+  dbscanClustering(customerList, epsilon, minPoints) {
+    const n = customerList.length;
+    if (n === 0) return [];
+
+    const visited = new Array(n).fill(false);
+    const noise = new Array(n).fill(false);
+    const clusterIds = new Array(n).fill(-1);
+    let currentCluster = 0;
+
+    // Bygg spatial grid for raskere nabo-oppslag (O(1) per celle i stedet for O(n))
+    const cellSizeKm = epsilon; // Cellestørrelse lik epsilon
+    const cellSizeDeg = cellSizeKm / 111; // Konverter km til grader (approx)
+    const grid = {};
+
+    // Plasser alle kunder i grid-celler
+    customerList.forEach((c, idx) => {
+      const cellX = Math.floor(c.lng / cellSizeDeg);
+      const cellY = Math.floor(c.lat / cellSizeDeg);
+      const key = `${cellX},${cellY}`;
+      if (!grid[key]) grid[key] = [];
+      grid[key].push(idx);
+    });
+
+    // Finn naboer via grid (sjekker kun 9 nærliggende celler)
+    const getNeighbors = (pointIndex) => {
+      const neighbors = [];
+      const p = customerList[pointIndex];
+      const cellX = Math.floor(p.lng / cellSizeDeg);
+      const cellY = Math.floor(p.lat / cellSizeDeg);
+
+      // Sjekk 3x3 celler rundt punktet
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const key = `${cellX + dx},${cellY + dy}`;
+          const cellIndices = grid[key];
+          if (cellIndices) {
+            for (const i of cellIndices) {
+              if (i !== pointIndex) {
+                const dist = this.haversineDistance(p.lat, p.lng, customerList[i].lat, customerList[i].lng);
+                if (dist <= epsilon) {
+                  neighbors.push(i);
+                }
+              }
+            }
+          }
+        }
+      }
+      return neighbors;
+    };
+
+    // Ekspander klynge (optimalisert med Set for O(1) lookup)
+    const expandCluster = (pointIndex, neighbors, clusterId) => {
+      clusterIds[pointIndex] = clusterId;
+      const queue = [...neighbors];
+      const queueSet = new Set(neighbors); // O(1) lookup i stedet for O(n)
+
+      while (queue.length > 0) {
+        const currentIndex = queue.shift();
+
+        if (!visited[currentIndex]) {
+          visited[currentIndex] = true;
+          const currentNeighbors = getNeighbors(currentIndex);
+
+          if (currentNeighbors.length >= minPoints) {
+            for (const neighbor of currentNeighbors) {
+              if (!queueSet.has(neighbor) && clusterIds[neighbor] === -1) {
+                queue.push(neighbor);
+                queueSet.add(neighbor);
+              }
+            }
+          }
+        }
+
+        if (clusterIds[currentIndex] === -1) {
+          clusterIds[currentIndex] = clusterId;
+        }
+      }
+    };
+
+    // Hovedløkke
+    for (let i = 0; i < n; i++) {
+      if (visited[i]) continue;
+      visited[i] = true;
+
+      const neighbors = getNeighbors(i);
+
+      if (neighbors.length < minPoints) {
+        noise[i] = true;
+      } else {
+        expandCluster(i, neighbors, currentCluster);
+        currentCluster++;
+      }
+    }
+
+    // Grupper kunder etter klynge-ID
+    const clusters = [];
+    for (let clusterId = 0; clusterId < currentCluster; clusterId++) {
+      const clusterCustomers = customerList.filter((_, idx) => clusterIds[idx] === clusterId);
+      if (clusterCustomers.length >= minPoints) {
+        clusters.push(clusterCustomers);
+      }
+    }
+
+    return clusters;
+  },
+
+  // Beregn effektivitetsscore for en klynge
+  calculateClusterEfficiency(cluster) {
+    const n = cluster.length;
+    if (n < 2) return null;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Start-lokasjon (fra config eller default)
+    const startLat = appConfig.routeStartLat || 59.9139;
+    const startLng = appConfig.routeStartLng || 10.7522;
+
+    // Sentroid
+    const centroid = this.getCentroid(cluster);
+
+    // Avstand fra start til sentroid
+    const distanceToStart = this.haversineDistance(startLat, startLng, centroid.lat, centroid.lng);
+
+    // Klyngens kompakthet (gjennomsnittlig avstand fra sentroid)
+    const avgDistanceFromCentroid = cluster.reduce((sum, c) =>
+      sum + this.haversineDistance(c.lat, c.lng, centroid.lat, centroid.lng), 0
+    ) / n;
+
+    // Kundetetthet (kunder per km²)
+    const bbox = this.getBoundingBox(cluster);
+    const latDiff = (bbox.maxLat - bbox.minLat) * 111; // ~111 km per grad lat
+    const lngDiff = (bbox.maxLng - bbox.minLng) * 111 * Math.cos(centroid.lat * Math.PI / 180);
+    const area = Math.max(latDiff * lngDiff, 0.1); // Minimum 0.1 km²
+    const density = n / area;
+
+    // Tell forfalte kunder
+    const overdueCount = cluster.filter(c => {
+      const nextDate = getNextControlDate(c);
+      return nextDate && nextDate < today;
+    }).length;
+
+    // Estimert kjøretid (minutter)
+    // - Tur-retur til klynge: avstand * 2 / 50 km/t * 60 min
+    // - Intra-klynge kjøring: gjennomsnittlig avstand * antall * 2 / 30 km/t * 60 min
+    // - Servicetid per kunde
+    const travelToCluster = (distanceToStart * 2 / 50) * 60;
+    const intraClusterTravel = (avgDistanceFromCentroid * n * 1.5 / 30) * 60;
+    const serviceTime = n * this.params.serviceTimeMinutes;
+    const estimatedMinutes = Math.round(travelToCluster + intraClusterTravel + serviceTime);
+
+    // Estimert distanse (km)
+    const estimatedKm = Math.round(distanceToStart * 2 + avgDistanceFromCentroid * n * 1.5);
+
+    // Effektivitetsscore (0-100)
+    // Høyere er bedre: belønner tetthet og antall, straffer lang avstand
+    const rawScore = (density * n * 10) / (1 + distanceToStart * 0.05 + avgDistanceFromCentroid * 0.3);
+    const efficiencyScore = Math.min(100, Math.round(rawScore * 10));
+
+    // Finn primært område (mest vanlige poststed)
+    const areaCount = {};
+    cluster.forEach(c => {
+      const area = c.poststed || 'Ukjent';
+      areaCount[area] = (areaCount[area] || 0) + 1;
+    });
+    const sortedAreas = Object.entries(areaCount).sort((a, b) => b[1] - a[1]);
+    const primaryArea = sortedAreas.length > 0 ? sortedAreas[0][0] : 'Ukjent';
+
+    // Kategorier i klyngen
+    const categories = [...new Set(cluster.map(c => c.kategori).filter(Boolean))];
+
+    return {
+      customers: cluster,
+      customerCount: n,
+      centroid,
+      primaryArea,
+      categories,
+      overdueCount,
+      upcomingCount: n - overdueCount,
+      efficiencyScore,
+      estimatedMinutes,
+      estimatedKm,
+      density: Math.round(density * 10) / 10,
+      avgDistanceFromCentroid: Math.round(avgDistanceFromCentroid * 10) / 10,
+      distanceToStart: Math.round(distanceToStart)
+    };
+  },
+
+  // Generer anbefalinger
+  generateRecommendations() {
+    const customersNeedingControl = this.getCustomersNeedingControl();
+
+    Logger.log('SmartRouteEngine: Kunder som trenger kontroll:', customersNeedingControl.length);
+
+    if (customersNeedingControl.length < this.params.minClusterSize) {
+      Logger.log('SmartRouteEngine: For få kunder, prøver fallback til område-basert');
+      // Fallback til område-basert gruppering
+      return this.generateAreaBasedRecommendations(customersNeedingControl);
+    }
+
+    // DBSCAN-klynging
+    let rawClusters = this.dbscanClustering(
+      customersNeedingControl,
+      this.params.clusterRadiusKm,
+      this.params.minClusterSize
+    );
+
+    Logger.log('SmartRouteEngine: DBSCAN fant', rawClusters.length, 'klynger');
+
+    // Hvis DBSCAN ikke finner noe, prøv med større radius eller fallback
+    if (rawClusters.length === 0 && customersNeedingControl.length >= 3) {
+      Logger.log('SmartRouteEngine: Ingen DBSCAN-klynger, prøver større radius');
+      // Prøv med dobbel radius
+      rawClusters = this.dbscanClustering(
+        customersNeedingControl,
+        this.params.clusterRadiusKm * 2,
+        this.params.minClusterSize
+      );
+
+      // Hvis fortsatt ingen, bruk område-basert fallback
+      if (rawClusters.length === 0) {
+        Logger.log('SmartRouteEngine: Bruker område-basert fallback');
+        return this.generateAreaBasedRecommendations(customersNeedingControl);
+      }
+    }
+
+    // Beregn effektivitet for hver klynge
+    const scoredClusters = rawClusters
+      .map((cluster, idx) => {
+        const efficiency = this.calculateClusterEfficiency(cluster);
+        if (!efficiency) return null;
+
+        // Filtrer ut klynger som tar for lang tid
+        if (efficiency.estimatedMinutes > this.params.maxDrivingTimeMinutes) {
+          // Del opp i mindre klynger hvis for stor
+          if (cluster.length > this.params.maxCustomersPerRoute) {
+            return null; // For nå, hopp over
+          }
+        }
+
+        // Begrens antall kunder per rute
+        if (cluster.length > this.params.maxCustomersPerRoute) {
+          // Ta de nærmeste til sentroiden
+          const sorted = [...cluster].sort((a, b) => {
+            const distA = this.haversineDistance(a.lat, a.lng, efficiency.centroid.lat, efficiency.centroid.lng);
+            const distB = this.haversineDistance(b.lat, b.lng, efficiency.centroid.lat, efficiency.centroid.lng);
+            return distA - distB;
+          });
+          const trimmed = sorted.slice(0, this.params.maxCustomersPerRoute);
+          return this.calculateClusterEfficiency(trimmed);
+        }
+
+        return { ...efficiency, id: idx };
+      })
+      .filter(Boolean);
+
+    // Sorter etter effektivitetsscore (høyest først)
+    this.clusters = scoredClusters
+      .sort((a, b) => b.efficiencyScore - a.efficiencyScore)
+      .map((cluster, idx) => ({ ...cluster, id: idx }));
+
+    return this.clusters;
+  },
+
+  // Vis/skjul klynge på kartet (toggle)
+  showClusterOnMap(clusterId) {
+    const cluster = this.clusters.find(c => c.id === clusterId);
+    if (!cluster) return;
+
+    // Sjekk at kart er initialisert
+    if (!map) {
+      showToast('Kartet er ikke lastet enda', 'warning');
+      return;
+    }
+
+    // Toggle: Hvis samme klynge allerede vises, skjul den
+    if (this.selectedClusterId === clusterId) {
+      this.clearClusterVisualization();
+      this.updateClusterButtons(); // Oppdater knapper
+      return;
+    }
+
+    this.clearClusterVisualization();
+    this.selectedClusterId = clusterId;
+    this.updateClusterButtons(); // Oppdater knapper
+
+    // Lag layer group for visualisering
+    this.clusterLayer = L.layerGroup().addTo(map);
+
+    // Tegn convex hull polygon rundt kundene
+    const positions = cluster.customers.map(c => [c.lat, c.lng]);
+    if (positions.length >= 3) {
+      const hull = this.convexHull(positions);
+      const polygon = L.polygon(hull, {
+        color: '#ff6b00',
+        weight: 2,
+        fillColor: '#ff6b00',
+        fillOpacity: 0.15,
+        dashArray: '5, 5'
+      }).addTo(this.clusterLayer);
+    }
+
+    // Marker kunder i klyngen
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    cluster.customers.forEach((c, idx) => {
+      const nextDate = getNextControlDate(c);
+      const isOverdue = nextDate && nextDate < today;
+
+      const marker = L.circleMarker([c.lat, c.lng], {
+        radius: 10,
+        color: isOverdue ? '#e74c3c' : '#f39c12',
+        weight: 2,
+        fillColor: isOverdue ? '#e74c3c' : '#f39c12',
+        fillOpacity: 0.8
+      }).addTo(this.clusterLayer);
+
+      marker.bindPopup(`
+        <strong>${escapeHtml(c.navn)}</strong><br>
+        ${escapeHtml(c.adresse || '')}<br>
+        <small>${isOverdue ? 'Forfalt' : 'Kommende'}</small>
+      `);
+    });
+
+    // Marker sentroiden
+    const centroidMarker = L.marker([cluster.centroid.lat, cluster.centroid.lng], {
+      icon: L.divIcon({
+        className: 'cluster-centroid-marker',
+        html: `<div class="centroid-icon"><i class="fas fa-crosshairs"></i></div>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+      })
+    }).addTo(this.clusterLayer);
+
+    // Zoom til klyngen
+    const bounds = L.latLngBounds(positions);
+    map.fitBounds(bounds, { padding: [50, 50] });
+
+    // Oppdater knapper etter visning
+    this.updateClusterButtons();
+  },
+
+  // Fjern klynge-visualisering
+  clearClusterVisualization() {
+    if (this.clusterLayer && map) {
+      map.removeLayer(this.clusterLayer);
+      this.clusterLayer = null;
+    }
+    this.selectedClusterId = null;
+  },
+
+  // Oppdater knapper etter toggle
+  updateClusterButtons() {
+    // Finn alle "Vis detaljer" knapper og oppdater tekst
+    document.querySelectorAll('.recommendation-card.enhanced').forEach(card => {
+      const clusterId = parseInt(card.dataset.clusterId);
+      const btn = card.querySelector('.rec-actions .btn-secondary');
+      if (btn) {
+        if (clusterId === this.selectedClusterId) {
+          btn.innerHTML = '<i class="fas fa-eye-slash"></i> Skjul';
+          card.classList.add('selected');
+        } else {
+          btn.innerHTML = '<i class="fas fa-map"></i> Vis detaljer';
+          card.classList.remove('selected');
+        }
+      }
+    });
+  },
+
+  // Convex hull algoritme (Gift wrapping)
+  convexHull(points) {
+    if (points.length < 3) return points;
+
+    const cross = (o, a, b) =>
+      (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+
+    // Finn startpunkt (lavest lat, med tiebreaker på lng)
+    let start = 0;
+    for (let i = 1; i < points.length; i++) {
+      if (points[i][0] < points[start][0] ||
+         (points[i][0] === points[start][0] && points[i][1] < points[start][1])) {
+        start = i;
+      }
+    }
+
+    const hull = [];
+    let current = start;
+
+    do {
+      hull.push(points[current]);
+      let next = 0;
+
+      for (let i = 1; i < points.length; i++) {
+        if (next === current || cross(points[current], points[next], points[i]) < 0) {
+          next = i;
+        }
+      }
+
+      current = next;
+    } while (current !== start && hull.length < points.length);
+
+    return hull;
+  },
+
+  // Opprett rute fra klynge
+  createRouteFromCluster(clusterId) {
+    const cluster = this.clusters.find(c => c.id === clusterId);
+    if (!cluster) return;
+
+    const customerIds = cluster.customers.map(c => c.id);
+    createRouteFromCustomerIds(customerIds);
+    switchToTab('routes');
+    showToast(`Opprettet rute for ${cluster.primaryArea} med ${cluster.customerCount} kunder`);
+  },
+
+  // Fallback: Område-basert gruppering (som den gamle metoden)
+  generateAreaBasedRecommendations(customersNeedingControl) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Hvis ingen kunder sendt inn, hent alle som trenger kontroll
+    const customerList = customersNeedingControl.length > 0
+      ? customersNeedingControl
+      : this.getCustomersNeedingControl();
+
+    if (customerList.length === 0) {
+      this.clusters = [];
+      return [];
+    }
+
+    // Grupper etter poststed
+    const byArea = {};
+    customerList.forEach(c => {
+      const area = c.poststed || 'Ukjent';
+      if (!byArea[area]) byArea[area] = [];
+      byArea[area].push(c);
+    });
+
+    // Konverter til klynge-format med effektivitetsberegning
+    const areaRecommendations = Object.entries(byArea)
+      .filter(([area, custs]) => custs.length >= 2) // Minimum 2 kunder per område
+      .map(([area, custs], idx) => {
+        // Filtrer til kun kunder med koordinater
+        const withCoords = custs.filter(c => c.lat && c.lng);
+        if (withCoords.length < 2) return null;
+
+        // Beregn effektivitet
+        const efficiency = this.calculateClusterEfficiency(withCoords);
+        if (!efficiency) return null;
+
+        return {
+          ...efficiency,
+          id: idx,
+          isAreaBased: true // Marker at dette er område-basert, ikke DBSCAN
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.efficiencyScore - a.efficiencyScore);
+
+    this.clusters = areaRecommendations.map((cluster, idx) => ({ ...cluster, id: idx }));
+
+    Logger.log('SmartRouteEngine: Område-basert fallback fant', this.clusters.length, 'klynger');
+
+    return this.clusters;
+  }
+};
+
+/**
+ * Get smart area recommendations for route planning
+ * Groups customers by poststed who need control within daysAhead days
+ * @deprecated Use SmartRouteEngine.generateRecommendations() instead
+ */
+function getSmartAreaRecommendations(daysAhead = 60, minCustomers = 3) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const futureDate = new Date(today);
+  futureDate.setDate(futureDate.getDate() + daysAhead);
+
+  // Find customers needing control within daysAhead days
+  const needsControl = customers.filter(c => {
+    const nextDate = getNextControlDate(c);
+    if (!nextDate) return false;
+    return nextDate <= futureDate;
+  });
+
+  // Group by poststed
+  const byArea = {};
+  needsControl.forEach(c => {
+    const area = c.poststed || 'Ukjent';
+    if (!byArea[area]) byArea[area] = [];
+    byArea[area].push(c);
+  });
+
+  // Filter areas with at least minCustomers customers
+  const recommendations = Object.entries(byArea)
+    .filter(([area, custs]) => custs.length >= minCustomers)
+    .map(([area, custs]) => ({
+      area,
+      customers: custs,
+      count: custs.length,
+      overdue: custs.filter(c => getNextControlDate(c) < today).length,
+      categories: [...new Set(custs.map(c => c.kategori).filter(Boolean))]
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  return recommendations;
+}
+
+/**
+ * Render smart recommendations in Ruteplanlegger tab
+ * Uses SmartRouteEngine for geographic clustering
+ */
+function renderSmartRecommendations() {
+  const container = document.getElementById('smartRecommendations');
+  if (!container) return;
+
+  // Oppdater SmartRouteEngine params fra HTML inputs
+  const daysInput = document.getElementById('smartDaysAhead');
+  const customersInput = document.getElementById('smartMaxCustomers');
+  const radiusInput = document.getElementById('smartClusterRadius');
+
+  if (daysInput) SmartRouteEngine.params.daysAhead = parseInt(daysInput.value) || 60;
+  if (customersInput) SmartRouteEngine.params.maxCustomersPerRoute = parseInt(customersInput.value) || 15;
+  if (radiusInput) SmartRouteEngine.params.clusterRadiusKm = parseFloat(radiusInput.value) || 5;
+
+  // Lagre params
+  SmartRouteEngine.saveParams();
+
+  // Generer anbefalinger med SmartRouteEngine
+  const recommendations = SmartRouteEngine.generateRecommendations();
+
+  let html = '';
+
+  if (recommendations.length === 0) {
+    // Vis mer detaljert info om hvorfor ingen anbefalinger ble funnet
+    const customersWithDates = customers.filter(c => getNextControlDate(c));
+    const customersWithCoords = customers.filter(c => c.lat && c.lng);
+    const needingControl = SmartRouteEngine.getCustomersNeedingControl();
+
+    let emptyMessage = 'Ingen ruteklynger funnet.';
+    let emptyHint = '';
+
+    if (customers.length === 0) {
+      emptyMessage = 'Ingen kunder i systemet.';
+    } else if (customersWithCoords.length === 0) {
+      emptyMessage = 'Ingen kunder har koordinater.';
+      emptyHint = 'Legg til adresser med koordinater for å få ruteanbefalinger.';
+    } else if (customersWithDates.length === 0) {
+      emptyMessage = 'Ingen kunder har kontrolldatoer.';
+      emptyHint = 'Legg til neste kontrolldato for å få ruteanbefalinger.';
+    } else if (needingControl.length === 0) {
+      emptyMessage = 'Ingen kontroller forfaller innen ' + SmartRouteEngine.params.daysAhead + ' dager.';
+      emptyHint = 'Prøv å øke "Dager fremover" i innstillingene.';
+    } else if (needingControl.length < 3) {
+      emptyMessage = 'Kun ' + needingControl.length + ' kunde(r) trenger kontroll.';
+      emptyHint = 'Minimum 2 kunder trengs for å danne en rute.';
+    }
+
+    html += `
+      <div class="rec-empty">
+        <i class="fas fa-info-circle"></i>
+        <p>${emptyMessage}</p>
+        ${emptyHint ? `<p class="rec-empty-hint">${emptyHint}</p>` : ''}
+        <p class="rec-empty-stats">
+          <small>${customers.length} kunder totalt | ${customersWithCoords.length} med koordinater | ${needingControl.length} trenger kontroll</small>
+        </p>
+      </div>`;
+    container.innerHTML = html;
+    return;
+  }
+
+  const maxVisible = SmartRouteEngine.showAllRecommendations ? recommendations.length : 6;
+  recommendations.slice(0, maxVisible).forEach(rec => {
+    // Bestem effektivitetsklasse
+    let efficiencyClass = 'low';
+    if (rec.efficiencyScore >= 70) efficiencyClass = 'high';
+    else if (rec.efficiencyScore >= 40) efficiencyClass = 'medium';
+
+    // Formater tid
+    const hours = Math.floor(rec.estimatedMinutes / 60);
+    const mins = rec.estimatedMinutes % 60;
+    const timeStr = hours > 0 ? `${hours}t ${mins}m` : `${mins}m`;
+
+    html += `
+      <div class="recommendation-card enhanced ${SmartRouteEngine.selectedClusterId === rec.id ? 'selected' : ''}" data-cluster-id="${rec.id}">
+        <div class="rec-header">
+          <div class="rec-title">
+            <span class="rec-cluster-id">#${rec.id + 1}</span>
+            <h4><i class="fas fa-map-pin"></i> ${escapeHtml(rec.primaryArea)}</h4>
+          </div>
+          <div class="rec-efficiency ${efficiencyClass}">
+            <span class="efficiency-score">${rec.efficiencyScore}%</span>
+            <span class="efficiency-label">effektivitet</span>
+          </div>
+        </div>
+
+        <div class="rec-metrics">
+          <div class="metric">
+            <i class="fas fa-users"></i>
+            <span>${rec.customerCount} kunder</span>
+          </div>
+          <div class="metric">
+            <i class="fas fa-road"></i>
+            <span>~${rec.estimatedKm} km</span>
+          </div>
+          <div class="metric">
+            <i class="fas fa-clock"></i>
+            <span>~${timeStr}</span>
+          </div>
+          ${rec.overdueCount > 0 ? `
+          <div class="metric urgency">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>${rec.overdueCount} forfalte</span>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="rec-categories">
+          ${rec.categories.map(c => `<span class="category-tag">${escapeHtml(c)}</span>`).join('') || '<span class="category-tag">Diverse</span>'}
+        </div>
+
+        <div class="rec-actions">
+          <button class="btn btn-secondary btn-small" onclick="SmartRouteEngine.showClusterOnMap(${rec.id})">
+            ${SmartRouteEngine.selectedClusterId === rec.id
+              ? '<i class="fas fa-eye-slash"></i> Skjul'
+              : '<i class="fas fa-map"></i> Vis detaljer'}
+          </button>
+          <button class="btn btn-primary btn-small" onclick="SmartRouteEngine.createRouteFromCluster(${rec.id})">
+            <i class="fas fa-route"></i> Opprett rute
+          </button>
+        </div>
+      </div>
+    `;
+  });
+
+  if (recommendations.length > 6) {
+    if (SmartRouteEngine.showAllRecommendations) {
+      html += `<button class="btn btn-link rec-toggle-all" onclick="toggleShowAllRecommendations()">
+        <i class="fas fa-chevron-up"></i> Vis færre
+      </button>`;
+    } else {
+      html += `<button class="btn btn-link rec-toggle-all" onclick="toggleShowAllRecommendations()">
+        <i class="fas fa-chevron-down"></i> Vis alle ${recommendations.length} anbefalinger
+      </button>`;
+    }
+  }
+
+  container.innerHTML = html;
+}
+
+/**
+ * Toggle showing all recommendations vs limited
+ */
+function toggleShowAllRecommendations() {
+  SmartRouteEngine.showAllRecommendations = !SmartRouteEngine.showAllRecommendations;
+  renderSmartRecommendations();
+}
+
+/**
+ * Update smart route settings and regenerate recommendations
+ */
+function updateSmartRouteSettings() {
+  // Hent verdier fra inputs
+  const daysAhead = parseInt(document.getElementById('smartDaysAhead')?.value) || 60;
+  const maxCustomers = parseInt(document.getElementById('smartMaxCustomers')?.value) || 15;
+  const maxDrivingTime = parseInt(document.getElementById('smartMaxDrivingTime')?.value) || 480;
+  const clusterRadius = parseFloat(document.getElementById('smartClusterRadius')?.value) || 5;
+
+  // Oppdater SmartRouteEngine
+  SmartRouteEngine.params.daysAhead = daysAhead;
+  SmartRouteEngine.params.maxCustomersPerRoute = maxCustomers;
+  SmartRouteEngine.params.maxDrivingTimeMinutes = maxDrivingTime;
+  SmartRouteEngine.params.clusterRadiusKm = clusterRadius;
+
+  // Lagre til localStorage
+  SmartRouteEngine.saveParams();
+
+  // Fjern eventuell klynge-visualisering
+  SmartRouteEngine.clearClusterVisualization();
+
+  // Regenerer anbefalinger
+  renderSmartRecommendations();
+
+  showToast('Innstillinger oppdatert');
+}
+
+// Flag for å unngå duplikate event listeners
+let smartRouteListenersInitialized = false;
+
+/**
+ * Initialize smart route settings slider listeners and values
+ */
+function initSmartRouteSettingsListeners() {
+  // Params er allerede lastet fra localStorage i SmartRouteEngine.params
+
+  // Oppdater slider-verdier fra lagrede params
+  const daysSlider = document.getElementById('smartDaysAhead');
+  const customersSlider = document.getElementById('smartMaxCustomers');
+  const radiusSlider = document.getElementById('smartClusterRadius');
+
+  if (daysSlider) {
+    daysSlider.value = SmartRouteEngine.params.daysAhead;
+    const daysValue = document.getElementById('smartDaysAheadValue');
+    if (daysValue) daysValue.textContent = `${SmartRouteEngine.params.daysAhead} dager`;
+  }
+
+  if (customersSlider) {
+    customersSlider.value = SmartRouteEngine.params.maxCustomersPerRoute;
+    const customersValue = document.getElementById('smartMaxCustomersValue');
+    if (customersValue) customersValue.textContent = `${SmartRouteEngine.params.maxCustomersPerRoute} kunder`;
+  }
+
+  if (radiusSlider) {
+    radiusSlider.value = SmartRouteEngine.params.clusterRadiusKm;
+    const radiusValue = document.getElementById('smartClusterRadiusValue');
+    if (radiusValue) radiusValue.textContent = `${SmartRouteEngine.params.clusterRadiusKm} km`;
+  }
+
+  // Bare legg til event listeners én gang - men kun hvis sliderne finnes
+  if (smartRouteListenersInitialized) return;
+  if (!daysSlider || !customersSlider || !radiusSlider) return; // Vent til DOM er klar
+  smartRouteListenersInitialized = true;
+
+  // Hjelpefunksjon for å vise tooltip ved slider
+  const showSliderTooltip = (slider, value, unit) => {
+    let tooltip = slider.parentElement.querySelector('.slider-tooltip');
+    if (!tooltip) {
+      tooltip = document.createElement('div');
+      tooltip.className = 'slider-tooltip';
+      slider.parentElement.style.position = 'relative';
+      slider.parentElement.appendChild(tooltip);
+    }
+
+    const min = parseFloat(slider.min);
+    const max = parseFloat(slider.max);
+    const percent = ((parseFloat(slider.value) - min) / (max - min)) * 100;
+
+    tooltip.textContent = `${value}${unit}`;
+    tooltip.style.left = `${percent}%`;
+    tooltip.classList.add('visible');
+  };
+
+  const hideSliderTooltip = (slider) => {
+    const tooltip = slider.parentElement.querySelector('.slider-tooltip');
+    if (tooltip) {
+      tooltip.classList.remove('visible');
+    }
+  };
+
+  // Dager fremover
+  if (daysSlider) {
+    daysSlider.addEventListener('input', function() {
+      const val = this.value;
+      const valueEl = document.getElementById('smartDaysAheadValue');
+      if (valueEl) valueEl.textContent = `${val} dager`;
+      showSliderTooltip(this, val, ' dager');
+    });
+    daysSlider.addEventListener('mouseup', function() { hideSliderTooltip(this); });
+    daysSlider.addEventListener('mouseleave', function() { hideSliderTooltip(this); });
+    daysSlider.addEventListener('touchend', function() { hideSliderTooltip(this); });
+  }
+
+  // Maks kunder
+  if (customersSlider) {
+    customersSlider.addEventListener('input', function() {
+      const val = this.value;
+      const valueEl = document.getElementById('smartMaxCustomersValue');
+      if (valueEl) valueEl.textContent = `${val} kunder`;
+      showSliderTooltip(this, val, ' kunder');
+    });
+    customersSlider.addEventListener('mouseup', function() { hideSliderTooltip(this); });
+    customersSlider.addEventListener('mouseleave', function() { hideSliderTooltip(this); });
+    customersSlider.addEventListener('touchend', function() { hideSliderTooltip(this); });
+  }
+
+  // Klyngeradius
+  if (radiusSlider) {
+    radiusSlider.addEventListener('input', function() {
+      const val = this.value;
+      const valueEl = document.getElementById('smartClusterRadiusValue');
+      if (valueEl) valueEl.textContent = `${val} km`;
+      showSliderTooltip(this, val, ' km');
+    });
+    radiusSlider.addEventListener('mouseup', function() { hideSliderTooltip(this); });
+    radiusSlider.addEventListener('mouseleave', function() { hideSliderTooltip(this); });
+    radiusSlider.addEventListener('touchend', function() { hideSliderTooltip(this); });
+  }
+}
+
+/**
+ * Show customers from a specific area on the map
+ */
+function showAreaOnMap(area) {
+  const areaCustomers = customers.filter(c => c.poststed === area);
+  if (areaCustomers.length === 0) return;
+
+  // Get valid coordinates
+  const coords = areaCustomers
+    .filter(c => c.lat && c.lng)
+    .map(c => [c.lat, c.lng]);
+
+  if (coords.length === 0) {
+    showToast('Ingen kunder med koordinater i dette området', 'warning');
+    return;
+  }
+
+  // Fit map to bounds
+  const bounds = L.latLngBounds(coords);
+  map.fitBounds(bounds, { padding: [50, 50] });
+
+  // Highlight the customers
+  highlightCustomersOnMap(areaCustomers.map(c => c.id));
+
+  showToast(`Viser ${areaCustomers.length} kunder i ${area}`);
+}
+
+/**
+ * Create a route for customers in a specific area
+ */
+function createRouteForArea(area, customerIds) {
+  if (!customerIds || customerIds.length === 0) {
+    showToast('Ingen kunder å lage rute for', 'warning');
+    return;
+  }
+
+  // Use existing route creation function
+  createRouteFromCustomerIds(customerIds);
+  switchToTab('routes');
+  showToast(`Opprettet rute for ${area} med ${customerIds.length} kunder`);
+}
+
+/**
+ * Highlight specific customers on the map with area highlight
+ */
+function highlightCustomersOnMap(customerIds) {
+  // Clear previous highlights
+  clearMapHighlights();
+
+  // Create a layer group for highlight rings
+  window.highlightLayer = L.layerGroup().addTo(map);
+  window.highlightedCustomerIds = customerIds;
+
+  // Get positions of all customers to highlight
+  const positions = [];
+  customers.forEach(c => {
+    if (customerIds.includes(c.id) && c.lat && c.lng) {
+      positions.push([c.lat, c.lng]);
+    }
+  });
+
+  if (positions.length === 0) {
+    showToast('Ingen kunder med koordinater funnet', 'warning');
+    return;
+  }
+
+  // Add small marker at each position
+  positions.forEach(pos => {
+    const dot = L.circleMarker(pos, {
+      radius: 8,
+      color: '#ff6b00',
+      weight: 2,
+      fillColor: '#ff6b00',
+      fillOpacity: 0.8,
+      className: 'highlight-dot'
+    }).addTo(window.highlightLayer);
+  });
+
+  // Create area highlight around all points
+  if (positions.length >= 3) {
+    // Use convex hull for 3+ points
+    const hull = getConvexHull(positions);
+    const polygon = L.polygon(hull, {
+      color: '#ff6b00',
+      weight: 3,
+      fillColor: '#ff6b00',
+      fillOpacity: 0.1,
+      dashArray: '8, 8',
+      className: 'highlight-area'
+    }).addTo(window.highlightLayer);
+  } else if (positions.length === 2) {
+    // Draw line between 2 points with buffer
+    const line = L.polyline(positions, {
+      color: '#ff6b00',
+      weight: 4,
+      dashArray: '8, 8',
+      className: 'highlight-area'
+    }).addTo(window.highlightLayer);
+  } else {
+    // Single point - draw larger circle
+    const circle = L.circle(positions[0], {
+      radius: 500,
+      color: '#ff6b00',
+      weight: 2,
+      fillColor: '#ff6b00',
+      fillOpacity: 0.1,
+      dashArray: '8, 8',
+      className: 'highlight-area'
+    }).addTo(window.highlightLayer);
+  }
+
+  // Show count
+  showToast(`${positions.length} kunder i området markert`, 'success');
+}
+
+/**
+ * Calculate convex hull of points (Graham scan algorithm)
+ */
+function getConvexHull(points) {
+  if (points.length < 3) return points;
+
+  // Find lowest point
+  let lowest = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i][0] < points[lowest][0] ||
+        (points[i][0] === points[lowest][0] && points[i][1] < points[lowest][1])) {
+      lowest = i;
+    }
+  }
+
+  // Swap lowest to first position
+  [points[0], points[lowest]] = [points[lowest], points[0]];
+  const pivot = points[0];
+
+  // Sort by polar angle
+  const sorted = points.slice(1).sort((a, b) => {
+    const angleA = Math.atan2(a[0] - pivot[0], a[1] - pivot[1]);
+    const angleB = Math.atan2(b[0] - pivot[0], b[1] - pivot[1]);
+    return angleA - angleB;
+  });
+
+  // Build hull
+  const hull = [pivot];
+  for (const point of sorted) {
+    while (hull.length > 1 && crossProduct(hull[hull.length - 2], hull[hull.length - 1], point) <= 0) {
+      hull.pop();
+    }
+    hull.push(point);
+  }
+
+  return hull;
+}
+
+function crossProduct(o, a, b) {
+  return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+}
+
+/**
+ * Clear all map highlights
+ */
+function clearMapHighlights() {
+  if (window.highlightLayer) {
+    window.highlightLayer.clearLayers();
+    map.removeLayer(window.highlightLayer);
+    window.highlightLayer = null;
+  }
+  window.highlightedCustomerIds = [];
+}
+
 /**
  * Switch to a specific tab
  */
@@ -2170,14 +3523,44 @@ async function handleSpaLogin(e) {
       `;
       loginBtn.style.background = '#4CAF50';
 
+      // Check if user is a super-admin - if so, redirect to admin panel
+      console.log('[Login Debug] data.klient:', data.klient);
+      console.log('[Login Debug] data.klient?.type:', data.klient?.type);
+      console.log('[Login Debug] Is type === bruker?:', data.klient?.type === 'bruker');
+      if (data.klient?.type === 'bruker') {
+        console.log('[Login Debug] Condition matched! Calling verify...');
+        // Verify super-admin status via API
+        try {
+          const verifyRes = await fetch('/api/klient/verify', {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+          });
+          const verifyData = await verifyRes.json();
+          console.log('[Login Debug] Verify response:', verifyData);
+          console.log('[Login Debug] isSuperAdmin:', verifyData.data?.user?.isSuperAdmin);
+          if (verifyData.data?.user?.isSuperAdmin) {
+            console.log('[Login Debug] User IS super-admin! Redirecting to /admin...');
+            localStorage.setItem('isSuperAdmin', 'true');
+            // Redirect to admin panel
+            setTimeout(() => {
+              window.location.href = '/admin';
+            }, 500);
+            return; // Don't continue to main app
+          }
+        } catch (e) {
+          console.warn('Could not verify super-admin status:', e);
+        }
+      } else {
+        console.log('[Login Debug] Condition NOT matched - data.klient?.type is not bruker');
+      }
+
       // Check if onboarding is needed (first login / no industry selected)
       const needsOnboarding = data.organization && !data.organization.onboardingCompleted;
 
       // Start the transition to app view (with onboarding if needed)
       setTimeout(async () => {
         if (needsOnboarding) {
-          // Show industry selection onboarding
-          await showIndustryOnboarding();
+          // Show onboarding wizard
+          await showOnboardingWizard();
         }
         transitionToAppView();
       }, 300);
@@ -2253,50 +3636,8 @@ function hideUserBar() {
 }
 
 // ========================================
-// INDUSTRY ONBOARDING
+// ONBOARDING
 // ========================================
-
-// Fetch available industries from API
-async function fetchIndustries() {
-  try {
-    const response = await fetch('/api/industries');
-    const data = await response.json();
-    if (data.success) {
-      return data.data;
-    }
-    return [];
-  } catch (error) {
-    console.error('Error fetching industries:', error);
-    return [];
-  }
-}
-
-// Select industry for organization
-async function selectIndustry(industrySlug) {
-  try {
-    const response = await fetch('/api/industries/select', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
-      body: JSON.stringify({ industrySlug })
-    });
-    const data = await response.json();
-
-    // Update onboarding stage via new API
-    if (data.success && data.data?.industry?.id) {
-      await updateOnboardingStep('industry_selected', {
-        industry_template_id: data.data.industry.id
-      });
-    }
-
-    return data;
-  } catch (error) {
-    console.error('Error selecting industry:', error);
-    return { success: false, error: 'Kunne ikke velge bransje' };
-  }
-}
 
 // Update onboarding step via API
 async function updateOnboardingStep(step, data = {}) {
@@ -2353,8 +3694,8 @@ async function getOnboardingStatus() {
 
 const onboardingWizard = {
   currentStep: 0,
+  // Note: Industry selection has been moved to the website registration/settings
   steps: [
-    { id: 'industry', title: 'Velg bransje', icon: 'fa-briefcase' },
     { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
     { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
     { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
@@ -2373,6 +3714,15 @@ async function showOnboardingWizard() {
   return new Promise(async (resolve) => {
     onboardingWizard.resolve = resolve;
     onboardingWizard.currentStep = 0;
+
+    // Industry selection is now handled on the website dashboard, not in the app
+    // Build wizard steps (without industry selection)
+    onboardingWizard.steps = [
+      { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
+      { id: 'import', title: 'Importer kunder', icon: 'fa-file-excel' },
+      { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
+      { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
+    ];
 
     // Create overlay
     const overlay = document.createElement('div');
@@ -2400,11 +3750,11 @@ async function renderWizardStep() {
   let stepContent = '';
 
   switch (step.id) {
-    case 'industry':
-      stepContent = await renderIndustryStep();
-      break;
     case 'company':
       stepContent = renderCompanyStep();
+      break;
+    case 'import':
+      stepContent = renderWizardImportStep();
       break;
     case 'map':
       stepContent = renderMapStep();
@@ -2451,45 +3801,6 @@ function renderWizardProgress() {
   `;
 }
 
-// Render industry selection step
-async function renderIndustryStep() {
-  const industries = await fetchIndustries();
-
-  if (industries.length === 0) {
-    return `
-      <div class="wizard-step-header">
-        <h1><i class="fas fa-exclamation-triangle"></i> Feil</h1>
-        <p>Kunne ikke laste bransjer. Prøv å laste siden på nytt.</p>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="wizard-step-header">
-      <h1><i class="fas fa-briefcase"></i> Velg din bransje</h1>
-      <p>Velkommen! For å tilpasse systemet til din virksomhet, velg bransjen som passer best.</p>
-    </div>
-
-    <div class="industry-grid">
-      ${industries.map(industry => `
-        <div class="industry-card" data-slug="${escapeHtml(industry.slug)}" data-id="${escapeHtml(industry.id)}">
-          <div class="industry-icon" style="background: ${escapeHtml(industry.color)}20; color: ${escapeHtml(industry.color)}">
-            <i class="fas ${escapeHtml(industry.icon)}"></i>
-          </div>
-          <h3>${escapeHtml(industry.name)}</h3>
-          <p>${escapeHtml(industry.description || '')}</p>
-        </div>
-      `).join('')}
-    </div>
-
-    <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
-        <i class="fas fa-forward"></i> Hopp over oppsett
-      </button>
-    </div>
-  `;
-}
-
 // Render company info step
 function renderCompanyStep() {
   const data = onboardingWizard.data.company;
@@ -2503,17 +3814,23 @@ function renderCompanyStep() {
     <div class="wizard-form">
       <div class="wizard-form-group">
         <label for="companyAddress"><i class="fas fa-map-marker-alt"></i> Firmaadresse</label>
-        <input type="text" id="companyAddress" placeholder="Gateadresse 123" value="${escapeHtml(data.address || '')}">
+        <div class="wizard-address-wrapper">
+          <input type="text" id="companyAddress" placeholder="Begynn å skrive adresse..." value="${escapeHtml(data.address || '')}" autocomplete="off">
+          <div class="wizard-address-suggestions" id="wizardAddressSuggestions"></div>
+        </div>
       </div>
 
       <div class="wizard-form-row">
         <div class="wizard-form-group">
           <label for="companyPostnummer"><i class="fas fa-hashtag"></i> Postnummer</label>
-          <input type="text" id="companyPostnummer" placeholder="0000" maxlength="4" value="${escapeHtml(data.postnummer || '')}">
+          <div class="wizard-postnummer-wrapper">
+            <input type="text" id="companyPostnummer" placeholder="0000" maxlength="4" value="${escapeHtml(data.postnummer || '')}" autocomplete="off">
+            <span class="wizard-postnummer-status" id="wizardPostnummerStatus"></span>
+          </div>
         </div>
         <div class="wizard-form-group">
           <label for="companyPoststed"><i class="fas fa-city"></i> Poststed</label>
-          <input type="text" id="companyPoststed" placeholder="Oslo" value="${escapeHtml(data.poststed || '')}">
+          <input type="text" id="companyPoststed" placeholder="Fylles automatisk" value="${escapeHtml(data.poststed || '')}">
         </div>
       </div>
 
@@ -2531,8 +3848,8 @@ function renderCompanyStep() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
+        <i class="fas fa-forward"></i> Hopp over oppsett
       </button>
       <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
         Neste <i class="fas fa-arrow-right"></i>
@@ -2580,7 +3897,8 @@ function renderMapStep() {
 
 // Render completion step
 function renderCompleteStep() {
-  const industryName = onboardingWizard.data.industry?.name || 'din bransje';
+  // Use industry from appConfig (set during registration on website)
+  const industryName = appConfig?.industry?.name || onboardingWizard.data.industry?.name || 'din virksomhet';
 
   return `
     <div class="wizard-step-header wizard-complete">
@@ -2609,49 +3927,1392 @@ function renderCompleteStep() {
   `;
 }
 
+// ========================================
+// WIZARD IMPORT STEP - Excel/CSV Import
+// ========================================
+
+// State management for wizard import
+const wizardImportState = {
+  currentImportStep: 1, // Sub-steps: 1=upload, 2=mapping, 3=preview, 4=results
+  sessionId: null,
+  previewData: null,
+  columnMapping: {},
+  categoryMapping: {},
+  customFieldMapping: {},  // Tracks what to do with unmapped columns
+  validCategories: [],
+  importResults: null,
+  isLoading: false,
+  loadingPhase: null, // 'uploading' | 'parsing' | 'ai-mapping' | 'validating' | 'importing'
+  loadingProgress: 0, // 0-100 for import progress
+  importedSoFar: 0,
+  totalToImport: 0,
+  aiQuestions: [], // Questions from AI for ambiguous mappings
+  questionAnswers: {}, // User answers to AI questions
+  requiredMappings: { navn: null, adresse: null }, // User-selected columns for required fields
+  error: null
+};
+
+// Reset wizard import state
+function resetWizardImportState() {
+  wizardImportState.currentImportStep = 1;
+  wizardImportState.sessionId = null;
+  wizardImportState.previewData = null;
+  wizardImportState.columnMapping = {};
+  wizardImportState.categoryMapping = {};
+  wizardImportState.customFieldMapping = {};
+  wizardImportState.validCategories = [];
+  wizardImportState.importResults = null;
+  wizardImportState.isLoading = false;
+  wizardImportState.loadingPhase = null;
+  wizardImportState.loadingProgress = 0;
+  wizardImportState.importedSoFar = 0;
+  wizardImportState.totalToImport = 0;
+  wizardImportState.aiQuestions = [];
+  wizardImportState.questionAnswers = {};
+  wizardImportState.requiredMappings = { navn: null, adresse: null };
+  wizardImportState.error = null;
+}
+
+/**
+ * Convert backend mapping format to frontend format
+ * Backend: { "ExcelHeader": "dbField" } e.g., { "Kundenavn": "navn" }
+ * Frontend: { "dbField": columnIndex } e.g., { "navn": 0 }
+ */
+function convertBackendToFrontendMapping(backendMapping, headers) {
+  const frontendMapping = {};
+  for (const [header, field] of Object.entries(backendMapping)) {
+    const index = headers.indexOf(header);
+    if (index !== -1) {
+      frontendMapping[field] = index;
+    }
+  }
+  return frontendMapping;
+}
+
+/**
+ * Convert frontend mapping format to backend format
+ * Frontend: { "dbField": columnIndex } e.g., { "navn": 0 }
+ * Backend: { "ExcelHeader": "dbField" } e.g., { "Kundenavn": "navn" }
+ */
+function convertFrontendToBackendMapping(frontendMapping, headers) {
+  const backendMapping = {};
+  for (const [field, index] of Object.entries(frontendMapping)) {
+    if (index !== undefined && index !== '' && headers[index]) {
+      backendMapping[headers[index]] = field;
+    }
+  }
+  return backendMapping;
+}
+
+/**
+ * Get sample value for a field from sample data
+ * @param {Object} sampleData - First row of raw data
+ * @param {number} columnIndex - Index of the column
+ * @param {Array} headers - Array of header names
+ */
+function getSampleValueForColumn(sampleData, columnIndex, headers) {
+  if (!sampleData || columnIndex === undefined || columnIndex === '' || !headers) {
+    return '-';
+  }
+  const header = headers[columnIndex];
+  if (!header) return '-';
+  const value = sampleData[header];
+  if (value === undefined || value === null || value === '') return '-';
+  return String(value);
+}
+
+// Render wizard import step
+function renderWizardImportStep() {
+  const importStep = wizardImportState.currentImportStep;
+
+  return `
+    <div class="wizard-step-header">
+      <h1><i class="fas fa-file-excel"></i> Importer kunder</h1>
+      <p>Last opp en Excel- eller CSV-fil med dine eksisterende kunder.</p>
+    </div>
+
+    <!-- Import sub-steps indicator -->
+    <div class="wizard-import-steps">
+      <div class="import-step-indicator ${importStep >= 1 ? 'active' : ''}" data-step="1">
+        <span class="step-number">1</span>
+        <span class="step-label">Last opp</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 2 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 2 ? 'active' : ''}" data-step="2">
+        <span class="step-number">2</span>
+        <span class="step-label">Mapping</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 3 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 3 ? 'active' : ''}" data-step="3">
+        <span class="step-number">3</span>
+        <span class="step-label">Forhåndsvis</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 4 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 4 ? 'active' : ''}" data-step="4">
+        <span class="step-number">4</span>
+        <span class="step-label">Resultat</span>
+      </div>
+    </div>
+
+    <!-- Dynamic content based on sub-step -->
+    <div class="wizard-import-content" id="wizardImportContent">
+      ${renderWizardImportSubStep(importStep)}
+    </div>
+  `;
+}
+
+// Render loading state with phase-specific messages and AI animation
+function renderWizardLoadingState() {
+  const phase = wizardImportState.loadingPhase;
+  const progress = wizardImportState.loadingProgress;
+
+  const phases = {
+    'uploading': { icon: 'fa-cloud-upload-alt', message: 'Laster opp fil...', isAI: false },
+    'parsing': { icon: 'fa-file-excel', message: 'Leser kolonner og rader...', isAI: false },
+    'ai-mapping': { icon: 'fa-robot', message: 'AI analyserer kolonner...', isAI: true },
+    'validating': { icon: 'fa-check-circle', message: 'Validerer data...', isAI: false },
+    'importing': { icon: 'fa-database', message: `Importerer kunder...`, isAI: false, showProgress: true }
+  };
+
+  const current = phases[phase] || { icon: 'fa-spinner', message: 'Behandler...', isAI: false };
+
+  return `
+    <div class="wizard-import-loading ${current.isAI ? 'ai-active' : ''}">
+      <div class="wizard-loading-icon ${current.isAI ? 'ai-pulse' : 'spinning'}">
+        <i class="fas ${current.icon}"></i>
+      </div>
+      <p class="wizard-loading-message">${current.message}</p>
+      ${current.isAI ? `
+        <div class="wizard-ai-thinking">
+          <span class="ai-dot"></span>
+          <span class="ai-dot"></span>
+          <span class="ai-dot"></span>
+        </div>
+        <p class="wizard-ai-hint">AI forstår kolonnenavn som "Hvem ringer vi?" → kontaktperson</p>
+      ` : ''}
+      ${current.showProgress ? `
+        <div class="wizard-progress-container">
+          <div class="wizard-progress-bar">
+            <div class="wizard-progress-fill" style="width: ${progress}%"></div>
+          </div>
+          <p class="wizard-progress-text">${wizardImportState.importedSoFar} av ${wizardImportState.totalToImport} kunder</p>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Render sub-step content
+function renderWizardImportSubStep(step) {
+  if (wizardImportState.isLoading) {
+    return renderWizardLoadingState();
+  }
+
+  if (wizardImportState.error) {
+    return `
+      <div class="wizard-import-error">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p>${escapeHtml(wizardImportState.error)}</p>
+        <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportRetry()">
+          <i class="fas fa-redo"></i> Prøv igjen
+        </button>
+      </div>
+    `;
+  }
+
+  switch (step) {
+    case 1:
+      return renderWizardImportUpload();
+    case 2:
+      return renderWizardImportMapping();
+    case 3:
+      return renderWizardImportPreview();
+    case 4:
+      return renderWizardImportResults();
+    default:
+      return renderWizardImportUpload();
+  }
+}
+
+// Sub-step 1: File upload
+function renderWizardImportUpload() {
+  // Get industry name from appConfig if available
+  const industryName = appConfig?.industry?.name || 'din bransje';
+
+  return `
+    <div class="wizard-import-upload">
+      <!-- AI Feature Banner -->
+      <div class="wizard-ai-feature-banner">
+        <div class="ai-feature-icon">
+          <i class="fas fa-robot"></i>
+        </div>
+        <div class="ai-feature-content">
+          <h4><i class="fas fa-magic"></i> AI-assistert import</h4>
+          <p>Vår AI forstår <strong>${escapeHtml(industryName)}</strong> og mapper automatisk kolonner til riktige felt - selv med kreative kolonnenavn!</p>
+        </div>
+      </div>
+
+      <div class="wizard-import-dropzone" id="wizardImportDropzone">
+        <i class="fas fa-cloud-upload-alt"></i>
+        <p><strong>Dra og slipp fil her</strong></p>
+        <p>eller klikk for å velge</p>
+        <span class="import-formats">Støttede formater: .xlsx, .xls, .csv (maks 10MB)</span>
+        <input type="file" id="wizardImportFileInput" accept=".xlsx,.xls,.csv" hidden>
+      </div>
+
+      <div class="wizard-import-tips">
+        <h4><i class="fas fa-lightbulb"></i> Tips for import</h4>
+        <ul>
+          <li>Filen bør ha én rad per kunde</li>
+          <li>Første rad bør inneholde kolonneoverskrifter</li>
+          <li>Påkrevde felt: Navn og adresse</li>
+          <li>AI gjenkjenner bransje-spesifikke felt automatisk</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="wizard-footer">
+      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
+        <i class="fas fa-arrow-left"></i> Tilbake
+      </button>
+      <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
+        Hopp over <i class="fas fa-forward"></i>
+      </button>
+    </div>
+  `;
+}
+
+// Render AI questions for ambiguous column mappings
+function renderAIQuestions() {
+  const questions = wizardImportState.aiQuestions || [];
+
+  if (questions.length === 0) {
+    return '';
+  }
+
+  return `
+    <div class="wizard-ai-questions">
+      <div class="wizard-ai-questions-header">
+        <i class="fas fa-question-circle"></i>
+        <span>AI trenger din hjelp med ${questions.length} ${questions.length === 1 ? 'kolonne' : 'kolonner'}</span>
+        <button class="wizard-btn-link" onclick="skipAIQuestions()">Bruk AI-anbefalinger</button>
+      </div>
+      <div class="wizard-ai-questions-list">
+        ${questions.map((q, index) => `
+          <div class="wizard-ai-question-card" data-question-index="${index}">
+            <div class="question-header">
+              <span class="question-column">"${escapeHtml(q.header)}"</span>
+              <span class="question-confidence">${Math.round((q.confidence || 0) * 100)}% sikker</span>
+            </div>
+            <p class="question-text">Hva inneholder denne kolonnen?</p>
+            <div class="question-options">
+              <label class="question-option ${wizardImportState.questionAnswers[q.header] === q.targetField ? 'selected' : ''}">
+                <input type="radio" name="q_${index}" value="${q.targetField || ''}"
+                  ${wizardImportState.questionAnswers[q.header] === q.targetField || (!wizardImportState.questionAnswers[q.header] && q.targetField) ? 'checked' : ''}
+                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '${q.targetField || ''}')">
+                <span>${escapeHtml(q.targetField || 'Egendefinert felt')} <span class="recommended">(Anbefalt av AI)</span></span>
+              </label>
+              <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'selected' : ''}">
+                <input type="radio" name="q_${index}" value="_custom"
+                  ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'checked' : ''}
+                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '_custom')">
+                <span>Behold som egendefinert felt</span>
+              </label>
+              <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'selected' : ''}">
+                <input type="radio" name="q_${index}" value="_skip"
+                  ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'checked' : ''}
+                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '_skip')">
+                <span>Ignorer denne kolonnen</span>
+              </label>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// Handle AI question answer
+function handleAIQuestionAnswer(header, value) {
+  wizardImportState.questionAnswers[header] = value;
+  updateWizardImportContent();
+}
+
+// Skip AI questions and use recommendations
+function skipAIQuestions() {
+  // Clear questions to hide the section
+  wizardImportState.aiQuestions = [];
+  updateWizardImportContent();
+}
+
+// Update required field mapping (navn or adresse)
+function updateRequiredMapping(field, column) {
+  wizardImportState.requiredMappings[field] = column;
+  updateWizardImportContent();
+}
+
+// Check if required fields are mapped (and different)
+function areRequiredFieldsMapped() {
+  const { navn, adresse } = wizardImportState.requiredMappings;
+  // Both must be selected
+  if (!navn || !adresse) return false;
+  // They must be different columns
+  if (navn === adresse) return false;
+  return true;
+}
+
+// Check if same column is selected for both required fields
+function isSameColumnSelected() {
+  const { navn, adresse } = wizardImportState.requiredMappings;
+  return navn && adresse && navn === adresse;
+}
+
+// Render REQUIRED field selectors - user MUST confirm these before import
+function renderRequiredFieldSelectors(data) {
+  const allColumns = data.allColumns || [];
+  const requiredFields = data.requiredFields || {};
+  const currentMappings = wizardImportState.requiredMappings;
+
+  if (allColumns.length === 0) {
+    return '';
+  }
+
+  const navnConfidence = requiredFields.navn?.confidence || 0;
+  const adresseConfidence = requiredFields.adresse?.confidence || 0;
+
+  return `
+    <div class="wizard-required-fields">
+      <div class="wizard-required-header">
+        <i class="fas fa-exclamation-circle"></i>
+        <span>Bekreft kolonner for kundenavn og adresse</span>
+      </div>
+      <p class="wizard-required-desc">Velg hvilke kolonner som inneholder kundenavn og adresse. Dette er påkrevd for import.</p>
+
+      <div class="wizard-required-grid">
+        <div class="wizard-required-row">
+          <label>
+            <i class="fas fa-user"></i>
+            Kundenavn *
+          </label>
+          <select id="navnColumnSelect" onchange="updateRequiredMapping('navn', this.value)" class="wizard-required-select">
+            <option value="">-- Velg kolonne --</option>
+            ${allColumns.map(col => `
+              <option value="${escapeHtml(col)}" ${currentMappings.navn === col ? 'selected' : ''}>
+                ${escapeHtml(col)}
+                ${requiredFields.navn?.suggestedColumn === col ? ' (Anbefalt)' : ''}
+              </option>
+            `).join('')}
+          </select>
+          ${navnConfidence > 0 && navnConfidence < 0.8 ? `
+            <span class="confidence-warning" title="AI er ${Math.round(navnConfidence * 100)}% sikker">
+              <i class="fas fa-question-circle"></i>
+            </span>
+          ` : ''}
+        </div>
+
+        <div class="wizard-required-row">
+          <label>
+            <i class="fas fa-map-marker-alt"></i>
+            Adresse *
+          </label>
+          <select id="adresseColumnSelect" onchange="updateRequiredMapping('adresse', this.value)" class="wizard-required-select">
+            <option value="">-- Velg kolonne --</option>
+            ${allColumns.map(col => `
+              <option value="${escapeHtml(col)}" ${currentMappings.adresse === col ? 'selected' : ''}>
+                ${escapeHtml(col)}
+                ${requiredFields.adresse?.suggestedColumn === col ? ' (Anbefalt)' : ''}
+              </option>
+            `).join('')}
+          </select>
+          ${adresseConfidence > 0 && adresseConfidence < 0.8 ? `
+            <span class="confidence-warning" title="AI er ${Math.round(adresseConfidence * 100)}% sikker">
+              <i class="fas fa-question-circle"></i>
+            </span>
+          ` : ''}
+        </div>
+      </div>
+
+      ${isSameColumnSelected() ? `
+        <div class="wizard-required-warning wizard-required-error">
+          <i class="fas fa-times-circle"></i>
+          <span>Kundenavn og adresse kan ikke bruke samme kolonne. Velg forskjellige kolonner.</span>
+        </div>
+      ` : !areRequiredFieldsMapped() ? `
+        <div class="wizard-required-warning">
+          <i class="fas fa-exclamation-triangle"></i>
+          <span>Du må velge kolonner for kundenavn og adresse før import</span>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Sub-step 2: FULLAUTOMATISK forhåndsvisning
+function renderWizardImportMapping() {
+  const data = wizardImportState.previewData;
+  if (!data) {
+    return renderWizardImportUpload();
+  }
+
+  const stats = data.stats || {};
+  const recognizedColumns = data.recognizedColumns || [];
+  const newFields = data.newFields || [];
+  const preview = data.preview || [];
+
+  // Count AI-mapped columns
+  const aiMappedCount = recognizedColumns.filter(c => c.source === 'ai').length;
+  const deterministicCount = recognizedColumns.filter(c => c.source === 'deterministic').length;
+
+  return `
+    <div class="wizard-auto-preview">
+      <!-- Summary header -->
+      <div class="wizard-auto-summary">
+        <div class="wizard-auto-success">
+          <i class="fas fa-check-circle"></i>
+          <span>Fant <strong>${data.totalRows || 0}</strong> kunder i filen</span>
+        </div>
+
+        <div class="wizard-auto-stats">
+          <div class="wizard-auto-stat">
+            <i class="fas fa-columns"></i>
+            <span>${data.totalColumns || 0} kolonner totalt</span>
+          </div>
+          <div class="wizard-auto-stat wizard-auto-stat-success">
+            <i class="fas fa-check"></i>
+            <span>${recognizedColumns.length} gjenkjent</span>
+          </div>
+          ${newFields.length > 0 ? `
+            <div class="wizard-auto-stat wizard-auto-stat-new">
+              <i class="fas fa-plus"></i>
+              <span>${newFields.length} nye felt</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+
+      <!-- AI Status indicator -->
+      ${data.aiEnabled ? `
+        <div class="wizard-ai-status wizard-ai-enabled">
+          <i class="fas fa-robot"></i>
+          <span>
+            <strong>AI-assistert mapping aktivert</strong>
+            ${aiMappedCount > 0 ? `- ${aiMappedCount} kolonner mappet av AI` : ''}
+            ${data.aiModelUsed ? `<span class="ai-model">(${data.aiModelUsed})</span>` : ''}
+          </span>
+        </div>
+      ` : `
+        <div class="wizard-ai-status wizard-ai-disabled">
+          <i class="fas fa-info-circle"></i>
+          <span>AI-mapping er ikke aktivert. Kun standard kolonnenavnmapping brukes.</span>
+        </div>
+      `}
+
+      <!-- REQUIRED: Column selection for name and address -->
+      ${renderRequiredFieldSelectors(data)}
+
+      <!-- AI Questions for ambiguous mappings -->
+      ${renderAIQuestions()}
+
+      <!-- Recognized columns -->
+      ${recognizedColumns.length > 0 ? `
+        <div class="wizard-auto-section">
+          <h4><i class="fas fa-check-circle"></i> Gjenkjente kolonner</h4>
+          <div class="wizard-auto-columns">
+            ${recognizedColumns.map(col => `
+              <div class="wizard-auto-column recognized ${col.source === 'ai' ? 'ai-mapped' : ''}">
+                <span class="column-from">${escapeHtml(col.header)}</span>
+                <i class="fas fa-arrow-right"></i>
+                <span class="column-to">${escapeHtml(col.mappedTo)}</span>
+                ${col.source === 'ai' ? `
+                  <span class="mapping-source ai" title="Mappet av AI med ${Math.round((col.confidence || 0) * 100)}% sikkerhet">
+                    <i class="fas fa-robot"></i>
+                  </span>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- New fields that will be created -->
+      ${newFields.length > 0 ? `
+        <div class="wizard-auto-section">
+          <h4><i class="fas fa-plus-circle"></i> Nye felt som opprettes automatisk</h4>
+          <div class="wizard-auto-columns">
+            ${newFields.map(f => `
+              <div class="wizard-auto-column new-field">
+                <span class="column-from">"${escapeHtml(f.header)}"</span>
+                <i class="fas fa-arrow-right"></i>
+                <span class="column-to">
+                  ${escapeHtml(f.displayName)}
+                  <span class="field-type">(${escapeHtml(f.typeDisplay)}${f.optionsCount > 0 ? `, ${f.optionsCount} valg` : ''})</span>
+                </span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Preview table -->
+      ${preview.length > 0 ? `
+        <div class="wizard-auto-section">
+          <h4><i class="fas fa-table"></i> Forhåndsvisning</h4>
+          <div class="wizard-auto-table-wrapper">
+            <table class="wizard-auto-table">
+              <thead>
+                <tr>
+                  ${Object.keys(preview[0] || {}).slice(0, 6).map(key => `
+                    <th>${escapeHtml(key)}</th>
+                  `).join('')}
+                  ${Object.keys(preview[0] || {}).length > 6 ? '<th>...</th>' : ''}
+                </tr>
+              </thead>
+              <tbody>
+                ${preview.slice(0, 3).map(row => `
+                  <tr>
+                    ${Object.values(row).slice(0, 6).map(val => `
+                      <td>${escapeHtml(String(val || '-'))}</td>
+                    `).join('')}
+                    ${Object.keys(row).length > 6 ? '<td>...</td>' : ''}
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Validation info -->
+      ${stats.invalid > 0 ? `
+        <div class="wizard-auto-warning">
+          <i class="fas fa-exclamation-triangle"></i>
+          <span>${stats.invalid} rader mangler påkrevd data og vil bli hoppet over</span>
+        </div>
+      ` : ''}
+    </div>
+
+    <div class="wizard-footer">
+      <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
+        <i class="fas fa-arrow-left"></i> Tilbake
+      </button>
+      <button class="wizard-btn wizard-btn-primary wizard-btn-import"
+        onclick="wizardStartImport()"
+        ${!areRequiredFieldsMapped() ? 'disabled title="Velg kolonner for kundenavn og adresse først"' : ''}>
+        <i class="fas fa-download"></i> Importer ${data.totalRows || 0} kunder
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Render section for unmapped columns (columns in Excel that aren't mapped to standard fields)
+ */
+function renderUnmappedColumnsSection(data, headers, mapping, targetFields) {
+  const unmappedColumns = data.unmappedColumns || [];
+
+  // If no unmapped columns, return empty
+  if (unmappedColumns.length === 0) {
+    return '';
+  }
+
+  // Get list of mapped column indices
+  const mappedIndices = new Set(Object.values(mapping).filter(v => v !== undefined && v !== ''));
+
+  // Filter to only show columns that are truly unmapped
+  const visibleUnmapped = unmappedColumns.filter(col => {
+    const index = headers.indexOf(col.header);
+    return !mappedIndices.has(index);
+  });
+
+  if (visibleUnmapped.length === 0) {
+    return '';
+  }
+
+  // Initialize customFieldMapping if not exists
+  if (!wizardImportState.customFieldMapping) {
+    wizardImportState.customFieldMapping = {};
+  }
+
+  return `
+    <div class="wizard-unmapped-section">
+      <h4 class="wizard-section-title">
+        <i class="fas fa-plus-circle"></i>
+        Ekstra kolonner i filen (${visibleUnmapped.length})
+      </h4>
+      <p class="wizard-section-desc">
+        Disse kolonnene finnes ikke i standardfeltene. Velg hva du vil gjøre med dem:
+      </p>
+
+      <div class="wizard-unmapped-grid">
+        ${visibleUnmapped.map(col => {
+          const currentAction = wizardImportState.customFieldMapping[col.header] || 'ignore';
+          return `
+            <div class="wizard-unmapped-row">
+              <div class="wizard-unmapped-info">
+                <span class="wizard-unmapped-header">${escapeHtml(col.header)}</span>
+                <span class="wizard-unmapped-sample">Eksempel: ${escapeHtml(col.sampleValue || '-')}</span>
+              </div>
+              <div class="wizard-unmapped-action">
+                <select onchange="handleUnmappedColumn('${escapeHtml(col.header)}', this.value)">
+                  <option value="ignore" ${currentAction === 'ignore' ? 'selected' : ''}>
+                    Ignorer
+                  </option>
+                  <option value="create" ${currentAction === 'create' ? 'selected' : ''}>
+                    Opprett felt "${escapeHtml(col.suggestedDisplayName || col.header)}"
+                  </option>
+                  ${targetFields.map(f => `
+                    <option value="map:${f.key}" ${currentAction === 'map:' + f.key ? 'selected' : ''}>
+                      Mapp til ${escapeHtml(f.label)}
+                    </option>
+                  `).join('')}
+                </select>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Handle user choice for unmapped column
+ */
+function handleUnmappedColumn(header, action) {
+  if (!wizardImportState.customFieldMapping) {
+    wizardImportState.customFieldMapping = {};
+  }
+
+  if (action === 'ignore') {
+    delete wizardImportState.customFieldMapping[header];
+  } else if (action === 'create') {
+    wizardImportState.customFieldMapping[header] = 'create';
+  } else if (action.startsWith('map:')) {
+    const targetField = action.substring(4);
+    // Map this column to the target field
+    const headers = wizardImportState.previewData?.headers || [];
+    const index = headers.indexOf(header);
+    if (index !== -1) {
+      wizardImportState.columnMapping[targetField] = index;
+    }
+    delete wizardImportState.customFieldMapping[header];
+  }
+
+  updateWizardImportContent();
+}
+
+// Expose to window
+window.handleUnmappedColumn = handleUnmappedColumn;
+
+// Sub-step 3: Preview with category mapping
+function renderWizardImportPreview() {
+  const data = wizardImportState.previewData;
+  if (!data || !data.preview) {
+    return renderWizardImportMapping();
+  }
+
+  const preview = data.preview;
+  const stats = data.stats || {};
+  const categoryMatches = data.categoryMatches || [];
+  const reimportPreview = data.reimportPreview || {};
+  const features = data.features || {};
+  const validCategories = wizardImportState.validCategories || [];
+
+  // Build category mapping UI if there are unmatched categories
+  let categoryMappingHtml = '';
+  if (categoryMatches.length > 0) {
+    categoryMappingHtml = `
+      <div class="wizard-category-mapping">
+        <h4><i class="fas fa-tags"></i> Kategori-mapping</h4>
+        <p>Følgende kategorier ble funnet i filen. Koble dem til eksisterende kategorier eller opprett nye.</p>
+        <div class="wizard-category-list">
+          ${categoryMatches.map(match => `
+            <div class="wizard-category-row">
+              <div class="wizard-category-original">
+                <span class="category-label">Fra fil:</span>
+                <span class="category-value">${escapeHtml(match.original)}</span>
+                <span class="category-count">(${match.count} kunder)</span>
+              </div>
+              <div class="wizard-category-arrow"><i class="fas fa-arrow-right"></i></div>
+              <div class="wizard-category-select">
+                <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeHtml(match.original)}', this.value)">
+                  ${match.suggested ? `
+                    <option value="${escapeHtml(match.suggested.id)}" selected>
+                      ${escapeHtml(match.suggested.name)} (anbefalt)
+                    </option>
+                  ` : '<option value="">-- Velg kategori --</option>'}
+                  ${validCategories.filter(c => !match.suggested || c.id !== match.suggested.id).map(cat => `
+                    <option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>
+                  `).join('')}
+                  <option value="__skip__">Hopp over (ingen kategori)</option>
+                  <option value="__new__">Opprett ny kategori</option>
+                </select>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  // Build preview table
+  const previewRows = preview.slice(0, 10);
+  const displayColumns = ['navn', 'adresse', 'postnummer', 'poststed', 'epost', 'telefon'];
+
+  return `
+    <div class="wizard-import-preview">
+      <!-- Stats summary -->
+      <div class="wizard-preview-stats">
+        <div class="stat-item">
+          <i class="fas fa-file-alt"></i>
+          <span class="stat-value">${stats.totalRows || 0}</span>
+          <span class="stat-label">Totalt rader</span>
+        </div>
+        <div class="stat-item ${stats.validRows > 0 ? 'success' : ''}">
+          <i class="fas fa-check-circle"></i>
+          <span class="stat-value">${stats.validRows || 0}</span>
+          <span class="stat-label">Gyldige</span>
+        </div>
+        <div class="stat-item ${stats.warnings > 0 ? 'warning' : ''}">
+          <i class="fas fa-exclamation-triangle"></i>
+          <span class="stat-value">${stats.warnings || 0}</span>
+          <span class="stat-label">Advarsler</span>
+        </div>
+        <div class="stat-item ${stats.errors > 0 ? 'error' : ''}">
+          <i class="fas fa-times-circle"></i>
+          <span class="stat-value">${stats.errors || 0}</span>
+          <span class="stat-label">Feil</span>
+        </div>
+        <div class="stat-item ${stats.duplicates > 0 ? 'warning' : ''}">
+          <i class="fas fa-copy"></i>
+          <span class="stat-value">${stats.duplicates || 0}</span>
+          <span class="stat-label">Duplikater</span>
+        </div>
+      </div>
+
+      ${features.updateEnabled || features.deletionDetectionEnabled ? `
+        <!-- Re-import Preview Summary -->
+        <div class="wizard-reimport-summary">
+          <h4><i class="fas fa-sync-alt"></i> Oppsummering av import</h4>
+          <div class="wizard-reimport-stats">
+            <div class="reimport-stat-item new">
+              <i class="fas fa-plus-circle"></i>
+              <span class="stat-value">${reimportPreview.toCreate || 0}</span>
+              <span class="stat-label">Nye kunder</span>
+            </div>
+            ${features.updateEnabled ? `
+              <div class="reimport-stat-item update">
+                <i class="fas fa-edit"></i>
+                <span class="stat-value">${reimportPreview.toUpdate || 0}</span>
+                <span class="stat-label">Oppdateres</span>
+              </div>
+              <div class="reimport-stat-item unchanged">
+                <i class="fas fa-equals"></i>
+                <span class="stat-value">${reimportPreview.unchanged || 0}</span>
+                <span class="stat-label">Uendret</span>
+              </div>
+            ` : ''}
+          </div>
+          ${features.deletionDetectionEnabled && reimportPreview.notInImport && reimportPreview.notInImport.length > 0 ? `
+            <div class="wizard-not-in-import-info">
+              <i class="fas fa-info-circle"></i>
+              <div>
+                <strong>${reimportPreview.notInImport.length} eksisterende kunder finnes ikke i importfilen</strong>
+                <p>Disse kundene vil <strong>IKKE</strong> bli slettet. De vises kun for informasjon.</p>
+                <details>
+                  <summary>Vis kunder</summary>
+                  <ul class="not-in-import-list">
+                    ${reimportPreview.notInImport.slice(0, 10).map(k => `
+                      <li>${escapeHtml(k.navn)} - ${escapeHtml(k.adresse)}</li>
+                    `).join('')}
+                    ${reimportPreview.notInImport.length > 10 ? `<li>...og ${reimportPreview.notInImport.length - 10} flere</li>` : ''}
+                  </ul>
+                </details>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+
+      ${categoryMappingHtml}
+
+      <!-- Preview table -->
+      <div class="wizard-preview-table-wrapper">
+        <h4><i class="fas fa-table"></i> Forhåndsvisning (${Math.min(10, previewRows.length)} av ${stats.totalRows || 0} rader)</h4>
+        <table class="wizard-preview-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              ${displayColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${previewRows.map((row, index) => `
+              <tr class="${row.hasError ? 'row-error' : row.hasWarning ? 'row-warning' : ''}">
+                <td>${index + 1}</td>
+                ${displayColumns.map(col => `
+                  <td>${escapeHtml(row[col] || '-')}</td>
+                `).join('')}
+                <td>
+                  ${row.hasError ? `<span class="status-error" title="${escapeHtml(row.errorMessage || 'Feil')}"><i class="fas fa-times-circle"></i></span>` :
+                    row.hasWarning ? `<span class="status-warning" title="${escapeHtml(row.warningMessage || 'Advarsel')}"><i class="fas fa-exclamation-triangle"></i></span>` :
+                    '<span class="status-ok"><i class="fas fa-check-circle"></i></span>'}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      ${stats.errors > 0 ? `
+        <div class="wizard-preview-warning">
+          <i class="fas fa-info-circle"></i>
+          <p>${stats.errors} rad(er) har feil og vil ikke bli importert. Du kan fortsette med de gyldige radene.</p>
+        </div>
+      ` : ''}
+    </div>
+
+    <div class="wizard-footer">
+      <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
+        <i class="fas fa-arrow-left"></i> Tilbake
+      </button>
+      <button class="wizard-btn wizard-btn-primary" onclick="wizardStartImport()" ${stats.validRows === 0 ? 'disabled' : ''}>
+        <i class="fas fa-file-import"></i> Importer ${stats.validRows || 0} kunder
+      </button>
+    </div>
+  `;
+}
+
+// Sub-step 4: Import results
+function renderWizardImportResults() {
+  const results = wizardImportState.importResults;
+  if (!results) {
+    return renderWizardImportPreview();
+  }
+
+  const isSuccess = results.success && results.importedCount > 0;
+
+  return `
+    <div class="wizard-import-results">
+      <div class="wizard-results-icon ${isSuccess ? 'success' : 'partial'}">
+        <i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+      </div>
+
+      <h2>${isSuccess ? 'Import fullført!' : 'Import delvis fullført'}</h2>
+
+      <div class="wizard-results-stats">
+        <div class="result-stat success">
+          <i class="fas fa-check"></i>
+          <span class="stat-value">${results.importedCount || 0}</span>
+          <span class="stat-label">Kunder importert</span>
+        </div>
+        ${results.autoFixedCount > 0 ? `
+          <div class="result-stat auto-fixed">
+            <i class="fas fa-magic"></i>
+            <span class="stat-value">${results.autoFixedCount}</span>
+            <span class="stat-label">Automatisk korrigert</span>
+          </div>
+        ` : ''}
+        ${results.newFieldsCreated > 0 ? `
+          <div class="result-stat info">
+            <i class="fas fa-plus-circle"></i>
+            <span class="stat-value">${results.newFieldsCreated}</span>
+            <span class="stat-label">Nye felt opprettet</span>
+          </div>
+        ` : ''}
+        ${results.skippedCount > 0 ? `
+          <div class="result-stat warning">
+            <i class="fas fa-forward"></i>
+            <span class="stat-value">${results.skippedCount}</span>
+            <span class="stat-label">Hoppet over</span>
+          </div>
+        ` : ''}
+        ${results.errorCount > 0 ? `
+          <div class="result-stat error">
+            <i class="fas fa-times"></i>
+            <span class="stat-value">${results.errorCount}</span>
+            <span class="stat-label">Feilet</span>
+          </div>
+        ` : ''}
+      </div>
+
+      ${results.importedCount > 0 ? `
+        <p class="wizard-results-message">
+          Kundene er nå tilgjengelige i systemet. Du kan se dem på kartet etter at oppsettet er fullført.
+          ${results.autoFixedCount > 0 ? `<br><br><i class="fas fa-magic"></i> <strong>${results.autoFixedCount} kunder</strong> ble automatisk korrigert (manglende data ble utfylt).` : ''}
+          ${results.newFieldsCreated > 0 ? `<br><strong>${results.newFieldsCreated} nye felt</strong> ble automatisk opprettet basert på kolonnene i filen.` : ''}
+        </p>
+      ` : ''}
+
+      ${results.errors && results.errors.length > 0 ? `
+        <div class="wizard-results-errors">
+          <h4><i class="fas fa-exclamation-triangle"></i> Feil under import</h4>
+          <ul>
+            ${results.errors.slice(0, 5).map(err => `
+              <li>${escapeHtml(err.row ? `Rad ${err.row}: ` : '')}${escapeHtml(err.message || 'Ukjent feil')}</li>
+            `).join('')}
+            ${results.errors.length > 5 ? `<li>...og ${results.errors.length - 5} flere feil</li>` : ''}
+          </ul>
+        </div>
+      ` : ''}
+    </div>
+
+    <div class="wizard-footer wizard-footer-center">
+      <button class="wizard-btn wizard-btn-primary" onclick="wizardImportComplete()">
+        Fortsett til neste steg <i class="fas fa-arrow-right"></i>
+      </button>
+    </div>
+  `;
+}
+
+// Update column mapping
+function updateWizardMapping(field, value) {
+  if (value === '') {
+    delete wizardImportState.columnMapping[field];
+  } else {
+    wizardImportState.columnMapping[field] = parseInt(value, 10);
+  }
+}
+
+// Update category mapping
+function updateWizardCategoryMapping(original, value) {
+  if (value === '' || value === '__skip__') {
+    delete wizardImportState.categoryMapping[original];
+  } else if (value === '__new__') {
+    // Create new category with same name
+    wizardImportState.categoryMapping[original] = { createNew: true, name: original };
+  } else {
+    wizardImportState.categoryMapping[original] = value;
+  }
+}
+
+// Validate required mappings
+function validateWizardMapping() {
+  const mapping = wizardImportState.columnMapping;
+  const errors = [];
+
+  if (mapping.navn === undefined || mapping.navn === '') {
+    errors.push('Kundenavn er påkrevd');
+  }
+  if (mapping.adresse === undefined || mapping.adresse === '') {
+    errors.push('Adresse er påkrevd');
+  }
+
+  return errors;
+}
+
+// Navigate between import sub-steps
+function wizardImportBack() {
+  if (wizardImportState.currentImportStep > 1) {
+    wizardImportState.currentImportStep--;
+    wizardImportState.error = null;
+    updateWizardImportContent();
+  }
+}
+
+async function wizardImportNext() {
+  const currentStep = wizardImportState.currentImportStep;
+
+  if (currentStep === 2) {
+    // Validate mapping before proceeding
+    const errors = validateWizardMapping();
+    if (errors.length > 0) {
+      showMessage(errors.join('. '), 'error');
+      return;
+    }
+
+    // Call preview API with mapping
+    await wizardFetchPreview();
+  } else if (currentStep < 4) {
+    wizardImportState.currentImportStep++;
+    updateWizardImportContent();
+  }
+}
+
+// Skip import and go to next wizard step
+function skipWizardImport() {
+  resetWizardImportState();
+  nextWizardStep();
+}
+
+// Complete import and go to next wizard step
+function wizardImportComplete() {
+  resetWizardImportState();
+  nextWizardStep();
+}
+
+// Retry after error
+function wizardImportRetry() {
+  wizardImportState.error = null;
+  wizardImportState.isLoading = false;
+  if (wizardImportState.currentImportStep > 1) {
+    wizardImportState.currentImportStep = 1;
+  }
+  updateWizardImportContent();
+}
+
+// Update wizard import content without re-rendering entire wizard
+function updateWizardImportContent() {
+  const container = document.getElementById('wizardImportContent');
+  if (container) {
+    container.innerHTML = renderWizardImportSubStep(wizardImportState.currentImportStep);
+    attachWizardImportListeners();
+  }
+
+  // Update sub-step indicators
+  const indicators = document.querySelectorAll('.import-step-indicator');
+  const connectors = document.querySelectorAll('.import-step-connector');
+  indicators.forEach((indicator, index) => {
+    const step = index + 1;
+    indicator.classList.toggle('active', step <= wizardImportState.currentImportStep);
+  });
+  connectors.forEach((connector, index) => {
+    const step = index + 2;
+    connector.classList.toggle('active', step <= wizardImportState.currentImportStep);
+  });
+}
+
+// Attach event listeners for wizard import
+function attachWizardImportListeners() {
+  const dropzone = document.getElementById('wizardImportDropzone');
+  const fileInput = document.getElementById('wizardImportFileInput');
+
+  if (!dropzone || !fileInput) return;
+
+  // Click to select file
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  // Drag and drop handlers
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropzone.classList.add('dragover');
+  });
+
+  dropzone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropzone.classList.remove('dragover');
+  });
+
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropzone.classList.remove('dragover');
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      wizardHandleFileSelect(files[0]);
+    }
+  });
+
+  // File input change
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+      wizardHandleFileSelect(e.target.files[0]);
+    }
+  });
+}
+
+// Handle file selection
+async function wizardHandleFileSelect(file) {
+  // Validate file type
+  const validTypes = [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+    'application/vnd.ms-excel', // .xls
+    'text/csv', // .csv
+    'application/csv'
+  ];
+  const validExtensions = ['.xlsx', '.xls', '.csv'];
+  const extension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+
+  if (!validTypes.includes(file.type) && !validExtensions.includes(extension)) {
+    showMessage('Ugyldig filtype. Bruk .xlsx, .xls eller .csv', 'error');
+    return;
+  }
+
+  // Validate file size (10MB max)
+  if (file.size > 10 * 1024 * 1024) {
+    showMessage('Filen er for stor. Maks størrelse er 10MB', 'error');
+    return;
+  }
+
+  // Show loading with phases
+  wizardImportState.isLoading = true;
+  wizardImportState.loadingPhase = 'uploading';
+  updateWizardImportContent();
+
+  try {
+    // Upload file and get initial preview
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Switch to parsing phase after a brief moment
+    setTimeout(() => {
+      if (wizardImportState.isLoading) {
+        wizardImportState.loadingPhase = 'parsing';
+        updateWizardImportContent();
+      }
+    }, 500);
+
+    // Switch to AI mapping phase after parsing starts
+    setTimeout(() => {
+      if (wizardImportState.isLoading) {
+        wizardImportState.loadingPhase = 'ai-mapping';
+        updateWizardImportContent();
+      }
+    }, 1200);
+
+    const response = await fetch('/api/kunder/import-excel/preview', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: formData
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || 'Kunne ikke behandle filen');
+    }
+
+    // Store preview data
+    wizardImportState.sessionId = result.sessionId;
+    wizardImportState.previewData = result.data;
+
+    // Store AI questions for low confidence mappings
+    if (result.data.lowConfidenceMappings && result.data.lowConfidenceMappings.length > 0) {
+      wizardImportState.aiQuestions = result.data.lowConfidenceMappings
+        .filter(m => m.confidence >= 0.5 && m.confidence < 0.8)
+        .slice(0, 3); // Max 3 questions
+    }
+
+    // Initialize required field mappings from server suggestions
+    if (result.data.requiredFields) {
+      wizardImportState.requiredMappings = {
+        navn: result.data.requiredFields.navn?.currentMapping ||
+              result.data.requiredFields.navn?.suggestedColumn ||
+              (result.data.allColumns?.[0] || null),
+        adresse: result.data.requiredFields.adresse?.currentMapping ||
+                 result.data.requiredFields.adresse?.suggestedColumn ||
+                 (result.data.allColumns?.[1] || null)
+      };
+      console.log('[DEBUG] Required mappings initialized:', wizardImportState.requiredMappings);
+      console.log('[DEBUG] From requiredFields:', result.data.requiredFields);
+    } else {
+      console.log('[DEBUG] No requiredFields in response');
+    }
+
+    // Convert backend mapping format to frontend format
+    const backendMapping = result.data.suggestedMapping || {};
+    const headers = result.data.headers || result.data.allColumns || [];
+    wizardImportState.columnMapping = convertBackendToFrontendMapping(backendMapping, headers);
+
+    wizardImportState.validCategories = result.data.validCategories || [];
+    wizardImportState.isLoading = false;
+    wizardImportState.currentImportStep = 2;
+
+    // Pre-fill category mapping with suggestions
+    if (result.data.categoryMatches) {
+      result.data.categoryMatches.forEach(match => {
+        if (match.suggested) {
+          wizardImportState.categoryMapping[match.original] = match.suggested.id;
+        }
+      });
+    }
+
+    updateWizardImportContent();
+
+  } catch (error) {
+    console.error('Wizard import error:', error);
+    wizardImportState.isLoading = false;
+    wizardImportState.error = error.message || 'En feil oppstod under behandling av filen';
+    updateWizardImportContent();
+  }
+}
+
+// Fetch preview with column mapping
+async function wizardFetchPreview() {
+  wizardImportState.isLoading = true;
+  updateWizardImportContent();
+
+  try {
+    // Convert frontend mapping to backend format before sending
+    const headers = wizardImportState.previewData?.headers || [];
+    const backendMapping = convertFrontendToBackendMapping(wizardImportState.columnMapping, headers);
+
+    const response = await fetch('/api/kunder/import-excel/preview', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        sessionId: wizardImportState.sessionId,
+        columnMapping: backendMapping,
+        categoryMapping: wizardImportState.categoryMapping
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || 'Kunne ikke hente forhåndsvisning');
+    }
+
+    wizardImportState.previewData = result.data;
+    wizardImportState.isLoading = false;
+    wizardImportState.currentImportStep = 3;
+
+    // Update category matches if they changed
+    if (result.data.categoryMatches) {
+      result.data.categoryMatches.forEach(match => {
+        if (match.suggested && !wizardImportState.categoryMapping[match.original]) {
+          wizardImportState.categoryMapping[match.original] = match.suggested.id;
+        }
+      });
+    }
+
+    updateWizardImportContent();
+
+  } catch (error) {
+    console.error('Wizard preview error:', error);
+    wizardImportState.isLoading = false;
+    wizardImportState.error = error.message || 'En feil oppstod under henting av forhåndsvisning';
+    updateWizardImportContent();
+  }
+}
+
+// Execute import - sends requiredMappings to override AI mapping
+async function wizardStartImport(confirmUpdate = false, confirmDeletions = false) {
+  // Enhanced validation of required field mappings
+  const { navn, adresse } = wizardImportState.requiredMappings;
+
+  if (!navn || navn === '' || navn === '-- Velg kolonne --') {
+    showMessage('Du må velge hvilken kolonne som inneholder kundenavn', 'error');
+    return;
+  }
+
+  if (!adresse || adresse === '' || adresse === '-- Velg kolonne --') {
+    showMessage('Du må velge hvilken kolonne som inneholder adresse', 'error');
+    return;
+  }
+
+  // Check if same column is selected for both fields
+  if (navn === adresse) {
+    showMessage('Kundenavn og adresse kan ikke bruke samme kolonne. Velg forskjellige kolonner.', 'error');
+    return;
+  }
+
+  // Log what we're sending for debugging
+  console.log('Starting import with mappings:', { navn, adresse, confirmUpdate, confirmDeletions });
+
+  wizardImportState.isLoading = true;
+  wizardImportState.loadingPhase = 'importing';
+  wizardImportState.loadingProgress = 0;
+  wizardImportState.importedSoFar = 0;
+  wizardImportState.totalToImport = wizardImportState.previewData?.totalRows || 0;
+  updateWizardImportContent();
+
+  try {
+    const response = await fetch('/api/kunder/import-excel/execute', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        sessionId: wizardImportState.sessionId,
+        requiredMappings: wizardImportState.requiredMappings, // User's column selection for navn and adresse
+        confirmUpdate,
+        confirmDeletions
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      // Check if server requires confirmation
+      if (result.requireConfirmation === 'update') {
+        wizardImportState.isLoading = false;
+        updateWizardImportContent();
+        // Ask user to confirm update
+        if (confirm(`${result.updateCount} eksisterende kunder vil bli oppdatert.\n\nVil du fortsette?`)) {
+          return wizardStartImport(true, confirmDeletions);
+        }
+        return;
+      }
+      if (result.requireConfirmation === 'deletions') {
+        wizardImportState.isLoading = false;
+        updateWizardImportContent();
+        // Inform user about records not in import (no deletion, just info)
+        if (confirm(`${result.notInImportCount} eksisterende kunder finnes ikke i importfilen.\n\nDisse vil IKKE bli slettet. Trykk OK for å fortsette.`)) {
+          return wizardStartImport(confirmUpdate, true);
+        }
+        return;
+      }
+      // Extract error message from various response formats
+      const errorMsg = typeof result.error === 'string'
+        ? result.error
+        : (result.error?.message || result.message || 'Import feilet');
+      throw new Error(errorMsg);
+    }
+
+    wizardImportState.importResults = result;
+    wizardImportState.isLoading = false;
+    wizardImportState.currentImportStep = 4;
+
+    updateWizardImportContent();
+
+    // Refresh customer list in background
+    if (result.importedCount > 0) {
+      refreshCustomerData();
+    }
+
+  } catch (error) {
+    console.error('Wizard import execute error:', error);
+    wizardImportState.isLoading = false;
+    // Ensure error is always a string, not an object
+    let errorMsg = 'En feil oppstod under import';
+    if (typeof error === 'string') {
+      errorMsg = error;
+    } else if (error && typeof error.message === 'string') {
+      errorMsg = error.message;
+    } else if (error && typeof error.error === 'string') {
+      errorMsg = error.error;
+    }
+    wizardImportState.error = errorMsg;
+    updateWizardImportContent();
+  }
+}
+
+// Refresh customer data after import
+async function refreshCustomerData() {
+  try {
+    // This will be available after wizard completes and app loads
+    if (typeof loadCustomers === 'function') {
+      await loadCustomers();
+    }
+  } catch (error) {
+    console.error('Error refreshing customer data:', error);
+  }
+}
+
 // Attach event listeners for current step
 function attachStepListeners(stepId) {
   switch (stepId) {
-    case 'industry':
-      attachIndustryListeners();
-      break;
     case 'company':
       attachCompanyListeners();
+      break;
+    case 'import':
+      attachWizardImportListeners();
       break;
     case 'map':
       attachMapListeners();
       break;
   }
-}
-
-// Industry step listeners
-function attachIndustryListeners() {
-  const cards = document.querySelectorAll('.industry-card');
-  cards.forEach(card => {
-    card.addEventListener('click', async () => {
-      cards.forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
-      card.classList.add('selecting');
-
-      const slug = card.dataset.slug;
-      const result = await selectIndustry(slug);
-
-      if (result.success && result.data?.industry) {
-        onboardingWizard.data.industry = result.data.industry;
-        localStorage.setItem('industrySlug', result.data.industry.slug);
-        localStorage.setItem('industryName', result.data.industry.name);
-        appConfig.industry = result.data.industry;
-
-        await serviceTypeRegistry.loadFromIndustry(result.data.industry.slug);
-
-        // Auto-advance to next step
-        setTimeout(() => nextWizardStep(), 500);
-      } else {
-        card.classList.remove('selecting');
-        showMessage(result.error || 'Kunne ikke velge bransje', 'error');
-      }
-    });
-  });
 }
 
 // Company step listeners
@@ -2689,20 +5350,219 @@ function attachCompanyListeners() {
     }
   }, 100);
 
-  // Input listeners
-  const addressInput = document.getElementById('companyAddress');
-  const postnummerInput = document.getElementById('companyPostnummer');
+  // Basic input listeners for manual typing (poststed only, others handled by autocomplete)
   const poststedInput = document.getElementById('companyPoststed');
-
-  if (addressInput) addressInput.addEventListener('input', (e) => {
-    onboardingWizard.data.company.address = e.target.value;
-  });
-  if (postnummerInput) postnummerInput.addEventListener('input', (e) => {
-    onboardingWizard.data.company.postnummer = e.target.value;
-  });
   if (poststedInput) poststedInput.addEventListener('input', (e) => {
     onboardingWizard.data.company.poststed = e.target.value;
   });
+
+  // Setup address autocomplete with Kartverket
+  setupWizardAddressAutocomplete();
+
+  // Setup postal code lookup with Bring
+  setupWizardPostnummerLookup();
+}
+
+// Wizard address autocomplete state
+let wizardAddressSuggestions = [];
+let wizardSelectedIndex = -1;
+
+// Setup address autocomplete for the wizard
+function setupWizardAddressAutocomplete() {
+  const addressInput = document.getElementById('companyAddress');
+  const suggestionsContainer = document.getElementById('wizardAddressSuggestions');
+
+  if (!addressInput || !suggestionsContainer) return;
+
+  // Debounced search using Kartverket API
+  const debouncedSearch = debounce(async (query) => {
+    if (query.length < 3) {
+      suggestionsContainer.classList.remove('visible');
+      wizardAddressSuggestions = [];
+      return;
+    }
+
+    wizardAddressSuggestions = await searchAddresses(query);
+    wizardSelectedIndex = -1;
+    renderWizardAddressSuggestions(wizardAddressSuggestions);
+  }, 300);
+
+  // Input event - update state and search
+  addressInput.addEventListener('input', (e) => {
+    onboardingWizard.data.company.address = e.target.value;
+    debouncedSearch(e.target.value);
+  });
+
+  // Keyboard navigation
+  addressInput.addEventListener('keydown', (e) => {
+    if (!wizardAddressSuggestions.length) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      wizardSelectedIndex = Math.min(wizardSelectedIndex + 1, wizardAddressSuggestions.length - 1);
+      updateWizardSuggestionSelection();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      wizardSelectedIndex = Math.max(wizardSelectedIndex - 1, 0);
+      updateWizardSuggestionSelection();
+    } else if (e.key === 'Enter' && wizardSelectedIndex >= 0) {
+      e.preventDefault();
+      selectWizardAddressSuggestion(wizardAddressSuggestions[wizardSelectedIndex]);
+    } else if (e.key === 'Escape') {
+      suggestionsContainer.classList.remove('visible');
+      wizardAddressSuggestions = [];
+    }
+  });
+
+  // Click outside to close suggestions
+  document.addEventListener('click', (e) => {
+    if (!addressInput.contains(e.target) && !suggestionsContainer.contains(e.target)) {
+      suggestionsContainer.classList.remove('visible');
+    }
+  });
+}
+
+// Render wizard address suggestions dropdown
+function renderWizardAddressSuggestions(results) {
+  const container = document.getElementById('wizardAddressSuggestions');
+  if (!container) return;
+
+  if (!results || results.length === 0) {
+    container.innerHTML = '';
+    container.classList.remove('visible');
+    return;
+  }
+
+  container.innerHTML = results.map((addr, index) => `
+    <div class="wizard-address-suggestion" data-index="${index}">
+      <i class="fas fa-map-marker-alt"></i>
+      <div class="wizard-address-text">
+        <div class="wizard-address-main">${escapeHtml(addr.adresse)}</div>
+        <div class="wizard-address-detail">${escapeHtml(addr.postnummer)} ${escapeHtml(addr.poststed)}${addr.kommune ? `, ${escapeHtml(addr.kommune)}` : ''}</div>
+      </div>
+    </div>
+  `).join('');
+
+  container.classList.add('visible');
+
+  // Add click handlers to each suggestion
+  container.querySelectorAll('.wizard-address-suggestion').forEach(item => {
+    item.addEventListener('click', () => {
+      const index = parseInt(item.dataset.index);
+      selectWizardAddressSuggestion(wizardAddressSuggestions[index]);
+    });
+  });
+}
+
+// Update visual selection in suggestions
+function updateWizardSuggestionSelection() {
+  const items = document.querySelectorAll('.wizard-address-suggestion');
+  items.forEach((item, i) => {
+    item.classList.toggle('selected', i === wizardSelectedIndex);
+  });
+}
+
+// Select an address suggestion and fill all fields
+function selectWizardAddressSuggestion(suggestion) {
+  const addressInput = document.getElementById('companyAddress');
+  const postnummerInput = document.getElementById('companyPostnummer');
+  const poststedInput = document.getElementById('companyPoststed');
+  const suggestionsContainer = document.getElementById('wizardAddressSuggestions');
+
+  // Fill form fields
+  if (addressInput) addressInput.value = suggestion.adresse;
+  if (postnummerInput) postnummerInput.value = suggestion.postnummer;
+  if (poststedInput) {
+    poststedInput.value = suggestion.poststed;
+    poststedInput.classList.add('auto-filled');
+  }
+
+  // Update wizard state
+  onboardingWizard.data.company.address = suggestion.adresse;
+  onboardingWizard.data.company.postnummer = suggestion.postnummer;
+  onboardingWizard.data.company.poststed = suggestion.poststed;
+  onboardingWizard.data.company.route_start_lat = suggestion.lat;
+  onboardingWizard.data.company.route_start_lng = suggestion.lng;
+
+  // Update map marker
+  if (wizardRouteMap) {
+    if (wizardRouteMarker) wizardRouteMap.removeLayer(wizardRouteMarker);
+    wizardRouteMarker = L.marker([suggestion.lat, suggestion.lng]).addTo(wizardRouteMap);
+    wizardRouteMap.setView([suggestion.lat, suggestion.lng], 14);
+  }
+
+  // Update coordinates display
+  const coordsEl = document.getElementById('routeCoordinates');
+  if (coordsEl) {
+    coordsEl.innerHTML = `<span>Valgt: ${suggestion.lat.toFixed(5)}, ${suggestion.lng.toFixed(5)}</span>`;
+  }
+
+  // Update postnummer status
+  updateWizardPostnummerStatus('valid');
+
+  // Hide suggestions
+  if (suggestionsContainer) {
+    suggestionsContainer.classList.remove('visible');
+    wizardAddressSuggestions = [];
+  }
+}
+
+// Setup postal code lookup for the wizard
+function setupWizardPostnummerLookup() {
+  const postnummerInput = document.getElementById('companyPostnummer');
+  const poststedInput = document.getElementById('companyPoststed');
+
+  if (!postnummerInput) return;
+
+  postnummerInput.addEventListener('input', async (e) => {
+    const value = e.target.value;
+    onboardingWizard.data.company.postnummer = value;
+
+    // Only lookup when we have exactly 4 digits
+    if (value.length === 4 && /^\d{4}$/.test(value)) {
+      updateWizardPostnummerStatus('loading');
+
+      const poststed = await lookupPostnummer(value);
+
+      if (poststed) {
+        if (poststedInput) {
+          poststedInput.value = poststed;
+          poststedInput.classList.add('auto-filled');
+        }
+        onboardingWizard.data.company.poststed = poststed;
+        updateWizardPostnummerStatus('valid');
+      } else {
+        updateWizardPostnummerStatus('invalid');
+      }
+    } else if (value.length < 4) {
+      updateWizardPostnummerStatus('');
+    }
+  });
+}
+
+// Update wizard postnummer status indicator
+function updateWizardPostnummerStatus(status) {
+  const statusEl = document.getElementById('wizardPostnummerStatus');
+  if (!statusEl) return;
+
+  statusEl.className = 'wizard-postnummer-status';
+
+  switch (status) {
+    case 'valid':
+      statusEl.innerHTML = '<i class="fas fa-check"></i>';
+      statusEl.classList.add('valid');
+      break;
+    case 'invalid':
+      statusEl.innerHTML = '<i class="fas fa-times"></i>';
+      statusEl.classList.add('invalid');
+      break;
+    case 'loading':
+      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      statusEl.classList.add('loading');
+      break;
+    default:
+      statusEl.innerHTML = '';
+  }
 }
 
 // Map step listeners
@@ -2792,32 +5652,44 @@ async function useAddressAsRouteStart() {
 
 // Navigate to next step
 async function nextWizardStep() {
-  const currentStepId = onboardingWizard.steps[onboardingWizard.currentStep].id;
+  try {
+    console.log('nextWizardStep called, current step:', onboardingWizard.currentStep);
+    const currentStepId = onboardingWizard.steps[onboardingWizard.currentStep].id;
+    console.log('Current step ID:', currentStepId);
 
-  // Save current step data to server
-  if (currentStepId === 'company') {
-    const data = onboardingWizard.data.company;
-    await updateOnboardingStep('company_info', {
-      company_address: data.address,
-      company_postnummer: data.postnummer,
-      company_poststed: data.poststed,
-      route_start_lat: data.route_start_lat,
-      route_start_lng: data.route_start_lng
-    });
-  } else if (currentStepId === 'map') {
-    const data = onboardingWizard.data.map;
-    await updateOnboardingStep('map_settings', {
-      map_center_lat: data.center_lat,
-      map_center_lng: data.center_lng,
-      map_zoom: data.zoom
-    });
+    // Save current step data to server
+    if (currentStepId === 'company') {
+      const data = onboardingWizard.data.company;
+      console.log('Saving company data:', data);
+      const result = await updateOnboardingStep('company_info', {
+        company_address: data.address,
+        company_postnummer: data.postnummer,
+        company_poststed: data.poststed,
+        route_start_lat: data.route_start_lat,
+        route_start_lng: data.route_start_lng
+      });
+      console.log('Company step save result:', result);
+    } else if (currentStepId === 'map') {
+      const data = onboardingWizard.data.map;
+      console.log('Saving map data:', data);
+      const result = await updateOnboardingStep('map_settings', {
+        map_center_lat: data.center_lat,
+        map_center_lng: data.center_lng,
+        map_zoom: data.zoom
+      });
+      console.log('Map step save result:', result);
+    }
+
+    // Cleanup maps before step change
+    cleanupWizardMaps();
+
+    onboardingWizard.currentStep++;
+    console.log('Moving to step:', onboardingWizard.currentStep);
+    await renderWizardStep();
+  } catch (error) {
+    console.error('Error in nextWizardStep:', error);
+    showMessage('Det oppstod en feil. Prøv igjen.', 'error');
   }
-
-  // Cleanup maps before step change
-  cleanupWizardMaps();
-
-  onboardingWizard.currentStep++;
-  await renderWizardStep();
 }
 
 // Navigate to previous step
@@ -2885,10 +5757,22 @@ async function handleSkipOnboarding() {
   }
 }
 
-// Legacy function for backwards compatibility
-async function showIndustryOnboarding() {
-  return showOnboardingWizard();
-}
+// Export wizard functions for onclick handlers
+window.nextWizardStep = nextWizardStep;
+window.prevWizardStep = prevWizardStep;
+window.handleSkipOnboarding = handleSkipOnboarding;
+window.useAddressAsRouteStart = useAddressAsRouteStart;
+window.completeOnboardingWizard = completeOnboardingWizard;
+
+// Export wizard import functions for onclick handlers
+window.skipWizardImport = skipWizardImport;
+window.wizardImportBack = wizardImportBack;
+window.wizardImportNext = wizardImportNext;
+window.wizardStartImport = wizardStartImport;
+window.wizardImportComplete = wizardImportComplete;
+window.wizardImportRetry = wizardImportRetry;
+window.updateWizardMapping = updateWizardMapping;
+window.updateWizardCategoryMapping = updateWizardCategoryMapping;
 
 // ========================================
 // CONTEXT TIPS - First-time user guidance
@@ -3183,41 +6067,6 @@ function closeSettingsModal() {
 
 // Load current settings into the modal
 async function loadSettingsData() {
-  // Load industries for selection grid
-  const industries = await fetchIndustries();
-  const grid = document.getElementById('industrySelectGrid');
-  const currentIndustrySlug = localStorage.getItem('industrySlug') || appConfig.industry?.slug || '';
-
-  if (grid && industries.length > 0) {
-    grid.innerHTML = industries.map(industry => `
-      <div class="industry-select-card ${industry.slug === currentIndustrySlug ? 'selected' : ''}"
-           data-industry-slug="${industry.slug}"
-           data-industry-name="${industry.name}">
-        <span class="industry-icon" style="color: ${industry.color}">
-          <i class="fas ${industry.icon}"></i>
-        </span>
-        <h4>${industry.name}</h4>
-        ${industry.description ? `<p>${industry.description}</p>` : ''}
-      </div>
-    `).join('');
-
-    // Add click handlers for industry cards
-    grid.querySelectorAll('.industry-select-card').forEach(card => {
-      card.addEventListener('click', () => {
-        grid.querySelectorAll('.industry-select-card').forEach(c => c.classList.remove('selected'));
-        card.classList.add('selected');
-      });
-    });
-  } else if (grid) {
-    grid.innerHTML = '<p class="no-industries">Ingen bransjer tilgjengelig</p>';
-  }
-
-  // Show current industry name
-  const currentName = document.getElementById('currentIndustryName');
-  if (currentName) {
-    currentName.textContent = localStorage.getItem('industryName') || appConfig.industry?.name || 'Ikke valgt';
-  }
-
   // Populate category dropdown from ServiceTypeRegistry
   const categorySelect = document.getElementById('settingsDefaultCategory');
   if (categorySelect) {
@@ -3282,37 +6131,6 @@ async function saveSettings() {
   }
 
   try {
-    // Check if industry changed
-    const selectedCard = document.querySelector('.industry-select-card.selected');
-    const newIndustrySlug = selectedCard?.dataset.industrySlug;
-    const newIndustryName = selectedCard?.dataset.industryName;
-    const currentIndustrySlug = localStorage.getItem('industrySlug') || appConfig.industry?.slug;
-
-    if (newIndustrySlug && newIndustrySlug !== currentIndustrySlug) {
-      // Change industry via API
-      const result = await selectIndustry(newIndustrySlug);
-      if (result.success) {
-        localStorage.setItem('industrySlug', newIndustrySlug);
-        localStorage.setItem('industryName', newIndustryName || result.data?.industry?.name || newIndustrySlug);
-        appConfig.industry = result.data?.industry;
-
-        // Reload service types for new industry
-        await serviceTypeRegistry.loadFromIndustry(newIndustrySlug);
-
-        // Apply industry changes to UI
-        applyIndustryChanges();
-
-        Logger.log('Industry changed to:', newIndustrySlug);
-      } else {
-        showMessage('Kunne ikke endre bransje: ' + (result.error || 'Ukjent feil'), 'error');
-        if (saveBtn) {
-          saveBtn.textContent = originalText;
-          saveBtn.disabled = false;
-        }
-        return;
-      }
-    }
-
     // Save display preferences
     const categorySelect = document.getElementById('settingsDefaultCategory');
     if (categorySelect) {
@@ -3524,7 +6342,7 @@ function updateServiceTypeDropdowns() {
     // Add combined option if there are multiple service types
     if (serviceTypes.length >= 2) {
       const combinedName = serviceTypes.map(st => st.name).join(' + ');
-      options += `<option value="${combinedName}">${combinedName}</option>`;
+      options += `<option value="${combinedName}">Begge (${combinedName})</option>`;
     }
 
     kategoriSelect.innerHTML = options;
@@ -4867,6 +7685,7 @@ function handleLogout() {
   }
 
   authToken = null;
+  isSuperAdmin = false;
   localStorage.removeItem('authToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('accessTokenExpiresAt');
@@ -4874,12 +7693,53 @@ function handleLogout() {
   localStorage.removeItem('userName');
   localStorage.removeItem('userRole');
   localStorage.removeItem('userType');
+  localStorage.removeItem('isSuperAdmin');
   // Multi-tenancy: Clear organization data
   localStorage.removeItem('organizationId');
   localStorage.removeItem('organizationSlug');
   localStorage.removeItem('organizationName');
+  // Clear impersonation data
+  localStorage.removeItem('isImpersonating');
+  localStorage.removeItem('impersonatingOrgId');
+  localStorage.removeItem('impersonatingOrgName');
 
   showLoginView();
+}
+
+// Stop impersonation and return to admin panel (for super-admins)
+async function stopImpersonation() {
+  try {
+    const response = await fetch('/api/super-admin/stop-impersonation', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      // Clear impersonation data
+      localStorage.removeItem('isImpersonating');
+      localStorage.removeItem('impersonatingOrgId');
+      localStorage.removeItem('impersonatingOrgName');
+
+      // Update token with admin token (no org context)
+      if (data.data.token) {
+        localStorage.setItem('authToken', data.data.token);
+      }
+
+      // Redirect to admin panel
+      window.location.href = '/admin';
+    } else {
+      console.error('Failed to stop impersonation:', data.error);
+      alert('Kunne ikke avslutte impersonering');
+    }
+  } catch (error) {
+    console.error('Error stopping impersonation:', error);
+    alert('Kunne ikke avslutte impersonering');
+  }
 }
 
 // Check if user is already logged in (supports both localStorage token and SSO cookie)
@@ -4914,6 +7774,12 @@ async function checkExistingAuth() {
           localStorage.setItem('userName', user.navn || 'Bruker');
           localStorage.setItem('userType', user.type || 'klient');
           localStorage.setItem('userRole', user.type === 'bruker' ? 'admin' : 'klient');
+          // Store super admin flag
+          if (user.isSuperAdmin) {
+            localStorage.setItem('isSuperAdmin', 'true');
+          } else {
+            localStorage.removeItem('isSuperAdmin');
+          }
         }
 
         // Update organization branding and persist org data
@@ -4999,7 +7865,7 @@ async function refreshAccessToken() {
   isRefreshingToken = true;
   refreshPromise = (async () => {
     try {
-      const response = await fetch('/api/auth/refresh', {
+      const response = await fetch('/api/klient/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken })
@@ -5170,7 +8036,6 @@ function showSubscriptionWarningBanner(message) {
     <div style="display:flex;align-items:center;gap:10px;">
       <i class="fas fa-exclamation-circle"></i>
       <span>${escapeHtml(message)}</span>
-      <a href="https://skyplanner.no/dashboard/abonnement" style="color:white;text-decoration:underline;margin-left:10px;font-weight:600;">Oppdater nå</a>
     </div>
     <button onclick="this.parentElement.remove()" style="background:none;border:none;color:white;cursor:pointer;font-size:18px;padding:0 5px;">&times;</button>
   `;
@@ -5308,12 +8173,11 @@ function hideSubscriptionTimer() {
 
 /**
  * Shows a modal when subscription is inactive
- * Prevents further app usage and redirects to payment page
+ * Prevents further app usage until subscription is resolved
  */
 function showSubscriptionError(errorData) {
   const message = errorData.error || 'Abonnementet er ikke aktivt';
   const details = errorData.details || {};
-  const redirectUrl = details.redirectUrl || 'https://skyplanner.no/dashboard/abonnement';
 
   // Remove existing modal if any
   const existing = document.getElementById('subscriptionErrorModal');
@@ -5342,12 +8206,8 @@ function showSubscriptionError(errorData) {
       </div>
       <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:24px;">${escapeHtml(statusTitle)}</h2>
       <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 24px;font-size:15px;line-height:1.6;">${escapeHtml(message)}</p>
-      <a href="${escapeHtml(redirectUrl)}" style="display:inline-block;background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;transition:transform 0.2s;">
-        <i class="fas fa-credit-card" style="margin-right:8px;"></i>
-        Administrer abonnement
-      </a>
-      <p style="margin-top:16px;font-size:13px;color:var(--text-muted, #666);">
-        Har du spørsmål? <a href="mailto:support@skyplanner.no" style="color:#3b82f6;">Kontakt oss</a>
+      <p style="font-size:13px;color:var(--text-muted, #666);">
+        Kontakt administrator for å håndtere abonnementet, eller <a href="mailto:sander@efffekt.no" style="color:#3b82f6;">ta kontakt med support</a>.
       </p>
     </div>
   `;
@@ -5356,7 +8216,7 @@ function showSubscriptionError(errorData) {
 
   // Prevent any interaction with the app
   modal.addEventListener('click', (e) => {
-    // Only allow clicking the link
+    // Only allow clicking the email link
     if (e.target.tagName !== 'A') {
       e.stopPropagation();
     }
@@ -5723,34 +8583,6 @@ function applyBranding() {
   // Render dynamic login features based on industry/service types
   renderLoginFeatures();
 
-  // Get webUrl from config
-  const webUrl = appConfig.data?.webUrl || appConfig.webUrl;
-
-  // Set back to website link on login page
-  const backToWebsiteLink = document.getElementById('backToWebsiteLink');
-  const loginBackLinkContainer = document.getElementById('loginBackLinkContainer');
-  if (backToWebsiteLink && loginBackLinkContainer) {
-    if (webUrl) {
-      backToWebsiteLink.href = webUrl;
-      loginBackLinkContainer.style.display = 'block';
-    } else {
-      loginBackLinkContainer.style.display = 'none';
-    }
-  }
-
-  // Show web link button if webUrl is configured
-  const webLinkBtn = document.getElementById('webLinkBtn');
-  if (webLinkBtn) {
-    if (webUrl) {
-      webLinkBtn.style.display = 'flex';
-      webLinkBtn.onclick = () => {
-        window.open(webUrl, '_blank');
-      };
-    } else {
-      webLinkBtn.style.display = 'none';
-    }
-  }
-
   Logger.log('Branding applied from config');
 }
 
@@ -5946,13 +8778,13 @@ function initMap() {
     position: 'bottomleft'
   }).addTo(map);
 
-  // Initialize marker cluster group with aggressive clustering
-  const clusterRadius = appConfig.mapClusterRadius || 120;
+  // Initialize marker cluster group - reduced radius for better overview
+  const clusterRadius = appConfig.mapClusterRadius || 60;
   markerClusterGroup = L.markerClusterGroup({
     maxClusterRadius: clusterRadius,
     iconCreateFunction: createClusterIcon,
-    // Disable clustering earlier (zoom 13 = neighborhood level)
-    disableClusteringAtZoom: 13,
+    // Disable clustering at zoom 11 - show individual markers earlier
+    disableClusteringAtZoom: 11,
     // Enable spiderfy only at max zoom (not on every zoom)
     spiderfyOnMaxZoom: true,
     spiderfyOnEveryZoom: false,
@@ -6009,18 +8841,60 @@ function initMap() {
 
     // Create popup content with options
     const areaNames = new Set();
+    const typeCounts = {};  // el_type: Landbruk, Næring, etc.
+    const driftCounts = {}; // brann_driftstype: Storfe, Sau, etc.
+    const systemCounts = {}; // brann_system: Elotec, ICAS, etc.
+
     customerIds.forEach(id => {
       const customer = customers.find(c => c.id === id);
-      if (customer && customer.poststed) {
-        areaNames.add(customer.poststed);
+      if (customer) {
+        if (customer.poststed) areaNames.add(customer.poststed);
+
+        // Count el_type (Landbruk, Næring, Bolig, etc.)
+        if (customer.el_type) typeCounts[customer.el_type] = (typeCounts[customer.el_type] || 0) + 1;
+
+        // Count driftstype
+        const drift = normalizeDriftstype(customer.brann_driftstype);
+        if (drift) driftCounts[drift] = (driftCounts[drift] || 0) + 1;
+
+        // Count brannsystem
+        const system = normalizeBrannsystem(customer.brann_system);
+        if (system) systemCounts[system] = (systemCounts[system] || 0) + 1;
       }
     });
+
+    // Build category summary HTML
+    let categoryHtml = '';
+    const typeEntries = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+    const driftEntries = Object.entries(driftCounts).sort((a, b) => b[1] - a[1]);
+    const systemEntries = Object.entries(systemCounts).sort((a, b) => b[1] - a[1]);
+
+    if (typeEntries.length > 0 || driftEntries.length > 0 || systemEntries.length > 0) {
+      categoryHtml = '<div class="cluster-categories">';
+      if (typeEntries.length > 0) {
+        categoryHtml += '<div class="cluster-category-group"><strong>Type:</strong> ';
+        categoryHtml += typeEntries.map(([name, count]) => `<span class="cluster-tag type-tag clickable" data-action="filterByElType" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
+        categoryHtml += '</div>';
+      }
+      if (systemEntries.length > 0) {
+        categoryHtml += '<div class="cluster-category-group"><strong>System:</strong> ';
+        categoryHtml += systemEntries.map(([name, count]) => `<span class="cluster-tag system-tag clickable" data-action="filterByBrannsystem" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
+        categoryHtml += '</div>';
+      }
+      if (driftEntries.length > 0) {
+        categoryHtml += '<div class="cluster-category-group"><strong>Drift:</strong> ';
+        categoryHtml += driftEntries.map(([name, count]) => `<span class="cluster-tag drift-tag clickable" data-action="filterByDrift" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
+        categoryHtml += '</div>';
+      }
+      categoryHtml += '</div>';
+    }
 
     const areaText = Array.from(areaNames).slice(0, 2).join(' / ') || 'Område';
     const popupContent = `
       <div class="cluster-popup">
         <h3>${escapeHtml(areaText)}</h3>
         <p><strong>${customerIds.length}</strong> kunder i dette området</p>
+        ${categoryHtml}
         <div class="cluster-popup-actions">
           <button class="btn btn-primary btn-small" data-action="addClusterToRoute" data-customer-ids="${customerIds.join(',')}">
             <i class="fas fa-route"></i> Legg til rute
@@ -6069,6 +8943,9 @@ async function loadCustomers() {
     const result = await response.json();
     customers = result.data || result; // Handle both { data: [...] } and direct array
     Logger.log('loadCustomers() fetched', customers.length, 'customers');
+    renderElTypeFilter(); // Update kundetype filter with customer data
+    renderDriftskategoriFilter(); // Update driftskategori filter with customer data
+    renderBrannsystemFilter(); // Update brannsystem filter with customer data
     applyFilters();
     renderMarkers(customers);
     renderCustomerAdmin();
@@ -6143,16 +9020,26 @@ async function applyFilters() {
   let filtered = [...customers];
   const searchQuery = searchInput?.value?.toLowerCase() || '';
 
-  // Category filter - exact match only
+  // Category filter - exact match
   if (selectedCategory !== 'all') {
     const beforeCount = filtered.length;
     filtered = filtered.filter(c => c.kategori === selectedCategory);
     Logger.log(`applyFilters: "${selectedCategory}" - ${beforeCount} -> ${filtered.length} kunder`);
   }
 
-  // Driftskategori filter
+  // Driftskategori filter (uses normalized values)
   if (selectedDriftskategori !== 'all') {
-    filtered = filtered.filter(c => c.brann_driftstype === selectedDriftskategori);
+    filtered = filtered.filter(c => normalizeDriftstype(c.brann_driftstype) === selectedDriftskategori);
+  }
+
+  // Brannsystem filter (uses normalized categories: Elotec, ICAS, Begge, Annet)
+  if (selectedBrannsystem !== 'all') {
+    filtered = filtered.filter(c => normalizeBrannsystem(c.brann_system) === selectedBrannsystem);
+  }
+
+  // Kundetype filter (el_type: Landbruk, Næring, Bolig, etc.)
+  if (selectedElType !== 'all') {
+    filtered = filtered.filter(c => c.el_type === selectedElType);
   }
 
   // Dynamic field filters
@@ -6214,6 +9101,7 @@ async function applyFilters() {
     } catch (error) {
       if (error.name === 'AbortError') return; // Request avbrutt av nyere request
       console.error('Feil ved henting av varsler:', error);
+      showNotification('Kunne ikke laste varsler. Prøv igjen senere.', 'error');
     }
   } else if (currentFilter !== 'alle') {
     filtered = filtered.filter(c => c.poststed === currentFilter);
@@ -6234,7 +9122,7 @@ async function applyFilters() {
   updateCategoryFilterCounts();
 }
 
-// Update category filter button counts
+// Update category filter button counts (exact match - matches filter behavior)
 function updateCategoryFilterCounts() {
   const elCount = customers.filter(c => c.kategori === 'El-Kontroll').length;
   const brannCount = customers.filter(c => c.kategori === 'Brannvarsling').length;
@@ -6251,16 +9139,20 @@ function updateCategoryFilterCounts() {
   if (brannBtn) brannBtn.innerHTML = `<i class="fas fa-fire"></i> Brannvarsling (${brannCount})`;
   if (beggeBtn) beggeBtn.innerHTML = `<i class="fas fa-bolt"></i><i class="fas fa-fire"></i> Begge (${beggeCount})`;
 
-  // Update kategori-tabs (right sidebar)
+  // Update kategori-tabs (right sidebar) - preserve icons by using innerHTML
   const alleTab = document.querySelector('[data-kategori="alle"]');
   const elTab = document.querySelector('[data-kategori="El-Kontroll"]');
   const brannTab = document.querySelector('[data-kategori="Brannvarsling"]');
   const beggeTab = document.querySelector('[data-kategori="El-Kontroll + Brannvarsling"]');
 
-  if (alleTab) alleTab.textContent = `Alle (${customers.length})`;
-  if (elTab) elTab.textContent = `El-Kontroll (${elCount})`;
-  if (brannTab) brannTab.textContent = `Brann (${brannCount})`;
-  if (beggeTab) beggeTab.textContent = `Begge (${beggeCount})`;
+  if (alleTab) alleTab.innerHTML = `Alle (${customers.length})`;
+  if (elTab) elTab.innerHTML = `${serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('el-kontroll'))} El-Kontroll (${elCount})`;
+  if (brannTab) brannTab.innerHTML = `${serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('brannvarsling'))} Brannvarsling (${brannCount})`;
+  if (beggeTab) {
+    const elIcon = serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('el-kontroll'));
+    const brannIcon = serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('brannvarsling'));
+    beggeTab.innerHTML = `${elIcon}${brannIcon} Begge (${beggeCount})`;
+  }
 
   // Update driftskategori filter counts
   const driftCategories = ['Storfe', 'Sau', 'Geit', 'Gris', 'Gartneri', 'Storfe/Sau'];
@@ -7697,7 +10589,8 @@ function showRouteInfo(orderedCustomers, durationSeconds, distanceMeters) {
   };
 
   const stops = orderedCustomers.map((customer, index) => `
-    <div class="route-stop">
+    <div class="route-stop sortable-item" draggable="true" data-customer-id="${customer.id}">
+      <div class="drag-handle"><i class="fas fa-grip-vertical"></i></div>
       <div class="stop-number">${index + 1}</div>
       <div class="stop-details">
         <h4>${escapeHtml(customer.navn)}</h4>
@@ -7712,10 +10605,12 @@ function showRouteInfo(orderedCustomers, durationSeconds, distanceMeters) {
   const km = (distanceMeters / 1000).toFixed(1);
 
   routeDetails.innerHTML = `
-    ${stops}
-    <div class="route-summary">
-      <p><strong>Total kjøretid:</strong> ${hours > 0 ? `${hours}t ` : ''}${minutes} min</p>
-      <p><strong>Total distanse:</strong> ${km} km</p>
+    <div id="routeStopsList">
+      ${stops}
+    </div>
+    <div class="route-summary" id="routeSummary">
+      <p><strong>Total kjøretid:</strong> <span id="routeDuration">${hours > 0 ? `${hours}t ` : ''}${minutes} min</span></p>
+      <p><strong>Total distanse:</strong> <span id="routeDistance">${km} km</span></p>
       <p><strong>Antall stopp:</strong> ${orderedCustomers.length}</p>
     </div>
     <div class="route-actions">
@@ -7727,10 +10622,167 @@ function showRouteInfo(orderedCustomers, durationSeconds, distanceMeters) {
 
   routeInfo.classList.remove('hidden');
 
+  // Initialize drag-and-drop for route stops
+  initRouteStopsSortable();
+
   // Add event listeners for new buttons
   document.getElementById('saveRouteBtn').addEventListener('click', showSaveRouteModal);
   document.getElementById('exportGoogleBtn').addEventListener('click', () => exportToMaps('google'));
   document.getElementById('exportAppleBtn').addEventListener('click', () => exportToMaps('apple'));
+}
+
+// Initialize sortable for route stops with live updates
+function initRouteStopsSortable() {
+  const container = document.getElementById('routeStopsList');
+  if (!container) return;
+
+  let draggedItem = null;
+
+  container.addEventListener('dragstart', (e) => {
+    const item = e.target.closest('.sortable-item');
+    if (!item) return;
+    draggedItem = item;
+    draggedItem.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  container.addEventListener('dragend', async () => {
+    if (draggedItem) {
+      draggedItem.classList.remove('dragging');
+      draggedItem = null;
+
+      // Update stop numbers and recalculate route
+      await updateRouteAfterReorder();
+    }
+  });
+
+  container.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (!draggedItem) return;
+
+    const afterElement = getDragAfterElement(container, e.clientY);
+    if (afterElement == null) {
+      container.appendChild(draggedItem);
+    } else {
+      container.insertBefore(draggedItem, afterElement);
+    }
+
+    // Update stop numbers live while dragging
+    updateStopNumbers();
+  });
+}
+
+// Update stop numbers after reordering
+function updateStopNumbers() {
+  const stops = document.querySelectorAll('#routeStopsList .route-stop');
+  stops.forEach((stop, index) => {
+    const numberEl = stop.querySelector('.stop-number');
+    if (numberEl) {
+      numberEl.textContent = index + 1;
+    }
+  });
+}
+
+// Recalculate route after reordering stops
+async function updateRouteAfterReorder() {
+  const container = document.getElementById('routeStopsList');
+  if (!container || !currentRouteData) return;
+
+  // Get new order of customers
+  const stops = container.querySelectorAll('.route-stop');
+  const newCustomerOrder = [];
+
+  stops.forEach(stop => {
+    const customerId = parseInt(stop.dataset.customerId);
+    const customer = currentRouteData.customers.find(c => c.id === customerId);
+    if (customer) {
+      newCustomerOrder.push(customer);
+    }
+  });
+
+  // Update stored data
+  currentRouteData.customers = newCustomerOrder;
+
+  // Show loading state
+  const summaryEl = document.getElementById('routeSummary');
+  summaryEl.classList.add('loading');
+
+  try {
+    // Recalculate route with new order
+    const startLocation = [
+      appConfig.routeStartLng || 17.65274,
+      appConfig.routeStartLat || 69.06888
+    ];
+
+    const coordinates = [
+      startLocation,
+      ...newCustomerOrder.map(c => [c.lng, c.lat]),
+      startLocation
+    ];
+
+    const response = await fetch('/api/routes/directions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ coordinates })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+
+      if (data.features && data.features.length > 0) {
+        const feature = data.features[0];
+        const props = feature.properties.summary;
+
+        // Update stats
+        currentRouteData.duration = props.duration;
+        currentRouteData.distance = props.distance;
+
+        const hours = Math.floor(props.duration / 3600);
+        const minutes = Math.floor((props.duration % 3600) / 60);
+        const km = (props.distance / 1000).toFixed(1);
+
+        document.getElementById('routeDuration').textContent = `${hours > 0 ? `${hours}t ` : ''}${minutes} min`;
+        document.getElementById('routeDistance').textContent = `${km} km`;
+
+        // Redraw route on map
+        drawRouteFromGeoJSON(feature);
+
+        // Update route markers
+        updateRouteMarkers(newCustomerOrder);
+      }
+    }
+  } catch (error) {
+    console.error('Kunne ikke oppdatere rute:', error);
+  } finally {
+    summaryEl.classList.remove('loading');
+  }
+}
+
+// Update route markers on map after reorder
+function updateRouteMarkers(orderedCustomers) {
+  // Remove existing customer markers (keep start marker)
+  routeMarkers.forEach((marker, index) => {
+    if (index > 0) { // Skip start marker
+      map.removeLayer(marker);
+    }
+  });
+  routeMarkers = routeMarkers.slice(0, 1); // Keep only start marker
+
+  // Add new numbered markers
+  orderedCustomers.forEach((customer, index) => {
+    const icon = L.divIcon({
+      className: 'route-marker',
+      html: `${index + 1}`,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
+    });
+
+    const marker = L.marker([customer.lat, customer.lng], { icon }).addTo(map);
+    routeMarkers.push(marker);
+  });
 }
 
 // Navigate to a single customer using device maps app
@@ -8679,6 +11731,10 @@ async function confirmDeleteCategory(id) {
 function initSortable(container, type) {
   if (!container) return;
 
+  // Skip if already initialized (prevent duplicate listeners)
+  if (container.dataset.sortableInitialized === 'true') return;
+  container.dataset.sortableInitialized = 'true';
+
   let draggedItem = null;
 
   container.addEventListener('dragstart', (e) => {
@@ -9285,12 +12341,32 @@ function renderCustomerAdmin() {
     }
 
     const isChecked = bulkSelectedCustomers.has(c.id);
+
+    // Build service info badges (el_type, brannsystem, driftstype) - use normalized values
+    let serviceInfo = '';
+    if (c.el_type) {
+      serviceInfo += `<span class="service-badge type-badge">${escapeHtml(c.el_type)}</span>`;
+    }
+    if (c.brann_system) {
+      const normalizedSystem = normalizeBrannsystem(c.brann_system);
+      if (normalizedSystem) {
+        serviceInfo += `<span class="service-badge system-badge">${escapeHtml(normalizedSystem)}</span>`;
+      }
+    }
+    if (c.brann_driftstype) {
+      const normalizedDrift = normalizeDriftstype(c.brann_driftstype);
+      if (normalizedDrift) {
+        serviceInfo += `<span class="service-badge drift-badge">${escapeHtml(normalizedDrift)}</span>`;
+      }
+    }
+
     return `
       <div class="customer-admin-item ${!hasCoords ? 'no-coords' : ''} ${isChecked ? 'bulk-selected' : ''}" data-id="${c.id}">
         <input type="checkbox" class="bulk-checkbox" data-id="${c.id}" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation()">
         <div class="customer-info">
           <span class="customer-name">${escapeHtml(c.navn)}</span>
           <span class="customer-location">${escapeHtml(c.poststed || '')}</span>
+          ${serviceInfo}
           ${nextControlInfo}
         </div>
       </div>
@@ -9337,16 +12413,16 @@ function renderOverdue() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Get overdue customers
+  // Get overdue customers - use getNextControlDate to check all date fields
   let overdueCustomers = customers.filter(c => {
-    if (!c.neste_kontroll) return false;
-    const nextDate = new Date(c.neste_kontroll);
+    const nextDate = getNextControlDate(c);
+    if (!nextDate) return false;
     return nextDate < today;
   });
 
   // Calculate days overdue for each
   overdueCustomers = overdueCustomers.map(c => {
-    const nextDate = new Date(c.neste_kontroll);
+    const nextDate = getNextControlDate(c);
     const daysOverdue = Math.ceil((today - nextDate) / (1000 * 60 * 60 * 24));
     return { ...c, daysOverdue };
   });
@@ -9769,26 +12845,46 @@ async function renderCalendar() {
 
   container.innerHTML = html;
 
-  // Add event listeners for calendar navigation
-  document.getElementById('prevMonth')?.addEventListener('click', () => {
+  // Cleanup old listeners first
+  runTabCleanup('calendar');
+
+  // Get elements
+  const prevBtn = document.getElementById('prevMonth');
+  const nextBtn = document.getElementById('nextMonth');
+  const addBtn = document.getElementById('addAvtaleBtn');
+
+  // Named handlers for cleanup
+  const handlePrevMonth = () => {
     currentCalendarMonth--;
     if (currentCalendarMonth < 0) {
       currentCalendarMonth = 11;
       currentCalendarYear--;
     }
     renderCalendar();
-  });
+  };
 
-  document.getElementById('nextMonth')?.addEventListener('click', () => {
+  const handleNextMonth = () => {
     currentCalendarMonth++;
     if (currentCalendarMonth > 11) {
       currentCalendarMonth = 0;
       currentCalendarYear++;
     }
     renderCalendar();
-  });
+  };
 
-  document.getElementById('addAvtaleBtn')?.addEventListener('click', () => openAvtaleModal());
+  const handleAddAvtale = () => openAvtaleModal();
+
+  // Add event listeners
+  prevBtn?.addEventListener('click', handlePrevMonth);
+  nextBtn?.addEventListener('click', handleNextMonth);
+  addBtn?.addEventListener('click', handleAddAvtale);
+
+  // Store cleanup function
+  tabCleanupFunctions.calendar = () => {
+    prevBtn?.removeEventListener('click', handlePrevMonth);
+    nextBtn?.removeEventListener('click', handleNextMonth);
+    addBtn?.removeEventListener('click', handleAddAvtale);
+  };
 }
 
 // Avtale modal functions
@@ -10006,138 +13102,17 @@ async function deleteAvtale() {
   }
 }
 
-// Render planner with future control intervals grouped by zone/area
+// Render planner - Smart Route Recommendations
 function renderPlanner() {
-  const container = document.getElementById('plannerContainer');
-  if (!container) return;
+  // Initialiser slider-lyttere og verdier
+  initSmartRouteSettingsListeners();
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Create future control schedule grouped by year, then area, then category
-  const schedule = {};
-
-  customers.forEach(customer => {
-    if (!customer.neste_kontroll) return;
-
-    const nextDate = new Date(customer.neste_kontroll);
-    const year = nextDate.getFullYear();
-    const area = customer.poststed || 'Ukjent';
-
-    if (!schedule[year]) {
-      schedule[year] = {};
-    }
-    if (!schedule[year][area]) {
-      schedule[year][area] = [];
-    }
-
-    schedule[year][area].push({
-      id: customer.id,
-      navn: customer.navn,
-      kategori: customer.kategori,
-      adresse: customer.adresse,
-      poststed: customer.poststed,
-      neste_kontroll: customer.neste_kontroll,
-      kontroll_intervall_mnd: customer.kontroll_intervall_mnd,
-      lat: customer.lat,
-      lng: customer.lng,
-      daysUntil: Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24))
-    });
-  });
-
-  // Sort years
-  const years = Object.keys(schedule).sort((a, b) => a - b);
-
-  // Sort areas and controls within each year alphabetically
-  years.forEach(year => {
-    const areas = Object.keys(schedule[year]).sort(compareNorwegian);
-    areas.forEach(area => {
-      sortByNavn(schedule[year][area]);
-    });
-  });
-
-  // Generate HTML
-  let html = '<div class="planner-content">';
-
-  if (years.length === 0) {
-    html += '<p style="padding: 20px; text-align: center; color: #999;">Ingen planlagte kontroller</p>';
-  } else {
-    years.forEach(year => {
-      const yearAreas = schedule[year];
-      const yearControls = Object.values(yearAreas).flat();
-      const totalControls = yearControls.length;
-
-      html += `
-        <div class="planner-year">
-          <div class="planner-year-header">${year} (${totalControls} kontroller)</div>
-      `;
-
-      // Sort areas alphabetically with Norwegian locale
-      const sortedAreas = Object.keys(yearAreas).sort((a, b) => a.localeCompare(b, 'no'));
-
-      sortedAreas.forEach(area => {
-        const areaControls = yearAreas[area];
-        const areaElKontroll = areaControls.filter(c => c.kategori === 'El-Kontroll');
-        const areaBrannvarsling = areaControls.filter(c => c.kategori === 'Brannvarsling');
-
-        html += `
-          <div class="planner-area">
-            <div class="planner-area-header">
-              <span class="planner-area-name">${escapeHtml(area)} (${areaControls.length})</span>
-              <button class="planner-area-btn" data-action="createRouteForArea" data-area="${escapeHtml(area)}" data-year="${year}">
-                <i class="fas fa-plus"></i> Rute
-              </button>
-            </div>
-
-            ${areaElKontroll.length > 0 ? `
-              <div class="planner-category">
-                <div class="planner-category-title">El-Kontroll (${areaElKontroll.length})</div>
-                <div class="planner-items">
-                  ${areaElKontroll.map(control => `
-                    <div class="planner-item" data-action="focusOnCustomer" data-customer-id="${control.id}">
-                      <div class="planner-item-date">${new Date(control.neste_kontroll).toLocaleDateString('no-NO')}</div>
-                      <div class="planner-item-info">
-                        <div class="planner-item-name">${escapeHtml(control.navn)}</div>
-                        <div class="planner-item-meta">${escapeHtml(control.adresse)}</div>
-                      </div>
-                      <div class="planner-item-interval">${control.kontroll_intervall_mnd / 12}år</div>
-                    </div>
-                  `).join('')}
-                </div>
-              </div>
-            ` : ''}
-
-            ${areaBrannvarsling.length > 0 ? `
-              <div class="planner-category">
-                <div class="planner-category-title">Brannvarsling (${areaBrannvarsling.length})</div>
-                <div class="planner-items">
-                  ${areaBrannvarsling.map(control => `
-                    <div class="planner-item" data-action="focusOnCustomer" data-customer-id="${control.id}">
-                      <div class="planner-item-date">${new Date(control.neste_kontroll).toLocaleDateString('no-NO')}</div>
-                      <div class="planner-item-info">
-                        <div class="planner-item-name">${escapeHtml(control.navn)}</div>
-                        <div class="planner-item-meta">${escapeHtml(control.adresse)}</div>
-                      </div>
-                      <div class="planner-item-interval">${control.kontroll_intervall_mnd / 12}år</div>
-                    </div>
-                  `).join('')}
-                </div>
-              </div>
-            ` : ''}
-          </div>
-        `;
-      });
-
-      html += `</div>`;
-    });
-  }
-
-  html += '</div>';
-  container.innerHTML = html;
+  // Render anbefalinger
+  renderSmartRecommendations();
 }
 
 // Create route for all customers in an area for a specific year
-function createRouteForArea(area, year) {
+function createRouteForAreaYear(area, year) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -10321,6 +13296,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   const isAuthenticated = await checkExistingAuth();
 
   if (isAuthenticated) {
+    // Check for impersonation or super-admin redirect
+    const isImpersonatingCheck = localStorage.getItem('isImpersonating') === 'true';
+    const isSuperAdminCheck = localStorage.getItem('isSuperAdmin') === 'true';
+
+    // If super-admin and NOT impersonating, redirect to admin panel
+    if (isSuperAdminCheck && !isImpersonatingCheck) {
+      window.location.href = '/admin';
+      return;
+    }
+
+    // If impersonating, show the impersonation banner
+    if (isImpersonatingCheck) {
+      const banner = document.getElementById('impersonationBanner');
+      const orgName = localStorage.getItem('impersonatingOrgName') || 'Ukjent bedrift';
+      if (banner) {
+        document.getElementById('impersonatingOrgName').textContent = orgName;
+        banner.style.display = 'flex';
+        document.body.classList.add('is-impersonating');
+      }
+    }
+
     // Already logged in - skip to app view directly (no animation)
     const loginOverlay = document.getElementById('loginOverlay');
     const appView = document.getElementById('appView');
@@ -10703,6 +13699,12 @@ function setupEventListeners() {
       e.preventDefault();
       const tabName = tab.getAttribute('data-tab');
 
+      // Cleanup previous tab's event listeners before switching
+      const prevTab = document.querySelector('.tab-item.active')?.dataset.tab;
+      if (prevTab) {
+        runTabCleanup(prevTab);
+      }
+
       // Remove active class from all tabs and panes
       tabItems.forEach(t => t.classList.remove('active'));
       tabPanes.forEach(p => p.classList.remove('active'));
@@ -10712,6 +13714,14 @@ function setupEventListeners() {
       const tabPane = document.getElementById(`tab-${tabName}`);
       if (tabPane) {
         tabPane.classList.add('active');
+
+        // Toggle compact mode for tabs with dynamic height (not for tabs that need scrolling)
+        const compactTabs = ['avhuking', 'statistikk', 'routes', 'calendar', 'planner', 'customers'];
+        if (compactTabs.includes(tabName)) {
+          contentPanel.classList.add('compact-mode');
+        } else {
+          contentPanel.classList.remove('compact-mode');
+        }
 
         // Update panel title
         if (panelTitle) {
@@ -10858,6 +13868,21 @@ function setupEventListeners() {
     });
   });
 
+  // Kundetype filter toggle (collapse/expand)
+  const elTypeFilterToggle = document.getElementById('elTypeFilterToggle');
+  const elTypeFilterButtons = document.getElementById('elTypeFilterButtons');
+  if (elTypeFilterToggle && elTypeFilterButtons) {
+    elTypeFilterToggle.addEventListener('click', () => {
+      const isHidden = elTypeFilterButtons.style.display === 'none';
+      elTypeFilterButtons.style.display = isHidden ? 'flex' : 'none';
+      const icon = elTypeFilterToggle.querySelector('.toggle-icon');
+      if (icon) {
+        icon.classList.toggle('fa-chevron-right', !isHidden);
+        icon.classList.toggle('fa-chevron-down', isHidden);
+      }
+    });
+  }
+
   // Driftskategori filter toggle (collapse/expand)
   const driftFilterToggle = document.getElementById('driftFilterToggle');
   const driftFilterButtons = document.getElementById('driftFilterButtons');
@@ -10866,6 +13891,21 @@ function setupEventListeners() {
       const isHidden = driftFilterButtons.style.display === 'none';
       driftFilterButtons.style.display = isHidden ? 'flex' : 'none';
       const icon = driftFilterToggle.querySelector('.toggle-icon');
+      if (icon) {
+        icon.classList.toggle('fa-chevron-right', !isHidden);
+        icon.classList.toggle('fa-chevron-down', isHidden);
+      }
+    });
+  }
+
+  // Brannsystem filter toggle (collapse/expand)
+  const brannsystemFilterToggle = document.getElementById('brannsystemFilterToggle');
+  const brannsystemFilterButtons = document.getElementById('brannsystemFilterButtons');
+  if (brannsystemFilterToggle && brannsystemFilterButtons) {
+    brannsystemFilterToggle.addEventListener('click', () => {
+      const isHidden = brannsystemFilterButtons.style.display === 'none';
+      brannsystemFilterButtons.style.display = isHidden ? 'flex' : 'none';
+      const icon = brannsystemFilterToggle.querySelector('.toggle-icon');
       if (icon) {
         icon.classList.toggle('fa-chevron-right', !isHidden);
         icon.classList.toggle('fa-chevron-down', isHidden);
@@ -10946,7 +13986,7 @@ function setupEventListeners() {
         deleteRoute(Number.parseInt(actionEl.dataset.routeId));
         break;
       case 'createRouteForArea':
-        createRouteForArea(actionEl.dataset.area, Number.parseInt(actionEl.dataset.year));
+        createRouteForAreaYear(actionEl.dataset.area, Number.parseInt(actionEl.dataset.year));
         break;
       case 'addClusterToRoute':
         const ids = actionEl.dataset.customerIds.split(',').map(id => Number.parseInt(id));
@@ -10954,6 +13994,27 @@ function setupEventListeners() {
         break;
       case 'zoomToCluster':
         zoomToCluster(Number.parseFloat(actionEl.dataset.lat), Number.parseFloat(actionEl.dataset.lng));
+        break;
+      case 'filterByElType':
+        selectedElType = actionEl.dataset.value;
+        localStorage.setItem('selectedElType', selectedElType);
+        renderElTypeFilter();
+        applyFilters();
+        map.closePopup();
+        break;
+      case 'filterByBrannsystem':
+        selectedBrannsystem = actionEl.dataset.value;
+        localStorage.setItem('selectedBrannsystem', selectedBrannsystem);
+        renderBrannsystemFilter();
+        applyFilters();
+        map.closePopup();
+        break;
+      case 'filterByDrift':
+        selectedDriftskategori = actionEl.dataset.value;
+        localStorage.setItem('selectedDriftskategori', selectedDriftskategori);
+        renderDriftskategoriFilter();
+        applyFilters();
+        map.closePopup();
         break;
       case 'sendReminder':
       case 'sendEmail':
@@ -11019,6 +14080,18 @@ function setupEventListeners() {
         const selectCustomerId = Number.parseInt(actionEl.dataset.customerId);
         focusOnCustomer(selectCustomerId);
         toggleCustomerSelection(selectCustomerId);
+        break;
+      case 'editTeamMember':
+        e.stopPropagation();
+        const editMemberId = Number.parseInt(actionEl.dataset.memberId);
+        const editMember = teamMembersData.find(m => m.id === editMemberId);
+        if (editMember) openTeamMemberModal(editMember);
+        break;
+      case 'deleteTeamMember':
+        e.stopPropagation();
+        const deleteMemberId = Number.parseInt(actionEl.dataset.memberId);
+        const deleteMember = teamMembersData.find(m => m.id === deleteMemberId);
+        if (deleteMember) deleteTeamMember(deleteMember);
         break;
     }
   });
@@ -11682,6 +14755,9 @@ async function loadAdminData() {
   renderAdminFields();
   renderAdminCategories();
 
+  // Check and load super admin data if applicable
+  await checkSuperAdminStatus();
+
   // Setup load more button
   document.getElementById('loadMoreLogins')?.addEventListener('click', () => loadLoginLog(true));
 }
@@ -11719,53 +14795,39 @@ async function loadTeamMembers() {
     list.innerHTML = '';
 
     const members = result.data?.members || [];
+    // Store for event delegation lookup
+    teamMembersData = members;
+
     if (members.length > 0) {
       if (emptyState) emptyState.style.display = 'none';
       list.style.display = 'flex';
 
-      members.forEach(member => {
+      // Use innerHTML with data-action attributes for event delegation
+      list.innerHTML = members.map(member => {
         const initials = getInitials(member.navn);
         const lastLogin = member.sist_innlogget
           ? formatRelativeTime(member.sist_innlogget)
           : 'Aldri innlogget';
 
-        const item = document.createElement('div');
-        item.className = 'team-member-item';
-        item.dataset.memberId = member.id;
-        item.innerHTML = `
-          <div class="team-member-status ${member.aktiv ? '' : 'inactive'}"></div>
-          <div class="team-member-avatar">${initials}</div>
-          <div class="team-member-info">
-            <div class="team-member-name">${escapeHtml(member.navn)}</div>
-            <div class="team-member-email">${escapeHtml(member.epost)}</div>
-            <div class="team-member-meta">
-              <span class="team-member-role">${escapeHtml(member.rolle || 'medlem')}</span>
-              <span class="team-member-last-login">Sist: ${lastLogin}</span>
+        return `
+          <div class="team-member-item" data-action="editTeamMember" data-member-id="${member.id}">
+            <div class="team-member-status ${member.aktiv ? '' : 'inactive'}"></div>
+            <div class="team-member-avatar">${initials}</div>
+            <div class="team-member-info">
+              <div class="team-member-name">${escapeHtml(member.navn)}</div>
+              <div class="team-member-email">${escapeHtml(member.epost)}</div>
+              <div class="team-member-meta">
+                <span class="team-member-role">${escapeHtml(member.rolle || 'medlem')}</span>
+                <span class="team-member-last-login">Sist: ${lastLogin}</span>
+              </div>
+            </div>
+            <div class="team-member-actions">
+              <button class="btn-icon" data-action="editTeamMember" data-member-id="${member.id}" title="Rediger"><i class="fas fa-pen"></i></button>
+              <button class="btn-icon delete" data-action="deleteTeamMember" data-member-id="${member.id}" title="Slett"><i class="fas fa-trash"></i></button>
             </div>
           </div>
-          <div class="team-member-actions">
-            <button class="btn-icon edit-member" title="Rediger"><i class="fas fa-pen"></i></button>
-            <button class="btn-icon delete delete-member" title="Slett"><i class="fas fa-trash"></i></button>
-          </div>
         `;
-
-        // Edit button click
-        item.querySelector('.edit-member').addEventListener('click', (e) => {
-          e.stopPropagation();
-          openTeamMemberModal(member);
-        });
-
-        // Delete button click
-        item.querySelector('.delete-member').addEventListener('click', (e) => {
-          e.stopPropagation();
-          deleteTeamMember(member);
-        });
-
-        // Whole item click opens edit
-        item.addEventListener('click', () => openTeamMemberModal(member));
-
-        list.appendChild(item);
-      });
+      }).join('');
     } else {
       list.style.display = 'none';
       if (emptyState) emptyState.style.display = 'block';
@@ -12307,6 +15369,553 @@ window.createRouteForArea = createRouteForArea;
 window.addClusterToRoute = addClusterToRoute;
 window.zoomToCluster = zoomToCluster;
 
+// ========================================
+// SUPER ADMIN FUNCTIONS
+// ========================================
+
+let isSuperAdmin = false;
+let superAdminOrganizations = [];
+let selectedOrgId = null;
+let selectedOrgData = null;
+
+async function checkSuperAdminStatus() {
+  // Check if user is super admin from the login response stored in sessionStorage/localStorage
+  // This is set during login
+  const storedSuperAdmin = sessionStorage.getItem('isSuperAdmin') || localStorage.getItem('isSuperAdmin');
+  isSuperAdmin = storedSuperAdmin === 'true';
+
+  if (isSuperAdmin) {
+    const superAdminSection = document.getElementById('superAdminSection');
+    if (superAdminSection) {
+      superAdminSection.style.display = 'block';
+      await loadSuperAdminData();
+    }
+  }
+}
+
+async function loadSuperAdminData() {
+  if (!isSuperAdmin) return;
+
+  try {
+    // Load global statistics
+    await loadGlobalStatistics();
+    // Load organizations list
+    await loadOrganizations();
+    // Setup event listeners
+    initSuperAdminUI();
+  } catch (error) {
+    console.error('Error loading super admin data:', error);
+  }
+}
+
+async function loadGlobalStatistics() {
+  try {
+    const response = await fetch('/api/super-admin/statistics', {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (!response.ok) {
+      console.error('Failed to load global statistics');
+      return;
+    }
+
+    const result = await response.json();
+    if (result.success && result.data) {
+      const stats = result.data;
+      updateElement('statTotalOrgs', stats.totalOrganizations || 0);
+      updateElement('statGlobalKunder', stats.totalKunder || 0);
+      updateElement('statGlobalBrukere', stats.totalBrukere || 0);
+      updateElement('statActiveOrgs', stats.activeOrganizations || 0);
+    }
+  } catch (error) {
+    console.error('Error loading global statistics:', error);
+  }
+}
+
+function updateElement(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+async function loadOrganizations() {
+  try {
+    const response = await fetch('/api/super-admin/organizations', {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (!response.ok) {
+      console.error('Failed to load organizations');
+      return;
+    }
+
+    const result = await response.json();
+    if (result.success) {
+      superAdminOrganizations = result.data || [];
+      renderOrganizationList();
+    }
+  } catch (error) {
+    console.error('Error loading organizations:', error);
+  }
+}
+
+function renderOrganizationList(filter = '') {
+  const tbody = document.getElementById('orgListBody');
+  if (!tbody) return;
+
+  const filtered = filter
+    ? superAdminOrganizations.filter(org =>
+        org.navn.toLowerCase().includes(filter.toLowerCase()) ||
+        org.slug.toLowerCase().includes(filter.toLowerCase())
+      )
+    : superAdminOrganizations;
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+          ${filter ? 'Ingen organisasjoner funnet' : 'Ingen organisasjoner registrert'}
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(org => {
+    const planBadge = getPlanBadge(org.plan_type);
+    const statusBadge = getSubscriptionStatusBadge(org.subscription_status);
+    const opprettet = org.opprettet ? new Date(org.opprettet).toLocaleDateString('nb-NO') : '-';
+
+    return `
+      <tr data-org-id="${org.id}">
+        <td><strong>${escapeHtml(org.navn)}</strong><br><small style="color: var(--text-tertiary);">${escapeHtml(org.slug)}</small></td>
+        <td>${planBadge}</td>
+        <td>${statusBadge}</td>
+        <td>${org.kunde_count || 0}</td>
+        <td>${org.bruker_count || 0}</td>
+        <td>${opprettet}</td>
+        <td>
+          <button class="btn btn-small btn-secondary" onclick="selectOrganization(${org.id})">
+            <i class="fas fa-eye"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function getPlanBadge(plan) {
+  const badges = {
+    'free': '<span class="badge badge-secondary">Gratis</span>',
+    'standard': '<span class="badge badge-primary">Standard</span>',
+    'premium': '<span class="badge badge-success">Premium</span>',
+    'enterprise': '<span class="badge badge-warning">Enterprise</span>'
+  };
+  return badges[plan] || badges.free;
+}
+
+function getSubscriptionStatusBadge(status) {
+  const badges = {
+    'active': '<span class="badge badge-success">Aktiv</span>',
+    'trialing': '<span class="badge badge-info">Prøveperiode</span>',
+    'past_due': '<span class="badge badge-warning">Forfalt</span>',
+    'canceled': '<span class="badge badge-danger">Kansellert</span>',
+    'incomplete': '<span class="badge badge-secondary">Ufullstendig</span>'
+  };
+  return badges[status] || '<span class="badge badge-secondary">Ukjent</span>';
+}
+
+async function selectOrganization(orgId) {
+  selectedOrgId = orgId;
+
+  try {
+    // Load organization details
+    const response = await fetch(`/api/super-admin/organizations/${orgId}`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (!response.ok) {
+      showNotification('Kunne ikke laste organisasjonsdetaljer', 'error');
+      return;
+    }
+
+    const result = await response.json();
+    if (result.success) {
+      selectedOrgData = result.data;
+      renderSelectedOrganization();
+
+      // Show the details section
+      const detailsSection = document.getElementById('selectedOrgSection');
+      if (detailsSection) {
+        detailsSection.style.display = 'block';
+        detailsSection.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      // Load customers for this org
+      await loadOrgCustomers(orgId);
+      await loadOrgUsers(orgId);
+    }
+  } catch (error) {
+    console.error('Error loading organization:', error);
+    showNotification('Feil ved lasting av organisasjon', 'error');
+  }
+}
+
+function renderSelectedOrganization() {
+  if (!selectedOrgData) return;
+
+  updateElement('selectedOrgName', selectedOrgData.navn);
+  updateElement('orgInfoSlug', selectedOrgData.slug);
+  updateElement('orgInfoPlan', selectedOrgData.plan_type || 'free');
+  updateElement('orgInfoSubscription', selectedOrgData.subscription_status || 'ukjent');
+  updateElement('orgInfoIndustry', selectedOrgData.industry_template_id ? `ID: ${selectedOrgData.industry_template_id}` : 'Ingen');
+}
+
+async function loadOrgCustomers(orgId) {
+  try {
+    const response = await fetch(`/api/super-admin/organizations/${orgId}/kunder`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (!response.ok) {
+      console.error('Failed to load org customers');
+      return;
+    }
+
+    const result = await response.json();
+    if (result.success) {
+      renderOrgCustomers(result.data || []);
+      updateElement('orgCustomerCount', (result.data || []).length);
+    }
+  } catch (error) {
+    console.error('Error loading org customers:', error);
+  }
+}
+
+function renderOrgCustomers(customers) {
+  const tbody = document.getElementById('orgCustomersBody');
+  if (!tbody) return;
+
+  if (customers.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+          Ingen kunder registrert
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = customers.map(kunde => `
+    <tr data-kunde-id="${kunde.id}">
+      <td><strong>${escapeHtml(kunde.navn)}</strong></td>
+      <td>${escapeHtml(kunde.adresse || '-')}</td>
+      <td>${escapeHtml(kunde.telefon || '-')}</td>
+      <td>${escapeHtml(kunde.epost || '-')}</td>
+      <td>
+        <button class="btn-icon" onclick="editOrgCustomer(${kunde.id})" title="Rediger">
+          <i class="fas fa-pen"></i>
+        </button>
+        <button class="btn-icon delete" onclick="deleteOrgCustomer(${kunde.id})" title="Slett">
+          <i class="fas fa-trash"></i>
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function loadOrgUsers(orgId) {
+  try {
+    const response = await fetch(`/api/super-admin/organizations/${orgId}/brukere`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (!response.ok) {
+      console.error('Failed to load org users');
+      return;
+    }
+
+    const result = await response.json();
+    if (result.success) {
+      renderOrgUsers(result.data || []);
+      updateElement('orgUserCount', (result.data || []).length);
+    }
+  } catch (error) {
+    console.error('Error loading org users:', error);
+  }
+}
+
+function renderOrgUsers(users) {
+  const tbody = document.getElementById('orgUsersBody');
+  if (!tbody) return;
+
+  if (users.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="4" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+          Ingen brukere registrert
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = users.map(user => {
+    const sistInnlogget = user.sist_innlogget
+      ? formatRelativeTime(user.sist_innlogget)
+      : 'Aldri';
+    const opprettet = user.opprettet
+      ? new Date(user.opprettet).toLocaleDateString('nb-NO')
+      : '-';
+
+    return `
+      <tr>
+        <td><strong>${escapeHtml(user.navn)}</strong></td>
+        <td>${escapeHtml(user.epost)}</td>
+        <td>${sistInnlogget}</td>
+        <td>${opprettet}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function closeOrgDetails() {
+  selectedOrgId = null;
+  selectedOrgData = null;
+  const detailsSection = document.getElementById('selectedOrgSection');
+  if (detailsSection) {
+    detailsSection.style.display = 'none';
+  }
+}
+
+async function addOrgCustomer() {
+  if (!selectedOrgId) return;
+
+  // Use the existing customer modal but in "add for org" mode
+  openCustomerModal(null, selectedOrgId);
+}
+
+async function editOrgCustomer(kundeId) {
+  if (!selectedOrgId) return;
+
+  try {
+    // Fetch customer data
+    const response = await fetch(`/api/super-admin/organizations/${selectedOrgId}/kunder`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (!response.ok) return;
+
+    const result = await response.json();
+    const kunde = (result.data || []).find(k => k.id === kundeId);
+
+    if (kunde) {
+      openCustomerModal(kunde, selectedOrgId);
+    }
+  } catch (error) {
+    console.error('Error fetching customer:', error);
+  }
+}
+
+async function deleteOrgCustomer(kundeId) {
+  if (!selectedOrgId) return;
+
+  if (!confirm('Er du sikker på at du vil slette denne kunden?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/super-admin/organizations/${selectedOrgId}/kunder/${kundeId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (response.ok) {
+      showNotification('Kunde slettet');
+      await loadOrgCustomers(selectedOrgId);
+      await loadGlobalStatistics();
+    } else {
+      const result = await response.json();
+      showNotification(result.error?.message || 'Kunne ikke slette kunden', 'error');
+    }
+  } catch (error) {
+    console.error('Error deleting customer:', error);
+    showNotification('Feil ved sletting av kunde', 'error');
+  }
+}
+
+// Open customer modal for super admin - reuse existing modal or create simple version
+function openCustomerModal(kunde = null, forOrgId = null) {
+  // For super admin, we'll create a simple modal inline
+  const existingModal = document.getElementById('superAdminCustomerModal');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'superAdminCustomerModal';
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h2>${kunde ? 'Rediger kunde' : 'Ny kunde'}</h2>
+        <button class="modal-close" onclick="closeSuperAdminCustomerModal()">&times;</button>
+      </div>
+      <form id="superAdminCustomerForm" onsubmit="saveSuperAdminCustomer(event)">
+        <input type="hidden" id="saKundeId" value="${kunde?.id || ''}">
+        <input type="hidden" id="saKundeOrgId" value="${forOrgId || ''}">
+
+        <div class="form-group">
+          <label for="saKundeNavn">Navn *</label>
+          <input type="text" id="saKundeNavn" value="${escapeHtml(kunde?.navn || '')}" required>
+        </div>
+
+        <div class="form-group">
+          <label for="saKundeAdresse">Adresse *</label>
+          <input type="text" id="saKundeAdresse" value="${escapeHtml(kunde?.adresse || '')}" required>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="saKundePostnummer">Postnummer</label>
+            <input type="text" id="saKundePostnummer" value="${escapeHtml(kunde?.postnummer || '')}">
+          </div>
+          <div class="form-group">
+            <label for="saKundePoststed">Poststed</label>
+            <input type="text" id="saKundePoststed" value="${escapeHtml(kunde?.poststed || '')}">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="saKundeTelefon">Telefon</label>
+            <input type="text" id="saKundeTelefon" value="${escapeHtml(kunde?.telefon || '')}">
+          </div>
+          <div class="form-group">
+            <label for="saKundeEpost">E-post</label>
+            <input type="email" id="saKundeEpost" value="${escapeHtml(kunde?.epost || '')}">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="saKundeKontaktperson">Kontaktperson</label>
+          <input type="text" id="saKundeKontaktperson" value="${escapeHtml(kunde?.kontaktperson || '')}">
+        </div>
+
+        <div class="form-group">
+          <label for="saKundeNotater">Notater</label>
+          <textarea id="saKundeNotater" rows="3">${escapeHtml(kunde?.notater || '')}</textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeSuperAdminCustomerModal()">Avbryt</button>
+          <button type="submit" class="btn btn-primary">${kunde ? 'Lagre' : 'Opprett'}</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+}
+
+function closeSuperAdminCustomerModal() {
+  const modal = document.getElementById('superAdminCustomerModal');
+  if (modal) modal.remove();
+}
+
+async function saveSuperAdminCustomer(e) {
+  e.preventDefault();
+
+  const kundeId = document.getElementById('saKundeId').value;
+  const orgId = document.getElementById('saKundeOrgId').value;
+
+  const data = {
+    navn: document.getElementById('saKundeNavn').value,
+    adresse: document.getElementById('saKundeAdresse').value,
+    postnummer: document.getElementById('saKundePostnummer').value,
+    poststed: document.getElementById('saKundePoststed').value,
+    telefon: document.getElementById('saKundeTelefon').value,
+    epost: document.getElementById('saKundeEpost').value,
+    kontaktperson: document.getElementById('saKundeKontaktperson').value,
+    notater: document.getElementById('saKundeNotater').value
+  };
+
+  try {
+    let url = `/api/super-admin/organizations/${orgId}/kunder`;
+    let method = 'POST';
+
+    if (kundeId) {
+      url += `/${kundeId}`;
+      method = 'PUT';
+    }
+
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (response.ok) {
+      showNotification(kundeId ? 'Kunde oppdatert' : 'Kunde opprettet');
+      closeSuperAdminCustomerModal();
+      await loadOrgCustomers(orgId);
+      await loadGlobalStatistics();
+    } else {
+      const result = await response.json();
+      showNotification(result.error?.message || 'Kunne ikke lagre kunden', 'error');
+    }
+  } catch (error) {
+    console.error('Error saving customer:', error);
+    showNotification('Feil ved lagring av kunde', 'error');
+  }
+}
+
+function initSuperAdminUI() {
+  // Organization search
+  const orgSearchInput = document.getElementById('orgSearchInput');
+  if (orgSearchInput) {
+    orgSearchInput.addEventListener('input', debounce((e) => {
+      renderOrganizationList(e.target.value);
+    }, 300));
+  }
+
+  // Close org details button
+  const closeOrgBtn = document.getElementById('closeOrgDetailsBtn');
+  if (closeOrgBtn) {
+    closeOrgBtn.addEventListener('click', closeOrgDetails);
+  }
+
+  // Add customer button
+  const addOrgCustomerBtn = document.getElementById('addOrgCustomerBtn');
+  if (addOrgCustomerBtn) {
+    addOrgCustomerBtn.addEventListener('click', addOrgCustomer);
+  }
+
+  // Organization detail tabs
+  const tabBtns = document.querySelectorAll('.org-tab-btn');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+
+      // Update active button
+      tabBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Show/hide tabs
+      document.getElementById('orgCustomersTab').style.display = tab === 'customers' ? 'block' : 'none';
+      document.getElementById('orgUsersTab').style.display = tab === 'users' ? 'block' : 'none';
+    });
+  });
+}
+
+// Make super admin functions available globally
+window.selectOrganization = selectOrganization;
+window.editOrgCustomer = editOrgCustomer;
+window.deleteOrgCustomer = deleteOrgCustomer;
+window.closeSuperAdminCustomerModal = closeSuperAdminCustomerModal;
+window.saveSuperAdminCustomer = saveSuperAdminCustomer;
+
 // ============================================
 // MOBILE RESPONSIVENESS
 // ============================================
@@ -12496,19 +16105,6 @@ function handleTouchMove(e) {
 
 function handleTouchEnd() {
   touchStartY = 0;
-}
-
-// Debounce helper
-function debounce(func, wait) {
-  let timeout;
-  return function executedFunction(...args) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
 }
 
 // Initialize mobile UI after DOM is ready

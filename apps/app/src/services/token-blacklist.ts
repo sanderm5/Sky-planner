@@ -17,11 +17,34 @@ const logger = createLogger('token-blacklist');
 // Key: token JTI (JWT ID), Value: expiration timestamp
 const cache = new Map<string, number>();
 
+// Maximum cache size to prevent unbounded memory growth
+// With 24h token expiry and normal logout patterns, 10k entries should be plenty
+const MAX_CACHE_SIZE = 10000;
+
 // Track if cache has been initialized from database
 let cacheInitialized = false;
 
 // Cleanup interval (every hour for database, cache cleaned on access)
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Evict oldest entries from cache when it exceeds max size
+ * Uses FIFO eviction since Map maintains insertion order
+ */
+function evictOldestIfNeeded(): void {
+  if (cache.size <= MAX_CACHE_SIZE) return;
+
+  const entriesToRemove = cache.size - MAX_CACHE_SIZE + 100; // Remove 100 extra to avoid frequent evictions
+  let removed = 0;
+
+  for (const key of cache.keys()) {
+    if (removed >= entriesToRemove) break;
+    cache.delete(key);
+    removed++;
+  }
+
+  logger.debug({ removed, cacheSize: cache.size }, 'Evicted old entries from token blacklist cache');
+}
 
 /**
  * Initialize cache from database
@@ -59,6 +82,7 @@ export async function blacklistToken(
 ): Promise<void> {
   // Add to cache immediately for fast subsequent checks
   cache.set(tokenId, expiresAt);
+  evictOldestIfNeeded(); // Ensure cache doesn't grow unbounded
   logger.debug({ tokenId, expiresAt }, 'Token added to cache');
 
   // Persist to database for durability
@@ -139,6 +163,7 @@ export async function isTokenBlacklisted(tokenId: string): Promise<boolean> {
       // Use a default expiry of 24 hours from now if we don't know the actual expiry
       const defaultExpiry = Math.floor(Date.now() / 1000) + 86400;
       cache.set(tokenId, defaultExpiry);
+      evictOldestIfNeeded(); // Ensure cache doesn't grow unbounded
       logger.debug({ tokenId }, 'Token found in database blacklist, added to cache');
     }
 

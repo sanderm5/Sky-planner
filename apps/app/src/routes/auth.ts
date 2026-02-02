@@ -20,6 +20,10 @@ const router: Router = Router();
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REMEMBER_ME_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+// Dummy hash for timing attack prevention
+// This hash is compared against when user doesn't exist to ensure consistent response time
+const DUMMY_PASSWORD_HASH = '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.Og6Dqw.V0SrleW';
+
 // Database service interface (will be injected)
 interface DatabaseService {
   getKlientByEpost(epost: string): Promise<KlientRecord | null>;
@@ -28,6 +32,18 @@ interface DatabaseService {
   updateBrukerLastLogin(id: number): Promise<void>;
   getOrganizationById(id: number): Promise<OrganizationRecord | null>;
   logLoginAttempt(data: LoginAttemptData): Promise<void>;
+  getAllKunder(organizationId: number): Promise<KundeRecord[]>;
+}
+
+interface KundeRecord {
+  id: number;
+  navn: string;
+  adresse?: string;
+  poststed?: string;
+  kategori?: string;
+  neste_el_kontroll?: string;
+  neste_brann_kontroll?: string;
+  neste_kontroll?: string;
 }
 
 interface KlientRecord {
@@ -52,6 +68,7 @@ interface BrukerRecord {
   rolle?: string;
   organization_id?: number;
   aktiv: boolean;
+  is_super_admin?: boolean;
 }
 
 interface OrganizationRecord {
@@ -136,6 +153,11 @@ router.post(
       }
     }
 
+    // Always run bcrypt.compare to prevent timing attacks
+    // If user doesn't exist, compare against dummy hash to ensure consistent response time
+    const hashToCompare = user?.passord_hash || DUMMY_PASSWORD_HASH;
+    const passwordMatch = await bcrypt.compare(passord, hashToCompare);
+
     if (!user) {
       // Log failed attempt
       await dbService.logLoginAttempt({
@@ -148,8 +170,6 @@ router.post(
       throw Errors.unauthorized('Feil e-post eller passord');
     }
 
-    // Verify password
-    const passwordMatch = await bcrypt.compare(passord, user.passord_hash);
     if (!passwordMatch) {
       await dbService.logLoginAttempt({
         epost,
@@ -256,6 +276,118 @@ router.post(
 );
 
 /**
+ * GET /api/klient/dashboard
+ * Returns dashboard data for the authenticated user
+ */
+router.get(
+  '/dashboard',
+  requireAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const user = req.user!;
+
+    // Get klient info if user is a klient
+    let klient: KlientRecord | null = null;
+    if (user.type === 'klient') {
+      klient = await dbService.getKlientByEpost(user.epost);
+    }
+
+    // Get all customers for the organization
+    let kunder: KundeRecord[] = [];
+    if (user.organizationId) {
+      kunder = await dbService.getAllKunder(user.organizationId);
+    }
+
+    // Helper to get Norwegian date (without time)
+    const getNorwegianToday = (): Date => {
+      const now = new Date();
+      const norwayTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Oslo' }));
+      norwayTime.setHours(0, 0, 0, 0);
+      return norwayTime;
+    };
+
+    // Helper to parse date string as local date
+    const parseLocalDate = (dateStr: string | undefined): Date | null => {
+      if (!dateStr) return null;
+      const [y, m, d] = dateStr.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    };
+
+    // Helper to get next control date (check all date fields)
+    const getNextControlDate = (k: KundeRecord): Date | null => {
+      const dates = [k.neste_el_kontroll, k.neste_brann_kontroll, k.neste_kontroll]
+        .filter(Boolean)
+        .map(d => parseLocalDate(d))
+        .filter((d): d is Date => d !== null);
+      if (dates.length === 0) return null;
+      return new Date(Math.min(...dates.map(d => d.getTime())));
+    };
+
+    const today = getNorwegianToday();
+
+    // Calculate forfalt (overdue)
+    const forfalt = kunder.filter(k => {
+      const nextDate = getNextControlDate(k);
+      if (!nextDate) return false;
+      return nextDate < today;
+    });
+
+    // Calculate upcoming controls (within 30 days)
+    const kommendeKontroller = kunder.filter(k => {
+      const nextDate = getNextControlDate(k);
+      if (!nextDate) return false;
+      const daysUntil = Math.ceil((nextDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return daysUntil >= 0 && daysUntil <= 30;
+    });
+
+    // Check if user is admin
+    const isAdmin = user.type === 'bruker' || klient?.rolle === 'admin';
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        klient: {
+          id: user.userId,
+          navn: klient?.navn || user.epost,
+          epost: klient?.epost || user.epost,
+          telefon: klient?.telefon,
+          adresse: klient?.adresse,
+          postnummer: klient?.postnummer,
+          poststed: klient?.poststed,
+          rolle: isAdmin ? 'admin' : (klient?.rolle || 'klient'),
+          type: user.type,
+        },
+        sessionExpiresAt: user.exp ? user.exp * 1000 : undefined,
+        stats: {
+          totaltKunder: kunder.length,
+          forfalt: forfalt.length,
+          kommendeKontroller: kommendeKontroller.length,
+        },
+        kommendeKontroller: kommendeKontroller.slice(0, 10).map(k => ({
+          id: k.id,
+          navn: k.navn,
+          adresse: k.adresse,
+          poststed: k.poststed,
+          kategori: k.kategori,
+          neste_kontroll: k.neste_el_kontroll || k.neste_brann_kontroll || k.neste_kontroll,
+        })),
+        forfalt: forfalt.slice(0, 5).map(k => ({
+          id: k.id,
+          navn: k.navn,
+          adresse: k.adresse,
+          poststed: k.poststed,
+          kategori: k.kategori,
+          neste_kontroll: k.neste_el_kontroll || k.neste_brann_kontroll || k.neste_kontroll,
+        })),
+        historikk: [], // TODO: Add kontroll_historikk when table exists
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
  * POST /api/klient/logout
  * Invalidates the current session by blacklisting the token
  */
@@ -351,6 +483,16 @@ router.get(
         currentPeriodEnd: organization?.current_period_end,
       }, '24h');
 
+      // Check if user is super admin (only for bruker type)
+      const brukerRecord = user as BrukerRecord;
+      authLogger.debug({
+        userId: user.id,
+        userType: decoded.type,
+        is_super_admin_raw: brukerRecord.is_super_admin,
+        is_super_admin_type: typeof brukerRecord.is_super_admin,
+      }, 'Verify: checking super admin status');
+      const isSuperAdmin = decoded.type === 'bruker' && brukerRecord.is_super_admin === true;
+
       res.json({
         success: true,
         data: {
@@ -363,6 +505,7 @@ router.get(
             type: decoded.type,
             organizationId: decoded.organizationId,
             organizationSlug: decoded.organizationSlug,
+            isSuperAdmin,
           },
           organization: organization
             ? {

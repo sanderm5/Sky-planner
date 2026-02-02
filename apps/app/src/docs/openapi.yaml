@@ -1,0 +1,1034 @@
+openapi: 3.0.3
+info:
+  title: SkyPlanner API
+  description: |
+    REST API for SkyPlanner kundeadministrasjon og ruteplanlegging.
+
+    ## Autentisering
+
+    API-et stotter to autentiseringsmetoder:
+
+    ### API-nokkel
+    For tredjeparts-integrasjoner. Opprett API-nokkel i admin-panelet.
+    ```
+    X-API-Key: sk_live_xxx
+    ```
+
+    ### JWT Bearer Token
+    For innloggede brukere via web-applikasjonen.
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    ## Rate Limiting
+    - Standard: 100 requests per 15 minutter
+    - API-nokler kan ha egne kvote-innstillinger
+
+    ## Feilhandtering
+    Alle feil returnerer et standardisert format:
+    ```json
+    {
+      "success": false,
+      "error": {
+        "code": "ERROR_CODE",
+        "message": "Beskrivende feilmelding"
+      },
+      "requestId": "abc123"
+    }
+    ```
+
+  version: 1.0.0
+  contact:
+    name: Efffekt AS
+    email: support@skyplanner.no
+    url: https://skyplanner.no
+
+servers:
+  - url: https://app.skyplanner.no/api
+    description: Produksjonsserver
+  - url: http://localhost:3000/api
+    description: Lokal utvikling
+
+tags:
+  - name: Kunder
+    description: Kundehåndtering (CRUD)
+  - name: Ruter
+    description: Ruteplanlegging
+  - name: Avtaler
+    description: Avtaler og besøk
+  - name: Webhooks
+    description: Webhook-administrasjon
+  - name: API-nokler
+    description: API-nokkelhåndtering
+  - name: Integrasjoner
+    description: Eksterne integrasjoner
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+paths:
+  # ============ Public API v1 - Customers ============
+  /v1/customers:
+    get:
+      tags:
+        - Kunder
+      summary: List kunder
+      description: Henter en paginert liste over kunder
+      operationId: listCustomers
+      security:
+        - ApiKeyAuth: [customers:read]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/limitParam'
+        - $ref: '#/components/parameters/offsetParam'
+        - name: search
+          in: query
+          description: Sok i navn, adresse, telefon, epost
+          schema:
+            type: string
+        - name: kategori
+          in: query
+          description: Filtrer på kategori
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Liste over kunder
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          data:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Customer'
+                          total:
+                            type: integer
+                          limit:
+                            type: integer
+                          offset:
+                            type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - Kunder
+      summary: Opprett kunde
+      description: Oppretter en ny kunde
+      operationId: createCustomer
+      security:
+        - ApiKeyAuth: [customers:write]
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerRequest'
+      responses:
+        '201':
+          description: Kunde opprettet
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/customers/{id}:
+    get:
+      tags:
+        - Kunder
+      summary: Hent kunde
+      description: Henter en spesifikk kunde
+      operationId: getCustomer
+      security:
+        - ApiKeyAuth: [customers:read]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+      responses:
+        '200':
+          description: Kundedetaljer
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Customer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Kunder
+      summary: Oppdater kunde
+      description: Oppdaterer en eksisterende kunde
+      operationId: updateCustomer
+      security:
+        - ApiKeyAuth: [customers:write]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerRequest'
+      responses:
+        '200':
+          description: Kunde oppdatert
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Customer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Kunder
+      summary: Slett kunde
+      description: Sletter en kunde permanent
+      operationId: deleteCustomer
+      security:
+        - ApiKeyAuth: [customers:write]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+      responses:
+        '200':
+          description: Kunde slettet
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: Kunde slettet
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============ Webhooks ============
+  /webhooks:
+    get:
+      tags:
+        - Webhooks
+      summary: List webhooks
+      description: Henter alle webhook-endepunkter for organisasjonen
+      operationId: listWebhooks
+      security:
+        - ApiKeyAuth: [webhooks:manage]
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Liste over webhooks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WebhookEndpoint'
+
+    post:
+      tags:
+        - Webhooks
+      summary: Opprett webhook
+      description: |
+        Oppretter et nytt webhook-endepunkt.
+
+        **Viktig:** Secret-verdien returneres kun ved opprettelse og må lagres trygt.
+      operationId: createWebhook
+      security:
+        - ApiKeyAuth: [webhooks:manage]
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        '201':
+          description: Webhook opprettet
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          webhook:
+                            $ref: '#/components/schemas/WebhookEndpoint'
+                          secret:
+                            type: string
+                            description: HMAC secret for signaturverifisering (vises kun en gang)
+                            example: whsec_abc123...
+                      message:
+                        type: string
+
+  /webhooks/{id}:
+    get:
+      tags:
+        - Webhooks
+      summary: Hent webhook
+      operationId: getWebhook
+      security:
+        - ApiKeyAuth: [webhooks:manage]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+      responses:
+        '200':
+          description: Webhook-detaljer
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WebhookEndpoint'
+
+    put:
+      tags:
+        - Webhooks
+      summary: Oppdater webhook
+      operationId: updateWebhook
+      security:
+        - ApiKeyAuth: [webhooks:manage]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookRequest'
+      responses:
+        '200':
+          description: Webhook oppdatert
+
+    delete:
+      tags:
+        - Webhooks
+      summary: Slett webhook
+      operationId: deleteWebhook
+      security:
+        - ApiKeyAuth: [webhooks:manage]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+      responses:
+        '200':
+          description: Webhook slettet
+
+  /webhooks/{id}/deliveries:
+    get:
+      tags:
+        - Webhooks
+      summary: Leveringshistorikk
+      description: Henter leveringshistorikk for et webhook-endepunkt
+      operationId: getWebhookDeliveries
+      security:
+        - ApiKeyAuth: [webhooks:manage]
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        '200':
+          description: Leveringshistorikk
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WebhookDelivery'
+
+  /webhooks/events:
+    get:
+      tags:
+        - Webhooks
+      summary: Tilgjengelige events
+      description: Henter liste over tilgjengelige webhook event-typer
+      operationId: getWebhookEvents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Liste over event-typer
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            event:
+                              type: string
+                              example: customer.created
+                            label:
+                              type: string
+                              example: Kunde opprettet
+
+  # ============ API Keys ============
+  /api-keys:
+    get:
+      tags:
+        - API-nokler
+      summary: List API-nokler
+      description: Henter alle API-nokler for organisasjonen
+      operationId: listApiKeys
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Liste over API-nokler
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ApiKey'
+
+    post:
+      tags:
+        - API-nokler
+      summary: Opprett API-nokkel
+      description: |
+        Oppretter en ny API-nokkel.
+
+        **Viktig:** Nokkel-verdien returneres kun ved opprettelse og må lagres trygt.
+      operationId: createApiKey
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+      responses:
+        '201':
+          description: API-nokkel opprettet
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          apiKey:
+                            $ref: '#/components/schemas/ApiKey'
+                          key:
+                            type: string
+                            description: Den fulle API-nokkelen (vises kun en gang)
+                            example: sk_live_abc123...
+
+  /api-keys/{id}/revoke:
+    post:
+      tags:
+        - API-nokler
+      summary: Deaktiver API-nokkel
+      operationId: revokeApiKey
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Årsak til deaktivering
+      responses:
+        '200':
+          description: API-nokkel deaktivert
+
+  # ============ Health ============
+  /health:
+    get:
+      tags:
+        - System
+      summary: Helsesjekk
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Systemstatus
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: healthy
+                      timestamp:
+                        type: string
+                        format: date-time
+                      version:
+                        type: string
+                        example: 2.0.0
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API-nokkel opprettet i admin-panelet
+
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT-token fra innlogging
+
+  parameters:
+    idParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Unik ID
+
+    limitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 100
+        maximum: 500
+      description: Maks antall resultater
+
+    offsetParam:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+      description: Antall resultater å hoppe over
+
+  schemas:
+    # ============ Base Response Types ============
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        requestId:
+          type: string
+          example: req_abc123
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Ugyldig data
+        requestId:
+          type: string
+
+    # ============ Customer Types ============
+    Customer:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        navn:
+          type: string
+          example: Ola Nordmann AS
+        adresse:
+          type: string
+          example: Storgata 1
+        postnummer:
+          type: string
+          example: "0123"
+        poststed:
+          type: string
+          example: Oslo
+        telefon:
+          type: string
+          example: "12345678"
+        epost:
+          type: string
+          format: email
+          example: post@example.com
+        lat:
+          type: number
+          format: double
+          example: 59.9139
+        lng:
+          type: number
+          format: double
+          example: 10.7522
+        kategori:
+          type: string
+          example: El-Kontroll
+        kontaktperson:
+          type: string
+        notater:
+          type: string
+        siste_el_kontroll:
+          type: string
+          format: date
+        neste_el_kontroll:
+          type: string
+          format: date
+        el_kontroll_intervall:
+          type: integer
+          description: Måneder mellom kontroller
+          example: 36
+        siste_brann_kontroll:
+          type: string
+          format: date
+        neste_brann_kontroll:
+          type: string
+          format: date
+        brann_kontroll_intervall:
+          type: integer
+          example: 12
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateCustomerRequest:
+      type: object
+      required:
+        - navn
+        - adresse
+      properties:
+        navn:
+          type: string
+          minLength: 1
+          maxLength: 255
+        adresse:
+          type: string
+        postnummer:
+          type: string
+          pattern: '^\d{4}$'
+        poststed:
+          type: string
+        telefon:
+          type: string
+        epost:
+          type: string
+          format: email
+        lat:
+          type: number
+        lng:
+          type: number
+        kategori:
+          type: string
+          enum: [El-Kontroll, Brannvarsling, Begge]
+        kontaktperson:
+          type: string
+        notater:
+          type: string
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        navn:
+          type: string
+        adresse:
+          type: string
+        postnummer:
+          type: string
+        poststed:
+          type: string
+        telefon:
+          type: string
+        epost:
+          type: string
+          format: email
+        kontaktperson:
+          type: string
+        notater:
+          type: string
+
+    # ============ Webhook Types ============
+    WebhookEndpoint:
+      type: object
+      properties:
+        id:
+          type: integer
+        url:
+          type: string
+          format: uri
+        name:
+          type: string
+        description:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+              - customer.created
+              - customer.updated
+              - customer.deleted
+              - route.created
+              - route.completed
+              - appointment.created
+              - appointment.completed
+              - sync.completed
+              - sync.failed
+        is_active:
+          type: boolean
+        failure_count:
+          type: integer
+        last_success_at:
+          type: string
+          format: date-time
+        last_failure_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    CreateWebhookRequest:
+      type: object
+      required:
+        - url
+        - name
+        - events
+      properties:
+        url:
+          type: string
+          format: uri
+          description: HTTPS URL for webhook-leveranser
+        name:
+          type: string
+          description: Beskrivende navn
+        description:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: Event-typer å abonnere på
+
+    UpdateWebhookRequest:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+        name:
+          type: string
+        description:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+
+    WebhookDelivery:
+      type: object
+      properties:
+        id:
+          type: integer
+        event_type:
+          type: string
+        event_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, delivered, failed, retrying]
+        attempt_count:
+          type: integer
+        response_status:
+          type: integer
+        response_time_ms:
+          type: integer
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        delivered_at:
+          type: string
+          format: date-time
+
+    # ============ API Key Types ============
+    ApiKey:
+      type: object
+      properties:
+        id:
+          type: integer
+        key_prefix:
+          type: string
+          example: sk_live_abc
+          description: Prefix for identifikasjon
+        name:
+          type: string
+        description:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+            enum:
+              - customers:read
+              - customers:write
+              - routes:read
+              - routes:write
+              - appointments:read
+              - appointments:write
+              - webhooks:manage
+        is_active:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    CreateApiKeyRequest:
+      type: object
+      required:
+        - name
+        - scopes
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+          minItems: 1
+        expires_at:
+          type: string
+          format: date-time
+          description: Utlopssdato (valgfri)
+        monthly_quota:
+          type: integer
+          description: Maks antall requests per måned
+        rate_limit_requests:
+          type: integer
+          description: Maks requests per vindu
+        rate_limit_window_seconds:
+          type: integer
+          description: Tidsvindu for rate limiting
+
+  responses:
+    BadRequest:
+      description: Ugyldig forespørsel
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: "Ugyldig data: navn er påkrevd"
+
+    Unauthorized:
+      description: Manglende eller ugyldig autentisering
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: UNAUTHORIZED
+              message: Ugyldig API-nokkel
+
+    Forbidden:
+      description: Manglende tilgang
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: FORBIDDEN
+              message: Manglende scope for denne operasjonen
+
+    NotFound:
+      description: Ressurs ikke funnet
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: Kunde ikke funnet
+
+# ============ Webhook Payload Documentation ============
+x-webhooks:
+  customer.created:
+    post:
+      summary: Kunde opprettet
+      description: Sendes når en ny kunde opprettes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  example: evt_abc123
+                type:
+                  type: string
+                  example: customer.created
+                created_at:
+                  type: string
+                  format: date-time
+                organization_id:
+                  type: integer
+                data:
+                  type: object
+                  properties:
+                    customer:
+                      $ref: '#/components/schemas/Customer'
+      responses:
+        '200':
+          description: Webhook mottatt
+
+  customer.updated:
+    post:
+      summary: Kunde oppdatert
+      description: Sendes når en kunde oppdateres
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                type:
+                  type: string
+                  example: customer.updated
+                created_at:
+                  type: string
+                  format: date-time
+                organization_id:
+                  type: integer
+                data:
+                  type: object
+                  properties:
+                    customer:
+                      $ref: '#/components/schemas/Customer'
+                    changes:
+                      type: object
+                      additionalProperties:
+                        type: object
+                        properties:
+                          old:
+                            type: string
+                          new:
+                            type: string
+
+  customer.deleted:
+    post:
+      summary: Kunde slettet
+      description: Sendes når en kunde slettes

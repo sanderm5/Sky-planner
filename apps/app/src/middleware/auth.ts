@@ -80,10 +80,22 @@ export async function requireAuth(
     req.user = decoded;
     req.organizationId = decoded.organizationId;
 
+    // Log impersonation activity for audit trail
+    if (decoded.isImpersonating && decoded.originalUserId) {
+      authLogger.info({
+        impersonatedUserId: decoded.userId,
+        originalUserId: decoded.originalUserId,
+        organizationId: decoded.organizationId,
+        method: req.method,
+        path: req.path,
+      }, 'Impersonation activity detected');
+    }
+
     authLogger.debug({
       userId: decoded.userId,
       organizationId: decoded.organizationId,
       type: decoded.type,
+      isImpersonating: decoded.isImpersonating || false,
     }, 'User authenticated');
 
     next();
@@ -147,6 +159,60 @@ export function requireAdmin(
     }
 
     next();
+  });
+}
+
+/**
+ * Requires super admin role (bruker with is_super_admin = true)
+ * Super admins can access all organizations' data
+ */
+export async function requireSuperAdmin(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  requireAuth(req, res, async (error) => {
+    if (error) {
+      return next(error);
+    }
+
+    // Must be a bruker (admin type)
+    if (req.user?.type !== 'bruker') {
+      authLogger.warn({
+        userId: req.user?.userId,
+        type: req.user?.type,
+        path: req.path,
+      }, 'Non-bruker attempted super admin action');
+      return next(Errors.forbidden('Krever super-admin tilgang'));
+    }
+
+    // Check if user has is_super_admin flag in database
+    try {
+      const { getDatabase } = await import('../services/database');
+      const db = await getDatabase();
+      const bruker = await db.getBrukerById(req.user.userId);
+
+      if (!bruker || !bruker.is_super_admin) {
+        authLogger.warn({
+          userId: req.user?.userId,
+          path: req.path,
+        }, 'Non-super-admin attempted super admin action');
+        return next(Errors.forbidden('Krever super-admin tilgang'));
+      }
+
+      // Mark request as super admin for use in routes
+      req.isSuperAdmin = true;
+
+      authLogger.info({
+        userId: req.user?.userId,
+        path: req.path,
+      }, 'Super admin access granted');
+
+      next();
+    } catch (err) {
+      authLogger.error({ error: err }, 'Failed to verify super admin status');
+      return next(Errors.internal('Kunne ikke verifisere tilgang'));
+    }
   });
 }
 

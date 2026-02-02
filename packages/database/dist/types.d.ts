@@ -15,6 +15,8 @@ export interface Organization {
     logo_url?: string;
     map_center_lat?: number;
     map_center_lng?: number;
+    industry_template_id?: number;
+    onboarding_completed?: boolean;
     stripe_customer_id?: string;
     stripe_subscription_id?: string;
     subscription_status?: 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
@@ -127,4 +129,14 @@ export type UpdateKunde = Partial<InsertKunde>;
 export type InsertBlogPost = Omit<BlogPost, 'id' | 'created_at' | 'updated_at'>;
 export type UpdateBlogPost = Partial<InsertBlogPost>;
 export type InsertContactSubmission = Omit<ContactSubmission, 'id' | 'created_at' | 'status'>;
+export interface PasswordResetToken {
+    id: number;
+    user_id: number;
+    user_type: 'klient' | 'bruker';
+    token_hash: string;
+    expires_at: string;
+    used_at?: string;
+    created_at?: string;
+}
+export type InsertPasswordResetToken = Omit<PasswordResetToken, 'id' | 'created_at' | 'used_at'>;
 //# sourceMappingURL=types.d.ts.map

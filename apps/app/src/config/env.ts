@@ -183,6 +183,16 @@ export function validateEnvironment(): EnvConfig {
 
     // Subscription
     SUBSCRIPTION_GRACE_PERIOD_DAYS: getEnvNumber('SUBSCRIPTION_GRACE_PERIOD_DAYS', 3),
+
+    // AI Import
+    AI_IMPORT_ENABLED: getEnvBoolean('AI_IMPORT_ENABLED', false),
+    AI_API_KEY: getEnvString('AI_API_KEY') || getEnvString('ANTHROPIC_API_KEY'),
+    AI_MODEL: getEnvString('AI_MODEL', 'claude-3-5-haiku-latest'),
+    AI_TIMEOUT_MS: getEnvNumber('AI_TIMEOUT_MS', 10000),
+
+    // Re-import Features (konservative defaults - begge av som default)
+    REIMPORT_UPDATE_ENABLED: getEnvBoolean('REIMPORT_UPDATE_ENABLED', false),
+    DELETION_DETECTION_ENABLED: getEnvBoolean('DELETION_DETECTION_ENABLED', false),
   };
 
   logger.info({
@@ -191,6 +201,7 @@ export function validateEnvironment(): EnvConfig {
     port: config.PORT,
     emailEnabled: config.EMAIL_NOTIFICATIONS_ENABLED,
     routePlanningEnabled: config.ENABLE_ROUTE_PLANNING,
+    aiImportEnabled: config.AI_IMPORT_ENABLED,
   }, 'Miljøkonfigurasjon lastet');
 
   return config;

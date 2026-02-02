@@ -21,7 +21,7 @@ import { requestIdMiddleware } from './middleware/requestId';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { requireActiveSubscription, checkSubscriptionWarning } from './middleware/subscription';
 import { requireTenantAuth } from './middleware/auth';
-import { getDatabase } from './services/database';
+import { getDatabase, registerShutdownHandlers } from './services/database';
 import authRoutes, { initAuthRoutes } from './routes/auth';
 import kunderRoutes, { initKunderRoutes } from './routes/kunder';
 import ruterRoutes, { initRuterRoutes } from './routes/ruter';
@@ -32,6 +32,14 @@ import configRoutes, { initConfigRoutes } from './routes/config';
 import industriesRoutes, { initIndustryRoutes } from './routes/industries';
 import teamMembersRoutes, { initTeamMembersRoutes } from './routes/team-members';
 import onboardingRoutes, { initOnboardingRoutes } from './routes/onboarding';
+import integrationsRoutes from './routes/integrations';
+import superAdminRoutes from './routes/super-admin';
+import importRoutes, { initImportRoutes } from './routes/import';
+import { createImportDbService } from './services/import/database';
+import apiKeysRoutes from './routes/api-keys';
+import publicApiV1Routes, { initPublicCustomersRoutes } from './routes/public-api/v1';
+import webhooksRoutes from './routes/webhooks';
+import docsRoutes from './routes/docs';
 import type { AuthenticatedRequest } from './types';
 
 // Validate environment and get config
@@ -52,6 +60,13 @@ async function initializeApp() {
   initIndustryRoutes(db as any);
   initTeamMembersRoutes(db as Parameters<typeof initTeamMembersRoutes>[0]);
   initOnboardingRoutes(db as Parameters<typeof initOnboardingRoutes>[0]);
+
+  // Initialize import routes with dedicated import database service
+  const importDbService = createImportDbService();
+  initImportRoutes(importDbService);
+
+  // Initialize public API routes
+  initPublicCustomersRoutes(db as Parameters<typeof initPublicCustomersRoutes>[0]);
 
   return db;
 }
@@ -77,6 +92,7 @@ app.use(
           'https://cdnjs.cloudflare.com',
           'https://api.mapbox.com',
         ],
+        scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: [
           "'self'",
           "'unsafe-inline'",
@@ -95,6 +111,7 @@ app.use(
           'https://api.mapbox.com',
           'https://*.tiles.mapbox.com',
           'https://events.mapbox.com',
+          'https://unpkg.com',
           'wss://localhost:*',
           'ws://localhost:*',
         ],
@@ -113,12 +130,14 @@ app.use(
 
 // CORS - sikker konfigurasjon
 // I produksjon: Krever eksplisitt ALLOWED_ORIGINS, eller fallback til skyplanner.no domener
+// I development: Kun localhost-origins tillates for å forhindre CSRF via exposed dev-miljø
 const SAFE_DEFAULT_ORIGINS = ['https://skyplanner.no', 'https://app.skyplanner.no', 'https://www.skyplanner.no'];
+const DEV_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:4321', 'http://127.0.0.1:3000', 'http://127.0.0.1:4321'];
 app.use(
   cors({
     origin: config.NODE_ENV === 'production'
       ? process.env.ALLOWED_ORIGINS?.split(',') || SAFE_DEFAULT_ORIGINS
-      : true,
+      : DEV_ALLOWED_ORIGINS,
     credentials: true,
   })
 );
@@ -126,6 +145,29 @@ app.use(
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Content-Type validation for API routes
+// Reject requests with body that don't have proper Content-Type header
+app.use('/api', (req, res, next): void => {
+  // Only check for methods that typically have a body
+  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    const contentType = req.headers['content-type'];
+    // Allow requests with JSON or form-urlencoded content, or no body
+    if (req.body && Object.keys(req.body).length > 0) {
+      if (!contentType || (!contentType.includes('application/json') && !contentType.includes('application/x-www-form-urlencoded'))) {
+        res.status(415).json({
+          success: false,
+          error: {
+            code: 'UNSUPPORTED_MEDIA_TYPE',
+            message: 'Content-Type må være application/json eller application/x-www-form-urlencoded',
+          },
+        });
+        return;
+      }
+    }
+  }
+  next();
+});
 
 // Request ID middleware (adds unique ID to each request)
 app.use(requestIdMiddleware);
@@ -155,22 +197,30 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting
+// Rate limiting - skip for localhost in development
+const isDevelopment = process.env.NODE_ENV !== 'production';
+const isLocalhost = (req: express.Request) => {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+};
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
+  max: isDevelopment ? 1000 : 100, // Higher limit in development
   message: { error: { code: 'TOO_MANY_REQUESTS', message: 'For mange forespørsler' } },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => isDevelopment && isLocalhost(req), // Skip localhost in dev
 });
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
+  max: isDevelopment ? 100 : 10, // Higher limit in development
   message: { error: { code: 'TOO_MANY_REQUESTS', message: 'For mange innloggingsforsøk' } },
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true, // Only count failed attempts
+  skip: (req) => isDevelopment && isLocalhost(req), // Skip localhost in dev
 });
 
 // Apply rate limiters
@@ -199,6 +249,25 @@ app.use('/api', kontaktloggRoutes);  // Routes include /kunder/:id/kontaktlogg a
 app.use('/api/email', emailRoutes);
 app.use('/api', configRoutes);  // Routes include /config and /routes/*
 app.use('/api/industries', industriesRoutes);
+app.use('/api/integrations', requireTenantAuth, requireActiveSubscription, integrationsRoutes);
+
+// Import routes (Excel import with staging)
+app.use('/api/import', requireTenantAuth, requireActiveSubscription, importRoutes);
+
+// Super admin routes (no tenant auth - super admin can access all orgs)
+app.use('/api/super-admin', superAdminRoutes);
+
+// API key management routes (admin only)
+app.use('/api/api-keys', apiKeysRoutes);
+
+// Webhook management routes (supports both API key and JWT auth)
+app.use('/api/webhooks', webhooksRoutes);
+
+// Public API v1 (supports both API key and JWT auth)
+app.use('/api/v1', publicApiV1Routes);
+
+// API Documentation (public)
+app.use('/api/docs', docsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -211,6 +280,12 @@ app.get('/api/health', (req, res) => {
       environment: config.NODE_ENV,
     },
   });
+});
+
+// ===== ADMIN PANEL ROUTE =====
+// Serve admin.html - auth is handled client-side by admin.js
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(publicPath, 'admin.html'));
 });
 
 // ===== SPA FALLBACK =====
@@ -232,6 +307,9 @@ const PORT = config.PORT;
 // Initialize and start
 initializeApp()
   .then(() => {
+    // Register graceful shutdown handlers for database cleanup
+    registerShutdownHandlers();
+
     app.listen(PORT, config.HOST, () => {
       logger.info({
         host: config.HOST,

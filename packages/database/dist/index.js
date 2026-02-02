@@ -12,7 +12,11 @@ export { getSupabaseClient, createSupabaseClient, clearClientCache, } from './cl
 // Organization queries
 export { createOrganization, getOrganizationById, getOrganizationBySlug, getOrganizationByStripeCustomer, updateOrganization, updateSubscriptionByStripeCustomer, hasActiveSubscription, logSubscriptionEvent, getOnboardingProgress, updateOnboardingProgress, } from './organizations';
 // Klient queries
-export { createKlient, getKlientByEmail, getKlientById, updateKlient, updateKlientPassword, isEmailRegistered, getKlienterByOrganization, } from './klienter';
+export { createKlient, getKlientByEmail, getKlientById, updateKlient, updateKlientPassword, isEmailRegistered, getKlienterByOrganization, 
+// Password reset
+createPasswordResetToken, getValidPasswordResetToken, markPasswordResetTokenUsed, deleteExpiredPasswordResetTokens, 
+// Kunde count
+getKundeCountByOrganization, } from './klienter';
 // Bruker queries
 export { getBrukerByEmail, getBrukerById, } from './brukere';
 // Storage utilities

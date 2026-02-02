@@ -45,33 +45,45 @@ async function getKundeById(id) {
 }
 
 async function createKunde(kunde) {
+  // Build insert object, excluding undefined/null fields
+  const insertData = {
+    navn: kunde.navn,
+    adresse: kunde.adresse,
+    postnummer: kunde.postnummer,
+    poststed: kunde.poststed,
+    telefon: kunde.telefon,
+    epost: kunde.epost,
+    lat: kunde.lat,
+    lng: kunde.lng,
+    siste_kontroll: kunde.siste_kontroll,
+    neste_kontroll: kunde.neste_kontroll,
+    kontroll_intervall_mnd: kunde.kontroll_intervall_mnd || 12,
+    notater: kunde.notater,
+    kategori: kunde.kategori || 'El-Kontroll',
+    // Separate kontroll-felt for El-Kontroll
+    siste_el_kontroll: kunde.siste_el_kontroll,
+    neste_el_kontroll: kunde.neste_el_kontroll,
+    el_kontroll_intervall: kunde.el_kontroll_intervall || 36,
+    // Separate kontroll-felt for Brannvarsling
+    siste_brann_kontroll: kunde.siste_brann_kontroll,
+    neste_brann_kontroll: kunde.neste_brann_kontroll,
+    brann_kontroll_intervall: kunde.brann_kontroll_intervall || 12,
+    // Driftskategori
+    driftskategori: kunde.driftskategori,
+    // Organization (multi-tenant support)
+    organization_id: kunde.organization_id,
+    // Kontaktperson
+    kontaktperson: kunde.kontaktperson
+  };
+
+  // Note: custom_data requires adding column to Supabase:
+  // ALTER TABLE kunder ADD COLUMN custom_data JSONB DEFAULT '{}';
+  // Uncomment below when column is added:
+  // if (kunde.custom_data) insertData.custom_data = kunde.custom_data;
+
   const { data, error } = await getClient()
     .from('kunder')
-    .insert({
-      navn: kunde.navn,
-      adresse: kunde.adresse,
-      postnummer: kunde.postnummer,
-      poststed: kunde.poststed,
-      telefon: kunde.telefon,
-      epost: kunde.epost,
-      lat: kunde.lat,
-      lng: kunde.lng,
-      siste_kontroll: kunde.siste_kontroll,
-      neste_kontroll: kunde.neste_kontroll,
-      kontroll_intervall_mnd: kunde.kontroll_intervall_mnd || 12,
-      notater: kunde.notater,
-      kategori: kunde.kategori || 'El-Kontroll',
-      // Separate kontroll-felt for El-Kontroll
-      siste_el_kontroll: kunde.siste_el_kontroll,
-      neste_el_kontroll: kunde.neste_el_kontroll,
-      el_kontroll_intervall: kunde.el_kontroll_intervall || 36,
-      // Separate kontroll-felt for Brannvarsling
-      siste_brann_kontroll: kunde.siste_brann_kontroll,
-      neste_brann_kontroll: kunde.neste_brann_kontroll,
-      brann_kontroll_intervall: kunde.brann_kontroll_intervall || 12,
-      // Driftskategori
-      driftskategori: kunde.driftskategori
-    })
+    .insert(insertData)
     .select()
     .single();
 
@@ -1068,6 +1080,77 @@ async function getAllOrganizations() {
   return data;
 }
 
+/**
+ * Get customer count for a specific organization (for super admin)
+ */
+async function getKundeCountForOrganization(organizationId) {
+  const { count, error } = await getClient()
+    .from('kunder')
+    .select('*', { count: 'exact', head: true })
+    .eq('organization_id', organizationId);
+
+  if (error) throw error;
+  return count || 0;
+}
+
+/**
+ * Get user (bruker/klient) count for a specific organization (for super admin)
+ */
+async function getBrukerCountForOrganization(organizationId) {
+  const { count, error } = await getClient()
+    .from('klienter')
+    .select('*', { count: 'exact', head: true })
+    .eq('organization_id', organizationId)
+    .eq('aktiv', true);
+
+  if (error) throw error;
+  return count || 0;
+}
+
+/**
+ * Get global statistics across all organizations (for super admin)
+ */
+async function getGlobalStatistics() {
+  // Get total organizations
+  const { count: totalOrganizations, error: orgError } = await getClient()
+    .from('organizations')
+    .select('*', { count: 'exact', head: true })
+    .eq('aktiv', true);
+
+  if (orgError) throw orgError;
+
+  // Get total customers
+  const { count: totalKunder, error: kundeError } = await getClient()
+    .from('kunder')
+    .select('*', { count: 'exact', head: true });
+
+  if (kundeError) throw kundeError;
+
+  // Get total users (klienter)
+  const { count: totalUsers, error: userError } = await getClient()
+    .from('klienter')
+    .select('*', { count: 'exact', head: true })
+    .eq('aktiv', true);
+
+  if (userError) throw userError;
+
+  // Get active subscriptions
+  const { count: activeSubscriptions, error: subError } = await getClient()
+    .from('organizations')
+    .select('*', { count: 'exact', head: true })
+    .eq('aktiv', true)
+    .in('subscription_status', ['active', 'trialing']);
+
+  if (subError) throw subError;
+
+  return {
+    totalOrganizations: totalOrganizations || 0,
+    totalKunder: totalKunder || 0,
+    totalUsers: totalUsers || 0,
+    activeSubscriptions: activeSubscriptions || 0,
+  };
+}
+
 async function createOrganization(org) {
   const { data, error } = await getClient()
     .from('organizations')
@@ -1836,6 +1919,83 @@ async function deactivateCustomerServices(kundeId, activeServiceTypeIds) {
   if (error) throw error;
 }
 
+// ===== ONBOARDING =====
+
+async function getOnboardingStatus(organizationId) {
+  const { data, error } = await getClient()
+    .from('organizations')
+    .select('onboarding_stage, onboarding_completed, industry_template_id')
+    .eq('id', organizationId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error;
+  if (!data) return null;
+
+  return {
+    stage: data.onboarding_stage || 'not_started',
+    completed: !!data.onboarding_completed,
+    industry_template_id: data.industry_template_id
+  };
+}
+
+async function updateOnboardingStage(organizationId, stage, additionalData = {}) {
+  const updateFields = {
+    onboarding_stage: stage
+  };
+
+  if (additionalData.onboarding_completed !== undefined) {
+    updateFields.onboarding_completed = additionalData.onboarding_completed;
+  }
+  if (additionalData.industry_template_id !== undefined) {
+    updateFields.industry_template_id = additionalData.industry_template_id;
+  }
+  if (additionalData.company_address !== undefined) {
+    updateFields.company_address = additionalData.company_address;
+  }
+  if (additionalData.company_postnummer !== undefined) {
+    updateFields.company_postnummer = additionalData.company_postnummer;
+  }
+  if (additionalData.company_poststed !== undefined) {
+    updateFields.company_poststed = additionalData.company_poststed;
+  }
+  if (additionalData.map_center_lat !== undefined) {
+    updateFields.map_center_lat = additionalData.map_center_lat;
+  }
+  if (additionalData.map_center_lng !== undefined) {
+    updateFields.map_center_lng = additionalData.map_center_lng;
+  }
+  if (additionalData.map_zoom !== undefined) {
+    updateFields.map_zoom = additionalData.map_zoom;
+  }
+  if (additionalData.route_start_lat !== undefined) {
+    updateFields.route_start_lat = additionalData.route_start_lat;
+  }
+  if (additionalData.route_start_lng !== undefined) {
+    updateFields.route_start_lng = additionalData.route_start_lng;
+  }
+
+  const { data, error } = await getClient()
+    .from('organizations')
+    .update(updateFields)
+    .eq('id', organizationId)
+    .select();
+
+  if (error) throw error;
+  return data && data.length > 0;
+}
+
+async function completeOnboarding(organizationId) {
+  // Directly update onboarding_completed without onboarding_stage (column may not exist)
+  const { data, error } = await getClient()
+    .from('organizations')
+    .update({ onboarding_completed: true })
+    .eq('id', organizationId)
+    .select();
+
+  if (error) throw error;
+  return data && data.length > 0;
+}
+
 export {
   getClient,
   // Kunder
@@ -1903,6 +2063,9 @@ export {
   getOrganizationById,
   getOrganizationBySlug,
   getAllOrganizations,
+  getKundeCountForOrganization,
+  getBrukerCountForOrganization,
+  getGlobalStatistics,
   createOrganization,
   updateOrganization,
   // Tenant-filtered queries
@@ -1928,5 +2091,9 @@ export {
   getServiceTypeBySlug,
   getAllServiceTypes,
   createOrUpdateCustomerServices,
-  deactivateCustomerServices
+  deactivateCustomerServices,
+  // Onboarding
+  getOnboardingStatus,
+  updateOnboardingStage,
+  completeOnboarding
 };

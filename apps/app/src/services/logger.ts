@@ -121,4 +121,39 @@ export function logAudit(
   );
 }
 
+// ============ Re-import Audit Logging ============
+
+export interface ReimportAuditDetails {
+  fileName: string;
+  totalRows: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+  errors: number;
+  updateEnabled: boolean;
+  notInImportCount?: number; // Kun informativt, ingen sletting
+}
+
+export function logReimportAudit(
+  log: pino.Logger,
+  userId: number,
+  organizationId: number,
+  details: ReimportAuditDetails
+) {
+  log.info(
+    {
+      audit: {
+        action: 'REIMPORT_KUNDER',
+        userId,
+        organizationId,
+        resourceType: 'kunder',
+        timestamp: new Date().toISOString(),
+      },
+      reimport: details,
+    },
+    `AUDIT: Re-import - ${details.created} nye, ${details.updated} oppdatert, ${details.skipped} hoppet over`
+  );
+}
+
 export default logger;

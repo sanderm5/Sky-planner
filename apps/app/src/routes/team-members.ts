@@ -135,8 +135,9 @@ router.post(
       epost: member.epost,
     });
 
-    // Don't return password hash
-    const { ...memberWithoutPassword } = member;
+    // Don't return password hash (database returns all fields including passord_hash)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { passord_hash: _, ...memberWithoutPassword } = member as any;
 
     const response: ApiResponse<TeamMember> = {
       success: true,

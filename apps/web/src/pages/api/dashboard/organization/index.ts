@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import * as db from '@skyplanner/database';
 import { requireApiAuth, isAuthError } from '../../../../middleware/auth';
+import { createClient } from '@supabase/supabase-js';
 
 // Initialize Supabase client
 db.getSupabaseClient({
@@ -43,10 +44,32 @@ export const PUT: APIRoute = async ({ request }) => {
 
   try {
     const body = await request.json();
-    const { navn, logo_url, primary_color } = body;
+    const { navn, logo_url, primary_color, industry_template_id } = body;
 
     // Build update object
     const updateData: Record<string, unknown> = {};
+
+    // Validate and add industry_template_id if provided
+    if (industry_template_id !== undefined) {
+      const supabase = createClient(
+        import.meta.env.SUPABASE_URL,
+        import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY
+      );
+      const { data: industry, error: industryError } = await supabase
+        .from('industry_templates')
+        .select('id')
+        .eq('id', industry_template_id)
+        .eq('aktiv', true)
+        .single();
+
+      if (industryError || !industry) {
+        return new Response(
+          JSON.stringify({ error: 'Ugyldig bransje valgt' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      updateData.industry_template_id = industry_template_id;
+    }
 
     if (navn !== undefined) {
       if (!navn.trim()) {
@@ -65,12 +88,48 @@ export const PUT: APIRoute = async ({ request }) => {
     }
 
     if (logo_url !== undefined) {
-      // Basic URL validation (or null to clear)
-      if (logo_url && !logo_url.match(/^https?:\/\/.+/)) {
-        return new Response(
-          JSON.stringify({ error: 'Ugyldig logo-URL' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
+      if (logo_url) {
+        // Validate URL format and security
+        try {
+          const url = new URL(logo_url);
+
+          // Only allow HTTPS in production
+          if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+            throw new Error('Kun HTTP/HTTPS-URLer er tillatt');
+          }
+
+          // Block data URIs (potential XSS)
+          if (logo_url.startsWith('data:')) {
+            throw new Error('Data-URLer er ikke tillatt');
+          }
+
+          // Validate path doesn't contain path traversal
+          if (url.pathname.includes('..')) {
+            throw new Error('Ugyldig URL-path');
+          }
+
+          // Validate file extension for images
+          const validExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.gif'];
+          const pathLower = url.pathname.toLowerCase();
+          const hasValidExtension = validExtensions.some(ext => pathLower.endsWith(ext));
+
+          // Allow Supabase storage URLs without extension check
+          const isSupabaseUrl = url.hostname.includes('supabase.co');
+
+          if (!hasValidExtension && !isSupabaseUrl) {
+            throw new Error('Logo må være en bildefil (PNG, JPG, WebP, SVG eller GIF)');
+          }
+
+          // Max URL length
+          if (logo_url.length > 2048) {
+            throw new Error('URL er for lang (maks 2048 tegn)');
+          }
+        } catch (error) {
+          return new Response(
+            JSON.stringify({ error: error instanceof Error ? error.message : 'Ugyldig logo-URL' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
       }
       updateData.logo_url = logo_url || null;
     }

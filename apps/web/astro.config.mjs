@@ -19,6 +19,15 @@ export default defineConfig({
     },
     ssr: {
       noExternal: ['@skyplanner/database', '@skyplanner/auth']
+    },
+    server: {
+      proxy: {
+        '/api/app': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/app/, '/api')
+        }
+      }
     }
   }
 });

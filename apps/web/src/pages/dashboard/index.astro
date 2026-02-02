@@ -19,6 +19,7 @@ const { user, organization } = authResult;
 // Fetch additional stats
 const users = await db.getKlienterByOrganization(organization.id);
 const activeUsers = users.filter(u => u.aktiv).length;
+const kundeCount = await db.getKundeCountByOrganization(organization.id);
 
 // Format subscription status
 const statusLabels: Record<string, string> = {
@@ -128,9 +129,9 @@ const appUrl = import.meta.env.PUBLIC_APP_URL || 'http://localhost:3000';
       href="/dashboard/fakturaer"
     />
     <StatCard
-      title="Kundegrense"
-      value={organization.max_kunder}
-      description="Maksimalt antall kunder"
+      title="Kunder"
+      value={`${kundeCount} / ${organization.max_kunder}`}
+      description="Antall kunder"
       icon="chart"
     />
   </div>

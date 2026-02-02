@@ -127,6 +127,15 @@ export interface Kunde {
   notater?: string;
   opprettet?: string;
   organization_id?: number;
+  kontaktperson?: string;
+  custom_data?: string; // JSON string for dynamic custom fields
+
+  // External integration fields
+  external_source?: string; // Integration ID (e.g., 'tripletex')
+  external_id?: string;     // ID in the external system
+  last_sync_at?: string;    // Last sync timestamp
+  import_hash?: string;     // Hash for detecting changes
+  last_import_at?: string;  // Last import timestamp
 }
 
 export interface Rute {
@@ -227,7 +236,7 @@ export interface Bruker {
   opprettet?: string;
 }
 
-export type OnboardingStage = 'not_started' | 'industry_selected' | 'company_info' | 'map_settings' | 'completed';
+export type OnboardingStage = 'not_started' | 'industry_selected' | 'company_info' | 'map_settings' | 'data_import' | 'completed';
 
 export interface Organization {
   id: number;
@@ -273,6 +282,9 @@ export interface JWTPayload {
   jti?: string; // JWT ID for token blacklisting
   iat?: number;
   exp?: number;
+  // Impersonation fields (super-admin only)
+  isImpersonating?: boolean;
+  originalUserId?: number;
 }
 
 export interface ApiError {
@@ -316,6 +328,8 @@ export interface CreateKundeRequest {
   el_kontroll_intervall?: number;
   brann_kontroll_intervall?: number;
   notater?: string;
+  kontaktperson?: string;
+  custom_data?: string;
 }
 
 export interface UpdateKundeRequest extends Partial<CreateKundeRequest> {
@@ -416,6 +430,16 @@ export interface EnvConfig {
 
   // Subscription
   SUBSCRIPTION_GRACE_PERIOD_DAYS: number;
+
+  // AI Import (optional)
+  AI_IMPORT_ENABLED?: boolean;
+  AI_API_KEY?: string;
+  AI_MODEL?: string;
+  AI_TIMEOUT_MS?: number;
+
+  // Re-import Features (konservative defaults - begge av som default)
+  REIMPORT_UPDATE_ENABLED?: boolean;
+  DELETION_DETECTION_ENABLED?: boolean;
 }
 
 // ============ Express Extensions ============
@@ -426,6 +450,7 @@ export interface AuthenticatedRequest extends Request {
   user?: JWTPayload;
   organizationId?: number;
   requestId?: string;
+  isSuperAdmin?: boolean;
 }
 
 // ============ Validation Types ============
@@ -436,3 +461,69 @@ export interface ValidationError {
 }
 
 export type ValidationResult = ValidationError[] | null;
+
+// ============ AI Import Types ============
+
+export interface AIColumnMapping {
+  excelHeader: string;
+  targetField: string | null;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface AIColumnMappingResult {
+  mappings: AIColumnMapping[];
+  modelUsed: string;
+  processingTimeMs: number;
+  fallbackUsed: boolean;
+}
+
+export interface ImportMappingInfo {
+  header: string;
+  mappedTo: string | null;
+  confidence: number;
+  source: 'deterministic' | 'ai' | 'data-analysis';
+  reasoning?: string;
+  validationIssues?: string[];
+}
+
+export interface ImportPreviewResult {
+  success: boolean;
+  sessionId: string;
+  data: {
+    fileName: string;
+    totalRows: number;
+    totalColumns: number;
+    preview: Record<string, unknown>[];
+    stats: {
+      valid: number;
+      invalid: number;
+      recognizedColumns: number;
+      newColumns: number;
+    };
+    recognizedColumns: Array<{
+      header: string;
+      mappedTo: string;
+      displayName: string;
+      confidence?: number;
+      source?: 'deterministic' | 'ai' | 'data-analysis';
+    }>;
+    newFields: Array<{
+      header: string;
+      fieldName: string;
+      displayName: string;
+      type: string;
+      typeDisplay: string;
+      optionsCount?: number;
+    }>;
+    autoMapping: {
+      standardFields: Record<string, string>;
+      customFields: Record<string, string>;
+    };
+    // AI-specific info
+    aiEnabled: boolean;
+    aiModelUsed?: string;
+    overallConfidence: number;
+    lowConfidenceMappings?: ImportMappingInfo[];
+  };
+}

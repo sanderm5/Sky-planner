@@ -8,6 +8,8 @@ import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { validateKunde } from '../utils/validation';
+import { geocodeCustomerData } from '../services/geocoding';
+import { getWebhookService } from '../services/webhooks';
 import type { AuthenticatedRequest, Kunde, CreateKundeRequest, ApiResponse } from '../types';
 
 const router: Router = Router();
@@ -64,8 +66,10 @@ router.get(
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const limit = Math.min(Number.parseInt(req.query.limit as string) || 100, 500);
-    const offset = Number.parseInt(req.query.offset as string) || 0;
-    const search = req.query.search as string | undefined;
+    const offset = Math.max(Number.parseInt(req.query.offset as string) || 0, 0);
+    // Limit search string length to prevent performance issues with LIKE queries
+    const rawSearch = req.query.search as string | undefined;
+    const search = rawSearch ? rawSearch.substring(0, 100) : undefined;
     const kategori = req.query.kategori as string | undefined;
 
     // Check if pagination/filtering is requested
@@ -194,12 +198,32 @@ router.post(
     // Prepare kunde data with defaults
     const kundeData = prepareKundeData(req.body, req.organizationId);
 
-    const kunde = await dbService.createKunde(kundeData);
+    // Geocode address if needed
+    const geocodedData = await geocodeCustomerData(kundeData);
+
+    const kunde = await dbService.createKunde(geocodedData);
 
     logAudit(apiLogger, 'CREATE', req.user!.userId, 'kunde', kunde.id, {
       navn: kunde.navn,
       kategori: kunde.kategori,
     });
+
+    // Trigger webhook for customer created
+    if (req.organizationId) {
+      getWebhookService().then(webhookService => {
+        webhookService.triggerCustomerCreated(req.organizationId!, {
+          id: kunde.id,
+          navn: kunde.navn,
+          adresse: kunde.adresse,
+          postnummer: kunde.postnummer,
+          poststed: kunde.poststed,
+          telefon: kunde.telefon,
+          epost: kunde.epost,
+        }).catch(err => {
+          apiLogger.error({ err, kundeId: kunde.id }, 'Failed to trigger customer.created webhook');
+        });
+      });
+    }
 
     const response: ApiResponse<Kunde> = {
       success: true,
@@ -230,6 +254,12 @@ router.put(
       throw Errors.validationError(validationErrors);
     }
 
+    // Fetch current customer data before update for webhook change tracking
+    const kundeBeforeUpdate = await dbService.getKundeById(id, req.organizationId);
+    if (!kundeBeforeUpdate) {
+      throw Errors.notFound('Kunde');
+    }
+
     // Prepare data (without organization_id - can't change tenant)
     const kundeData = prepareKundeData(req.body);
 
@@ -241,6 +271,36 @@ router.put(
     logAudit(apiLogger, 'UPDATE', req.user!.userId, 'kunde', id, {
       fields: Object.keys(req.body),
     });
+
+    // Trigger webhook for customer updated
+    if (req.organizationId) {
+      getWebhookService().then(webhookService => {
+        webhookService.triggerCustomerUpdated(
+          req.organizationId!,
+          {
+            id: kunde.id,
+            navn: kunde.navn,
+            adresse: kunde.adresse,
+            postnummer: kunde.postnummer,
+            poststed: kunde.poststed,
+            telefon: kunde.telefon,
+            epost: kunde.epost,
+          },
+          // Include changed fields with old and new values
+          Object.keys(req.body).reduce((acc, field) => {
+            const oldValue = (kundeBeforeUpdate as unknown as Record<string, unknown>)[field];
+            const newValue = req.body[field];
+            // Only include fields that actually changed
+            if (oldValue !== newValue) {
+              acc[field] = { old: oldValue, new: newValue };
+            }
+            return acc;
+          }, {} as Record<string, { old: unknown; new: unknown }>)
+        ).catch(err => {
+          apiLogger.error({ err, kundeId: kunde.id }, 'Failed to trigger customer.updated webhook');
+        });
+      });
+    }
 
     const response: ApiResponse<Kunde> = {
       success: true,
@@ -265,12 +325,35 @@ router.delete(
       throw Errors.badRequest('Ugyldig kunde-ID');
     }
 
+    // Get customer data before deletion for webhook
+    const kundeBeforeDelete = await dbService.getKundeById(id, req.organizationId);
+    if (!kundeBeforeDelete) {
+      throw Errors.notFound('Kunde');
+    }
+
     const deleted = await dbService.deleteKunde(id, req.organizationId);
     if (!deleted) {
       throw Errors.notFound('Kunde');
     }
 
     logAudit(apiLogger, 'DELETE', req.user!.userId, 'kunde', id);
+
+    // Trigger webhook for customer deleted
+    if (req.organizationId) {
+      getWebhookService().then(webhookService => {
+        webhookService.triggerCustomerDeleted(req.organizationId!, {
+          id: kundeBeforeDelete.id,
+          navn: kundeBeforeDelete.navn,
+          adresse: kundeBeforeDelete.adresse,
+          postnummer: kundeBeforeDelete.postnummer,
+          poststed: kundeBeforeDelete.poststed,
+          telefon: kundeBeforeDelete.telefon,
+          epost: kundeBeforeDelete.epost,
+        }).catch(err => {
+          apiLogger.error({ err, kundeId: id }, 'Failed to trigger customer.deleted webhook');
+        });
+      });
+    }
 
     const response: ApiResponse = {
       success: true,

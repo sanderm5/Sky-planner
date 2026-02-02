@@ -68,10 +68,18 @@ export function getRefreshCookieConfig(isProduction, customDomain) {
  * Extracts token from cookie header string
  * Works with both Express (parsed cookies) and raw cookie header
  */
+/**
+ * Escapes special regex characters in a string to prevent regex injection
+ */
+function escapeRegExp(str) {
+    // Using replace with global flag (g) for compatibility with older ES targets
+    return str.replace(/[.*+?^${}()|[\]\\]/g, String.raw `\$&`);
+}
 export function extractTokenFromCookies(cookies, cookieName = AUTH_COOKIE_NAME) {
     if (typeof cookies === 'string') {
-        // Parse raw cookie header
-        const match = cookies.match(new RegExp(`${cookieName}=([^;]+)`));
+        // Parse raw cookie header (escape cookieName to prevent regex injection)
+        const escapedName = escapeRegExp(cookieName);
+        const match = cookies.match(new RegExp(`${escapedName}=([^;]+)`));
         return match ? match[1] : null;
     }
     return cookies[cookieName] || null;

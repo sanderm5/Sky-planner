@@ -5,7 +5,7 @@
 
 import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+// Note: requireTenantAuth is applied at route-level in server.ts
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import type { AuthenticatedRequest, ApiResponse, OnboardingStage } from '../types';
 
@@ -17,6 +17,7 @@ const ONBOARDING_STAGES: OnboardingStage[] = [
   'industry_selected',
   'company_info',
   'map_settings',
+  'data_import',
   'completed'
 ];
 
@@ -49,12 +50,18 @@ export function initOnboardingRoutes(databaseService: OnboardingDbService): Rout
 /**
  * GET /api/onboarding/status
  * Get current onboarding status for the organization
+ * Note: requireTenantAuth is applied at route-level in server.ts
  */
 router.get(
   '/status',
-  requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const status = await dbService.getOnboardingStatus(req.organizationId!);
+    let status;
+    try {
+      status = await dbService.getOnboardingStatus(req.organizationId!);
+    } catch (error) {
+      apiLogger.error({ error, organizationId: req.organizationId }, 'Failed to get onboarding status');
+      throw Errors.internal('Kunne ikke hente onboarding-status');
+    }
 
     if (!status) {
       throw Errors.notFound('Organisasjon ikke funnet');
@@ -77,7 +84,7 @@ router.get(
         stage: status.stage,
         completed: status.completed,
         nextStage,
-        progress: Math.round((currentIndex / (ONBOARDING_STAGES.length - 1)) * 100),
+        progress: Math.round((currentIndex / Math.max(ONBOARDING_STAGES.length - 1, 1)) * 100),
         industry_template_id: status.industry_template_id,
       },
       requestId: req.requestId,
@@ -90,10 +97,10 @@ router.get(
 /**
  * POST /api/onboarding/step
  * Complete an onboarding step and move to the next
+ * Note: requireTenantAuth is applied at route-level in server.ts
  */
 router.post(
   '/step',
-  requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { step, data } = req.body;
 
@@ -101,8 +108,15 @@ router.post(
       throw Errors.badRequest('Ugyldig onboarding-steg');
     }
 
-    // Get current status
-    const currentStatus = await dbService.getOnboardingStatus(req.organizationId!);
+    // Get current status with error handling
+    let currentStatus;
+    try {
+      currentStatus = await dbService.getOnboardingStatus(req.organizationId!);
+    } catch (error) {
+      apiLogger.error({ error, organizationId: req.organizationId }, 'Failed to get onboarding status');
+      throw Errors.internal('Kunne ikke hente onboarding-status');
+    }
+
     if (!currentStatus) {
       throw Errors.notFound('Organisasjon ikke funnet');
     }
@@ -131,19 +145,38 @@ router.post(
         if (data?.map_zoom) updateData.map_zoom = data.map_zoom;
         break;
 
+      case 'data_import':
+        // Data import step - user can import customers or skip
+        // No specific data to store, just tracks progress
+        if (data?.imported_count) {
+          // Optional: track how many customers were imported
+          apiLogger.info({
+            organizationId: req.organizationId,
+            importedCount: data.imported_count
+          }, 'Customers imported during onboarding');
+        }
+        break;
+
       case 'completed':
         updateData.onboarding_completed = true;
         break;
     }
 
-    // Update the onboarding stage
-    const success = await dbService.updateOnboardingStage(
-      req.organizationId!,
-      step,
-      updateData
-    );
+    // Update the onboarding stage with error handling
+    let success;
+    try {
+      success = await dbService.updateOnboardingStage(
+        req.organizationId!,
+        step,
+        updateData
+      );
+    } catch (error) {
+      apiLogger.error({ error, organizationId: req.organizationId, step, updateData }, 'Failed to update onboarding stage');
+      throw Errors.internal('Kunne ikke oppdatere onboarding-status');
+    }
 
     if (!success) {
+      apiLogger.warn({ organizationId: req.organizationId, step }, 'Onboarding stage update returned false');
       throw Errors.internal('Kunne ikke oppdatere onboarding-status');
     }
 
@@ -168,7 +201,7 @@ router.post(
         stage: step,
         completed: step === 'completed',
         nextStage,
-        progress: Math.round((currentIndex / (ONBOARDING_STAGES.length - 1)) * 100),
+        progress: Math.round((currentIndex / Math.max(ONBOARDING_STAGES.length - 1, 1)) * 100),
       },
       requestId: req.requestId,
     };
@@ -180,10 +213,10 @@ router.post(
 /**
  * POST /api/onboarding/skip
  * Skip the onboarding process entirely
+ * Note: requireTenantAuth is applied at route-level in server.ts
  */
 router.post(
   '/skip',
-  requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const success = await dbService.completeOnboarding(req.organizationId!);
 
@@ -206,10 +239,10 @@ router.post(
 /**
  * POST /api/onboarding/reset
  * Reset onboarding to start (admin only, for testing)
+ * Note: requireTenantAuth is applied at route-level in server.ts
  */
 router.post(
   '/reset',
-  requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     // Only allow reset in development or for admins
     if (process.env.NODE_ENV === 'production' && req.user?.type !== 'bruker') {

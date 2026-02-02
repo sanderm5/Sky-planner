@@ -4,7 +4,7 @@
  */
 
 import { getSupabaseClient } from './client';
-import type { Klient, InsertKlient, UpdateKlient } from './types';
+import type { Klient, InsertKlient, UpdateKlient, PasswordResetToken, InsertPasswordResetToken } from './types';
 
 /**
  * Creates a new klient (account owner)
@@ -121,4 +121,103 @@ export async function getKlienterByOrganization(
 
   if (error) throw new Error(`Failed to get klienter: ${error.message}`);
   return data || [];
+}
+
+// ============ Password Reset Functions ============
+
+/**
+ * Creates a password reset token
+ */
+export async function createPasswordResetToken(
+  data: InsertPasswordResetToken
+): Promise<PasswordResetToken> {
+  const client = getSupabaseClient();
+
+  // First, invalidate any existing tokens for this user
+  await client
+    .from('password_reset_tokens')
+    .delete()
+    .eq('user_id', data.user_id)
+    .eq('user_type', data.user_type);
+
+  const { data: token, error } = await client
+    .from('password_reset_tokens')
+    .insert(data)
+    .select()
+    .single();
+
+  if (error) throw new Error(`Failed to create password reset token: ${error.message}`);
+  return token;
+}
+
+/**
+ * Gets a valid (not expired, not used) password reset token by hash
+ */
+export async function getValidPasswordResetToken(
+  tokenHash: string
+): Promise<PasswordResetToken | null> {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client
+    .from('password_reset_tokens')
+    .select('*')
+    .eq('token_hash', tokenHash)
+    .is('used_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') return null;
+    throw new Error(`Failed to get password reset token: ${error.message}`);
+  }
+  return data;
+}
+
+/**
+ * Marks a password reset token as used
+ */
+export async function markPasswordResetTokenUsed(tokenId: number): Promise<void> {
+  const client = getSupabaseClient();
+
+  const { error } = await client
+    .from('password_reset_tokens')
+    .update({ used_at: new Date().toISOString() })
+    .eq('id', tokenId);
+
+  if (error) throw new Error(`Failed to mark token as used: ${error.message}`);
+}
+
+/**
+ * Deletes expired password reset tokens (cleanup)
+ */
+export async function deleteExpiredPasswordResetTokens(): Promise<number> {
+  const client = getSupabaseClient();
+
+  const { data, error } = await client
+    .from('password_reset_tokens')
+    .delete()
+    .lt('expires_at', new Date().toISOString())
+    .select('id');
+
+  if (error) throw new Error(`Failed to delete expired tokens: ${error.message}`);
+  return data?.length || 0;
+}
+
+// ============ Kunde Count Functions ============
+
+/**
+ * Gets the count of kunder (customers) for an organization
+ */
+export async function getKundeCountByOrganization(
+  organizationId: number
+): Promise<number> {
+  const client = getSupabaseClient();
+
+  const { count, error } = await client
+    .from('kunder')
+    .select('*', { count: 'exact', head: true })
+    .eq('organization_id', organizationId);
+
+  if (error) throw new Error(`Failed to get kunde count: ${error.message}`);
+  return count || 0;
 }

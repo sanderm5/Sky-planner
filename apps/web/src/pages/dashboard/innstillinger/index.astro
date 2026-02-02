@@ -2,6 +2,7 @@
 import DashboardLayout from '../../../layouts/DashboardLayout.astro';
 import { requireAuth, isAuthError } from '../../../middleware/auth';
 import * as db from '@skyplanner/database';
+import { createClient } from '@supabase/supabase-js';
 
 // Initialize Supabase client
 db.getSupabaseClient({
@@ -14,6 +15,22 @@ const authResult = await requireAuth(Astro);
 if (isAuthError(authResult)) return authResult;
 
 const { user, organization } = authResult;
+
+// Get current industry info
+const supabase = createClient(
+  import.meta.env.SUPABASE_URL,
+  import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY
+);
+
+let currentIndustry = null;
+if ((organization as any).industry_template_id) {
+  const { data } = await supabase
+    .from('industry_templates')
+    .select('id, name, slug, icon, color, description')
+    .eq('id', (organization as any).industry_template_id)
+    .single();
+  currentIndustry = data;
+}
 ---
 
 <DashboardLayout
@@ -26,6 +43,22 @@ const { user, organization } = authResult;
   <div class="mb-8">
     <h1 class="text-2xl font-bold text-white mb-2">Innstillinger</h1>
     <p class="text-dark-400">Administrer organisasjonsinnstillinger og branding.</p>
+  </div>
+
+  <!-- Settings Navigation -->
+  <div class="mb-8 flex flex-wrap gap-2">
+    <a href="/dashboard/innstillinger" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+      Generelt
+    </a>
+    <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Integrasjoner
+    </a>
+    <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      API-nøkler
+    </a>
+    <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Webhooks
+    </a>
   </div>
 
   <!-- Organization Settings Form -->
@@ -61,6 +94,62 @@ const { user, organization } = authResult;
             />
           </div>
           <p class="text-xs text-dark-400 mt-1">URL-slug kan ikke endres.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Industry Settings -->
+    <div class="glass-card p-6">
+      <h2 class="text-lg font-semibold text-white mb-6">Bransje</h2>
+
+      <div class="space-y-4">
+        {currentIndustry ? (
+          <div class="flex items-center gap-4 p-4 rounded-xl border border-dark-600 bg-dark-800/50">
+            <div class="w-12 h-12 rounded-lg flex items-center justify-center text-lg" style={`background: ${currentIndustry.color}20; color: ${currentIndustry.color}`}>
+              <i class={`fas ${currentIndustry.icon}`}></i>
+            </div>
+            <div class="flex-1">
+              <p class="font-medium text-white">{currentIndustry.name}</p>
+              {currentIndustry.description && <p class="text-sm text-dark-400">{currentIndustry.description}</p>}
+            </div>
+            <button
+              type="button"
+              id="change-industry-btn"
+              class="text-primary-400 hover:text-primary-300 text-sm font-medium"
+            >
+              Endre bransje
+            </button>
+          </div>
+        ) : (
+          <div class="text-dark-400">Ingen bransje valgt</div>
+        )}
+
+        <div id="industry-selector" class="hidden">
+          <p class="text-sm text-amber-400 mb-3">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            Endring av bransje vil oppdatere tilgjengelige tjenesttyper og ikoner i appen.
+          </p>
+          <div id="industry-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-h-72 overflow-y-auto pr-1">
+            <div class="col-span-full text-center text-dark-400 py-4">Laster bransjer...</div>
+          </div>
+          <input type="hidden" id="industry-id" name="industry_template_id" value={currentIndustry?.id || ''} />
+          <div class="flex items-center gap-3 mt-4">
+            <button
+              type="button"
+              id="save-industry-btn"
+              class="btn-primary"
+              disabled
+            >
+              Lagre bransje
+            </button>
+            <button
+              type="button"
+              id="cancel-industry-btn"
+              class="btn-secondary"
+            >
+              Avbryt
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -233,6 +322,132 @@ const { user, organization } = authResult;
   const primaryColorInput = document.getElementById('primary-color') as HTMLInputElement;
   const logoUrlInput = document.getElementById('logo-url') as HTMLInputElement;
   const deleteOrgBtn = document.getElementById('delete-org-btn');
+
+  // Industry elements
+  const changeIndustryBtn = document.getElementById('change-industry-btn');
+  const industrySelector = document.getElementById('industry-selector');
+  const industryGrid = document.getElementById('industry-grid');
+  const industryIdInput = document.getElementById('industry-id') as HTMLInputElement;
+  const saveIndustryBtn = document.getElementById('save-industry-btn') as HTMLButtonElement;
+  const cancelIndustryBtn = document.getElementById('cancel-industry-btn');
+
+  let originalIndustryId = industryIdInput?.value || '';
+  let industriesLoaded = false;
+
+  // Fetch and render industries
+  async function loadIndustries() {
+    if (industriesLoaded) return;
+
+    try {
+      const response = await fetch('/api/industries');
+      const data = await response.json();
+
+      if (!response.ok || !data.industries) {
+        throw new Error('Kunne ikke laste bransjer');
+      }
+
+      if (industryGrid) {
+        industryGrid.innerHTML = data.industries.map((industry: any) => `
+          <button
+            type="button"
+            class="industry-card p-3 rounded-xl border transition-all text-left ${industry.id.toString() === originalIndustryId ? 'border-primary-500 bg-primary-500/10' : 'border-dark-600 hover:border-dark-500'}"
+            data-id="${industry.id}"
+            data-slug="${industry.slug}"
+          >
+            <div class="flex items-center gap-2 mb-1">
+              <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm" style="background: ${industry.color}20; color: ${industry.color}">
+                <i class="fas ${industry.icon}"></i>
+              </span>
+              <span class="font-medium text-white text-sm">${industry.name}</span>
+            </div>
+            ${industry.description ? `<p class="text-xs text-dark-400 line-clamp-2">${industry.description}</p>` : ''}
+          </button>
+        `).join('');
+
+        // Add click handlers
+        document.querySelectorAll('.industry-card').forEach(card => {
+          card.addEventListener('click', () => {
+            document.querySelectorAll('.industry-card').forEach(c => {
+              c.classList.remove('border-primary-500', 'bg-primary-500/10');
+              c.classList.add('border-dark-600');
+            });
+            card.classList.remove('border-dark-600');
+            card.classList.add('border-primary-500', 'bg-primary-500/10');
+            const cardEl = card as HTMLElement;
+            industryIdInput.value = cardEl.dataset.id || '';
+            // Enable save button only if different from original
+            if (saveIndustryBtn) {
+              saveIndustryBtn.disabled = industryIdInput.value === originalIndustryId;
+            }
+          });
+        });
+
+        industriesLoaded = true;
+      }
+    } catch (err) {
+      if (industryGrid) {
+        industryGrid.innerHTML = '<div class="col-span-full text-center text-red-400 py-4">Kunne ikke laste bransjer.</div>';
+      }
+    }
+  }
+
+  // Show industry selector
+  changeIndustryBtn?.addEventListener('click', async () => {
+    industrySelector?.classList.remove('hidden');
+    changeIndustryBtn?.closest('.flex')?.classList.add('hidden');
+    await loadIndustries();
+  });
+
+  // Cancel industry change
+  cancelIndustryBtn?.addEventListener('click', () => {
+    industrySelector?.classList.add('hidden');
+    changeIndustryBtn?.closest('.flex')?.classList.remove('hidden');
+    industryIdInput.value = originalIndustryId;
+    // Reset selection visually
+    document.querySelectorAll('.industry-card').forEach(card => {
+      const cardEl = card as HTMLElement;
+      if (cardEl.dataset.id === originalIndustryId) {
+        card.classList.remove('border-dark-600');
+        card.classList.add('border-primary-500', 'bg-primary-500/10');
+      } else {
+        card.classList.remove('border-primary-500', 'bg-primary-500/10');
+        card.classList.add('border-dark-600');
+      }
+    });
+  });
+
+  // Save industry change
+  saveIndustryBtn?.addEventListener('click', async () => {
+    const newIndustryId = industryIdInput.value;
+    if (!newIndustryId || newIndustryId === originalIndustryId) return;
+
+    if (!confirm('Er du sikker på at du vil endre bransje? Dette vil oppdatere tilgjengelige tjenesttyper i appen.')) {
+      return;
+    }
+
+    saveIndustryBtn.disabled = true;
+    saveIndustryBtn.textContent = 'Lagrer...';
+
+    try {
+      const res = await fetch('/api/dashboard/organization', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ industry_template_id: parseInt(newIndustryId) }),
+      });
+
+      if (!res.ok) {
+        const result = await res.json();
+        throw new Error(result.error || 'Kunne ikke oppdatere bransje');
+      }
+
+      // Reload page to show updated industry
+      window.location.reload();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Kunne ikke oppdatere bransje');
+      saveIndustryBtn.disabled = false;
+      saveIndustryBtn.textContent = 'Lagre bransje';
+    }
+  });
 
   // Logo upload elements
   const logoUpload = document.getElementById('logo-upload') as HTMLInputElement;

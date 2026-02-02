@@ -28,6 +28,7 @@ export type {
   BlogPost,
   CustomerStory,
   ContactSubmission,
+  PasswordResetToken,
   InsertOrganization,
   UpdateOrganization,
   InsertKlient,
@@ -37,6 +38,7 @@ export type {
   InsertBlogPost,
   UpdateBlogPost,
   InsertContactSubmission,
+  InsertPasswordResetToken,
 } from './types';
 
 // Organization queries
@@ -62,6 +64,13 @@ export {
   updateKlientPassword,
   isEmailRegistered,
   getKlienterByOrganization,
+  // Password reset
+  createPasswordResetToken,
+  getValidPasswordResetToken,
+  markPasswordResetTokenUsed,
+  deleteExpiredPasswordResetTokens,
+  // Kunde count
+  getKundeCountByOrganization,
 } from './klienter';
 
 // Bruker queries
