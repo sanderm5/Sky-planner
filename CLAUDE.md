@@ -12,8 +12,8 @@ Dette er en **monorepo** med Turborepo og pnpm workspaces.
 ```
 /
 ├── apps/
-│   ├── app/     → Backend API + Kart-applikasjon (Express.js)
-│   └── web/     → Marketing-nettside (Astro)
+│   ├── app/     → Backend API + Kart-applikasjon (Express.js + TypeScript)
+│   └── web/     → Marketing-nettside + Dashboard (Astro)
 ├── packages/
 │   ├── auth/    → Delt autentisering (JWT, cookies)
 │   ├── database/→ Delt database-logikk (Supabase)
@@ -30,16 +30,20 @@ Intern applikasjon for kundeadministrasjon med:
 - Interaktivt kart med kundemarkører
 - Ruteoptimalisering for serviceturer
 - Kalender og avtaler
-- E-postvarsler
+- Import-system for kundedata (CSV, Excel)
+- API-nøkler og Public API (v1)
+- Webhooks for integrasjoner
+- Regnskapssystem-integrasjoner (Tripletex, Fiken, PowerOffice)
 
-**Stack:** Express.js, Vanilla JS, Leaflet, SQLite/Supabase
+**Stack:** Express.js, TypeScript, Vanilla JS, Leaflet, Supabase
 
 ### [apps/web](apps/web/CLAUDE.md) - Marketing-nettside
-Offentlig nettside for produktet med:
-- Landing page
-- Priser og FAQ
-- Brukerregistrering
+Offentlig nettside og bruker-dashboard med:
+- Landing page og priser
+- Brukerregistrering og autentisering
 - Stripe-betalinger
+- Dashboard for organisasjonsinnstillinger
+- API-nøkler, integrasjoner og webhooks-administrasjon
 
 **Stack:** Astro 5, Tailwind CSS, Stripe
 
@@ -82,7 +86,7 @@ pnpm typecheck
 | Oppgave | Gå til |
 |---------|--------|
 | Backend API / Kundedata / Kart | [apps/app/](apps/app/CLAUDE.md) |
-| Marketing-nettside / Priser / Registrering | [apps/web/](apps/web/CLAUDE.md) |
+| Marketing-nettside / Dashboard | [apps/web/](apps/web/CLAUDE.md) |
 | Autentisering (delt) | `packages/auth/` |
 | Database-logikk (delt) | `packages/database/` |
 
@@ -106,5 +110,7 @@ Kopier `.env.example` til `.env` i `apps/app/`:
 DATABASE_TYPE=sqlite|supabase
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
 ORS_API_KEY=...
+ENCRYPTION_KEY=...
 ```
