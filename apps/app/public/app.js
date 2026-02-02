@@ -6560,35 +6560,44 @@ function showToast(message, type = 'info') {
 
 // Initialize settings event listeners
 function initSettingsEventListeners() {
-  // Use event delegation for settings button (more robust)
-  document.addEventListener('click', (e) => {
-    // Settings button click
-    if (e.target.closest('#settingsBtn')) {
+  // Direct event listeners for settings modal buttons (more reliable than delegation)
+  const closeBtn = document.getElementById('closeSettingsModal');
+  const cancelBtn = document.getElementById('cancelSettingsBtn');
+  const saveBtn = document.getElementById('saveSettingsBtn');
+  const settingsModal = document.getElementById('settingsModal');
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openSettingsModal();
-      return;
-    }
-
-    // Close settings modal button
-    if (e.target.closest('#closeSettingsModal') || e.target.closest('#cancelSettingsBtn')) {
       closeSettingsModal();
-      return;
-    }
+    });
+  }
 
-    // Save settings button
-    if (e.target.closest('#saveSettingsBtn')) {
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSettingsModal();
+    });
+  }
+
+  if (saveBtn) {
+    saveBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       saveSettings();
-      return;
-    }
+    });
+  }
 
-    // Settings modal backdrop click to close
-    const settingsModal = document.getElementById('settingsModal');
-    if (e.target === settingsModal) {
-      closeSettingsModal();
-      return;
-    }
-  });
+  // Backdrop click to close
+  if (settingsModal) {
+    settingsModal.addEventListener('click', (e) => {
+      if (e.target === settingsModal) {
+        closeSettingsModal();
+      }
+    });
+  }
 
   // Settings tab switching
   document.querySelectorAll('.settings-tab').forEach(tab => {
@@ -7328,15 +7337,6 @@ function transitionToAppView() {
   // Set currentView to 'app' BEFORE loading customers (so renderMarkers isn't blocked)
   currentView = 'app';
 
-  // Initialize app data only on first login
-  if (!appInitialized) {
-    initializeApp();
-    appInitialized = true;
-  } else {
-    // On subsequent logins, reload customers to refresh markers
-    loadCustomers();
-  }
-
   // PHASE 1: Slide out login form (left side)
   if (loginSide) {
     loginSide.style.transition = 'transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease-out';
@@ -7386,6 +7386,17 @@ function transitionToAppView() {
       }
     }
   }, 1000);
+
+  // PHASE 5b: Load data AFTER flyTo animation completes (~2.2s from start)
+  // This prevents UI jank during the login transition
+  setTimeout(() => {
+    if (!appInitialized) {
+      initializeApp();
+      appInitialized = true;
+    } else {
+      loadCustomers();
+    }
+  }, 2300);
 
   // PHASE 6: Slide in sidebar and show tab navigation
   setTimeout(() => {
@@ -9229,16 +9240,17 @@ function createClusterIcon(cluster) {
   const areaNames = new Set();
   let warningCount = 0;
 
-  // Collect all unique area names and count warnings
+  // Collect all unique area names and count warnings from marker options (not popup)
   markers.forEach(marker => {
-    const popupContent = marker.getPopup().getContent();
-    const poststedMatch = popupContent.match(/<p>(\d+)\s+([^<]+)<\/p>/);
-    if (poststedMatch) {
-      areaNames.add(poststedMatch[2].trim());
-    }
-    // Check for warnings (forfalt or snart)
-    if (popupContent.includes('status-overdue') || popupContent.includes('status-soon')) {
-      warningCount++;
+    // Use stored customer data on marker (set in renderMarkers)
+    const customerData = marker.options.customerData;
+    if (customerData) {
+      if (customerData.poststed) {
+        areaNames.add(customerData.poststed);
+      }
+      if (customerData.hasWarning) {
+        warningCount++;
+      }
     }
   });
 
@@ -9503,8 +9515,28 @@ function renderMarkers(customerData) {
   // Reset retry count on successful render
   renderMarkersRetryCount = 0;
 
-  // Clear existing markers from cluster
-  markerClusterGroup.clearLayers();
+  // Clear existing markers from cluster (with error handling for animation edge cases)
+  try {
+    markerClusterGroup.clearLayers();
+  } catch (e) {
+    // Leaflet animation race condition - recreate cluster group
+    console.warn('clearLayers failed, recreating cluster group:', e.message);
+    map.removeLayer(markerClusterGroup);
+    markerClusterGroup = L.markerClusterGroup({
+      maxClusterRadius: appConfig.mapClusterRadius || 60,
+      iconCreateFunction: createClusterIcon,
+      disableClusteringAtZoom: 14,
+      spiderfyOnMaxZoom: true,
+      spiderfyOnEveryZoom: false,
+      spiderfyDistanceMultiplier: 2.5,
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+      animate: true,
+      animateAddingMarkers: false,
+      singleMarkerMode: false
+    });
+    map.addLayer(markerClusterGroup);
+  }
   markers = {};
 
   // Log what we're rendering
@@ -9552,8 +9584,14 @@ function renderMarkers(customerData) {
       });
 
       // Lazy popup - generate content only when opened (performance optimization)
-      const marker = L.marker([customer.lat, customer.lng], { icon })
-        .bindPopup(() => generatePopupContent(customer), { maxWidth: 350 });
+      // Store customer data on marker for cluster icon (avoids parsing popup content)
+      const marker = L.marker([customer.lat, customer.lng], {
+        icon,
+        customerData: {
+          poststed: customer.poststed,
+          hasWarning: showWarning
+        }
+      }).bindPopup(() => generatePopupContent(customer), { maxWidth: 350 });
 
       marker.on('click', () => {
         marker.openPopup();
@@ -13726,13 +13764,8 @@ function setupEventListeners() {
       if (tabPane) {
         tabPane.classList.add('active');
 
-        // Toggle compact mode for tabs with dynamic height (not for tabs that need scrolling)
-        const compactTabs = ['avhuking', 'statistikk', 'routes', 'calendar', 'planner', 'customers'];
-        if (compactTabs.includes(tabName)) {
-          contentPanel.classList.add('compact-mode');
-        } else {
-          contentPanel.classList.remove('compact-mode');
-        }
+        // Fjern compact-mode slik at alle faner kan scrolle
+        contentPanel.classList.remove('compact-mode');
 
         // Update panel title
         if (panelTitle) {

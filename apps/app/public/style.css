@@ -771,22 +771,21 @@ a:hover {
   overflow-y: visible !important;
 }
 
-/* Faner med dynamisk høyde */
+/* Faner - lar innholdet utvide seg så .tab-content kan scrolle */
 #tab-avhuking,
 #tab-statistikk,
 #tab-routes,
 #tab-calendar,
-#tab-customers {
-  height: auto !important;
-}
-
-/* Ruteplanlegger - scroll aktivert */
+#tab-customers,
 #tab-planner {
-  height: 100% !important;
-  min-height: 0 !important;
-  overflow-y: auto !important;
+  display: block;
 }
 
+#tab-avhuking:not(.active),
+#tab-statistikk:not(.active),
+#tab-routes:not(.active),
+#tab-calendar:not(.active),
+#tab-customers:not(.active),
 #tab-planner:not(.active) {
   display: none !important;
 }
@@ -798,7 +797,7 @@ a:hover {
 #tab-dashboard {
   height: 100% !important;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
   display: flex !important;
   flex-direction: column !important;
 }
@@ -4684,7 +4683,7 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9000;
+  z-index: 99000;
 }
 
 .modal.hidden {
@@ -4701,6 +4700,8 @@ a:hover {
   overflow-y: auto;
   box-shadow: var(--shadow-xl);
   border: 1px solid var(--color-border);
+  pointer-events: auto;
+  position: relative;
 }
 
 .modal-header {
