@@ -8783,8 +8783,8 @@ function initMap() {
   markerClusterGroup = L.markerClusterGroup({
     maxClusterRadius: clusterRadius,
     iconCreateFunction: createClusterIcon,
-    // Disable clustering at zoom 11 - show individual markers earlier
-    disableClusteringAtZoom: 11,
+    // Disable clustering at zoom 14 - keep clustering longer for better performance
+    disableClusteringAtZoom: 14,
     // Enable spiderfy only at max zoom (not on every zoom)
     spiderfyOnMaxZoom: true,
     spiderfyOnEveryZoom: false,
@@ -9424,6 +9424,57 @@ function renderCustomerList(customerData) {
   // Using data-action attributes on elements for CSP compliance and memory efficiency
 }
 
+// Generate popup content lazily (performance optimization - only called when popup opens)
+function generatePopupContent(customer) {
+  const isSelected = selectedCustomers.has(customer.id);
+  const controlStatus = getControlStatus(customer);
+  const hasEmail = customer.epost && customer.epost.trim() !== '';
+
+  // Generate dynamic popup control info based on selected industry
+  const kontrollInfoHtml = serviceTypeRegistry.renderPopupControlInfo(customer, controlStatus);
+
+  // Generate dynamic industry-specific fields
+  const industryFieldsHtml = serviceTypeRegistry.renderPopupIndustryFields(customer);
+
+  // Generate custom organization fields from Excel import
+  const customFieldsHtml = renderPopupCustomFields(customer);
+
+  return `
+    <h3>${escapeHtml(customer.navn)}</h3>
+    <p><strong>Kategori:</strong> ${escapeHtml(customer.kategori || 'Annen')}</p>
+    ${industryFieldsHtml}
+    ${customFieldsHtml}
+    <p>${escapeHtml(customer.adresse)}</p>
+    <p>${escapeHtml(customer.postnummer || '')} ${escapeHtml(customer.poststed || '')}</p>
+    ${customer.telefon ? `<p>Tlf: ${escapeHtml(customer.telefon)}</p>` : ''}
+    ${customer.epost ? `<p>E-post: ${escapeHtml(customer.epost)}</p>` : ''}
+    ${kontrollInfoHtml}
+    <div class="popup-actions">
+      <button class="btn btn-small btn-navigate" data-action="navigateToCustomer" data-lat="${customer.lat}" data-lng="${customer.lng}" data-name="${escapeHtml(customer.navn)}">
+        <i class="fas fa-directions"></i> Naviger
+      </button>
+      <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
+        ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
+      </button>
+      <button class="btn btn-small ${bulkSelectedCustomers.has(customer.id) ? 'btn-success' : 'btn-complete'}"
+              data-action="toggleBulkSelect"
+              data-customer-id="${customer.id}">
+        <i class="fas ${bulkSelectedCustomers.has(customer.id) ? 'fa-check-circle' : 'fa-check'}"></i>
+        ${bulkSelectedCustomers.has(customer.id) ? 'Valgt' : 'Marker ferdig'}
+      </button>
+      <button class="btn btn-small btn-secondary" data-action="editCustomer" data-customer-id="${customer.id}">
+        Rediger
+      </button>
+      <button class="btn btn-small ${hasEmail ? 'btn-email' : 'btn-disabled'}"
+              data-action="sendEmail"
+              data-customer-id="${customer.id}"
+              ${hasEmail ? '' : 'disabled'}>
+        <i class="fas fa-envelope"></i> E-post
+      </button>
+    </div>
+  `;
+}
+
 // Render markers on map
 let renderMarkersRetryCount = 0;
 const MAX_RENDER_RETRIES = 10;
@@ -9472,10 +9523,8 @@ function renderMarkers(customerData) {
       const isSelected = selectedCustomers.has(customer.id);
       const controlStatus = getControlStatus(customer);
 
-      // Create marker with label showing name and address
-      const shortName = customer.navn.length > 25 ? customer.navn.substring(0, 23) + '...' : customer.navn;
-      const shortAddress = customer.adresse ? (customer.adresse.length > 30 ? customer.adresse.substring(0, 28) + '...' : customer.adresse) : '';
-      const location = customer.poststed || customer.postnummer || '';
+      // Create marker with simplified label (performance optimization)
+      const shortName = customer.navn.length > 20 ? customer.navn.substring(0, 18) + '...' : customer.navn;
 
       // Show warning icon for overdue or soon (within 30 days)
       const showWarning = controlStatus.status === 'forfalt' || controlStatus.status === 'snart';
@@ -9496,60 +9545,15 @@ function renderMarkers(customerData) {
           </div>
           <div class="marker-label">
             <span class="marker-name">${escapeHtml(shortName)}</span>
-            <span class="marker-address">${escapeHtml(shortAddress)}</span>
-            <span class="marker-location">${escapeHtml(location)}</span>
           </div>
         `,
-        iconSize: [220, 60],
-        iconAnchor: [20, 36]
+        iconSize: [180, 40],
+        iconAnchor: [20, 30]
       });
 
-      const hasEmail = customer.epost && customer.epost.trim() !== '';
-
-      // Generate dynamic popup control info based on selected industry
-      const kontrollInfoHtml = serviceTypeRegistry.renderPopupControlInfo(customer, controlStatus);
-
-      // Generate dynamic industry-specific fields (replaces hardcoded el_type, brann_system etc.)
-      const industryFieldsHtml = serviceTypeRegistry.renderPopupIndustryFields(customer);
-
-      // Generate custom organization fields from Excel import
-      const customFieldsHtml = renderPopupCustomFields(customer);
-
+      // Lazy popup - generate content only when opened (performance optimization)
       const marker = L.marker([customer.lat, customer.lng], { icon })
-        .bindPopup(`
-          <h3>${escapeHtml(customer.navn)}</h3>
-          <p><strong>Kategori:</strong> ${escapeHtml(customer.kategori || 'Annen')}</p>
-          ${industryFieldsHtml}
-          ${customFieldsHtml}
-          <p>${escapeHtml(customer.adresse)}</p>
-          <p>${escapeHtml(customer.postnummer || '')} ${escapeHtml(customer.poststed || '')}</p>
-          ${customer.telefon ? `<p>Tlf: ${escapeHtml(customer.telefon)}</p>` : ''}
-          ${customer.epost ? `<p>E-post: ${escapeHtml(customer.epost)}</p>` : ''}
-          ${kontrollInfoHtml}
-          <div class="popup-actions">
-            <button class="btn btn-small btn-navigate" data-action="navigateToCustomer" data-lat="${customer.lat}" data-lng="${customer.lng}" data-name="${escapeHtml(customer.navn)}">
-              <i class="fas fa-directions"></i> Naviger
-            </button>
-            <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
-              ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
-            </button>
-            <button class="btn btn-small ${bulkSelectedCustomers.has(customer.id) ? 'btn-success' : 'btn-complete'}"
-                    data-action="toggleBulkSelect"
-                    data-customer-id="${customer.id}">
-              <i class="fas ${bulkSelectedCustomers.has(customer.id) ? 'fa-check-circle' : 'fa-check'}"></i>
-              ${bulkSelectedCustomers.has(customer.id) ? 'Valgt' : 'Marker ferdig'}
-            </button>
-            <button class="btn btn-small btn-secondary" data-action="editCustomer" data-customer-id="${customer.id}">
-              Rediger
-            </button>
-            <button class="btn btn-small ${hasEmail ? 'btn-email' : 'btn-disabled'}"
-                    data-action="sendEmail"
-                    data-customer-id="${customer.id}"
-                    ${hasEmail ? '' : 'disabled'}>
-              <i class="fas fa-envelope"></i> E-post
-            </button>
-          </div>
-        `);
+        .bindPopup(() => generatePopupContent(customer), { maxWidth: 350 });
 
       marker.on('click', () => {
         marker.openPopup();
@@ -13389,12 +13393,19 @@ function initializeApp() {
   initMap();
   Logger.log('initializeApp() after initMap, markerClusterGroup:', !!markerClusterGroup);
 
-  // Load data
-  loadCustomers();
-  loadOmrader();
-  loadRoutes();
-  loadOrganizationFields(); // Load dynamic organization fields
-  loadOrganizationCategories(); // Load dynamic organization categories
+  // Load data in parallel for faster startup (performance optimization)
+  Promise.all([
+    loadCustomers(),
+    loadOmrader(),
+    loadRoutes(),
+    loadOrganizationFields(),
+    loadOrganizationCategories()
+  ]).then(() => {
+    Logger.log('initializeApp() all data loaded');
+  }).catch(err => {
+    console.error('Error loading initial data:', err);
+  });
+
   initWebSocket();
 
   // Setup event listeners

@@ -10,12 +10,19 @@ const AUTH_API = '/api/klient';
 let organizations = [];
 let selectedOrgId = null;
 let editingCustomerId = null;
+let editingUserId = null;
+
+// Chart instances
+let growthChart = null;
+let activityChart = null;
+let planChart = null;
 
 // DOM Elements
 const loadingOverlay = document.getElementById('loadingOverlay');
 const adminApp = document.getElementById('adminApp');
 const orgPanel = document.getElementById('orgPanel');
 const customerModal = document.getElementById('customerModal');
+const userModal = document.getElementById('userModal');
 
 // ========================================
 // INITIALIZATION
@@ -67,7 +74,10 @@ async function initAdminPanel() {
     // Load data
     await Promise.all([
       loadGlobalStats(),
-      loadOrganizations()
+      loadOrganizations(),
+      loadGrowthChart(),
+      loadActivityChart(),
+      loadBillingOverview()
     ]);
 
   } catch (error) {
@@ -121,6 +131,27 @@ function setupEventListeners() {
   document.querySelector('#customerModal .modal-backdrop').addEventListener('click', closeCustomerModal);
   document.getElementById('customerForm').addEventListener('submit', handleCustomerSubmit);
 
+  // User modal
+  document.getElementById('closeUserModal').addEventListener('click', closeUserModal);
+  document.getElementById('cancelUserBtn').addEventListener('click', closeUserModal);
+  document.querySelector('#userModal .modal-backdrop').addEventListener('click', closeUserModal);
+  document.getElementById('userForm').addEventListener('submit', handleUserSubmit);
+  document.getElementById('resetPasswordBtn').addEventListener('click', handleResetPassword);
+
+  // Login history
+  document.getElementById('viewLoginHistoryBtn').addEventListener('click', () => showLoginHistory());
+  document.getElementById('backToUsersBtn').addEventListener('click', () => hideLoginHistory());
+  document.getElementById('loginStatusFilter').addEventListener('change', () => loadLoginHistory(selectedOrgId));
+  document.getElementById('loginEpostFilter').addEventListener('input', debounce(() => loadLoginHistory(selectedOrgId), 300));
+
+  // Chart period selectors
+  document.getElementById('growthPeriodSelect').addEventListener('change', (e) => {
+    loadGrowthChart(parseInt(e.target.value));
+  });
+  document.getElementById('activityPeriodSelect').addEventListener('change', (e) => {
+    loadActivityChart(parseInt(e.target.value));
+  });
+
   // Click outside panel to close
   document.addEventListener('click', (e) => {
     if (orgPanel.classList.contains('open') &&
@@ -159,13 +190,256 @@ async function loadGlobalStats() {
 
     if (data.success) {
       document.getElementById('statTotalOrgs').textContent = data.data.totalOrganizations || 0;
-      document.getElementById('statTotalCustomers').textContent = data.data.totalKunder || 0;
+      document.getElementById('statTotalCustomers').textContent = data.data.totalCustomers || data.data.totalKunder || 0;
       document.getElementById('statActiveSubscriptions').textContent = data.data.activeSubscriptions || 0;
-      document.getElementById('statTotalUsers').textContent = data.data.totalBrukere || 0;
+      document.getElementById('statTotalUsers').textContent = data.data.totalUsers || data.data.totalBrukere || 0;
+
+      // Update plan chart
+      if (data.data.organizationsByPlan) {
+        updatePlanChart(data.data.organizationsByPlan);
+      }
     }
   } catch (error) {
     console.error('Failed to load stats:', error);
   }
+}
+
+// ========================================
+// CHARTS
+// ========================================
+
+async function loadGrowthChart(months = 12) {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/statistics/growth?months=${months}`);
+    const data = await res.json();
+
+    if (data.success) {
+      const { organizations, customers, users } = data.data;
+
+      // Calculate growth rate
+      if (organizations.length >= 2) {
+        const lastMonth = organizations[organizations.length - 1]?.count || 0;
+        const prevMonth = organizations[organizations.length - 2]?.count || 0;
+        const growthRate = prevMonth > 0 ? Math.round((lastMonth / prevMonth - 1) * 100) : 0;
+        document.getElementById('kpiGrowthRate').textContent = `${growthRate >= 0 ? '+' : ''}${growthRate}%`;
+      }
+
+      // Create/update chart
+      const ctx = document.getElementById('growthChart').getContext('2d');
+
+      if (growthChart) {
+        growthChart.destroy();
+      }
+
+      // Fill in missing months
+      const allMonths = generateMonthLabels(months);
+      const orgData = mapDataToMonths(organizations, allMonths);
+      const customerData = mapDataToMonths(customers, allMonths);
+      const userData = mapDataToMonths(users, allMonths);
+
+      growthChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: allMonths.map(m => formatMonthLabel(m)),
+          datasets: [
+            {
+              label: 'Organisasjoner',
+              data: orgData,
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              tension: 0.3,
+              fill: true
+            },
+            {
+              label: 'Kunder',
+              data: customerData,
+              borderColor: '#22c55e',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              tension: 0.3,
+              fill: true
+            },
+            {
+              label: 'Brukere',
+              data: userData,
+              borderColor: '#f59e0b',
+              backgroundColor: 'rgba(245, 158, 11, 0.1)',
+              tension: 0.3,
+              fill: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#a0a0a0', boxWidth: 12, padding: 16 }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: '#333333' },
+              ticks: { color: '#a0a0a0' }
+            },
+            y: {
+              grid: { color: '#333333' },
+              ticks: { color: '#a0a0a0' },
+              beginAtZero: true
+            }
+          }
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Failed to load growth chart:', error);
+  }
+}
+
+async function loadActivityChart(days = 30) {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/statistics/activity?days=${days}`);
+    const data = await res.json();
+
+    if (data.success) {
+      const { loginsByDay, activeUsers7Days, activeUsers30Days, totalLogins } = data.data;
+
+      // Update KPIs
+      document.getElementById('kpiActiveUsers7').textContent = activeUsers7Days || 0;
+      document.getElementById('kpiActiveUsers30').textContent = activeUsers30Days || 0;
+      document.getElementById('kpiTotalLogins').textContent = totalLogins || 0;
+
+      // Create/update chart
+      const ctx = document.getElementById('activityChart').getContext('2d');
+
+      if (activityChart) {
+        activityChart.destroy();
+      }
+
+      activityChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: loginsByDay.map(d => formatDateShort(d.date)),
+          datasets: [
+            {
+              label: 'Vellykkede',
+              data: loginsByDay.map(d => d.successful),
+              backgroundColor: 'rgba(34, 197, 94, 0.7)',
+              borderRadius: 4
+            },
+            {
+              label: 'Feilede',
+              data: loginsByDay.map(d => d.failed),
+              backgroundColor: 'rgba(239, 68, 68, 0.7)',
+              borderRadius: 4
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#a0a0a0', boxWidth: 12, padding: 16 }
+            }
+          },
+          scales: {
+            x: {
+              stacked: true,
+              grid: { display: false },
+              ticks: { color: '#a0a0a0', maxRotation: 45 }
+            },
+            y: {
+              stacked: true,
+              grid: { color: '#333333' },
+              ticks: { color: '#a0a0a0' },
+              beginAtZero: true
+            }
+          }
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Failed to load activity chart:', error);
+  }
+}
+
+function updatePlanChart(planData) {
+  const ctx = document.getElementById('planChart').getContext('2d');
+
+  if (planChart) {
+    planChart.destroy();
+  }
+
+  const labels = [];
+  const values = [];
+  const colors = {
+    free: '#666666',
+    standard: '#3b82f6',
+    premium: '#a855f7',
+    enterprise: '#f59e0b'
+  };
+  const bgColors = [];
+
+  for (const [plan, count] of Object.entries(planData)) {
+    labels.push(getPlanLabel(plan));
+    values.push(count);
+    bgColors.push(colors[plan] || '#666666');
+  }
+
+  planChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: bgColors,
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: '#a0a0a0', boxWidth: 12, padding: 12 }
+        }
+      }
+    }
+  });
+}
+
+// Chart helpers
+function generateMonthLabels(months) {
+  const labels = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    labels.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return labels;
+}
+
+function mapDataToMonths(data, months) {
+  const map = {};
+  for (const item of data) {
+    map[item.month] = item.count;
+  }
+  return months.map(m => map[m] || 0);
+}
+
+function formatMonthLabel(month) {
+  const [year, m] = month.split('-');
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Des'];
+  return `${monthNames[parseInt(m) - 1]} ${year.slice(2)}`;
+}
+
+function formatDateShort(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return `${d.getDate()}/${d.getMonth() + 1}`;
 }
 
 async function loadOrganizations() {
@@ -355,6 +629,7 @@ async function loadOrgUsers(orgId) {
 
     if (data.success) {
       const users = data.data || [];
+      document.getElementById('userCount').textContent = `${users.length} brukere`;
 
       if (users.length === 0) {
         usersList.innerHTML = '<div class="empty-text">Ingen brukere registrert</div>';
@@ -362,7 +637,7 @@ async function loadOrgUsers(orgId) {
       }
 
       usersList.innerHTML = users.map(u => `
-        <div class="user-card">
+        <div class="user-card" onclick="openUserModal(${u.id})" data-user-id="${u.id}">
           <div class="user-avatar">
             <i class="fas fa-user"></i>
           </div>
@@ -376,11 +651,341 @@ async function loadOrgUsers(orgId) {
           </div>
         </div>
       `).join('');
+
+      // Store users for modal
+      window.currentOrgUsers = users;
     }
   } catch (error) {
     console.error('Failed to load users:', error);
     usersList.innerHTML = '<div class="error-text">Kunne ikke laste brukere</div>';
   }
+}
+
+// ========================================
+// USER MANAGEMENT
+// ========================================
+
+function openUserModal(userId) {
+  editingUserId = userId;
+  const user = window.currentOrgUsers?.find(u => u.id === userId);
+
+  if (!user) {
+    showError('Bruker ikke funnet');
+    return;
+  }
+
+  document.getElementById('userModalTitle').textContent = 'Rediger bruker';
+  document.getElementById('editUserId').value = userId;
+  document.getElementById('userNavn').value = user.navn || '';
+  document.getElementById('userEpost').value = user.epost || '';
+  document.getElementById('userTelefon').value = user.telefon || '';
+  document.getElementById('userRolle').value = user.rolle || 'medlem';
+  document.getElementById('userAktiv').value = user.aktiv ? 'true' : 'false';
+
+  userModal.classList.add('open');
+}
+
+function closeUserModal() {
+  userModal.classList.remove('open');
+  editingUserId = null;
+}
+
+async function handleUserSubmit(e) {
+  e.preventDefault();
+
+  if (!editingUserId || !selectedOrgId) return;
+
+  const saveBtn = document.getElementById('saveUserBtn');
+  const originalText = saveBtn.textContent;
+  saveBtn.disabled = true;
+  saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Lagrer...';
+
+  try {
+    const userData = {
+      navn: document.getElementById('userNavn').value,
+      epost: document.getElementById('userEpost').value,
+      telefon: document.getElementById('userTelefon').value,
+      rolle: document.getElementById('userRolle').value,
+      aktiv: document.getElementById('userAktiv').value === 'true'
+    };
+
+    const res = await fetchWithAuth(`${API_BASE}/organizations/${selectedOrgId}/brukere/${editingUserId}`, {
+      method: 'PUT',
+      body: JSON.stringify(userData)
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+      closeUserModal();
+      await loadOrgUsers(selectedOrgId);
+      showSuccess('Bruker oppdatert');
+    } else {
+      showError(data.error?.message || 'Kunne ikke oppdatere bruker');
+    }
+  } catch (error) {
+    console.error('Failed to update user:', error);
+    showError('Kunne ikke oppdatere bruker');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = originalText;
+  }
+}
+
+async function handleResetPassword() {
+  if (!editingUserId || !selectedOrgId) return;
+
+  const user = window.currentOrgUsers?.find(u => u.id === editingUserId);
+  if (!confirm(`Send e-post for tilbakestilling av passord til ${user?.epost || 'denne brukeren'}?`)) {
+    return;
+  }
+
+  const btn = document.getElementById('resetPasswordBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/organizations/${selectedOrgId}/brukere/${editingUserId}/reset-password`, {
+      method: 'POST'
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+      showSuccess(`E-post sendt til ${data.data.epost}`);
+    } else {
+      showError(data.error?.message || 'Kunne ikke sende reset-epost');
+    }
+  } catch (error) {
+    console.error('Failed to reset password:', error);
+    showError('Kunne ikke sende reset-epost');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
+
+// ========================================
+// LOGIN HISTORY
+// ========================================
+
+function showLoginHistory() {
+  document.getElementById('tab-users').classList.remove('active');
+  document.getElementById('tab-login-history').classList.add('active');
+  loadLoginHistory(selectedOrgId);
+}
+
+function hideLoginHistory() {
+  document.getElementById('tab-login-history').classList.remove('active');
+  document.getElementById('tab-users').classList.add('active');
+}
+
+async function loadLoginHistory(orgId) {
+  if (!orgId) return;
+
+  const list = document.getElementById('loginHistoryList');
+  list.innerHTML = '<div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster historikk...</div>';
+
+  const status = document.getElementById('loginStatusFilter').value;
+  const epost = document.getElementById('loginEpostFilter').value;
+
+  let url = `${API_BASE}/organizations/${orgId}/login-history?limit=50`;
+  if (status) url += `&status=${status}`;
+  if (epost) url += `&epost=${encodeURIComponent(epost)}`;
+
+  try {
+    const res = await fetchWithAuth(url);
+    const data = await res.json();
+
+    if (data.success) {
+      const { logs, total } = data.data;
+
+      if (logs.length === 0) {
+        list.innerHTML = '<div class="empty-text">Ingen innlogginger funnet</div>';
+        return;
+      }
+
+      list.innerHTML = logs.map(log => `
+        <div class="login-entry">
+          <div class="login-status-icon ${log.status === 'vellykket' ? 'success' : 'failed'}">
+            <i class="fas fa-${log.status === 'vellykket' ? 'check' : 'times'}"></i>
+          </div>
+          <div class="login-details">
+            <strong>${escapeHtml(log.bruker_navn || log.epost)}</strong>
+            <small>${escapeHtml(log.epost)}</small>
+            ${log.feil_melding ? `<small style="color: #f87171;">${escapeHtml(log.feil_melding)}</small>` : ''}
+          </div>
+          <div class="login-time">
+            ${formatDateTime(log.tidspunkt)}
+          </div>
+        </div>
+      `).join('');
+    }
+  } catch (error) {
+    console.error('Failed to load login history:', error);
+    list.innerHTML = '<div class="error-text">Kunne ikke laste historikk</div>';
+  }
+}
+
+function formatDateTime(dateStr) {
+  if (!dateStr) return '-';
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleString('nb-NO', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+// ========================================
+// BILLING
+// ========================================
+
+async function loadBillingOverview() {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/billing/overview`);
+    const data = await res.json();
+
+    if (data.success) {
+      document.getElementById('statMRR').textContent = data.data.mrrFormatted || '0 kr';
+    }
+  } catch (error) {
+    console.error('Failed to load billing overview:', error);
+  }
+}
+
+async function loadOrgBilling(orgId) {
+  const billingInfo = document.getElementById('billingInfo');
+  const invoicesList = document.getElementById('invoicesList');
+
+  billingInfo.innerHTML = '<div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster faktureringsinformasjon...</div>';
+  invoicesList.innerHTML = '';
+
+  try {
+    // Load billing info and invoices in parallel
+    const [billingRes, invoicesRes] = await Promise.all([
+      fetchWithAuth(`${API_BASE}/organizations/${orgId}/billing`),
+      fetchWithAuth(`${API_BASE}/organizations/${orgId}/invoices`)
+    ]);
+
+    const billingData = await billingRes.json();
+    const invoicesData = await invoicesRes.json();
+
+    if (billingData.success) {
+      const billing = billingData.data;
+
+      if (!billing.hasStripe) {
+        billingInfo.innerHTML = `
+          <div class="no-stripe-message">
+            <i class="fas fa-credit-card"></i>
+            <p>Ingen Stripe-kunde tilknyttet</p>
+            <small>Plan: ${getPlanLabel(billing.plan_type)}</small>
+          </div>
+        `;
+      } else if (billing.stripeError) {
+        billingInfo.innerHTML = `
+          <div class="no-stripe-message">
+            <i class="fas fa-exclamation-triangle"></i>
+            <p>Kunne ikke hente Stripe-data</p>
+            <small>Plan: ${getPlanLabel(billing.plan_type)} | Status: ${getStatusLabel(billing.subscription_status)}</small>
+          </div>
+        `;
+      } else {
+        const sub = billing.subscription;
+        billingInfo.innerHTML = `
+          <div class="billing-grid">
+            <div class="billing-grid-item">
+              <div class="value">${getPlanLabel(billing.plan_type)}</div>
+              <div class="label">Plan</div>
+            </div>
+            <div class="billing-grid-item">
+              <div class="value status-badge status-${billing.subscription_status}">${getStatusLabel(billing.subscription_status)}</div>
+              <div class="label">Status</div>
+            </div>
+            ${sub ? `
+              <div class="billing-grid-item">
+                <div class="value">${formatAmount(sub.amount, sub.currency)}</div>
+                <div class="label">Per ${sub.interval === 'month' ? 'mnd' : 'ar'}</div>
+              </div>
+              <div class="billing-grid-item">
+                <div class="value">${formatDate(sub.current_period_end)}</div>
+                <div class="label">Neste faktura</div>
+              </div>
+            ` : ''}
+          </div>
+          ${billing.customer ? `
+            <div class="billing-card">
+              <h5>Stripe-kunde</h5>
+              <div class="billing-value">${escapeHtml(billing.customer.name || billing.customer.email)}</div>
+              <div class="billing-detail">${escapeHtml(billing.customer.email)}</div>
+              <div class="billing-detail">ID: ${billing.customer.id}</div>
+            </div>
+          ` : ''}
+          ${sub?.trial_end ? `
+            <div class="billing-card">
+              <h5>Proveperiode</h5>
+              <div class="billing-value">Utloper ${formatDate(sub.trial_end)}</div>
+            </div>
+          ` : ''}
+          ${sub?.cancel_at_period_end ? `
+            <div class="billing-card" style="border-left: 3px solid var(--danger-color);">
+              <h5>Avslutning</h5>
+              <div class="billing-value">Avsluttes ${formatDate(sub.current_period_end)}</div>
+            </div>
+          ` : ''}
+        `;
+      }
+    }
+
+    // Render invoices
+    if (invoicesData.success && invoicesData.data.invoices?.length > 0) {
+      invoicesList.innerHTML = invoicesData.data.invoices.map(inv => `
+        <div class="invoice-item">
+          <div class="invoice-info">
+            <strong>${inv.number || inv.id.slice(-8)}</strong>
+            <small>${formatDate(inv.created)}</small>
+          </div>
+          <div class="invoice-amount">
+            ${formatAmount(inv.amount, inv.currency)}
+            <span class="invoice-status ${inv.status}">${getInvoiceStatusLabel(inv.status)}</span>
+          </div>
+          <div class="invoice-actions">
+            ${inv.hosted_invoice_url ? `<a href="${inv.hosted_invoice_url}" target="_blank" title="Vis faktura"><i class="fas fa-external-link-alt"></i></a>` : ''}
+            ${inv.invoice_pdf ? `<a href="${inv.invoice_pdf}" target="_blank" title="Last ned PDF"><i class="fas fa-file-pdf"></i></a>` : ''}
+          </div>
+        </div>
+      `).join('');
+    } else {
+      invoicesList.innerHTML = '<div class="empty-text">Ingen fakturaer</div>';
+    }
+
+  } catch (error) {
+    console.error('Failed to load billing:', error);
+    billingInfo.innerHTML = '<div class="error-text">Kunne ikke laste faktureringsinformasjon</div>';
+  }
+}
+
+function formatAmount(amount, currency = 'nok') {
+  if (!amount) return '0 kr';
+  const value = amount / 100; // Stripe amounts are in cents
+  return `${value.toLocaleString('nb-NO')} ${currency.toUpperCase() === 'NOK' ? 'kr' : currency.toUpperCase()}`;
+}
+
+function getInvoiceStatusLabel(status) {
+  const labels = {
+    'paid': 'Betalt',
+    'open': 'Apen',
+    'draft': 'Utkast',
+    'uncollectible': 'Ikke innkrevbar',
+    'void': 'Kansellert'
+  };
+  return labels[status] || status;
 }
 
 function closePanel() {
@@ -398,6 +1003,11 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-content').forEach(content => {
     content.classList.toggle('active', content.id === `tab-${tabId}`);
   });
+
+  // Load billing data when switching to billing tab
+  if (tabId === 'billing' && selectedOrgId) {
+    loadOrgBilling(selectedOrgId);
+  }
 }
 
 // ========================================
@@ -639,6 +1249,14 @@ function showError(message) {
 function showSuccess(message) {
   // Simple alert for now - can be replaced with toast/notification
   console.log('Success:', message);
+}
+
+function debounce(fn, delay) {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
 }
 
 // ========================================

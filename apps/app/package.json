@@ -22,6 +22,7 @@
     "@skyplanner/auth": "workspace:*",
     "@skyplanner/database": "workspace:*",
     "@supabase/supabase-js": "^2.89.0",
+    "stripe": "^14.0.0",
     "axios": "^1.13.4",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

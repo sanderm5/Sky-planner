@@ -264,6 +264,8 @@ export interface Organization {
   subscription_status?: 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
   trial_ends_at?: string;
   current_period_end?: string;
+  stripe_customer_id?: string;
+  stripe_subscription_id?: string;
   opprettet?: string;
 }
 

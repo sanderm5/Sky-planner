@@ -4233,6 +4233,411 @@ class DatabaseService {
     this.sqlite!.prepare(`UPDATE webhook_deliveries SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   }
 
+  // ============ SUPER ADMIN - GROWTH STATISTICS ============
+
+  /**
+   * Get growth statistics over time (for super admin dashboard)
+   * Returns monthly counts for organizations, customers, and users
+   */
+  async getGrowthStatistics(months: number = 12): Promise<{
+    organizations: Array<{ month: string; count: number }>;
+    customers: Array<{ month: string; count: number }>;
+    users: Array<{ month: string; count: number }>;
+  }> {
+    if (this.type === 'supabase' && this.supabase) {
+      // Supabase implementation
+      const client = this.supabase.getClient();
+
+      const startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - months);
+
+      const { data: orgs } = await client
+        .from('organizations')
+        .select('created_at')
+        .gte('created_at', startDate.toISOString());
+
+      const { data: customers } = await client
+        .from('kunder')
+        .select('opprettet')
+        .gte('opprettet', startDate.toISOString());
+
+      const { data: users } = await client
+        .from('klient')
+        .select('opprettet')
+        .gte('opprettet', startDate.toISOString());
+
+      return {
+        organizations: this.aggregateByMonth(orgs || [], 'created_at'),
+        customers: this.aggregateByMonth(customers || [], 'opprettet'),
+        users: this.aggregateByMonth(users || [], 'opprettet'),
+      };
+    }
+
+    if (!this.sqlite) {
+      return { organizations: [], customers: [], users: [] };
+    }
+
+    // SQLite implementation
+    const organizationsQuery = this.sqlite.prepare(`
+      SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as count
+      FROM organizations
+      WHERE created_at >= date('now', '-${months} months')
+      GROUP BY strftime('%Y-%m', created_at)
+      ORDER BY month ASC
+    `).all() as Array<{ month: string; count: number }>;
+
+    const customersQuery = this.sqlite.prepare(`
+      SELECT strftime('%Y-%m', opprettet) as month, COUNT(*) as count
+      FROM kunder
+      WHERE opprettet >= date('now', '-${months} months')
+      GROUP BY strftime('%Y-%m', opprettet)
+      ORDER BY month ASC
+    `).all() as Array<{ month: string; count: number }>;
+
+    const usersQuery = this.sqlite.prepare(`
+      SELECT strftime('%Y-%m', opprettet) as month, COUNT(*) as count
+      FROM klient
+      WHERE opprettet >= date('now', '-${months} months')
+      GROUP BY strftime('%Y-%m', opprettet)
+      ORDER BY month ASC
+    `).all() as Array<{ month: string; count: number }>;
+
+    return {
+      organizations: organizationsQuery,
+      customers: customersQuery,
+      users: usersQuery,
+    };
+  }
+
+  /**
+   * Helper to aggregate records by month
+   */
+  private aggregateByMonth(
+    records: Array<{ [key: string]: string | null }>,
+    dateField: string
+  ): Array<{ month: string; count: number }> {
+    const counts: Record<string, number> = {};
+
+    for (const record of records) {
+      const date = record[dateField];
+      if (date) {
+        const month = date.substring(0, 7); // YYYY-MM
+        counts[month] = (counts[month] || 0) + 1;
+      }
+    }
+
+    return Object.entries(counts)
+      .map(([month, count]) => ({ month, count }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+  }
+
+  /**
+   * Get activity statistics (logins, active users)
+   */
+  async getActivityStatistics(days: number = 30): Promise<{
+    loginsByDay: Array<{ date: string; successful: number; failed: number }>;
+    activeUsers7Days: number;
+    activeUsers30Days: number;
+    totalLogins: number;
+  }> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+
+      const { data: logins } = await client
+        .from('login_logg')
+        .select('tidspunkt, status')
+        .gte('tidspunkt', startDate.toISOString());
+
+      const active7Query = client
+        .from('klient')
+        .select('id')
+        .gte('sist_innlogget', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+        .eq('aktiv', true);
+      const { data: active7Data } = await active7Query;
+
+      const active30Query = client
+        .from('klient')
+        .select('id')
+        .gte('sist_innlogget', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+        .eq('aktiv', true);
+      const { data: active30Data } = await active30Query;
+
+      const active7 = active7Data?.length || 0;
+      const active30 = active30Data?.length || 0;
+
+      return {
+        loginsByDay: this.aggregateLoginsByDay(logins || []),
+        activeUsers7Days: active7 || 0,
+        activeUsers30Days: active30 || 0,
+        totalLogins: logins?.length || 0,
+      };
+    }
+
+    if (!this.sqlite) {
+      return { loginsByDay: [], activeUsers7Days: 0, activeUsers30Days: 0, totalLogins: 0 };
+    }
+
+    const loginsByDay = this.sqlite.prepare(`
+      SELECT
+        date(tidspunkt) as date,
+        SUM(CASE WHEN status = 'vellykket' THEN 1 ELSE 0 END) as successful,
+        SUM(CASE WHEN status = 'feilet' THEN 1 ELSE 0 END) as failed
+      FROM login_logg
+      WHERE tidspunkt >= date('now', '-${days} days')
+      GROUP BY date(tidspunkt)
+      ORDER BY date ASC
+    `).all() as Array<{ date: string; successful: number; failed: number }>;
+
+    const active7Result = this.sqlite.prepare(`
+      SELECT COUNT(*) as count FROM klient
+      WHERE sist_innlogget >= datetime('now', '-7 days') AND aktiv = 1
+    `).get() as { count: number };
+
+    const active30Result = this.sqlite.prepare(`
+      SELECT COUNT(*) as count FROM klient
+      WHERE sist_innlogget >= datetime('now', '-30 days') AND aktiv = 1
+    `).get() as { count: number };
+
+    const totalLoginsResult = this.sqlite.prepare(`
+      SELECT COUNT(*) as count FROM login_logg
+      WHERE tidspunkt >= date('now', '-${days} days')
+    `).get() as { count: number };
+
+    return {
+      loginsByDay,
+      activeUsers7Days: active7Result?.count || 0,
+      activeUsers30Days: active30Result?.count || 0,
+      totalLogins: totalLoginsResult?.count || 0,
+    };
+  }
+
+  /**
+   * Helper to aggregate logins by day
+   */
+  private aggregateLoginsByDay(
+    logins: Array<{ tidspunkt: string; status: string }>
+  ): Array<{ date: string; successful: number; failed: number }> {
+    const counts: Record<string, { successful: number; failed: number }> = {};
+
+    for (const login of logins) {
+      const date = login.tidspunkt.substring(0, 10); // YYYY-MM-DD
+      if (!counts[date]) {
+        counts[date] = { successful: 0, failed: 0 };
+      }
+      if (login.status === 'vellykket') {
+        counts[date].successful++;
+      } else {
+        counts[date].failed++;
+      }
+    }
+
+    return Object.entries(counts)
+      .map(([date, stats]) => ({ date, ...stats }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  // ============ SUPER ADMIN - USER MANAGEMENT ============
+
+  /**
+   * Get login history for an organization
+   */
+  async getLoginHistoryForOrganization(
+    organizationId: number,
+    options: { limit?: number; offset?: number; status?: string; epost?: string } = {}
+  ): Promise<{
+    logs: Array<{
+      id: number;
+      epost: string;
+      bruker_navn: string | null;
+      bruker_type: string | null;
+      status: string;
+      ip_adresse: string | null;
+      user_agent: string | null;
+      feil_melding: string | null;
+      tidspunkt: string;
+    }>;
+    total: number;
+  }> {
+    const { limit = 50, offset = 0, status, epost } = options;
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+
+      let query = client
+        .from('login_logg')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .order('tidspunkt', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (status) query = query.eq('status', status);
+      if (epost) query = query.ilike('epost', `%${epost}%`);
+
+      const { data } = await query;
+
+      // Get total count separately
+      let countQuery = client
+        .from('login_logg')
+        .select('id')
+        .eq('organization_id', organizationId);
+      if (status) countQuery = countQuery.eq('status', status);
+      if (epost) countQuery = countQuery.ilike('epost', `%${epost}%`);
+      const { data: countData } = await countQuery;
+
+      return { logs: data || [], total: countData?.length || 0 };
+    }
+
+    if (!this.sqlite) {
+      return { logs: [], total: 0 };
+    }
+
+    let whereClause = 'WHERE organization_id = ?';
+    const params: unknown[] = [organizationId];
+
+    if (status) {
+      whereClause += ' AND status = ?';
+      params.push(status);
+    }
+    if (epost) {
+      whereClause += ' AND epost LIKE ?';
+      params.push(`%${epost}%`);
+    }
+
+    const countResult = this.sqlite.prepare(`
+      SELECT COUNT(*) as count FROM login_logg ${whereClause}
+    `).get(...params) as { count: number };
+
+    const logs = this.sqlite.prepare(`
+      SELECT * FROM login_logg
+      ${whereClause}
+      ORDER BY tidspunkt DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset) as Array<{
+      id: number;
+      epost: string;
+      bruker_navn: string | null;
+      bruker_type: string | null;
+      status: string;
+      ip_adresse: string | null;
+      user_agent: string | null;
+      feil_melding: string | null;
+      tidspunkt: string;
+    }>;
+
+    return { logs, total: countResult?.count || 0 };
+  }
+
+  /**
+   * Update a klient (user) record
+   */
+  async updateKlient(
+    klientId: number,
+    data: {
+      navn?: string;
+      epost?: string;
+      telefon?: string;
+      rolle?: string;
+      aktiv?: boolean;
+    }
+  ): Promise<KlientRecord | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data: updated, error } = await client
+        .from('klient')
+        .update(data)
+        .eq('id', klientId)
+        .select()
+        .single();
+
+      if (error) throw new Error(`Failed to update klient: ${error.message}`);
+      return updated;
+    }
+
+    if (!this.sqlite) return null;
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(value);
+      }
+    }
+
+    if (fields.length === 0) return this.getKlientById(klientId);
+
+    values.push(klientId);
+    this.sqlite.prepare(`
+      UPDATE klient SET ${fields.join(', ')} WHERE id = ?
+    `).run(...values);
+
+    return this.getKlientById(klientId);
+  }
+
+  /**
+   * Get a single klient by ID
+   */
+  async getKlientById(klientId: number): Promise<KlientRecord | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data, error } = await client
+        .from('klient')
+        .select('*')
+        .eq('id', klientId)
+        .single();
+
+      if (error) return null;
+      return data;
+    }
+
+    if (!this.sqlite) return null;
+
+    return this.sqlite.prepare(`
+      SELECT * FROM klient WHERE id = ?
+    `).get(klientId) as KlientRecord | null;
+  }
+
+  /**
+   * Create password reset token
+   */
+  async createPasswordResetToken(data: {
+    user_id: number;
+    user_type: 'klient' | 'bruker';
+    token_hash: string;
+    epost: string;
+    expires_at: string;
+  }): Promise<{ id: number }> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data: result, error } = await client
+        .from('password_reset_tokens')
+        .insert({
+          token: data.token_hash,
+          user_id: data.user_id,
+          user_type: data.user_type,
+          epost: data.epost,
+          expires_at: data.expires_at,
+        })
+        .select('id')
+        .single();
+
+      if (error) throw new Error(`Failed to create reset token: ${error.message}`);
+      return { id: result.id };
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare(`
+      INSERT INTO password_reset_tokens (token, user_id, user_type, epost, expires_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(data.token_hash, data.user_id, data.user_type, data.epost, data.expires_at);
+
+    return { id: result.lastInsertRowid as number };
+  }
+
   /**
    * Close database connection
    * Should be called during graceful shutdown

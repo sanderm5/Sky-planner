@@ -12,6 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="admin.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <!-- Loading state -->
@@ -70,6 +71,78 @@
           <div class="stat-content">
             <span class="stat-value" id="statTotalUsers">-</span>
             <span class="stat-label">Brukere totalt</span>
+          </div>
+        </div>
+        <div class="stat-card stat-card-mrr">
+          <div class="stat-icon"><i class="fas fa-coins"></i></div>
+          <div class="stat-content">
+            <span class="stat-value" id="statMRR">-</span>
+            <span class="stat-label">MRR</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Dashboard Charts section -->
+      <section class="charts-section">
+        <div class="charts-row">
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-chart-line"></i> Vekst over tid</h3>
+              <select id="growthPeriodSelect" class="chart-select">
+                <option value="6">Siste 6 mnd</option>
+                <option value="12" selected>Siste 12 mnd</option>
+                <option value="24">Siste 24 mnd</option>
+              </select>
+            </div>
+            <div class="chart-container">
+              <canvas id="growthChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-sign-in-alt"></i> Innloggingsaktivitet</h3>
+              <select id="activityPeriodSelect" class="chart-select">
+                <option value="7">Siste 7 dager</option>
+                <option value="14">Siste 14 dager</option>
+                <option value="30" selected>Siste 30 dager</option>
+              </select>
+            </div>
+            <div class="chart-container">
+              <canvas id="activityChart"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="chart-card small">
+            <div class="chart-header">
+              <h3><i class="fas fa-layer-group"></i> Fordeling per plan</h3>
+            </div>
+            <div class="chart-container">
+              <canvas id="planChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card kpi-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-tachometer-alt"></i> KPI-er</h3>
+            </div>
+            <div class="kpi-grid">
+              <div class="kpi-item">
+                <span class="kpi-value" id="kpiActiveUsers7">-</span>
+                <span class="kpi-label">Aktive brukere (7d)</span>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-value" id="kpiActiveUsers30">-</span>
+                <span class="kpi-label">Aktive brukere (30d)</span>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-value" id="kpiTotalLogins">-</span>
+                <span class="kpi-label">Totale innlogginger</span>
+              </div>
+              <div class="kpi-item">
+                <span class="kpi-value" id="kpiGrowthRate">-</span>
+                <span class="kpi-label">Vekst siste mnd</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -143,6 +216,9 @@
           <button class="tab-btn" data-tab="users">
             <i class="fas fa-user-cog"></i> Brukere
           </button>
+          <button class="tab-btn" data-tab="billing">
+            <i class="fas fa-credit-card"></i> Fakturering
+          </button>
         </div>
 
         <!-- Customers tab -->
@@ -160,12 +236,105 @@
 
         <!-- Users tab -->
         <div class="tab-content" id="tab-users">
+          <div class="tab-header">
+            <span id="userCount">0 brukere</span>
+            <button class="btn-sm btn-secondary" id="viewLoginHistoryBtn">
+              <i class="fas fa-history"></i> Innloggingshistorikk
+            </button>
+          </div>
           <div class="users-list" id="usersList">
             <!-- Dynamically filled -->
           </div>
         </div>
+
+        <!-- Login History tab (hidden by default) -->
+        <div class="tab-content" id="tab-login-history">
+          <div class="tab-header">
+            <span>Innloggingshistorikk</span>
+            <button class="btn-sm btn-secondary" id="backToUsersBtn">
+              <i class="fas fa-arrow-left"></i> Tilbake
+            </button>
+          </div>
+          <div class="login-filters">
+            <select id="loginStatusFilter" class="filter-select">
+              <option value="">Alle statuser</option>
+              <option value="vellykket">Vellykkede</option>
+              <option value="feilet">Feilede</option>
+            </select>
+            <input type="text" id="loginEpostFilter" class="filter-input" placeholder="Filtrer pa e-post...">
+          </div>
+          <div class="login-history-list" id="loginHistoryList">
+            <!-- Dynamically filled -->
+          </div>
+        </div>
+
+        <!-- Billing tab -->
+        <div class="tab-content" id="tab-billing">
+          <div class="billing-info" id="billingInfo">
+            <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster faktureringsinformasjon...</div>
+          </div>
+          <div class="billing-section">
+            <h4><i class="fas fa-file-invoice"></i> Fakturaer</h4>
+            <div class="invoices-list" id="invoicesList">
+              <!-- Dynamically filled -->
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
+
+    <!-- Edit User Modal -->
+    <div class="modal" id="userModal">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="userModalTitle">Rediger bruker</h3>
+          <button class="btn-close" id="closeUserModal">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <form id="userForm">
+          <input type="hidden" id="editUserId">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="userNavn">Navn</label>
+              <input type="text" id="userNavn" name="navn" required>
+            </div>
+            <div class="form-group">
+              <label for="userEpost">E-post</label>
+              <input type="email" id="userEpost" name="epost" required>
+            </div>
+            <div class="form-group">
+              <label for="userTelefon">Telefon</label>
+              <input type="tel" id="userTelefon" name="telefon">
+            </div>
+            <div class="form-group">
+              <label for="userRolle">Rolle</label>
+              <select id="userRolle" name="rolle">
+                <option value="admin">Admin</option>
+                <option value="medlem">Medlem</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="userAktiv">Status</label>
+              <select id="userAktiv" name="aktiv">
+                <option value="true">Aktiv</option>
+                <option value="false">Inaktiv</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-warning" id="resetPasswordBtn">
+              <i class="fas fa-key"></i> Send reset-epost
+            </button>
+            <div class="modal-footer-right">
+              <button type="button" class="btn-secondary" id="cancelUserBtn">Avbryt</button>
+              <button type="submit" class="btn-primary" id="saveUserBtn">Lagre</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <!-- Add/Edit Customer Modal -->
     <div class="modal" id="customerModal">

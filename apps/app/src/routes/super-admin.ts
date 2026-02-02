@@ -390,6 +390,181 @@ router.get(
   })
 );
 
+/**
+ * PUT /api/super-admin/organizations/:id/brukere/:brukerId
+ * Update a user (klient) - role, active status, etc.
+ */
+router.put(
+  '/organizations/:id/brukere/:brukerId',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const orgId = Number.parseInt(req.params.id);
+    const brukerId = Number.parseInt(req.params.brukerId);
+
+    if (Number.isNaN(orgId) || Number.isNaN(brukerId)) {
+      throw Errors.badRequest('Ugyldig ID');
+    }
+
+    const db = await getDatabase();
+
+    // Verify org exists
+    const org = await db.getOrganizationById(orgId);
+    if (!org) {
+      throw Errors.notFound('Organisasjon');
+    }
+
+    // Verify user exists and belongs to org
+    const existingUser = await db.getKlientById(brukerId);
+    if (!existingUser || existingUser.organization_id !== orgId) {
+      throw Errors.notFound('Bruker');
+    }
+
+    // Only allow updating specific fields
+    const allowedFields = ['navn', 'epost', 'telefon', 'rolle', 'aktiv'];
+    const updateData: Record<string, unknown> = {};
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      throw Errors.badRequest('Ingen gyldige felt å oppdatere');
+    }
+
+    const updatedUser = await db.updateKlient(brukerId, updateData);
+
+    logAudit(apiLogger, 'SUPER_ADMIN_UPDATE_USER', req.user!.userId, 'klient', brukerId, {
+      organizationId: orgId,
+      fields: Object.keys(updateData),
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        id: updatedUser?.id,
+        navn: updatedUser?.navn,
+        epost: updatedUser?.epost,
+        telefon: updatedUser?.telefon,
+        rolle: updatedUser?.rolle,
+        aktiv: updatedUser?.aktiv,
+        sist_innlogget: updatedUser?.sist_innlogget,
+        opprettet: updatedUser?.opprettet,
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * POST /api/super-admin/organizations/:id/brukere/:brukerId/reset-password
+ * Send password reset email to a user
+ */
+router.post(
+  '/organizations/:id/brukere/:brukerId/reset-password',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const orgId = Number.parseInt(req.params.id);
+    const brukerId = Number.parseInt(req.params.brukerId);
+
+    if (Number.isNaN(orgId) || Number.isNaN(brukerId)) {
+      throw Errors.badRequest('Ugyldig ID');
+    }
+
+    const db = await getDatabase();
+
+    // Verify org exists
+    const org = await db.getOrganizationById(orgId);
+    if (!org) {
+      throw Errors.notFound('Organisasjon');
+    }
+
+    // Verify user exists and belongs to org
+    const user = await db.getKlientById(brukerId);
+    if (!user || user.organization_id !== orgId) {
+      throw Errors.notFound('Bruker');
+    }
+
+    // Generate reset token
+    const crypto = await import('crypto');
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 minutes
+
+    // Store token in database
+    await db.createPasswordResetToken({
+      user_id: brukerId,
+      user_type: 'klient',
+      token_hash: tokenHash,
+      epost: user.epost,
+      expires_at: expiresAt,
+    });
+
+    // Log reset URL (email service not implemented yet)
+    const resetUrl = `${process.env.PUBLIC_WEB_URL || 'https://skyplanner.no'}/auth/tilbakestill-passord?token=${token}`;
+    apiLogger.info({ userId: brukerId, epost: user.epost, resetUrl }, 'Password reset token created');
+
+    logAudit(apiLogger, 'SUPER_ADMIN_RESET_PASSWORD', req.user!.userId, 'klient', brukerId, {
+      organizationId: orgId,
+      epost: user.epost,
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        message: 'E-post med tilbakestillingslenke er sendt',
+        epost: user.epost,
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/super-admin/organizations/:id/login-history
+ * Get login history for an organization
+ */
+router.get(
+  '/organizations/:id/login-history',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const orgId = Number.parseInt(req.params.id);
+    if (Number.isNaN(orgId)) {
+      throw Errors.badRequest('Ugyldig organisasjons-ID');
+    }
+
+    const db = await getDatabase();
+
+    // Verify org exists
+    const org = await db.getOrganizationById(orgId);
+    if (!org) {
+      throw Errors.notFound('Organisasjon');
+    }
+
+    const limit = Math.min(Number.parseInt(req.query.limit as string) || 50, 200);
+    const offset = Number.parseInt(req.query.offset as string) || 0;
+    const status = req.query.status as string | undefined;
+    const epost = req.query.epost as string | undefined;
+
+    const result = await db.getLoginHistoryForOrganization(orgId, {
+      limit,
+      offset,
+      status,
+      epost,
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: result,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
 // ========================================
 // GLOBAL STATISTICS
 // ========================================
@@ -408,6 +583,50 @@ router.get(
     const response: ApiResponse = {
       success: true,
       data: stats,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/super-admin/statistics/growth
+ * Get growth statistics over time (organizations, customers, users per month)
+ */
+router.get(
+  '/statistics/growth',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const db = await getDatabase();
+    const months = Math.min(Number.parseInt(req.query.months as string) || 12, 24);
+
+    const growthStats = await db.getGrowthStatistics(months);
+
+    const response: ApiResponse = {
+      success: true,
+      data: growthStats,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/super-admin/statistics/activity
+ * Get activity statistics (logins, active users)
+ */
+router.get(
+  '/statistics/activity',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const db = await getDatabase();
+    const days = Math.min(Number.parseInt(req.query.days as string) || 30, 90);
+
+    const activityStats = await db.getActivityStatistics(days);
+
+    const response: ApiResponse = {
+      success: true,
+      data: activityStats,
       requestId: req.requestId,
     };
 
@@ -508,6 +727,252 @@ router.post(
       data: {
         token: adminToken,
         redirectUrl: '/admin',
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+// ========================================
+// BILLING / STRIPE
+// ========================================
+
+// Initialize Stripe lazily
+let stripeClient: import('stripe').default | null = null;
+
+async function getStripe() {
+  if (!stripeClient) {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeKey) {
+      throw Errors.internal('Stripe ikke konfigurert');
+    }
+    const Stripe = (await import('stripe')).default;
+    stripeClient = new Stripe(stripeKey);
+  }
+  return stripeClient;
+}
+
+/**
+ * GET /api/super-admin/organizations/:id/billing
+ * Get billing/subscription info for an organization
+ */
+router.get(
+  '/organizations/:id/billing',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const orgId = Number.parseInt(req.params.id);
+    if (Number.isNaN(orgId)) {
+      throw Errors.badRequest('Ugyldig organisasjons-ID');
+    }
+
+    const db = await getDatabase();
+    const org = await db.getOrganizationById(orgId);
+
+    if (!org) {
+      throw Errors.notFound('Organisasjon');
+    }
+
+    // If no Stripe customer, return basic info
+    if (!org.stripe_customer_id) {
+      const response: ApiResponse = {
+        success: true,
+        data: {
+          hasStripe: false,
+          plan_type: org.plan_type || 'free',
+          subscription_status: org.subscription_status || 'inactive',
+          trial_ends_at: org.trial_ends_at,
+          current_period_end: org.current_period_end,
+        },
+        requestId: req.requestId,
+      };
+      res.json(response);
+      return;
+    }
+
+    try {
+      const stripe = await getStripe();
+
+      // Get customer info
+      const customer = await stripe.customers.retrieve(org.stripe_customer_id);
+
+      // Get active subscriptions
+      const subscriptions = await stripe.subscriptions.list({
+        customer: org.stripe_customer_id,
+        limit: 1,
+      });
+
+      const subscription = subscriptions.data[0];
+
+      const response: ApiResponse = {
+        success: true,
+        data: {
+          hasStripe: true,
+          customer: {
+            id: customer.id,
+            email: (customer as import('stripe').Stripe.Customer).email,
+            name: (customer as import('stripe').Stripe.Customer).name,
+            created: (customer as import('stripe').Stripe.Customer).created,
+          },
+          subscription: subscription ? {
+            id: subscription.id,
+            status: subscription.status,
+            plan: subscription.items.data[0]?.price?.nickname || org.plan_type,
+            amount: subscription.items.data[0]?.price?.unit_amount,
+            currency: subscription.items.data[0]?.price?.currency,
+            interval: subscription.items.data[0]?.price?.recurring?.interval,
+            current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
+            current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+            trial_end: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
+            cancel_at_period_end: subscription.cancel_at_period_end,
+          } : null,
+          plan_type: org.plan_type || 'free',
+          subscription_status: org.subscription_status || 'inactive',
+        },
+        requestId: req.requestId,
+      };
+
+      res.json(response);
+    } catch (error) {
+      apiLogger.error({ error, orgId }, 'Failed to fetch Stripe data');
+      // Return basic info if Stripe fails
+      const response: ApiResponse = {
+        success: true,
+        data: {
+          hasStripe: true,
+          stripeError: true,
+          plan_type: org.plan_type || 'free',
+          subscription_status: org.subscription_status || 'inactive',
+          trial_ends_at: org.trial_ends_at,
+          current_period_end: org.current_period_end,
+        },
+        requestId: req.requestId,
+      };
+      res.json(response);
+    }
+  })
+);
+
+/**
+ * GET /api/super-admin/organizations/:id/invoices
+ * Get invoice history for an organization
+ */
+router.get(
+  '/organizations/:id/invoices',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const orgId = Number.parseInt(req.params.id);
+    if (Number.isNaN(orgId)) {
+      throw Errors.badRequest('Ugyldig organisasjons-ID');
+    }
+
+    const db = await getDatabase();
+    const org = await db.getOrganizationById(orgId);
+
+    if (!org) {
+      throw Errors.notFound('Organisasjon');
+    }
+
+    if (!org.stripe_customer_id) {
+      const response: ApiResponse = {
+        success: true,
+        data: { invoices: [], hasStripe: false },
+        requestId: req.requestId,
+      };
+      res.json(response);
+      return;
+    }
+
+    try {
+      const stripe = await getStripe();
+      const limit = Math.min(Number.parseInt(req.query.limit as string) || 10, 50);
+
+      const invoices = await stripe.invoices.list({
+        customer: org.stripe_customer_id,
+        limit,
+      });
+
+      const formattedInvoices = invoices.data.map(inv => ({
+        id: inv.id,
+        number: inv.number,
+        status: inv.status,
+        amount: inv.amount_paid || inv.amount_due,
+        currency: inv.currency,
+        created: new Date(inv.created * 1000).toISOString(),
+        period_start: inv.period_start ? new Date(inv.period_start * 1000).toISOString() : null,
+        period_end: inv.period_end ? new Date(inv.period_end * 1000).toISOString() : null,
+        hosted_invoice_url: inv.hosted_invoice_url,
+        invoice_pdf: inv.invoice_pdf,
+      }));
+
+      const response: ApiResponse = {
+        success: true,
+        data: { invoices: formattedInvoices, hasStripe: true },
+        requestId: req.requestId,
+      };
+
+      res.json(response);
+    } catch (error) {
+      apiLogger.error({ error, orgId }, 'Failed to fetch invoices');
+      throw Errors.internal('Kunne ikke hente fakturaer');
+    }
+  })
+);
+
+/**
+ * GET /api/super-admin/billing/overview
+ * Get global billing overview (MRR, plan distribution, etc.)
+ */
+router.get(
+  '/billing/overview',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const db = await getDatabase();
+
+    // Calculate MRR from organization data
+    const organizations = await db.getAllOrganizations();
+
+    // Plan prices (approximate - should match Stripe)
+    const planPrices: Record<string, number> = {
+      free: 0,
+      standard: 499,
+      premium: 999,
+      enterprise: 2499,
+    };
+
+    let mrr = 0;
+    const planCounts: Record<string, number> = { free: 0, standard: 0, premium: 0, enterprise: 0 };
+    let activeCount = 0;
+    let trialingCount = 0;
+    let canceledCount = 0;
+
+    for (const org of organizations) {
+      const plan = org.plan_type || 'free';
+      planCounts[plan] = (planCounts[plan] || 0) + 1;
+
+      if (org.subscription_status === 'active') {
+        mrr += planPrices[plan] || 0;
+        activeCount++;
+      } else if (org.subscription_status === 'trialing') {
+        trialingCount++;
+      } else if (org.subscription_status === 'canceled') {
+        canceledCount++;
+      }
+    }
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        mrr,
+        mrrFormatted: `${mrr.toLocaleString('nb-NO')} kr`,
+        planCounts,
+        statusCounts: {
+          active: activeCount,
+          trialing: trialingCount,
+          canceled: canceledCount,
+          total: organizations.length,
+        },
+        churnRate: organizations.length > 0
+          ? Math.round((canceledCount / organizations.length) * 100)
+          : 0,
       },
       requestId: req.requestId,
     };

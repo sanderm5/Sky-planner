@@ -857,6 +857,433 @@ body {
 }
 
 /* ========================================
+   CHARTS SECTION
+======================================== */
+
+.charts-section {
+  margin-bottom: 32px;
+}
+
+.charts-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.chart-card.small {
+  max-width: 100%;
+}
+
+.chart-card.kpi-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.chart-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.chart-header h3 i {
+  color: var(--accent-color);
+}
+
+.chart-select {
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chart-select:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.chart-container {
+  position: relative;
+  height: 200px;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  flex: 1;
+}
+
+.kpi-item {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.kpi-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.kpi-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ========================================
+   LOGIN HISTORY
+======================================== */
+
+.login-filters {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-select,
+.filter-input {
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.filter-select {
+  min-width: 140px;
+}
+
+.filter-input {
+  flex: 1;
+}
+
+.filter-select:focus,
+.filter-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.login-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.login-entry {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.login-status-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.login-status-icon.success {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.login-status-icon.failed {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.login-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.login-details strong {
+  font-size: 13px;
+}
+
+.login-details small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.login-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* ========================================
+   USER MANAGEMENT
+======================================== */
+
+.user-card {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.user-card:hover {
+  background: var(--bg-hover);
+}
+
+.user-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-warning {
+  padding: 10px 16px;
+  background: var(--warning-color);
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.btn-warning:hover {
+  background: #d97706;
+}
+
+.modal-footer-right {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.form-group select {
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.form-group select:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+/* ========================================
+   BILLING SECTION
+======================================== */
+
+.stat-card-mrr .stat-icon {
+  color: var(--success-color);
+}
+
+.stat-card-mrr .stat-value {
+  color: var(--success-color);
+}
+
+.billing-info {
+  margin-bottom: 20px;
+}
+
+.billing-card {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.billing-card h5 {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.billing-card .billing-value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.billing-card .billing-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.billing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.billing-grid-item {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.billing-grid-item .value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.billing-grid-item .label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.billing-section {
+  margin-top: 20px;
+}
+
+.billing-section h4 {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.billing-section h4 i {
+  color: var(--accent-color);
+}
+
+.invoices-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invoice-item {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.invoice-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.invoice-info strong {
+  font-size: 13px;
+}
+
+.invoice-info small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.invoice-amount {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.invoice-status {
+  font-size: 10px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.invoice-status.paid {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.invoice-status.open {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
+.invoice-status.draft {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.invoice-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.invoice-actions a {
+  width: 28px;
+  height: 28px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.invoice-actions a:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.no-stripe-message {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted);
+}
+
+.no-stripe-message i {
+  font-size: 32px;
+  margin-bottom: 12px;
+  display: block;
+}
+
+/* ========================================
    RESPONSIVE
 ======================================== */
 
