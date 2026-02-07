@@ -1,0 +1,159 @@
+---
+// Email verification result page
+const status = Astro.url.searchParams.get('status');
+const error = Astro.url.searchParams.get('error');
+
+const messages = {
+  success: {
+    title: 'E-post verifisert!',
+    message: 'Din e-postadresse er nå verifisert. Du kan nå logge inn.',
+    type: 'success' as const,
+  },
+  already_verified: {
+    title: 'Allerede verifisert',
+    message: 'Din e-postadresse er allerede verifisert. Du kan logge inn.',
+    type: 'info' as const,
+  },
+  expired: {
+    title: 'Lenken har utløpt',
+    message: 'Verifiseringslenken har utløpt. Vennligst be om en ny.',
+    type: 'error' as const,
+  },
+  invalid_token: {
+    title: 'Ugyldig lenke',
+    message: 'Verifiseringslenken er ugyldig. Vennligst sjekk at du bruker riktig lenke.',
+    type: 'error' as const,
+  },
+  missing_token: {
+    title: 'Mangler token',
+    message: 'Verifiseringslenken er ufullstendig.',
+    type: 'error' as const,
+  },
+  verification_failed: {
+    title: 'Verifisering feilet',
+    message: 'Noe gikk galt under verifiseringen. Prøv igjen senere.',
+    type: 'error' as const,
+  },
+  server_error: {
+    title: 'Serverfeil',
+    message: 'En feil oppstod. Vennligst prøv igjen senere.',
+    type: 'error' as const,
+  },
+};
+
+const result = status ? messages[status as keyof typeof messages] : error ? messages[error as keyof typeof messages] : null;
+---
+
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bekreft e-post - Sky Planner</title>
+  <link rel="stylesheet" href="/styles/auth.css">
+  <style>
+    .result-container {
+      max-width: 400px;
+      margin: 100px auto;
+      padding: 40px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+      text-align: center;
+    }
+
+    .result-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 32px;
+    }
+
+    .result-icon.success {
+      background-color: #dcfce7;
+      color: #16a34a;
+    }
+
+    .result-icon.info {
+      background-color: #dbeafe;
+      color: #2563eb;
+    }
+
+    .result-icon.error {
+      background-color: #fee2e2;
+      color: #dc2626;
+    }
+
+    .result-title {
+      font-size: 24px;
+      font-weight: 600;
+      margin: 0 0 12px;
+      color: #18181b;
+    }
+
+    .result-message {
+      color: #71717a;
+      margin: 0 0 24px;
+      line-height: 1.5;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 600;
+      transition: opacity 0.2s;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+    }
+
+    .btn-secondary {
+      background: #f4f4f5;
+      color: #3f3f46;
+      margin-left: 8px;
+    }
+
+    .btn-secondary:hover {
+      background: #e4e4e7;
+    }
+  </style>
+</head>
+<body style="background-color: #f4f4f5; min-height: 100vh;">
+  <div class="result-container">
+    {result ? (
+      <>
+        <div class={`result-icon ${result.type}`}>
+          {result.type === 'success' && '✓'}
+          {result.type === 'info' && 'ℹ'}
+          {result.type === 'error' && '✕'}
+        </div>
+        <h1 class="result-title">{result.title}</h1>
+        <p class="result-message">{result.message}</p>
+        <a href="/auth/login" class="btn">Logg inn</a>
+        {result.type === 'error' && (
+          <a href="/auth/registrer" class="btn btn-secondary">Registrer på nytt</a>
+        )}
+      </>
+    ) : (
+      <>
+        <div class="result-icon info">?</div>
+        <h1 class="result-title">Bekreft e-postadressen din</h1>
+        <p class="result-message">
+          Sjekk innboksen din for en verifiserings-e-post fra Sky Planner.
+          Klikk på lenken i e-posten for å bekrefte adressen.
+        </p>
+        <a href="/auth/login" class="btn">Gå til innlogging</a>
+      </>
+    )}
+  </div>
+</body>
+</html>

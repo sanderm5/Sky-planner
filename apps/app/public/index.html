@@ -598,10 +598,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" />
   <link rel="stylesheet" href="style.css?v=20260202-area" />
 </head>
 <body>
@@ -611,7 +611,7 @@
       <i class="fas fa-user-secret"></i>
       <span>Du ser appen som: <strong id="impersonatingOrgName"></strong></span>
     </div>
-    <button class="impersonation-exit" onclick="stopImpersonation()">
+    <button class="impersonation-exit" id="stopImpersonationBtn">
       <i class="fas fa-arrow-left"></i>
       Tilbake til Admin
     </button>
@@ -716,21 +716,22 @@
         </button>
       </div>
 
+      <!-- Subscription countdown timer - prominent placement for trial users -->
+      <div class="subscription-timer-banner" id="subscriptionTimer" style="display: none;">
+        <div class="subscription-timer-content">
+          <i class="fas fa-clock"></i>
+          <span id="subscriptionTimerText"></span>
+        </div>
+        <a href="/dashboard/abonnement" class="subscription-timer-cta">Oppgrader</a>
+      </div>
+
       <!-- User info / Logout -->
       <div class="user-bar" id="userBar" style="display: none;">
         <span class="user-name" id="userNameDisplay"></span>
         <div class="user-bar-actions">
-          <!-- Subscription countdown timer -->
-          <div class="subscription-timer" id="subscriptionTimer" style="display: none;">
-            <i class="fas fa-clock"></i>
-            <span id="subscriptionTimerText"></span>
-          </div>
           <button class="theme-toggle-btn" id="themeToggleBtn" title="Bytt tema">
             <i class="fas fa-sun theme-icon-light"></i>
             <i class="fas fa-moon theme-icon-dark"></i>
-          </button>
-          <button class="settings-btn" id="settingsBtn" title="Innstillinger">
-            <i class="fas fa-cog"></i>
           </button>
           <button class="logout-btn" id="logoutBtnMain" title="Logg ut">
             <i class="fas fa-sign-out-alt"></i>
@@ -914,9 +915,14 @@
         <div class="tab-pane" id="tab-customers">
           <div class="tab-header">
             <h2>Kunder</h2>
-            <button id="addCustomerBtnTab" class="btn btn-primary btn-small">
-              <i class="fas fa-plus"></i> Ny kunde
-            </button>
+            <div class="tab-header-actions">
+              <button id="importCustomersBtn" class="btn btn-secondary btn-small">
+                <i class="fas fa-file-import"></i> Importer
+              </button>
+              <button id="addCustomerBtnTab" class="btn btn-primary btn-small">
+                <i class="fas fa-plus"></i> Ny kunde
+              </button>
+            </div>
           </div>
 
           <div class="customer-admin">
@@ -1064,23 +1070,23 @@
 
               <div class="setting-row">
                 <label for="smartDaysAhead">Dager fremover</label>
-                <input type="range" id="smartDaysAhead" min="7" max="180" value="60" oninput="document.getElementById('smartDaysAheadValue').textContent = this.value + ' dager'">
+                <input type="range" id="smartDaysAhead" min="7" max="180" value="60">
                 <span class="setting-value" id="smartDaysAheadValue">60 dager</span>
               </div>
 
               <div class="setting-row">
                 <label for="smartMaxCustomers">Maks kunder</label>
-                <input type="range" id="smartMaxCustomers" min="3" max="30" value="15" oninput="document.getElementById('smartMaxCustomersValue').textContent = this.value + ' kunder'">
+                <input type="range" id="smartMaxCustomers" min="3" max="30" value="15">
                 <span class="setting-value" id="smartMaxCustomersValue">15 kunder</span>
               </div>
 
               <div class="setting-row">
                 <label for="smartClusterRadius">Klyngeradius</label>
-                <input type="range" id="smartClusterRadius" min="1" max="20" value="5" oninput="document.getElementById('smartClusterRadiusValue').textContent = this.value + ' km'">
+                <input type="range" id="smartClusterRadius" min="1" max="20" value="5">
                 <span class="setting-value" id="smartClusterRadiusValue">5 km</span>
               </div>
 
-              <button class="btn btn-primary" onclick="renderSmartRecommendations()">
+              <button class="btn btn-primary" id="refreshSmartRecommendationsBtn">
                 <i class="fas fa-sync-alt"></i> Oppdater anbefalinger
               </button>
             </div>
@@ -1800,10 +1806,32 @@
           </div>
         </div>
 
-        <!-- Skjulte legacy-felt for bakoverkompatibilitet -->
-        <input type="hidden" id="siste_kontroll">
-        <input type="hidden" id="neste_kontroll">
-        <input type="hidden" id="kontroll_intervall" value="12">
+        <!-- MVP Oppfølging Section (synlig kun i MVP-modus, skjult by default) -->
+        <div class="control-section" id="mvpKontrollSection" style="display: none;">
+          <div class="control-section-header">
+            <i class="fas fa-calendar-check"></i> Oppfølging
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="siste_kontroll">Siste kontakt</label>
+              <input type="date" id="siste_kontroll">
+            </div>
+            <div class="form-group">
+              <label for="neste_kontroll">Neste oppfølging</label>
+              <input type="date" id="neste_kontroll">
+            </div>
+            <div class="form-group">
+              <label for="kontroll_intervall">Intervall</label>
+              <select id="kontroll_intervall">
+                <option value="1">1 mnd</option>
+                <option value="3">3 mnd</option>
+                <option value="6">6 mnd</option>
+                <option value="12" selected>12 mnd</option>
+                <option value="24">24 mnd</option>
+              </select>
+            </div>
+          </div>
+        </div>
 
         <div class="form-group">
           <label for="notater">Notater</label>
@@ -2158,128 +2186,15 @@
     </div>
   </div>
 
-  <!-- Settings Modal -->
-  <div id="settingsModal" class="modal hidden">
-    <div class="modal-content settings-modal-content">
+  <!-- Import Modal -->
+  <div id="importModal" class="modal hidden">
+    <div class="modal-content modal-large">
       <div class="modal-header">
-        <h2><i class="fas fa-cog"></i> Innstillinger</h2>
-        <button class="modal-close" id="closeSettingsModal">&times;</button>
+        <h2><i class="fas fa-file-import"></i> Importer kunder</h2>
+        <button class="modal-close" id="closeImportModal">&times;</button>
       </div>
-
-      <div class="settings-tabs">
-        <button class="settings-tab active" data-settings-tab="visning">
-          <i class="fas fa-eye"></i> Visning
-        </button>
-        <button class="settings-tab" data-settings-tab="kart">
-          <i class="fas fa-map"></i> Kart
-        </button>
-        <button class="settings-tab" data-settings-tab="import">
-          <i class="fas fa-file-import"></i> Import
-        </button>
-      </div>
-
-      <div class="settings-content">
-        <!-- Visning Tab -->
-        <div class="settings-pane active" id="settings-visning">
-          <h3>Visningsinnstillinger</h3>
-
-          <div class="form-group">
-            <label for="settingsDefaultCategory">Standard kategori-filter</label>
-            <select id="settingsDefaultCategory">
-              <option value="all">Alle kategorier</option>
-              <!-- Fylles dynamisk -->
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label>Synlige kolonner i kundeliste</label>
-            <div class="checkbox-group">
-              <label class="checkbox-label">
-                <input type="checkbox" id="colTelefon" checked>
-                <span>Telefon</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="colEpost" checked>
-                <span>E-post</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="colNesteKontroll" checked>
-                <span>Neste kontroll</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="colKategori" checked>
-                <span>Kategori</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="colPoststed" checked>
-                <span>Poststed</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="settingsWarningDays">Varslingsdager (kommende kontroller)</label>
-            <select id="settingsWarningDays">
-              <option value="14">14 dager</option>
-              <option value="30" selected>30 dager</option>
-              <option value="60">60 dager</option>
-              <option value="90">90 dager</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Kart Tab -->
-        <div class="settings-pane" id="settings-kart">
-          <h3>Kartinnstillinger</h3>
-
-          <div class="form-group">
-            <label for="settingsMapMode">Standard kartmodus</label>
-            <select id="settingsMapMode">
-              <option value="satellite">Satellitt</option>
-              <option value="dark">Mørkt tema</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label for="settingsMapZoom">Standard zoom-nivå</label>
-            <div class="range-with-value">
-              <input type="range" id="settingsMapZoom" min="4" max="12" value="6">
-              <span id="settingsMapZoomValue">6</span>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="settingsMarkerSize">Markørstørrelse</label>
-            <select id="settingsMarkerSize">
-              <option value="small">Liten</option>
-              <option value="medium" selected>Medium</option>
-              <option value="large">Stor</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Import Tab - Deaktivert -->
-        <div class="settings-pane" id="settings-import">
-          <h3>Importer kundedata</h3>
-          <div class="import-disabled-notice" style="text-align: center; padding: 40px 20px;">
-            <i class="fas fa-file-excel" style="font-size: 48px; color: var(--text-tertiary); margin-bottom: 20px;"></i>
-            <h4>Import er deaktivert</h4>
-            <p class="settings-description" style="max-width: 400px; margin: 16px auto;">
-              For import av kundedata fra Excel eller andre systemer, vennligst send filen til oss
-              så legger vi inn dataene for deg.
-            </p>
-            <p style="color: var(--text-secondary); margin-top: 16px;">
-              <i class="fas fa-envelope"></i> support@efffekt.no
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="cancelSettingsBtn">Avbryt</button>
-        <button type="button" class="btn btn-primary" id="saveSettingsBtn">
-          <i class="fas fa-save"></i> Lagre innstillinger
-        </button>
+      <div class="modal-body" id="importModalContent">
+        <!-- Import wizard content rendered here -->
       </div>
     </div>
   </div>
@@ -2306,8 +2221,8 @@
 
   </div><!-- End of appView -->
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
   <script src="app.js?v=20260202-area"></script>
 </body>
 </html>

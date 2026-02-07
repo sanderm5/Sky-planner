@@ -21,6 +21,7 @@ type SqliteDatabase = {
   };
   exec(sql: string): void;
   transaction<T>(fn: () => T): () => T;
+  close(): void;
 };
 
 // Supabase client type for direct queries
@@ -58,6 +59,7 @@ interface SupabaseService {
   getAllOrganizations(): Promise<Organization[]>;
   getKundeCountForOrganization(organizationId: number): Promise<number>;
   getBrukerCountForOrganization(organizationId: number): Promise<number>;
+  getKlienterForOrganization(organizationId: number): Promise<KlientRecord[]>;
   updateOrganization(id: number, data: Partial<Organization>): Promise<Organization | null>;
   getGlobalStatistics(): Promise<{ totalOrganizations: number; totalKunder: number; totalUsers: number; activeSubscriptions: number }>;
 
@@ -182,7 +184,7 @@ class DatabaseService {
         neste_kontroll DATE,
         kontroll_intervall_mnd INTEGER DEFAULT 12,
         notater TEXT,
-        kategori TEXT DEFAULT 'El-Kontroll',
+        kategori TEXT,
         el_type TEXT,
         brann_system TEXT,
         brann_driftstype TEXT,
@@ -321,7 +323,7 @@ class DatabaseService {
         kunde_id INTEGER,
         dato DATE NOT NULL,
         klokkeslett TEXT,
-        type TEXT DEFAULT 'El-Kontroll',
+        type TEXT,
         beskrivelse TEXT,
         status TEXT DEFAULT 'planlagt',
         opprettet_av TEXT,
@@ -561,12 +563,35 @@ class DatabaseService {
       this.sqlite.exec(`ALTER TABLE kunder ADD COLUMN last_sync_at DATETIME`);
     } catch { /* Column may already exist */ }
 
+    // Failed sync items for retry mechanism
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS failed_sync_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id INTEGER NOT NULL,
+        integration_id TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        external_source TEXT NOT NULL,
+        error_message TEXT,
+        retry_count INTEGER DEFAULT 0,
+        max_retries INTEGER DEFAULT 3,
+        status TEXT DEFAULT 'pending',
+        last_attempt_at DATETIME,
+        next_retry_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(organization_id, integration_id, external_id),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+      )
+    `);
+
     // Indexes for integration tables
     this.sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_org_integrations_org ON organization_integrations(organization_id);
       CREATE INDEX IF NOT EXISTS idx_org_integrations_active ON organization_integrations(organization_id, is_active);
       CREATE INDEX IF NOT EXISTS idx_sync_log_org ON integration_sync_log(organization_id, integration_id);
       CREATE INDEX IF NOT EXISTS idx_kunder_external_source ON kunder(organization_id, external_source, external_id);
+      CREATE INDEX IF NOT EXISTS idx_failed_sync_org ON failed_sync_items(organization_id, integration_id);
+      CREATE INDEX IF NOT EXISTS idx_failed_sync_status ON failed_sync_items(status, next_retry_at);
     `);
 
     dbLogger.info('SQLite tables initialized');
@@ -923,7 +948,7 @@ class DatabaseService {
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const result = this.sqlite
-      .prepare('SELECT * FROM klient WHERE LOWER(epost) = LOWER(?) AND aktiv = 1')
+      .prepare('SELECT * FROM klient WHERE LOWER(epost) = LOWER(?)')
       .get(epost);
 
     return (result as KlientRecord) || null;
@@ -938,7 +963,7 @@ class DatabaseService {
 
     try {
       const result = this.sqlite
-        .prepare('SELECT * FROM brukere WHERE LOWER(epost) = LOWER(?) AND aktiv = 1')
+        .prepare('SELECT * FROM brukere WHERE LOWER(epost) = LOWER(?)')
         .get(epost);
       return (result as BrukerRecord) || null;
     } catch {
@@ -956,7 +981,7 @@ class DatabaseService {
 
     try {
       const result = this.sqlite
-        .prepare('SELECT * FROM brukere WHERE id = ? AND aktiv = 1')
+        .prepare('SELECT * FROM brukere WHERE id = ?')
         .get(id);
       return (result as BrukerRecord) || null;
     } catch {
@@ -2730,6 +2755,120 @@ class DatabaseService {
     return result || null;
   }
 
+  // ============ FAILED SYNC ITEMS (RETRY) ============
+
+  /**
+   * Record a failed sync item for later retry.
+   * Uses upsert — increments retry_count on conflict.
+   * Marks as permanently_failed when max_retries is reached.
+   */
+  async recordFailedSyncItem(
+    organizationId: number,
+    data: {
+      integration_id: string;
+      external_id: string;
+      external_source: string;
+      error_message: string;
+    }
+  ): Promise<void> {
+    this.validateTenantContext(organizationId, 'recordFailedSyncItem');
+    if (!this.sqlite) return;
+
+    const sql = `
+      INSERT INTO failed_sync_items
+        (organization_id, integration_id, external_id, external_source, error_message, last_attempt_at, next_retry_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+1 hour'))
+      ON CONFLICT(organization_id, integration_id, external_id)
+      DO UPDATE SET
+        retry_count = retry_count + 1,
+        error_message = excluded.error_message,
+        last_attempt_at = datetime('now'),
+        next_retry_at = datetime('now', '+' || (MIN(retry_count + 1, 3) * 60) || ' minutes'),
+        status = CASE
+          WHEN retry_count + 1 >= max_retries THEN 'permanently_failed'
+          ELSE 'pending'
+        END,
+        updated_at = datetime('now')
+    `;
+    this.sqlite.prepare(sql).run(
+      organizationId,
+      data.integration_id,
+      data.external_id,
+      data.external_source,
+      data.error_message
+    );
+  }
+
+  /**
+   * Mark a failed sync item as resolved (successfully synced on retry)
+   */
+  async resolveFailedSyncItem(
+    organizationId: number,
+    integrationId: string,
+    externalId: string
+  ): Promise<void> {
+    this.validateTenantContext(organizationId, 'resolveFailedSyncItem');
+    if (!this.sqlite) return;
+
+    const sql = `
+      UPDATE failed_sync_items
+      SET status = 'resolved', resolved_at = datetime('now'), updated_at = datetime('now')
+      WHERE organization_id = ? AND integration_id = ? AND external_id = ?
+    `;
+    this.sqlite.prepare(sql).run(organizationId, integrationId, externalId);
+  }
+
+  /**
+   * Cleanup old resolved/permanently_failed items
+   */
+  async cleanupOldFailedSyncItems(daysOld: number = 30): Promise<number> {
+    if (!this.sqlite) return 0;
+
+    const sql = `
+      DELETE FROM failed_sync_items
+      WHERE status IN ('resolved', 'permanently_failed')
+        AND updated_at < datetime('now', '-' || ? || ' days')
+    `;
+    const result = this.sqlite.prepare(sql).run(daysOld);
+    return result.changes;
+  }
+
+  /**
+   * Get all active integrations that are due for a scheduled sync.
+   * Cross-organization query — used only by the cron system.
+   */
+  async getAllDueIntegrations(): Promise<Array<{
+    id: number;
+    organization_id: number;
+    integration_id: string;
+    credentials_encrypted: string;
+    is_active: boolean;
+    last_sync_at: string | null;
+    sync_frequency_hours: number;
+  }>> {
+    if (!this.sqlite) return [];
+
+    const sql = `
+      SELECT id, organization_id, integration_id, credentials_encrypted,
+             is_active, last_sync_at, sync_frequency_hours
+      FROM organization_integrations
+      WHERE is_active = 1
+        AND (
+          last_sync_at IS NULL
+          OR datetime(last_sync_at, '+' || sync_frequency_hours || ' hours') < datetime('now')
+        )
+    `;
+    return this.sqlite.prepare(sql).all() as Array<{
+      id: number;
+      organization_id: number;
+      integration_id: string;
+      credentials_encrypted: string;
+      is_active: boolean;
+      last_sync_at: string | null;
+      sync_frequency_hours: number;
+    }>;
+  }
+
   // ============ SUPER ADMIN METHODS ============
   // Note: These methods are SQLite-only for now
 
@@ -2812,12 +2951,130 @@ class DatabaseService {
   }
 
   /**
+   * Delete organization and all related data (for super admin)
+   * This is a hard delete that permanently removes all data.
+   */
+  async deleteOrganization(id: number): Promise<boolean> {
+    if (this.type === 'supabase' && this.supabase) {
+      // For Supabase, use a transaction via RPC or delete in order
+      const client = this.supabase.getClient();
+
+      // Delete in order to respect foreign keys
+      // kontaktlogg references kunder
+      await client.from('kontaktlogg').delete().eq('organization_id', id);
+
+      // email_innstillinger references kunder
+      const { data: kunder } = await client.from('kunder').select('id').eq('organization_id', id);
+      if (kunder && kunder.length > 0) {
+        const kundeIds = kunder.map((k: { id: number }) => k.id);
+        await client.from('email_innstillinger').delete().in('kunde_id', kundeIds);
+      }
+
+      // rute_kunder references ruter
+      const { data: ruter } = await client.from('ruter').select('id').eq('organization_id', id);
+      if (ruter && ruter.length > 0) {
+        const ruteIds = ruter.map((r: { id: number }) => r.id);
+        await client.from('rute_kunder').delete().in('rute_id', ruteIds);
+      }
+
+      // organization_field_options references organization_fields
+      const { data: fields } = await client.from('organization_fields').select('id').eq('organization_id', id);
+      if (fields && fields.length > 0) {
+        const fieldIds = fields.map((f: { id: number }) => f.id);
+        await client.from('organization_field_options').delete().in('field_id', fieldIds);
+      }
+
+      // Delete main tables
+      await client.from('email_varsler').delete().eq('organization_id', id);
+      await client.from('avtaler').delete().eq('organization_id', id);
+      await client.from('ruter').delete().eq('organization_id', id);
+      await client.from('kunder').delete().eq('organization_id', id);
+      await client.from('organization_integrations').delete().eq('organization_id', id);
+      await client.from('integration_sync_log').delete().eq('organization_id', id);
+      await client.from('organization_fields').delete().eq('organization_id', id);
+      await client.from('mapping_cache').delete().eq('organization_id', id);
+      await client.from('api_keys').delete().eq('organization_id', id);
+      await client.from('webhook_deliveries').delete().eq('organization_id', id);
+      await client.from('webhook_endpoints').delete().eq('organization_id', id);
+      await client.from('login_logg').delete().eq('organization_id', id);
+      await client.from('klient').delete().eq('organization_id', id);
+
+      // Finally delete the organization
+      const { error } = await client.from('organizations').delete().eq('id', id);
+
+      return !error;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Use transaction for SQLite to ensure atomicity
+    const transaction = this.sqlite.transaction(() => {
+      // Delete kontaktlogg (references kunder)
+      this.sqlite!.prepare('DELETE FROM kontaktlogg WHERE kunde_id IN (SELECT id FROM kunder WHERE organization_id = ?)').run(id);
+
+      // Delete email_innstillinger (references kunder)
+      this.sqlite!.prepare('DELETE FROM email_innstillinger WHERE kunde_id IN (SELECT id FROM kunder WHERE organization_id = ?)').run(id);
+
+      // Delete email_varsler
+      this.sqlite!.prepare('DELETE FROM email_varsler WHERE organization_id = ?').run(id);
+
+      // Delete rute_kunder (references ruter)
+      this.sqlite!.prepare('DELETE FROM rute_kunder WHERE rute_id IN (SELECT id FROM ruter WHERE organization_id = ?)').run(id);
+
+      // Delete avtaler
+      this.sqlite!.prepare('DELETE FROM avtaler WHERE organization_id = ?').run(id);
+
+      // Delete ruter
+      this.sqlite!.prepare('DELETE FROM ruter WHERE organization_id = ?').run(id);
+
+      // Delete kunder
+      this.sqlite!.prepare('DELETE FROM kunder WHERE organization_id = ?').run(id);
+
+      // Delete organization_field_options (references organization_fields)
+      this.sqlite!.prepare('DELETE FROM organization_field_options WHERE field_id IN (SELECT id FROM organization_fields WHERE organization_id = ?)').run(id);
+
+      // Delete organization_fields
+      this.sqlite!.prepare('DELETE FROM organization_fields WHERE organization_id = ?').run(id);
+
+      // Delete organization_integrations
+      this.sqlite!.prepare('DELETE FROM organization_integrations WHERE organization_id = ?').run(id);
+
+      // Delete integration_sync_log
+      this.sqlite!.prepare('DELETE FROM integration_sync_log WHERE organization_id = ?').run(id);
+
+      // Delete mapping_cache
+      this.sqlite!.prepare('DELETE FROM mapping_cache WHERE organization_id = ?').run(id);
+
+      // Delete api_keys
+      this.sqlite!.prepare('DELETE FROM api_keys WHERE organization_id = ?').run(id);
+
+      // Delete webhook_deliveries
+      this.sqlite!.prepare('DELETE FROM webhook_deliveries WHERE organization_id = ?').run(id);
+
+      // Delete webhook_endpoints
+      this.sqlite!.prepare('DELETE FROM webhook_endpoints WHERE organization_id = ?').run(id);
+
+      // Delete login_logg
+      this.sqlite!.prepare('DELETE FROM login_logg WHERE organization_id = ?').run(id);
+
+      // Delete klient (users)
+      this.sqlite!.prepare('DELETE FROM klient WHERE organization_id = ?').run(id);
+
+      // Finally delete the organization
+      const result = this.sqlite!.prepare('DELETE FROM organizations WHERE id = ?').run(id);
+
+      return result.changes > 0;
+    });
+
+    return transaction();
+  }
+
+  /**
    * Get all users (klienter) for an organization (for super admin)
    */
   async getKlienterForOrganization(organizationId: number): Promise<KlientRecord[]> {
-    if (this.type === 'supabase') {
-      // TODO: Implement Supabase version
-      return [];
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getKlienterForOrganization(organizationId);
     }
 
     if (!this.sqlite) return [];
@@ -4544,9 +4801,20 @@ class DatabaseService {
   ): Promise<KlientRecord | null> {
     if (this.type === 'supabase' && this.supabase) {
       const client = this.supabase.getClient();
+      // Filter to only columns that exist in the Supabase klient table
+      const supabaseFields = ['navn', 'epost', 'telefon', 'aktiv', 'adresse', 'postnummer', 'poststed'];
+      const filteredData: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (supabaseFields.includes(key) && value !== undefined) {
+          filteredData[key] = value;
+        }
+      }
+      if (Object.keys(filteredData).length === 0) {
+        return this.getKlientById(klientId);
+      }
       const { data: updated, error } = await client
         .from('klient')
-        .update(data)
+        .update(filteredData)
         .eq('id', klientId)
         .select()
         .single();
@@ -4646,7 +4914,7 @@ class DatabaseService {
     if (this.sqlite) {
       try {
         // better-sqlite3 close method
-        (this.sqlite as unknown as { close(): void }).close();
+        this.sqlite.close();
         dbLogger.info('SQLite database connection closed');
       } catch (error) {
         dbLogger.error({ error }, 'Error closing SQLite database');

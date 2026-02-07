@@ -3,6 +3,7 @@
  * Ensures required variables are set before startup
  */
 
+import crypto from 'node:crypto';
 import { logger } from '../services/logger';
 import type { EnvConfig } from '../types';
 
@@ -116,7 +117,12 @@ export function validateEnvironment(): EnvConfig {
   // Check JWT secret strength in production
   const jwtSecret = getEnvString('JWT_SECRET', '');
   if (isProduction && jwtSecret && jwtSecret.length < 32) {
-    warnings.push('JWT_SECRET bør være minst 32 tegn for sikkerhet');
+    errors.push('JWT_SECRET må være minst 32 tegn i produksjon');
+  }
+
+  // Check encryption salt in production
+  if (isProduction && !process.env.ENCRYPTION_SALT) {
+    warnings.push('ENCRYPTION_SALT bør settes i produksjon for bedre sikkerhet');
   }
 
   // Log warnings
@@ -148,7 +154,7 @@ export function validateEnvironment(): EnvConfig {
       if (isProduction) {
         throw new Error('JWT_SECRET must be set in production');
       }
-      return `dev-${Date.now()}-${Math.random().toString(36)}`;
+      return `dev-${crypto.randomBytes(32).toString('hex')}`;
     })(),
 
     // Supabase
@@ -193,6 +199,16 @@ export function validateEnvironment(): EnvConfig {
     // Re-import Features (konservative defaults - begge av som default)
     REIMPORT_UPDATE_ENABLED: getEnvBoolean('REIMPORT_UPDATE_ENABLED', false),
     DELETION_DETECTION_ENABLED: getEnvBoolean('DELETION_DETECTION_ENABLED', false),
+
+    // Encryption - require in production, fallback for dev
+    ENCRYPTION_SALT: (() => {
+      const salt = getEnvString('ENCRYPTION_SALT');
+      if (salt) return salt;
+      if (isProduction) {
+        throw new Error('ENCRYPTION_SALT must be set in production');
+      }
+      return 'skyplanner-dev-salt-change-in-prod';
+    })(),
   };
 
   logger.info({

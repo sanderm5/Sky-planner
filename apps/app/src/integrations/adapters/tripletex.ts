@@ -319,6 +319,62 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
 
     return result;
   }
+
+  /**
+   * Subscribe to Tripletex webhook events for customer changes
+   * @param credentials Valid session credentials
+   * @param callbackUrl The URL Tripletex should send events to
+   * @param events Event types to subscribe to
+   */
+  async subscribeToWebhooks(
+    credentials: IntegrationCredentials,
+    callbackUrl: string,
+    events: string[] = ['customer.create', 'customer.update', 'customer.delete']
+  ): Promise<number[]> {
+    const subscriptionIds: number[] = [];
+
+    for (const event of events) {
+      const response = await this.rateLimitedFetch<{ value: { id: number } }>(
+        `${this.config.baseUrl}/event/subscription`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            event,
+            targetUrl: callbackUrl,
+            fields: '*',
+          }),
+        },
+        credentials
+      );
+
+      subscriptionIds.push(response.value.id);
+
+      this.adapterLogger.info(
+        { event, subscriptionId: response.value.id, callbackUrl },
+        'Subscribed to Tripletex webhook'
+      );
+    }
+
+    return subscriptionIds;
+  }
+
+  /**
+   * Unsubscribe from a Tripletex webhook
+   * @param credentials Valid session credentials
+   * @param subscriptionId The subscription ID to remove
+   */
+  async unsubscribeFromWebhooks(
+    credentials: IntegrationCredentials,
+    subscriptionId: number
+  ): Promise<void> {
+    await this.rateLimitedFetch<void>(
+      `${this.config.baseUrl}/event/subscription/${subscriptionId}`,
+      { method: 'DELETE' },
+      credentials
+    );
+
+    this.adapterLogger.info({ subscriptionId }, 'Unsubscribed from Tripletex webhook');
+  }
 }
 
 // Export a factory function for creating the adapter

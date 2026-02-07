@@ -10,6 +10,8 @@ import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { getDatabase } from '../services/database';
 import { validateKunde } from '../utils/validation';
 import { geocodeCustomerData } from '../services/geocoding';
+import { getCookieConfig, buildSetCookieHeader } from '@skyplanner/auth';
+import { getConfig } from '../config/env';
 import type { AuthenticatedRequest, ApiResponse, Kunde, CreateKundeRequest } from '../types';
 
 const router: Router = Router();
@@ -29,13 +31,20 @@ router.get(
   '/organizations',
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const db = await getDatabase();
+    const page = Math.max(Number.parseInt(req.query.page as string, 10) || 1, 1);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit as string, 10) || 50, 1), 200);
+    const offset = (page - 1) * limit;
 
     // Get all organizations with customer and user counts
     const organizations = await db.getAllOrganizations();
+    const total = organizations.length;
+
+    // Paginate before enriching to avoid N+1 on all orgs
+    const paginatedOrgs = organizations.slice(offset, offset + limit);
 
     // Enrich with stats
     const enrichedOrgs = await Promise.all(
-      organizations.map(async (org) => {
+      paginatedOrgs.map(async (org) => {
         const kundeCount = await db.getKundeCountForOrganization(org.id);
         const brukerCount = await db.getBrukerCountForOrganization(org.id);
 
@@ -53,7 +62,10 @@ router.get(
 
     const response: ApiResponse = {
       success: true,
-      data: enrichedOrgs,
+      data: {
+        organizations: enrichedOrgs,
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      },
       requestId: req.requestId,
     };
 
@@ -151,6 +163,53 @@ router.put(
     const response: ApiResponse = {
       success: true,
       data: updatedOrg,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * DELETE /api/super-admin/organizations/:id
+ * Delete an organization and all related data
+ */
+router.delete(
+  '/organizations/:id',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const orgId = Number.parseInt(req.params.id);
+    if (Number.isNaN(orgId)) {
+      throw Errors.badRequest('Ugyldig organisasjons-ID');
+    }
+
+    const db = await getDatabase();
+
+    // Verify org exists
+    const existingOrg = await db.getOrganizationById(orgId);
+    if (!existingOrg) {
+      throw Errors.notFound('Organisasjon');
+    }
+
+    // Get counts before deletion for audit
+    const kundeCount = await db.getKundeCountForOrganization(orgId);
+    const brukerCount = await db.getBrukerCountForOrganization(orgId);
+
+    // Delete the organization and all related data
+    await db.deleteOrganization(orgId);
+
+    logAudit(apiLogger, 'SUPER_ADMIN_DELETE_ORG', req.user!.userId, 'organization', orgId, {
+      organizationName: existingOrg.navn,
+      organizationSlug: existingOrg.slug,
+      kundeCount,
+      brukerCount,
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        message: 'Organisasjon slettet',
+        organizationId: orgId,
+      },
       requestId: req.requestId,
     };
 
@@ -681,6 +740,12 @@ router.post(
       organizationSlug: org.slug,
     });
 
+    // Set httpOnly auth cookie with impersonation token
+    const isProduction = getConfig().NODE_ENV === 'production';
+    const cookieConfig = getCookieConfig(isProduction);
+    const cookieHeader = buildSetCookieHeader(impersonationToken, cookieConfig.options);
+    res.setHeader('Set-Cookie', cookieHeader);
+
     const response: ApiResponse = {
       success: true,
       data: {
@@ -721,6 +786,12 @@ router.post(
     );
 
     logAudit(apiLogger, 'SUPER_ADMIN_STOP_IMPERSONATE', req.user!.userId, 'user', req.user!.userId);
+
+    // Set httpOnly auth cookie with admin token
+    const isProduction = getConfig().NODE_ENV === 'production';
+    const cookieConfig = getCookieConfig(isProduction);
+    const cookieHeader = buildSetCookieHeader(adminToken, cookieConfig.options);
+    res.setHeader('Set-Cookie', cookieHeader);
 
     const response: ApiResponse = {
       success: true,

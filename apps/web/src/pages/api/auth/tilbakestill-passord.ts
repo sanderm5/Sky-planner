@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import * as db from '@skyplanner/database';
 import { createHash } from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { validatePassword as validatePasswordStrength } from '@skyplanner/auth';
 
 // Initialize Supabase client
 db.getSupabaseClient({
@@ -12,31 +13,22 @@ db.getSupabaseClient({
 const BCRYPT_ROUNDS = 12;
 
 /**
- * Validates password strength
+ * Validates password strength using @skyplanner/auth
+ * Enhanced security with common password checking
  */
 function validatePassword(password: string): { isValid: boolean; errors: string[] } {
-  const errors: string[] = [];
-
-  if (password.length < 8) {
-    errors.push('Passord må være minst 8 tegn');
-  }
-  if (!/[A-ZÆØÅ]/.test(password)) {
-    errors.push('Passord må inneholde minst én stor bokstav');
-  }
-  if (!/[a-zæøå]/.test(password)) {
-    errors.push('Passord må inneholde minst én liten bokstav');
-  }
-  if (!/[0-9]/.test(password)) {
-    errors.push('Passord må inneholde minst ett tall');
-  }
-  // Require at least one special character for stronger passwords
-  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/.test(password)) {
-    errors.push('Passord må inneholde minst ett spesialtegn (!@#$%^&* osv.)');
-  }
+  const result = validatePasswordStrength(password, {
+    minLength: 10, // Økt fra 8 til 10 tegn
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    checkCommonPasswords: true,
+  });
 
   return {
-    isValid: errors.length === 0,
-    errors,
+    isValid: result.valid,
+    errors: result.errors,
   };
 }
 

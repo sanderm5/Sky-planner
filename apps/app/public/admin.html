@@ -154,7 +154,7 @@
           <div class="section-actions">
             <div class="search-box">
               <i class="fas fa-search"></i>
-              <input type="search" id="orgSearchInput" placeholder="Sok etter bedrift...">
+              <input type="search" id="orgSearchInput" placeholder="Søk etter bedrift...">
             </div>
           </div>
         </div>
@@ -204,6 +204,10 @@
             <button class="btn-primary btn-impersonate" id="impersonateBtn">
               <i class="fas fa-user-secret"></i>
               Logg inn som denne bedriften
+            </button>
+            <button class="btn-danger-outline" id="deleteOrgBtn">
+              <i class="fas fa-trash"></i>
+              Slett bedrift
             </button>
           </div>
         </div>
@@ -261,7 +265,7 @@
               <option value="vellykket">Vellykkede</option>
               <option value="feilet">Feilede</option>
             </select>
-            <input type="text" id="loginEpostFilter" class="filter-input" placeholder="Filtrer pa e-post...">
+            <input type="text" id="loginEpostFilter" class="filter-input" placeholder="Filtrer på e-post...">
           </div>
           <div class="login-history-list" id="loginHistoryList">
             <!-- Dynamically filled -->
@@ -386,6 +390,47 @@
             <button type="submit" class="btn-primary" id="saveCustomerBtn">Lagre</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Delete Organization Modal -->
+    <div class="modal" id="deleteOrgModal">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content modal-danger">
+        <div class="modal-header">
+          <h3 id="deleteOrgModalTitle">
+            <i class="fas fa-exclamation-triangle"></i>
+            Slett bedrift
+          </h3>
+          <button class="btn-close" id="closeDeleteOrgModal">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="warning-text">
+            <strong>Advarsel:</strong> Du er i ferd med å slette bedriften
+            <span id="deleteOrgName" class="highlight"></span>.
+          </p>
+          <div class="deletion-stats" id="deletionStats">
+            <!-- Dynamically filled with counts -->
+          </div>
+          <p class="warning-detail">
+            Denne handlingen vil permanent slette alle data tilknyttet bedriften, inkludert alle kunder, brukere, ruter, avtaler og integrasjoner.
+            <strong>Denne handlingen kan ikke angres!</strong>
+          </p>
+          <div class="confirmation-input">
+            <label for="confirmOrgName">
+              Skriv bedriftens navn for å bekrefte:
+            </label>
+            <input type="text" id="confirmOrgName" placeholder="Skriv bedriftens navn...">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" id="cancelDeleteOrgBtn">Avbryt</button>
+          <button type="button" class="btn-danger" id="confirmDeleteOrgBtn" disabled>
+            <i class="fas fa-trash"></i> Slett bedrift
+          </button>
+        </div>
       </div>
     </div>
   </div>

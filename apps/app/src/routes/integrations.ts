@@ -4,13 +4,14 @@
  */
 
 import { Router, Response } from 'express';
+import { randomBytes } from 'node:crypto';
 import { apiLogger } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { getDatabase } from '../services/database';
 import { getIntegrationRegistry } from '../integrations/registry';
 import { encryptCredentials, decryptCredentials, isCredentialsExpired } from '../integrations/encryption';
-import { createTripletexAdapter } from '../integrations/adapters/tripletex';
+import { createTripletexAdapter, TripletexAdapter } from '../integrations/adapters/tripletex';
 import { createPowerOfficeAdapter, PowerOfficeAdapter } from '../integrations/adapters/poweroffice';
 import { createFikenAdapter } from '../integrations/adapters/fiken';
 import type { AuthenticatedRequest } from '../types';
@@ -420,6 +421,76 @@ router.get(
         requestId: req.requestId,
       });
     }
+  })
+);
+
+/**
+ * POST /api/integrations/tripletex/webhooks/subscribe
+ * Subscribe to real-time webhook events from Tripletex
+ */
+router.post(
+  '/tripletex/webhooks/subscribe',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const db = await getDatabase();
+    const stored = await db.getIntegrationCredentials(req.organizationId!, 'tripletex');
+
+    if (!stored || !stored.is_active) {
+      throw Errors.badRequest('Tripletex-integrasjon er ikke tilkoblet');
+    }
+
+    const adapter = registry.get('tripletex');
+    if (!adapter || !(adapter instanceof TripletexAdapter)) {
+      throw Errors.badRequest('Tripletex-adapter ikke tilgjengelig');
+    }
+
+    let credentials = await decryptCredentials(stored.credentials_encrypted);
+
+    if (isCredentialsExpired(credentials)) {
+      credentials = await adapter.refreshAuth(credentials);
+      const encrypted = await encryptCredentials(credentials);
+      await db.saveIntegrationCredentials(req.organizationId!, {
+        integration_id: 'tripletex',
+        credentials_encrypted: encrypted,
+        is_active: true,
+      });
+    }
+
+    // Build the callback URL
+    const baseUrl = req.headers['x-forwarded-host']
+      ? `https://${req.headers['x-forwarded-host']}`
+      : `${req.protocol}://${req.get('host')}`;
+    const callbackUrl = `${baseUrl}/api/integration-webhooks/tripletex/${req.organizationId}`;
+
+    // Subscribe to Tripletex events
+    const subscriptionIds = await adapter.subscribeToWebhooks(credentials, callbackUrl);
+
+    // Generate and store a webhook verification token in credentials metadata
+    const webhookToken = randomBytes(32).toString('hex');
+    credentials.metadata = {
+      ...credentials.metadata,
+      webhookToken,
+      webhookCallbackUrl: callbackUrl,
+      webhookSubscriptionIds: subscriptionIds,
+    };
+    const encrypted = await encryptCredentials(credentials);
+    await db.saveIntegrationCredentials(req.organizationId!, {
+      integration_id: 'tripletex',
+      credentials_encrypted: encrypted,
+      is_active: true,
+    });
+
+    apiLogger.info(
+      { organizationId: req.organizationId, callbackUrl, subscriptionIds },
+      'Tripletex webhook subscription created'
+    );
+
+    res.json({
+      success: true,
+      message: 'Abonnert på Tripletex-hendelser',
+      data: { callbackUrl, subscriptionIds },
+      requestId: req.requestId,
+    });
   })
 );
 

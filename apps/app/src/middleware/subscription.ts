@@ -32,6 +32,7 @@ export function checkSubscriptionStatus(
 
   // No status means no subscription data - default to allowing (for legacy/migration)
   if (!status) {
+    authLogger.warn('No subscription status found - allowing access (legacy/migration)');
     return {
       isActive: true,
       message: 'Ingen abonnementsstatus funnet',
@@ -177,8 +178,9 @@ export function checkSubscriptionWarning(
     user.currentPeriodEnd
   );
 
-  // Add warning header if in grace period or trialing
-  if (result.isInGracePeriod || user.subscriptionStatus === 'trialing') {
+  // Add warning header only for grace period (payment issues)
+  // Trial users already see the countdown timer, no need for intrusive banner
+  if (result.isInGracePeriod) {
     res.setHeader('X-Subscription-Warning', result.message);
   }
 

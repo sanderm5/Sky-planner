@@ -36,16 +36,15 @@ CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens(expires_at);
 -- 3. PASSWORD_RESET_TOKENS TABLE
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id SERIAL PRIMARY KEY,
-  token TEXT UNIQUE NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
   user_id INTEGER NOT NULL,
   user_type TEXT NOT NULL CHECK (user_type IN ('klient', 'bruker')),
-  epost TEXT NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
-  used BOOLEAN DEFAULT false,
+  used_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_reset_tokens_token ON password_reset_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_reset_tokens_token_hash ON password_reset_tokens(token_hash);
 
 -- 4. KONTROLL_HISTORIKK TABLE (History of past controls)
 CREATE TABLE IF NOT EXISTS kontroll_historikk (
@@ -75,7 +74,7 @@ CREATE OR REPLACE FUNCTION cleanup_expired_tokens()
 RETURNS void AS $$
 BEGIN
   DELETE FROM auth_tokens WHERE expires_at < NOW();
-  DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used = true;
+  DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL;
 END;
 $$ LANGUAGE plpgsql;
 

@@ -16,6 +16,9 @@ if (isAuthError(authResult)) return authResult;
 
 const { user, organization } = authResult;
 
+// Check if organization is in full mode (TRE Allservice features)
+const isFullMode = (organization as any).app_mode === 'full';
+
 // Get current industry info
 const supabase = createClient(
   import.meta.env.SUPABASE_URL,
@@ -50,15 +53,19 @@ if ((organization as any).industry_template_id) {
     <a href="/dashboard/innstillinger" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
       Generelt
     </a>
-    <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
-      Integrasjoner
-    </a>
-    <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
-      API-nøkler
-    </a>
-    <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
-      Webhooks
-    </a>
+    {isFullMode && (
+      <>
+        <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+          Integrasjoner
+        </a>
+        <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+          API-nøkler
+        </a>
+        <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+          Webhooks
+        </a>
+      </>
+    )}
   </div>
 
   <!-- Organization Settings Form -->

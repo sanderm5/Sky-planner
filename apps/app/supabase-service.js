@@ -1098,13 +1098,27 @@ async function getKundeCountForOrganization(organizationId) {
  */
 async function getBrukerCountForOrganization(organizationId) {
   const { count, error } = await getClient()
-    .from('klienter')
+    .from('klient')
     .select('*', { count: 'exact', head: true })
     .eq('organization_id', organizationId)
     .eq('aktiv', true);
 
   if (error) throw error;
   return count || 0;
+}
+
+/**
+ * Get all users (klienter) for an organization (for super admin)
+ */
+async function getKlienterForOrganization(organizationId) {
+  const { data, error } = await getClient()
+    .from('klient')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .order('navn', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
 }
 
 /**
@@ -1128,7 +1142,7 @@ async function getGlobalStatistics() {
 
   // Get total users (klienter)
   const { count: totalUsers, error: userError } = await getClient()
-    .from('klienter')
+    .from('klient')
     .select('*', { count: 'exact', head: true })
     .eq('aktiv', true);
 
@@ -2065,6 +2079,7 @@ export {
   getAllOrganizations,
   getKundeCountForOrganization,
   getBrukerCountForOrganization,
+  getKlienterForOrganization,
   getGlobalStatistics,
   createOrganization,
   updateOrganization,

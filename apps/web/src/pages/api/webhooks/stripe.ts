@@ -1,6 +1,12 @@
 import type { APIRoute } from 'astro';
 import Stripe from 'stripe';
 import * as db from '@skyplanner/database';
+import {
+  createEmailSender,
+  type SubscriptionActivatedData,
+  type PaymentFailedData,
+  type SubscriptionCanceledData,
+} from '@skyplanner/email';
 
 // Valid subscription statuses that match our database schema
 type ValidSubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
@@ -23,6 +29,17 @@ function mapSubscriptionStatus(stripeStatus: Stripe.Subscription.Status): ValidS
 }
 
 export const POST: APIRoute = async ({ request }) => {
+  // TEMPORARILY DISABLED - manual invoicing via Fiken
+  // Remove this block to re-enable Stripe webhooks
+  console.log('Stripe webhooks temporarily disabled - manual billing via Fiken');
+  return new Response(
+    JSON.stringify({ received: true, status: 'disabled' }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+
   // Validate environment at request time (not module load)
   const STRIPE_SECRET_KEY = import.meta.env.STRIPE_SECRET_KEY;
   const STRIPE_WEBHOOK_SECRET = import.meta.env.STRIPE_WEBHOOK_SECRET;
@@ -77,13 +94,24 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
+    // Initialize email sender
+    const emailSender = createEmailSender({
+      resendApiKey: import.meta.env.RESEND_API_KEY || '',
+      fromEmail: import.meta.env.FROM_EMAIL || 'noreply@skyplanner.no',
+      fromName: 'Sky Planner',
+    });
+
+    const dashboardUrl = import.meta.env.PUBLIC_BASE_URL || 'https://skyplanner.no';
+
     // Get organization_id from Stripe customer for logging
     const eventObject = event.data.object as { customer?: string };
     let organizationId = 0;
+    let organization: Awaited<ReturnType<typeof db.getOrganizationByStripeCustomer>> = null;
+
     if (eventObject.customer) {
-      const org = await db.getOrganizationByStripeCustomer(eventObject.customer);
-      if (org) {
-        organizationId = org.id;
+      organization = await db.getOrganizationByStripeCustomer(eventObject.customer);
+      if (organization) {
+        organizationId = organization.id;
       }
     }
 
@@ -111,6 +139,21 @@ export const POST: APIRoute = async ({ request }) => {
         await db.updateSubscriptionByStripeCustomer(customerId, {
           subscription_status: 'canceled',
         });
+
+        // Send cancellation email to organization owner
+        if (organization) {
+          const klienter = await db.getKlienterByOrganization(organization.id);
+          const klient = klienter[0]; // Get the first (owner) klient
+          if (klient?.epost) {
+            const endDate = new Date(subscription.current_period_end * 1000).toLocaleDateString('nb-NO');
+            const emailData: SubscriptionCanceledData = {
+              userName: klient.navn || 'kunde',
+              endDate,
+              reactivateUrl: `${dashboardUrl}/dashboard/abonnement`,
+            };
+            await emailSender.sendSubscriptionCanceled(klient.epost, emailData);
+          }
+        }
         break;
       }
 
@@ -122,6 +165,24 @@ export const POST: APIRoute = async ({ request }) => {
           await db.updateSubscriptionByStripeCustomer(customerId, {
             subscription_status: 'active',
           });
+
+          // Send activation email to organization owner
+          if (organization) {
+            const klienter = await db.getKlienterByOrganization(organization.id);
+            const klient = klienter[0];
+            if (klient?.epost) {
+              const planName = organization.plan_type === 'premium' ? 'Premium' : 'Standard';
+              const price = organization.plan_type === 'premium' ? '999 kr/mnd' : '499 kr/mnd';
+              const emailData: SubscriptionActivatedData = {
+                userName: klient.navn || 'kunde',
+                planName,
+                price,
+                billingCycle: 'monthly',
+                dashboardUrl: `${dashboardUrl}/dashboard`,
+              };
+              await emailSender.sendSubscriptionActivated(klient.epost, emailData);
+            }
+          }
         }
         break;
       }
@@ -133,6 +194,22 @@ export const POST: APIRoute = async ({ request }) => {
         await db.updateSubscriptionByStripeCustomer(customerId, {
           subscription_status: 'past_due',
         });
+
+        // Send payment failed email to organization owner
+        if (organization) {
+          const klienter = await db.getKlienterByOrganization(organization.id);
+          const klient = klienter[0];
+          if (klient?.epost) {
+            const planName = organization.plan_type === 'premium' ? 'Premium' : 'Standard';
+            const emailData: PaymentFailedData = {
+              userName: klient.navn || 'kunde',
+              planName,
+              updatePaymentUrl: `${dashboardUrl}/dashboard/abonnement`,
+              gracePeriodDays: 7,
+            };
+            await emailSender.sendPaymentFailed(klient.epost, emailData);
+          }
+        }
         break;
       }
     }

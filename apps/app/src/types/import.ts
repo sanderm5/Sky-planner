@@ -3,6 +3,8 @@
  * Comprehensive type definitions for the staging-based import pipeline
  */
 
+import type { CleaningReport } from '../services/import/cleaner';
+
 // ============ Import Batch Status State Machine ============
 
 export type ImportBatchStatus =
@@ -368,6 +370,7 @@ export interface ColumnInfo {
 
 export interface PreviewRow {
   rowNumber: number;
+  stagingRowId?: number;
   values: Record<string, unknown>;
   mappedValues?: Record<string, unknown>;
   validationStatus?: StagingRowStatus;
@@ -434,6 +437,33 @@ export interface UploadImportResponse {
   batchId: number;
   status: ImportBatchStatus;
   preview: ImportPreview;
+
+  // Data for frontend compatibility (cleaning + mapping)
+  headers: string[];
+  allColumns: string[];
+  suggestedMapping: Record<string, string>;
+  cleaningReport?: CleaningReport;
+  cleanedPreview?: Record<string, unknown>[];
+  originalPreview?: Record<string, unknown>[];
+  totalRows: number;
+  totalRowsAfterCleaning: number;
+  totalColumns: number;
+  fileName: string;
+  recognizedColumns: Array<{ excelHeader: string; mappedTo: string; source: string; confidence: number; sampleValue: string }>;
+  unmappedHeaders: string[];
+  validCategories?: string[];
+}
+
+// Re-export CleaningReport for consumers
+export type { CleaningReport } from '../services/import/cleaner';
+
+export interface BatchQualityReport {
+  overallScore: number;           // 0-100
+  completenessAverage: number;    // 0-1
+  validPercentage: number;
+  fieldCoverage: Record<string, number>;  // Per field: % of rows with value
+  commonErrors: Array<{ errorCode: string; count: number; message: string }>;
+  suggestions: string[];
 }
 
 export interface ApplyMappingRequest {
@@ -461,11 +491,20 @@ export interface ValidateImportResponse {
   errorCount: number;
   errors: ImportValidationError[];
   previewRows: PreviewRow[];
+  duplicateReport?: {
+    totalChecked: number;
+    probableDuplicates: number;
+    possibleDuplicates: number;
+    uniqueRows: number;
+  };
+  qualityReport?: BatchQualityReport;
 }
 
 export interface CommitImportRequest {
   batchId: number;
   dryRun?: boolean;  // Preview what would happen
+  excludedRowIds?: number[];  // Row IDs to exclude from import
+  rowEdits?: Record<number, Record<string, unknown>>;  // Row ID -> field edits
 }
 
 // ============ Format Change Detection ============

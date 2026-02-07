@@ -1284,6 +1284,147 @@ body {
 }
 
 /* ========================================
+   DELETE ORGANIZATION
+======================================== */
+
+.btn-danger-outline {
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  color: var(--danger-color);
+  border: 1px solid var(--danger-color);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+  margin-top: 8px;
+}
+
+.btn-danger-outline:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #f87171;
+  color: #f87171;
+}
+
+/* Delete organization modal */
+.modal-danger .modal-header {
+  border-bottom-color: rgba(239, 68, 68, 0.3);
+}
+
+.modal-danger .modal-header h3 {
+  color: var(--danger-color);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.warning-text {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.warning-text .highlight {
+  color: var(--danger-color);
+  font-weight: 600;
+}
+
+.warning-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.warning-detail strong {
+  color: var(--danger-color);
+}
+
+.deletion-stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.deletion-stats .stat-item {
+  background: var(--bg-tertiary);
+  padding: 12px 16px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  font-size: 14px;
+}
+
+.deletion-stats .stat-item i {
+  color: var(--accent-color);
+}
+
+.confirmation-input {
+  margin-top: 16px;
+}
+
+.confirmation-input label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.confirmation-input input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.confirmation-input input:focus {
+  outline: none;
+  border-color: var(--danger-color);
+}
+
+.btn-danger {
+  padding: 10px 20px;
+  background: var(--danger-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ========================================
    RESPONSIVE
 ======================================== */
 

@@ -1,6 +1,7 @@
 /**
  * Shared database types for El-Kontroll platform
  */
+export type AppMode = 'mvp' | 'full';
 export interface Organization {
     id: number;
     navn: string;
@@ -17,6 +18,7 @@ export interface Organization {
     map_center_lng?: number;
     industry_template_id?: number;
     onboarding_completed?: boolean;
+    app_mode?: AppMode;
     stripe_customer_id?: string;
     stripe_subscription_id?: string;
     subscription_status?: 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';

@@ -114,16 +114,15 @@ CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens(expires_at);
 -- 1.5 PASSWORD_RESET_TOKENS
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id SERIAL PRIMARY KEY,
-  token TEXT UNIQUE NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
   user_id INTEGER NOT NULL,
   user_type TEXT NOT NULL CHECK (user_type IN ('klient', 'bruker')),
-  epost TEXT NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
-  used BOOLEAN DEFAULT false,
+  used_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_reset_tokens_token ON password_reset_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_reset_tokens_token_hash ON password_reset_tokens(token_hash);
 
 -- =====================================================
 -- STEG 2: KUNDEDATA TABELLER
@@ -142,8 +141,8 @@ CREATE TABLE IF NOT EXISTS kunder (
   lat REAL,
   lng REAL,
 
-  -- Kategori og type
-  kategori TEXT DEFAULT 'El-Kontroll',
+  -- Kategori og type (no default - set based on industry template)
+  kategori TEXT,
   el_type TEXT,
   brann_system TEXT,
   brann_driftstype TEXT,
@@ -209,7 +208,7 @@ CREATE TABLE IF NOT EXISTS avtaler (
   kunde_id INTEGER REFERENCES kunder(id) ON DELETE CASCADE,
   dato DATE NOT NULL,
   klokkeslett TIME,
-  type VARCHAR(50) DEFAULT 'El-Kontroll',
+  type VARCHAR(50),
   beskrivelse TEXT,
   status VARCHAR(20) DEFAULT 'planlagt',
   opprettet_av VARCHAR(100),
@@ -407,7 +406,7 @@ CREATE OR REPLACE FUNCTION cleanup_expired_tokens()
 RETURNS void AS $$
 BEGIN
   DELETE FROM auth_tokens WHERE expires_at < NOW();
-  DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used = true;
+  DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL;
 END;
 $$ LANGUAGE plpgsql;
 

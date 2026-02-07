@@ -27,12 +27,16 @@ apps/app/
 │   ├── routes/
 │   │   ├── auth.ts         # Autentisering
 │   │   ├── kunder.ts       # Kunde-CRUD
+│   │   ├── config.ts       # App-konfigurasjon (branding, kart, etc.)
 │   │   ├── onboarding.ts   # Onboarding-flow
 │   │   ├── team-members.ts # Teammedlemmer
 │   │   ├── api-keys.ts     # API-nøkler
 │   │   ├── webhooks.ts     # Webhooks-administrasjon
-│   │   ├── import.ts       # Dataimport
+│   │   ├── import.ts       # Dataimport (staging-basert)
+│   │   ├── export.ts       # Dataeksport (CSV, JSON, GDPR)
 │   │   ├── integrations.ts # Regnskapssystem-integrasjoner
+│   │   ├── integration-webhooks.ts # Innkommende webhooks fra regnskapssystem
+│   │   ├── cron.ts         # Planlagte vedlikeholdsoppgaver
 │   │   ├── super-admin.ts  # Super admin-funksjoner
 │   │   ├── docs.ts         # API-dokumentasjon
 │   │   └── public-api/     # Public API v1
@@ -46,13 +50,19 @@ apps/app/
 │   │   ├── api-keys.ts     # API-nøkkel-håndtering
 │   │   ├── webhooks.ts     # Webhook-utsendelse
 │   │   ├── geocoding.ts    # Geokoding
+│   │   ├── alerts.ts       # Varslingssystem (Slack, Discord, webhook)
+│   │   ├── export.ts       # Eksport-tjeneste (CSV, JSON, GDPR)
 │   │   └── import/         # Import-system
 │   │       ├── index.ts
 │   │       ├── parser.ts
 │   │       ├── validation.ts
 │   │       ├── transformers.ts
 │   │       ├── database.ts
-│   │       └── format-detection.ts
+│   │       ├── format-detection.ts
+│   │       ├── cleaner.ts           # Auto-rensing av importdata (10 regler)
+│   │       ├── duplicate-detection.ts # Fuzzy duplikatdeteksjon
+│   │       ├── ai-mapping.ts        # AI-assistert kolonnemapping (Claude)
+│   │       └── postnummer-registry.ts # Norsk postnummerregister (~5000 koder)
 │   ├── integrations/       # Regnskapssystem-adaptere
 │   │   ├── index.ts
 │   │   ├── base-adapter.ts
@@ -65,7 +75,9 @@ apps/app/
 │   │       └── poweroffice.ts
 │   ├── middleware/
 │   │   ├── auth.ts         # JWT-autentisering
-│   │   └── api-key-auth.ts # API-nøkkel-autentisering
+│   │   ├── api-key-auth.ts # API-nøkkel-autentisering
+│   │   ├── csrf.ts         # CSRF-beskyttelse (double-submit cookie)
+│   │   └── subscription.ts # Abonnement-sjekk
 │   ├── types/
 │   │   ├── index.ts
 │   │   ├── api-key.ts
@@ -142,6 +154,13 @@ pnpm build        # Kompiler TypeScript
 | POST | `/api/import/preview` | Forhåndsvis import |
 | POST | `/api/import/execute` | Utfør import |
 
+### Eksport
+| Metode | Endpoint | Beskrivelse |
+|--------|----------|-------------|
+| GET | `/api/export/kunder?format=csv\|json` | Eksporter kunder |
+| GET | `/api/export/ruter?format=csv\|json` | Eksporter ruter |
+| GET | `/api/export/all` | Full GDPR-dataeksport |
+
 ### Integrasjoner
 | Metode | Endpoint | Beskrivelse |
 |--------|----------|-------------|
@@ -149,6 +168,20 @@ pnpm build        # Kompiler TypeScript
 | POST | `/api/integrations/:provider/connect` | Koble til |
 | POST | `/api/integrations/:provider/disconnect` | Koble fra |
 | POST | `/api/integrations/:provider/sync` | Synkroniser data |
+
+### Innkommende integrasjon-webhooks
+| Metode | Endpoint | Beskrivelse |
+|--------|----------|-------------|
+| POST | `/api/integration-webhooks/tripletex/:orgId` | Tripletex-hendelser |
+
+### Cron-jobber (beskyttet med CRON_SECRET)
+| Metode | Endpoint | Beskrivelse |
+|--------|----------|-------------|
+| POST | `/api/cron/cleanup-tokens` | Rydd opp utløpte tokens |
+| POST | `/api/cron/cleanup-all` | Kjør all opprydding |
+| POST | `/api/cron/process-deletions` | Utfør ventende kontoslettinger |
+| POST | `/api/cron/sync-integrations` | Synkroniser aktive integrasjoner |
+| GET | `/api/cron/health` | Helsesjekk for cron-overvåking |
 
 ### Public API (v1)
 | Metode | Endpoint | Beskrivelse |
@@ -158,6 +191,13 @@ pnpm build        # Kompiler TypeScript
 | POST | `/api/v1/customers` | Opprett kunde |
 | PUT | `/api/v1/customers/:id` | Oppdater kunde |
 | DELETE | `/api/v1/customers/:id` | Slett kunde |
+
+### Andre
+| Metode | Endpoint | Beskrivelse |
+|--------|----------|-------------|
+| GET | `/api/csrf-token` | Hent CSRF-token |
+| GET | `/api/health` | Helsesjekk |
+| GET | `/api/health/detailed` | Detaljert helsesjekk (DB, minne, uptime) |
 
 ---
 
@@ -169,7 +209,11 @@ pnpm build        # Kompiler TypeScript
 - `kontaktlogg` - Kundekontakt-historikk
 - `api_keys` - API-nøkler for integrasjoner
 - `webhooks` - Webhook-konfigurasjoner
-- `import_jobs` - Import-historikk
+- `import_jobs` - Import-historikk (med duplikatinfo, kvalitetsrapport)
+- `failed_sync_items` - Feilede integrasjonssynkroniseringer (retry-mekanisme)
+- `account_deletion_requests` - GDPR kontosletting-forespørsler
+- `totp_pending_sessions` - 2FA-sesjoner under innlogging
+- `totp_audit_log` - Revisjonslogg for 2FA-hendelser
 
 ---
 
@@ -191,18 +235,30 @@ pnpm build        # Kompiler TypeScript
 - **Leaflet** - Interaktivt kart
 
 ### Regnskapssystemer
-- **Tripletex** - Synkronisering av kunder
+- **Tripletex** - Synkronisering av kunder + innkommende webhooks
 - **Fiken** - Synkronisering av kunder
 - **PowerOffice** - Synkronisering av kunder
+
+---
+
+## Sikkerhet
+
+| Lag | Beskrivelse |
+|-----|-------------|
+| CSRF | Double-submit cookie-mønster på alle POST/PUT/PATCH/DELETE |
+| Rate limiting | 3 nivåer: generelt API, innlogging, sensitive handlinger |
+| Helmet | Sikkerhetshoder inkl. CSP, HSTS (1 år) |
+| CORS | Streng origin-validering (prod: ALLOWED_ORIGINS) |
+| RLS | Row-Level Security for multi-tenant isolasjon |
+| Innholdsvalidering | Avviser forespørsler uten riktig Content-Type |
+
+**Middleware-rekkefølge:** Helmet → CORS → Body parsing → Cookie → CSRF-token → CSRF-validering → Content-Type → Request ID → Logging → Rate limiting
 
 ---
 
 ## Migrasjoner
 
 ```bash
-# Kjør migrasjoner
-node migrations/001_initial.cjs
-node migrations/005_super_admin.cjs
 # SQL-migrasjoner kjøres direkte i Supabase
 ```
 
@@ -213,3 +269,13 @@ node migrations/005_super_admin.cjs
 | 007_api_keys | API-nøkler |
 | 008_webhooks | Webhooks |
 | 009_external_id | Eksterne ID-er for integrasjoner |
+| 010_rls_security_policies | Row-Level Security-policyer |
+| 011_tenant_rls_policies | Tenant-spesifikke RLS-policyer |
+| 012_email_verification | E-postverifisering (token, utløpstid) |
+| 013_gdpr_account_deletion | GDPR-kontosletting (soft-delete, grace period) |
+| 014_two_factor_auth | 2FA/TOTP (kryptert hemmelighet, backup-koder, audit-logg) |
+| 015_app_mode | Applikasjonsmodus-konfigurasjon |
+| 016_fix_password_reset_tokens | Passordtilbakestilling-fiks |
+| 016_mvp_friendly_defaults | MVP-vennlige standardverdier |
+| 017_failed_sync_items | Retry-mekanisme for feilede synkroniseringer |
+| 018_import_enhancements | Duplikatdeteksjon, kvalitetsrapport, flerark-støtte |

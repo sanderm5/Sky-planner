@@ -107,7 +107,7 @@ async function setupSQLite() {
       neste_kontroll DATE,
       kontroll_intervall_mnd INTEGER DEFAULT 12,
       notater TEXT,
-      kategori TEXT DEFAULT 'El-Kontroll',
+      kategori TEXT,
       opprettet DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);

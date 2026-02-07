@@ -4,6 +4,15 @@ import { requireApiAuth, isAuthError } from '../../../../middleware/auth';
 
 // POST - Create Stripe Customer Portal session
 export const POST: APIRoute = async ({ request }) => {
+  // TEMPORARILY DISABLED - manual invoicing via Fiken
+  // Remove this block to re-enable Stripe portal
+  return new Response(
+    JSON.stringify({
+      error: 'Selvbetjent fakturering er ikke tilgjengelig. Kontakt oss på support@skyplanner.no for fakturaer og abonnementsendringer.',
+    }),
+    { status: 503, headers: { 'Content-Type': 'application/json' } }
+  );
+
   const STRIPE_SECRET_KEY = import.meta.env.STRIPE_SECRET_KEY;
   if (!STRIPE_SECRET_KEY) {
     console.warn('Stripe not configured - portal unavailable');

@@ -9,6 +9,7 @@ import type {
   TransformationRule,
   TransformationType,
 } from '../../types/import';
+import { lookupPostnummer, lookupPoststed } from './postnummer-registry';
 
 // Norwegian month names (lowercase)
 const NORWEGIAN_MONTHS: Record<string, number> = {
@@ -40,7 +41,7 @@ export function applyTransformations(
 
   for (const mapping of mappingConfig.mappings) {
     const rawValue = rawData[mapping.sourceColumn];
-    let transformedValue = rawValue;
+    let transformedValue: unknown;
 
     // Apply transformation if defined
     if (mapping.transformation) {
@@ -62,7 +63,98 @@ export function applyTransformations(
     result[mapping.targetField] = transformedValue;
   }
 
+  // Auto-enrich postal/address data using registry
+  enrichPostalData(result);
+
   return result;
+}
+
+/**
+ * Auto-enrich postal code, city, and address data using the Norwegian postal registry
+ */
+function enrichPostalData(result: Record<string, unknown>): void {
+  const postnummer = typeof result.postnummer === 'string' ? result.postnummer : null;
+  const poststed = typeof result.poststed === 'string' ? result.poststed : null;
+  const adresse = typeof result.adresse === 'string' ? result.adresse : null;
+
+  enrichPoststedFromPostnummer(result, postnummer, poststed);
+  enrichPostnummerFromPoststed(result, postnummer, poststed);
+  enrichFromCombinedAddress(result, postnummer, poststed, adresse);
+}
+
+function enrichPoststedFromPostnummer(
+  result: Record<string, unknown>, postnummer: string | null, poststed: string | null
+): void {
+  if (postnummer && !poststed) {
+    const entry = lookupPostnummer(postnummer);
+    if (entry) result.poststed = entry.poststed;
+  }
+}
+
+function enrichPostnummerFromPoststed(
+  result: Record<string, unknown>, postnummer: string | null, poststed: string | null
+): void {
+  if (poststed && !postnummer) {
+    const entries = lookupPoststed(poststed);
+    const gateEntries = entries.filter(e => e.kategori === 'G');
+    if (gateEntries.length === 1) {
+      result.postnummer = gateEntries[0].postnummer;
+    }
+  }
+}
+
+function enrichFromCombinedAddress(
+  result: Record<string, unknown>,
+  postnummer: string | null, poststed: string | null, adresse: string | null
+): void {
+  if (!adresse || postnummer || poststed) return;
+
+  const split = splitNorwegianAddress(adresse);
+  if (!split.postnummer) return;
+
+  result.adresse = split.adresse;
+  result.postnummer = split.postnummer;
+  if (split.poststed) {
+    result.poststed = split.poststed;
+  } else {
+    const entry = lookupPostnummer(split.postnummer);
+    if (entry) result.poststed = entry.poststed;
+  }
+}
+
+/**
+ * Split a combined Norwegian address into components
+ * Handles formats like "Storgata 5, 0184 Oslo" or "Storgata 5 0184 Oslo"
+ */
+export function splitNorwegianAddress(combined: string): {
+  adresse: string;
+  postnummer?: string;
+  poststed?: string;
+} {
+  if (!combined) return { adresse: combined };
+
+  // Pattern: "Street 123, 0184 Oslo" or "Street 123 0184 Oslo"
+  const fullPattern = /^(.+?),?\s+(\d{4})\s+(.+)$/;
+  const fullMatch = fullPattern.exec(combined);
+  if (fullMatch) {
+    return {
+      adresse: fullMatch[1].trim(),
+      postnummer: fullMatch[2],
+      poststed: fullMatch[3].trim(),
+    };
+  }
+
+  // Pattern: trailing postal code only "Street 123, 0184"
+  const partialPattern = /^(.+?),?\s+(\d{4})$/;
+  const partialMatch = partialPattern.exec(combined);
+  if (partialMatch) {
+    return {
+      adresse: partialMatch[1].trim(),
+      postnummer: partialMatch[2],
+    };
+  }
+
+  return { adresse: combined };
 }
 
 /**
@@ -94,7 +186,7 @@ export function applyTransformation(
     splitFirst: (v, params) => splitFirst(v, params?.delimiter as string),
     splitLast: (v, params) => splitLast(v, params?.delimiter as string),
     regex: (v, params) => regexExtract(v, params?.pattern as string, params?.group as number),
-    lookup: (v, params) => lookupValue(v, params?.table as Record<string, unknown>, params?.default as unknown),
+    lookup: (v, params) => lookupValue(v, params?.table as Record<string, unknown>, params?.default),
   };
 
   const transformer = transformers[rule.type];
@@ -125,7 +217,9 @@ function applyDefaultTransformation(
 
   switch (mapping.targetFieldType) {
     case 'string':
-      return String(result);
+      if (typeof result === 'string') return result;
+      if (typeof result === 'number' || typeof result === 'boolean') return String(result);
+      return '';
 
     case 'email':
       return typeof result === 'string' ? result.toLowerCase().trim() : result;
@@ -179,15 +273,17 @@ function capitalize(str: string): string {
  */
 function parseNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+  if (typeof value !== 'string' && typeof value !== 'boolean') return null;
 
-  const str = String(value).trim();
+  const str = typeof value === 'string' ? value.trim() : String(value);
   if (str === '') return null;
 
   // Handle Norwegian number format (comma as decimal separator)
-  const normalized = str.replace(/\s/g, '').replace(',', '.');
-  const num = parseFloat(normalized);
+  const normalized = str.replaceAll(/\s/g, '').replaceAll(',', '.');
+  const num = Number.parseFloat(normalized);
 
-  return isNaN(num) ? null : num;
+  return Number.isNaN(num) ? null : num;
 }
 
 /**
@@ -195,7 +291,8 @@ function parseNumber(value: unknown): number | null {
  */
 function parseInteger(value: unknown): number | null {
   const num = parseNumber(value);
-  return num !== null ? Math.round(num) : null;
+  if (num === null) return null;
+  return Math.round(num);
 }
 
 /**
@@ -203,8 +300,10 @@ function parseInteger(value: unknown): number | null {
  */
 function parseBoolean(value: unknown): boolean | null {
   if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value;
 
-  const str = String(value).toLowerCase().trim();
+  const str = (typeof value === 'string' ? value : String(value as string | number))
+    .toLowerCase().trim();
 
   const trueValues = ['ja', 'yes', 'true', '1', 'x', 'sant'];
   const falseValues = ['nei', 'no', 'false', '0', '', 'usant'];
@@ -216,7 +315,8 @@ function parseBoolean(value: unknown): boolean | null {
 }
 
 /**
- * Parse a date from various formats
+ * Parse a date from various formats.
+ * Tries multiple parsers in priority order, with optional format hint.
  */
 function parseDate(value: unknown, format?: string): string | null {
   if (value === null || value === undefined) return null;
@@ -226,80 +326,203 @@ function parseDate(value: unknown, format?: string): string | null {
     return formatDateOutput(value);
   }
 
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
   const str = String(value).trim();
   if (str === '') return null;
 
-  // Try Norwegian date first (DD.MM.YYYY)
+  return parseDateString(str, format) ?? parseExcelDate(value);
+}
+
+/** Try all string-based date parsers in priority order */
+function parseDateString(str: string, format?: string): string | null {
+  // Try quarter format first ("Q2 2023", "2. kvartal 2023")
+  const quarter = parseQuarterDate(str);
+  if (quarter) return quarter;
+
+  // If format hint suggests US date order, try that first
+  if (format === 'MM/DD/YYYY') {
+    const us = parseUSDate(str);
+    if (us) return us;
+  }
+
+  // Try Norwegian date (DD.MM.YYYY)
   const norwegian = parseNorwegianDate(str, format);
   if (norwegian) return norwegian;
 
-  // Try month text format (e.g., "mars 2024", "Mar 2024", "15 mars 2024")
+  // Try month text format (e.g., "mars 2024")
   const monthText = parseMonthText(str);
   if (monthText) return monthText;
 
   // Try ISO format
-  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) {
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
     const date = new Date(str);
-    if (!isNaN(date.getTime())) {
-      return formatDateOutput(date);
-    }
+    if (!Number.isNaN(date.getTime())) return formatDateOutput(date);
   }
 
-  // Try Excel serial number
-  const excelDate = parseExcelDate(value);
-  if (excelDate) return excelDate;
+  // Try US date as fallback
+  return parseUSDate(str);
+}
+
+/**
+ * Parse quarter date format
+ * Examples: "Q2 2023", "Q1/2024", "2. kvartal 2023", "kvartal 3 2024"
+ */
+function parseQuarterDate(str: string): string | null {
+  // "Q2 2023" or "Q2/2023"
+  const qMatch = /^Q([1-4])\s*[/\s]\s*(\d{4})$/i.exec(str);
+  if (qMatch) {
+    const quarter = Number.parseInt(qMatch[1], 10);
+    const year = Number.parseInt(qMatch[2], 10);
+    const month = (quarter - 1) * 3; // Q1=Jan, Q2=Apr, Q3=Jul, Q4=Oct
+    return formatDateOutput(new Date(year, month, 1));
+  }
+
+  // "2. kvartal 2023" or "kvartal 3 2024"
+  const kvMatch = /^(?:(\d)\.\s*)?kvartal\s*(\d)?\s+(\d{4})$/i.exec(str);
+  if (kvMatch) {
+    const quarter = Number.parseInt(kvMatch[1] || kvMatch[2] || '0', 10);
+    const year = Number.parseInt(kvMatch[3], 10);
+    if (quarter >= 1 && quarter <= 4) {
+      const month = (quarter - 1) * 3;
+      return formatDateOutput(new Date(year, month, 1));
+    }
+  }
 
   return null;
 }
 
 /**
- * Parse Norwegian date format (DD.MM.YYYY or DD/MM/YYYY)
+ * Parse US date format (MM/DD/YYYY)
+ * Only matches when first number > 12 (unambiguous) or when format hint is given
  */
-function parseNorwegianDate(value: unknown, format?: string): string | null {
-  if (value === null || value === undefined) return null;
+function parseUSDate(str: string): string | null {
+  const match = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/.exec(str);
+  if (!match) return null;
 
-  const str = String(value).trim();
+  const first = Number.parseInt(match[1], 10);
+  const second = Number.parseInt(match[2], 10);
+  let year = Number.parseInt(match[3], 10);
 
-  // DD.MM.YYYY or DD/MM/YYYY
-  const match = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
-  if (match) {
-    const day = parseInt(match[1], 10);
-    const month = parseInt(match[2], 10);
-    let year = parseInt(match[3], 10);
-
-    // Handle 2-digit years
-    if (year < 100) {
-      year += year < 50 ? 2000 : 1900;
-    }
-
-    // Validate basic ranges
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const date = new Date(year, month - 1, day);
-      if (!isNaN(date.getTime())) {
-        // Verify the date didn't roll over (e.g., Feb 31 -> Mar 3)
-        if (date.getDate() === day && date.getMonth() === month - 1 && date.getFullYear() === year) {
-          return formatDateOutput(date);
-        }
-      }
-    }
+  if (year < 100) {
+    year += year < 50 ? 2000 : 1900;
   }
 
-  // Try month.year format (MM.YYYY)
-  const monthYearMatch = str.match(/^(\d{1,2})[./-](\d{4})$/);
-  if (monthYearMatch) {
-    const month = parseInt(monthYearMatch[1], 10);
-    const year = parseInt(monthYearMatch[2], 10);
-
-    if (month >= 1 && month <= 12) {
-      const date = new Date(year, month - 1, 1);
-      if (!isNaN(date.getTime())) {
-        return formatDateOutput(date);
-      }
+  // If first number > 12, it can't be a month - must be DD/MM/YYYY (handled by Norwegian parser)
+  // If second number > 12, it can't be a day in US format but could be valid as MM/DD
+  // Only parse as US if second > 12 (unambiguous: first must be month)
+  if (second > 12 && first >= 1 && first <= 12) {
+    const date = new Date(year, first - 1, second);
+    if (!Number.isNaN(date.getTime()) && date.getDate() === second && date.getMonth() === first - 1) {
+      return formatDateOutput(date);
     }
   }
 
   return null;
+}
+
+/**
+ * Detect the dominant date format in a column of values.
+ * Returns a format hint to disambiguate DD/MM vs MM/DD.
+ */
+export function detectColumnDateFormat(
+  values: unknown[]
+): 'DD.MM.YYYY' | 'MM/DD/YYYY' | 'ISO' | 'mixed' | 'unknown' {
+  let ddmmCount = 0;
+  let mmddCount = 0;
+  let isoCount = 0;
+
+  for (const val of values) {
+    if (typeof val !== 'string' && typeof val !== 'number') continue;
+    const str = String(val).trim();
+    if (str === '') continue;
+
+    // ISO is unambiguous
+    if (/^\d{4}-\d{2}-\d{2}/.test(str)) { isoCount++; continue; }
+
+    const result = classifyDateParts(str);
+    ddmmCount += result.ddmm;
+    mmddCount += result.mmdd;
+  }
+
+  return pickDominantFormat(isoCount, ddmmCount, mmddCount);
+}
+
+function classifyDateParts(str: string): { ddmm: number; mmdd: number } {
+  const match = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/.exec(str);
+  if (!match) return { ddmm: 0, mmdd: 0 };
+
+  const first = Number.parseInt(match[1], 10);
+  const second = Number.parseInt(match[2], 10);
+
+  // Unambiguous: first > 12 must be day
+  if (first > 12 && second <= 12) return { ddmm: 1, mmdd: 0 };
+  // Unambiguous: second > 12 must be day (US format)
+  if (second > 12 && first <= 12) return { ddmm: 0, mmdd: 1 };
+  // Ambiguous: dots strongly suggest European
+  if (match[0].includes('.')) return { ddmm: 1, mmdd: 0 };
+  // Ambiguous: slash is truly ambiguous
+  if (match[0].includes('/')) return { ddmm: 0.5, mmdd: 0.5 };
+  return { ddmm: 0.5, mmdd: 0.5 };
+}
+
+function pickDominantFormat(
+  isoCount: number, ddmmCount: number, mmddCount: number
+): 'DD.MM.YYYY' | 'MM/DD/YYYY' | 'ISO' | 'mixed' | 'unknown' {
+  if (isoCount > ddmmCount && isoCount > mmddCount) return 'ISO';
+  if (ddmmCount > 0 && mmddCount === 0) return 'DD.MM.YYYY';
+  if (mmddCount > 0 && ddmmCount === 0) return 'MM/DD/YYYY';
+  if (ddmmCount > 0 || mmddCount > 0) return 'mixed';
+  return 'unknown';
+}
+
+/**
+ * Parse Norwegian date format (DD.MM.YYYY or DD/MM/YYYY)
+ */
+function parseNorwegianDate(value: unknown, _format?: string): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+
+  const str = String(value).trim();
+
+  return parseNorwegianDayMonthYear(str) ?? parseMonthYearOnly(str);
+}
+
+function parseNorwegianDayMonthYear(str: string): string | null {
+  const match = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/.exec(str);
+  if (!match) return null;
+
+  const day = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  let year = Number.parseInt(match[3], 10);
+
+  if (year < 100) {
+    year += year < 50 ? 2000 : 1900;
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+
+  // Verify no date rollover (e.g., Feb 31 -> Mar 3)
+  if (date.getDate() === day && date.getMonth() === month - 1 && date.getFullYear() === year) {
+    return formatDateOutput(date);
+  }
+  return null;
+}
+
+function parseMonthYearOnly(str: string): string | null {
+  const match = /^(\d{1,2})[./-](\d{4})$/.exec(str);
+  if (!match) return null;
+
+  const month = Number.parseInt(match[1], 10);
+  const year = Number.parseInt(match[2], 10);
+
+  if (month < 1 || month > 12) return null;
+
+  const date = new Date(year, month - 1, 1);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return formatDateOutput(date);
 }
 
 /**
@@ -328,7 +551,7 @@ function parseExcelDate(value: unknown): string | null {
   const excelEpoch = new Date(1899, 11, 31); // Dec 31, 1899
   const date = new Date(excelEpoch.getTime() + adjustedNum * 24 * 60 * 60 * 1000);
 
-  if (!isNaN(date.getTime()) && date.getFullYear() >= 1900 && date.getFullYear() <= 2100) {
+  if (!Number.isNaN(date.getTime()) && date.getFullYear() >= 1900 && date.getFullYear() <= 2100) {
     return formatDateOutput(date);
   }
 
@@ -340,75 +563,61 @@ function parseExcelDate(value: unknown): string | null {
  * Examples: "mars 2024", "Mar 2024", "15 mars 2024", "15. mars 2024"
  */
 function parseMonthText(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return null;
 
-  const str = String(value).trim().toLowerCase();
+  const str = value.trim().toLowerCase();
   if (str === '') return null;
 
-  // Pattern 1: "15 mars 2024" or "15. mars 2024" (day month year)
-  const dayMonthYearMatch = str.match(/^(\d{1,2})\.?\s+([a-zæøå]+)\.?\s+(\d{4})$/);
-  if (dayMonthYearMatch) {
-    const day = parseInt(dayMonthYearMatch[1], 10);
-    const monthName = dayMonthYearMatch[2];
-    const year = parseInt(dayMonthYearMatch[3], 10);
-    const month = NORWEGIAN_MONTHS[monthName];
+  return parseDayMonthYear(str)
+    ?? parseMonthYear(str)
+    ?? parseYearMonth(str)
+    ?? parseShortMonthDay(str);
+}
 
-    if (month && day >= 1 && day <= 31) {
-      const date = new Date(year, month - 1, day);
-      if (!isNaN(date.getTime())) {
-        return formatDateOutput(date);
-      }
-    }
-  }
+/** "15 mars 2024" or "15. mars 2024" */
+function parseDayMonthYear(str: string): string | null {
+  const m = /^(\d{1,2})\.?\s+([a-zæøå]+)\.?\s+(\d{4})$/.exec(str);
+  if (!m) return null;
+  const day = Number.parseInt(m[1], 10);
+  const month = NORWEGIAN_MONTHS[m[2]];
+  const year = Number.parseInt(m[3], 10);
+  if (!month || day < 1 || day > 31) return null;
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : formatDateOutput(date);
+}
 
-  // Pattern 2: "mars 2024" or "mar 2024" (month year only - defaults to 1st)
-  const monthYearMatch = str.match(/^([a-zæøå]+)\.?\s+(\d{4})$/);
-  if (monthYearMatch) {
-    const monthName = monthYearMatch[1];
-    const year = parseInt(monthYearMatch[2], 10);
-    const month = NORWEGIAN_MONTHS[monthName];
+/** "mars 2024" or "mar 2024" */
+function parseMonthYear(str: string): string | null {
+  const m = /^([a-zæøå]+)\.?\s+(\d{4})$/.exec(str);
+  if (!m) return null;
+  const month = NORWEGIAN_MONTHS[m[1]];
+  const year = Number.parseInt(m[2], 10);
+  if (!month) return null;
+  const date = new Date(year, month - 1, 1);
+  return Number.isNaN(date.getTime()) ? null : formatDateOutput(date);
+}
 
-    if (month) {
-      const date = new Date(year, month - 1, 1);
-      if (!isNaN(date.getTime())) {
-        return formatDateOutput(date);
-      }
-    }
-  }
+/** "2024 mars" */
+function parseYearMonth(str: string): string | null {
+  const m = /^(\d{4})\s+([a-zæøå]+)\.?$/.exec(str);
+  if (!m) return null;
+  const year = Number.parseInt(m[1], 10);
+  const month = NORWEGIAN_MONTHS[m[2]];
+  if (!month) return null;
+  const date = new Date(year, month - 1, 1);
+  return Number.isNaN(date.getTime()) ? null : formatDateOutput(date);
+}
 
-  // Pattern 3: "2024 mars" (year month - less common but support it)
-  const yearMonthMatch = str.match(/^(\d{4})\s+([a-zæøå]+)\.?$/);
-  if (yearMonthMatch) {
-    const year = parseInt(yearMonthMatch[1], 10);
-    const monthName = yearMonthMatch[2];
-    const month = NORWEGIAN_MONTHS[monthName];
-
-    if (month) {
-      const date = new Date(year, month - 1, 1);
-      if (!isNaN(date.getTime())) {
-        return formatDateOutput(date);
-      }
-    }
-  }
-
-  // Pattern 4: "09.sep" or "sep.09" (month.shortmonth format from Excel)
-  const shortMonthMatch = str.match(/^(\d{1,2})\.?([a-zæøå]+)$/);
-  if (shortMonthMatch) {
-    const dayOrMonth = parseInt(shortMonthMatch[1], 10);
-    const monthName = shortMonthMatch[2];
-    const month = NORWEGIAN_MONTHS[monthName];
-
-    if (month && dayOrMonth >= 1 && dayOrMonth <= 31) {
-      // Assume current year, day.month format
-      const year = new Date().getFullYear();
-      const date = new Date(year, month - 1, dayOrMonth);
-      if (!isNaN(date.getTime())) {
-        return formatDateOutput(date);
-      }
-    }
-  }
-
-  return null;
+/** "09.sep" or "09sep" */
+function parseShortMonthDay(str: string): string | null {
+  const m = /^(\d{1,2})\.?([a-zæøå]+)$/.exec(str);
+  if (!m) return null;
+  const day = Number.parseInt(m[1], 10);
+  const month = NORWEGIAN_MONTHS[m[2]];
+  if (!month || day < 1 || day > 31) return null;
+  const year = new Date().getFullYear();
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : formatDateOutput(date);
 }
 
 /**
@@ -426,12 +635,13 @@ function formatDateOutput(date: Date): string {
  */
 function formatPhone(value: unknown): string | null {
   if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
 
   const str = String(value).trim();
   if (str === '') return null;
 
   // Remove all non-digits except +
-  const digits = str.replace(/[^\d+]/g, '');
+  const digits = str.replaceAll(/[^\d+]/g, '');
 
   // Remove leading + and country code if present
   let normalized = digits;
@@ -439,7 +649,8 @@ function formatPhone(value: unknown): string | null {
     normalized = normalized.slice(3);
   } else if (normalized.startsWith('0047')) {
     normalized = normalized.slice(4);
-  } else if (normalized.startsWith('47') && normalized.length > 10) {
+  } else if (normalized.startsWith('47') && normalized.length === 10) {
+    // 47 + 8 digits = country code format without +
     normalized = normalized.slice(2);
   }
 
@@ -461,12 +672,13 @@ function formatPhone(value: unknown): string | null {
  */
 function formatPostnummer(value: unknown): string | null {
   if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
 
   const str = String(value).trim();
   if (str === '') return null;
 
   // Extract digits
-  const digits = str.replace(/\D/g, '');
+  const digits = str.replaceAll(/\D/g, '');
 
   // Must be 4 digits
   if (digits.length === 4) {
@@ -485,9 +697,8 @@ function formatPostnummer(value: unknown): string | null {
  * Split string and take first part
  */
 function splitFirst(value: unknown, delimiter = ','): string | null {
-  if (value === null || value === undefined) return null;
-  const str = String(value);
-  const parts = str.split(delimiter);
+  if (typeof value !== 'string') return null;
+  const parts = value.split(delimiter);
   return parts[0]?.trim() || null;
 }
 
@@ -495,21 +706,20 @@ function splitFirst(value: unknown, delimiter = ','): string | null {
  * Split string and take last part
  */
 function splitLast(value: unknown, delimiter = ','): string | null {
-  if (value === null || value === undefined) return null;
-  const str = String(value);
-  const parts = str.split(delimiter);
-  return parts[parts.length - 1]?.trim() || null;
+  if (typeof value !== 'string') return null;
+  const parts = value.split(delimiter);
+  return parts.at(-1)?.trim() || null;
 }
 
 /**
  * Extract value using regex
  */
 function regexExtract(value: unknown, pattern: string, group = 0): string | null {
-  if (value === null || value === undefined || !pattern) return null;
+  if (typeof value !== 'string' || !pattern) return null;
 
   try {
     const regex = new RegExp(pattern);
-    const match = String(value).match(regex);
+    const match = regex.exec(value);
     if (match) {
       return match[group] || match[0] || null;
     }
@@ -532,7 +742,7 @@ function lookupValue(
     return defaultValue ?? null;
   }
 
-  const key = String(value).trim();
+  const key = typeof value === 'string' ? value.trim() : String(value as string | number).trim();
 
   // Try exact match
   if (key in table) {

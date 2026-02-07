@@ -8,6 +8,10 @@ import { parseExcelBuffer } from './parser';
 import { detectFormatChange, suggestColumnMappings } from './format-detection';
 import { applyTransformations } from './transformers';
 import { validateMappedRow, convertToDbErrors } from './validation';
+import { cleanImportData } from './cleaner';
+import { checkDuplicates } from './duplicate-detection';
+import { getAIMappingSuggestions } from './ai-mapping';
+import type { ExistingKunde, BatchDuplicateReport } from './duplicate-detection';
 import type {
   ImportBatch,
   ImportBatchStatus,
@@ -30,6 +34,8 @@ import type {
   ApplyMappingResponse,
   FormatChangeResult,
   StagingRowStatus,
+  UploadImportResponse,
+  BatchQualityReport,
 } from '../../types/import';
 
 // Database service interface
@@ -91,6 +97,9 @@ export interface ImportDbService {
   createKunde(data: Record<string, unknown>): Promise<{ id: number }>;
   updateKunde(id: number, data: Record<string, unknown>, organizationId: number): Promise<void>;
   deleteKunde(id: number, organizationId: number): Promise<void>;
+
+  // Duplicate detection (load existing customers for matching)
+  getKunderForDuplicateCheck(organizationId: number): Promise<ExistingKunde[]>;
 }
 
 // Singleton instance
@@ -99,7 +108,7 @@ let dbServiceRef: ImportDbService | null = null;
 
 export function initImportService(dbService: ImportDbService): void {
   dbServiceRef = dbService;
-  importServiceInstance = null; // Reset instance to use new db service
+  // Don't reset existing instance - avoid losing state during concurrent imports
 }
 
 export function getImportService(): ImportService {
@@ -116,7 +125,7 @@ export function getImportService(): ImportService {
  * Normalize company name for duplicate detection
  * Handles variations like "AS", "A/S", "A.S.", extra whitespace, etc.
  */
-function normalizeCompanyName(name: string): string {
+export function normalizeCompanyName(name: string): string {
   if (!name) return '';
 
   let normalized = name.trim().toLowerCase();
@@ -153,7 +162,7 @@ function normalizeCompanyName(name: string): string {
  * Normalize address for duplicate detection
  * Handles variations in street names, numbers, etc.
  */
-function normalizeAddress(address: string): string {
+export function normalizeAddress(address: string): string {
   if (!address) return '';
 
   let normalized = address.trim().toLowerCase();
@@ -190,11 +199,21 @@ class ImportService {
     userId: number,
     fileBuffer: Buffer,
     fileName: string
-  ): Promise<{ batchId: number; status: ImportBatchStatus; preview: ImportPreview }> {
+  ): Promise<UploadImportResponse> {
     apiLogger.info({ organizationId, fileName }, 'Starting Excel upload and parse');
 
     // Parse Excel file
     const parsed = parseExcelBuffer(fileBuffer);
+
+    // Run auto-cleaning on parsed data
+    const { cleanedRows, report: cleaningReport } = cleanImportData(parsed.rows, parsed.headers);
+
+    // Generate mapping suggestions (template → regex → AI fallback)
+    const { suggestedMapping, recognizedColumns, unmappedHeaders } =
+      await this.generateMappingSuggestions(
+        organizationId, parsed.headers, parsed.columnFingerprint,
+        cleanedRows, parsed.rows[0]
+      );
 
     // Check for format changes
     const formatChange = await detectFormatChange(
@@ -225,8 +244,8 @@ class ImportService {
 
     const batch = await this.db.createImportBatch(batchData);
 
-    // Store staging rows
-    const stagingRows: InsertStagingRow[] = parsed.rows.map((row, idx) => ({
+    // Store staging rows (use cleaned data as raw_data for staging)
+    const stagingRows: InsertStagingRow[] = cleanedRows.map((row, idx) => ({
       batch_id: batch.id,
       organization_id: organizationId,
       row_number: idx + 2, // Excel row number (1-indexed + header)
@@ -239,24 +258,30 @@ class ImportService {
     // Record column history
     await this.recordColumnHistory(organizationId, parsed.columnFingerprint, parsed.headers);
 
-    // Get suggested template if available
-    let suggestedTemplate: ImportMappingTemplate | null = null;
-    if (!formatChange.requiresRemapping) {
-      suggestedTemplate = await this.db.getImportMappingTemplateByFingerprint(
-        organizationId,
-        parsed.columnFingerprint
-      );
-    }
+    // Get suggested template for preview if available
+    const previewTemplate = formatChange.requiresRemapping
+      ? null
+      : await this.db.getImportMappingTemplateByFingerprint(organizationId, parsed.columnFingerprint);
 
     // Build preview
     const preview = this.buildPreview(
       batch,
       parsed.headers,
-      parsed.rows.slice(0, 10),
+      cleanedRows.slice(0, 10),
       parsed.columnInfo,
       formatChange,
-      suggestedTemplate
+      previewTemplate
     );
+
+    // Build original and cleaned preview rows for frontend cleaning step
+    const originalPreview = parsed.rows.slice(0, 100).map((row, index) => ({
+      _rowIndex: index,
+      ...row,
+    }));
+    const cleanedPreview = cleanedRows.slice(0, 100).map((row, index) => ({
+      _rowIndex: index,
+      ...row,
+    }));
 
     // Log audit
     await this.db.createImportAuditLog({
@@ -269,11 +294,12 @@ class ImportService {
         rowCount: parsed.totalRows,
         columnCount: parsed.columnCount,
         formatChangeDetected: formatChange.detected,
+        cleaningApplied: cleaningReport.totalCellsCleaned > 0 || cleaningReport.totalRowsRemoved > 0,
       },
     });
 
     apiLogger.info(
-      { batchId: batch.id, rowCount: parsed.totalRows },
+      { batchId: batch.id, rowCount: parsed.totalRows, cleanedRows: cleanedRows.length },
       'Excel upload complete'
     );
 
@@ -281,6 +307,18 @@ class ImportService {
       batchId: batch.id,
       status: batch.status as ImportBatchStatus,
       preview,
+      headers: parsed.headers,
+      allColumns: parsed.headers,
+      suggestedMapping,
+      cleaningReport,
+      originalPreview,
+      cleanedPreview,
+      totalRows: parsed.totalRows,
+      totalRowsAfterCleaning: cleanedRows.length,
+      totalColumns: parsed.columnCount,
+      fileName,
+      recognizedColumns,
+      unmappedHeaders,
     };
   }
 
@@ -319,6 +357,7 @@ class ImportService {
 
     const previewRows: PreviewRow[] = stagingRows.map(row => ({
       rowNumber: row.row_number,
+      stagingRowId: row.id,
       values: row.raw_data,
       mappedValues: row.mapped_data,
       validationStatus: row.validation_status as StagingRowStatus,
@@ -380,9 +419,24 @@ class ImportService {
 
     let mappedCount = 0;
 
+    // Log mapping config for debugging
+    apiLogger.info(
+      { batchId, mappingCount: mappingConfig.mappings.length, mappings: mappingConfig.mappings.map(m => `${m.sourceColumn} → ${m.targetField}`) },
+      'Applying mapping config'
+    );
+    if (stagingRows.length > 0) {
+      apiLogger.info(
+        { rawDataKeys: Object.keys(stagingRows[0].raw_data), sampleValues: Object.entries(stagingRows[0].raw_data).slice(0, 3).map(([k, v]) => `${k}=${v}`) },
+        'First row raw_data sample'
+      );
+    }
+
     for (const row of stagingRows) {
       try {
         const mappedData = applyTransformations(row.raw_data, mappingConfig);
+        if (mappedCount === 0) {
+          apiLogger.info({ mappedDataKeys: Object.keys(mappedData), sampleMapped: Object.entries(mappedData).slice(0, 5).map(([k, v]) => `${k}=${v}`) }, 'First mapped row sample');
+        }
         await this.db.updateImportStagingRow(row.id, { mapped_data: mappedData });
         mappedCount++;
       } catch (error) {
@@ -390,23 +444,12 @@ class ImportService {
       }
     }
 
-    // Save as template if requested
-    if (options.saveAsTemplate && options.templateName) {
-      const headers = Object.keys(stagingRows[0]?.raw_data || {});
-      await this.db.createImportMappingTemplate({
-        organization_id: organizationId,
-        name: options.templateName,
-        source_column_fingerprint: batch.column_fingerprint,
-        source_columns: headers,
-        mapping_config: mappingConfig,
-        ai_suggested: false,
-        human_confirmed: true,
-        confirmed_by: options.userId,
-        confirmed_at: new Date().toISOString(),
-        is_default: false,
-        use_count: 1,
-      });
-    }
+    // Feedback loop: auto-save/update mapping template for this column fingerprint
+    const headers = Object.keys(stagingRows[0]?.raw_data || {});
+    await this.saveOrUpdateMappingTemplate(
+      organizationId, batch.column_fingerprint, headers,
+      mappingConfig, options.userId, options.saveAsTemplate, options.templateName
+    );
 
     await this.db.updateImportBatch(batchId, { status: 'mapped' });
 
@@ -439,8 +482,6 @@ class ImportService {
     }
 
     await this.db.updateImportBatch(batchId, { status: 'validating' });
-
-    // Clear previous errors
     await this.db.deleteImportValidationErrors(batchId);
 
     const stagingRows = await this.db.getImportStagingRows(batchId, {
@@ -448,65 +489,207 @@ class ImportService {
       offset: 0,
     });
 
-    let validCount = 0;
-    let warningCount = 0;
-    let errorCount = 0;
     const allErrors: any[] = [];
+    const counts = await this.validateRows(stagingRows, batchId, mappingConfig, allErrors);
 
-    for (const row of stagingRows) {
-      if (!row.mapped_data) {
-        continue;
-      }
+    // Duplicate detection
+    const dupResult = await this.runDuplicateDetection(
+      organizationId, batchId, stagingRows, allErrors, counts
+    );
 
-      const result = validateMappedRow(row.mapped_data, row.row_number, mappingConfig);
-
-      // Store errors
-      if (result.errors.length > 0 || result.warnings.length > 0) {
-        const dbErrors = convertToDbErrors(
-          [...result.errors, ...result.warnings],
-          row.id,
-          batchId
-        );
-        await this.db.createImportValidationErrors(dbErrors);
-        allErrors.push(...dbErrors);
-      }
-
-      // Update row status
-      let status: StagingRowStatus = 'valid';
-      if (result.errors.length > 0) {
-        status = 'invalid';
-        errorCount++;
-      } else if (result.warnings.length > 0) {
-        status = 'warning';
-        warningCount++;
-      } else {
-        validCount++;
-      }
-
-      await this.db.updateImportStagingRow(row.id, { validation_status: status });
-    }
+    // Generate quality report
+    const qualityReport = this.buildQualityReport(stagingRows, counts, allErrors);
 
     // Update batch
     await this.db.updateImportBatch(batchId, {
       status: 'validated',
-      valid_row_count: validCount,
-      warning_row_count: warningCount,
-      error_row_count: errorCount,
+      valid_row_count: counts.valid,
+      warning_row_count: counts.warning,
+      error_row_count: counts.error,
     });
 
     apiLogger.info(
-      { batchId, validCount, warningCount, errorCount },
+      { batchId, ...counts, duplicates: dupResult?.probableDuplicates ?? 0, quality: qualityReport.overallScore },
       'Validation complete'
     );
 
     return {
       batchId,
       status: 'validated',
-      validCount,
-      warningCount,
-      errorCount,
+      validCount: counts.valid,
+      warningCount: counts.warning,
+      errorCount: counts.error,
       errors: allErrors,
       previewRows: [],
+      duplicateReport: dupResult ? {
+        totalChecked: dupResult.totalChecked,
+        probableDuplicates: dupResult.probableDuplicates,
+        possibleDuplicates: dupResult.possibleDuplicates,
+        uniqueRows: dupResult.uniqueRows,
+      } : undefined,
+      qualityReport,
+    };
+  }
+
+  private async validateRows(
+    stagingRows: ImportStagingRow[],
+    batchId: number,
+    mappingConfig: ImportMappingConfig | undefined,
+    allErrors: any[]
+  ): Promise<{ valid: number; warning: number; error: number; completenessScores: number[] }> {
+    let valid = 0, warning = 0, error = 0;
+    const completenessScores: number[] = [];
+
+    for (const row of stagingRows) {
+      if (!row.mapped_data) continue;
+
+      const result = validateMappedRow(row.mapped_data, row.row_number, mappingConfig);
+      completenessScores.push(result.completenessScore);
+
+      if (result.errors.length > 0 || result.warnings.length > 0) {
+        const dbErrors = convertToDbErrors(
+          [...result.errors, ...result.warnings], row.id, batchId
+        );
+        await this.db.createImportValidationErrors(dbErrors);
+        allErrors.push(...dbErrors);
+      }
+
+      let status: StagingRowStatus = 'valid';
+      if (result.errors.length > 0) { status = 'invalid'; error++; }
+      else if (result.warnings.length > 0) { status = 'warning'; warning++; }
+      else { valid++; }
+
+      await this.db.updateImportStagingRow(row.id, { validation_status: status });
+    }
+
+    return { valid, warning, error, completenessScores };
+  }
+
+  private async runDuplicateDetection(
+    organizationId: number,
+    batchId: number,
+    stagingRows: ImportStagingRow[],
+    allErrors: any[],
+    counts: { valid: number; warning: number; error: number }
+  ): Promise<BatchDuplicateReport | undefined> {
+    try {
+      const existingKunder = await this.db.getKunderForDuplicateCheck(organizationId);
+      const batchRows = stagingRows
+        .filter(r => r.mapped_data)
+        .map((r, idx) => ({ data: r.mapped_data as Record<string, unknown>, index: idx }));
+
+      if (batchRows.length === 0) return undefined;
+
+      const report = checkDuplicates(batchRows, existingKunder);
+      await this.storeDuplicateWarnings(report, stagingRows, batchId, allErrors, counts);
+      return report;
+    } catch (err) {
+      apiLogger.warn({ err, batchId }, 'Duplicate detection failed, continuing without it');
+      return undefined;
+    }
+  }
+
+  private async storeDuplicateWarnings(
+    report: BatchDuplicateReport,
+    stagingRows: ImportStagingRow[],
+    batchId: number,
+    allErrors: any[],
+    counts: { valid: number; warning: number }
+  ): Promise<void> {
+    for (const dupResult of report.results) {
+      const stagingRow = stagingRows[dupResult.rowIndex];
+      const topCandidate = dupResult.candidates[0];
+      if (!stagingRow || !topCandidate) continue;
+
+      const errorCode = topCandidate.batchRowIndex === undefined ? 'DUPLICATE_ENTRY' : 'DUPLICATE_IN_BATCH';
+      const message = topCandidate.existingKundeId
+        ? `Mulig duplikat av eksisterende kunde "${topCandidate.navn}" (${Math.round(topCandidate.score * 100)}% match)`
+        : `Mulig duplikat av rad ${(topCandidate.batchRowIndex ?? 0) + 2} i filen (${Math.round(topCandidate.score * 100)}% match)`;
+
+      const dupErrors = [{
+        staging_row_id: stagingRow.id,
+        batch_id: batchId,
+        severity: topCandidate.confidence === 'high' ? 'warning' as const : 'info' as const,
+        error_code: errorCode,
+        field_name: 'navn',
+        message,
+        actual_value: typeof stagingRow.mapped_data?.navn === 'string' ? stagingRow.mapped_data.navn : undefined,
+        suggestion: topCandidate.existingKundeId ? `Kunde-ID: ${topCandidate.existingKundeId}` : undefined,
+      }];
+      await this.db.createImportValidationErrors(dupErrors);
+      allErrors.push(...dupErrors);
+
+      if (stagingRow.validation_status === 'valid' || stagingRow.validation_status === 'pending') {
+        counts.warning++;
+        counts.valid = Math.max(0, counts.valid - 1);
+        await this.db.updateImportStagingRow(stagingRow.id, { validation_status: 'warning' });
+      }
+    }
+  }
+
+  private buildQualityReport(
+    stagingRows: ImportStagingRow[],
+    counts: { valid: number; warning: number; error: number; completenessScores: number[] },
+    allErrors: any[]
+  ): BatchQualityReport {
+    const total = counts.valid + counts.warning + counts.error;
+    const completenessAvg = counts.completenessScores.length > 0
+      ? counts.completenessScores.reduce((a, b) => a + b, 0) / counts.completenessScores.length
+      : 0;
+    const validPct = total > 0 ? counts.valid / total : 0;
+
+    // Field coverage: what % of rows have a value for each field
+    const fieldCoverage: Record<string, number> = {};
+    const trackedFields = ['navn', 'adresse', 'postnummer', 'poststed', 'telefon', 'epost', 'kontaktperson'];
+    const rowsWithData = stagingRows.filter(r => r.mapped_data);
+
+    for (const field of trackedFields) {
+      const filled = rowsWithData.filter(r => {
+        const val = r.mapped_data?.[field];
+        return val !== null && val !== undefined && String(val).trim() !== '';
+      }).length;
+      fieldCoverage[field] = rowsWithData.length > 0 ? filled / rowsWithData.length : 0;
+    }
+
+    // Common errors grouped by code
+    const errorCounts = new Map<string, { count: number; message: string }>();
+    for (const err of allErrors) {
+      const code = err.error_code || 'UNKNOWN';
+      const existing = errorCounts.get(code);
+      if (existing) {
+        existing.count++;
+      } else {
+        errorCounts.set(code, { count: 1, message: err.message || code });
+      }
+    }
+    const commonErrors = Array.from(errorCounts.entries())
+      .map(([errorCode, { count, message }]) => ({ errorCode, count, message }))
+      .sort((a, b) => b.count - a.count);
+
+    // Generate human-readable suggestions
+    const suggestions: string[] = [];
+    for (const [field, coverage] of Object.entries(fieldCoverage)) {
+      if (coverage < 0.5) {
+        const pct = Math.round(coverage * 100);
+        suggestions.push(`${100 - pct}% av radene mangler ${field}`);
+      }
+    }
+    if (validPct < 0.8) {
+      suggestions.push(`Kun ${Math.round(validPct * 100)}% av radene er gyldige - vurder å rette feil før import`);
+    }
+
+    // Overall score: weighted combination
+    const overallScore = Math.round(
+      (validPct * 40) + (completenessAvg * 40) + (Math.min(1, Object.values(fieldCoverage).reduce((a, b) => a + b, 0) / trackedFields.length) * 20)
+    );
+
+    return {
+      overallScore,
+      completenessAverage: completenessAvg,
+      validPercentage: validPct,
+      fieldCoverage,
+      commonErrors,
+      suggestions,
     };
   }
 
@@ -516,7 +699,11 @@ class ImportService {
     organizationId: number,
     batchId: number,
     userId: number,
-    options: { dryRun?: boolean }
+    options: {
+      dryRun?: boolean;
+      excludedRowIds?: number[];
+      rowEdits?: Record<number, Record<string, unknown>>;
+    }
   ): Promise<ImportCommitResult> {
     const startedAt = new Date();
     const batch = await this.db.getImportBatch(organizationId, batchId);
@@ -537,6 +724,9 @@ class ImportService {
       offset: 0,
     });
 
+    // Create a set for faster lookup of excluded rows
+    const excludedSet = new Set(options.excludedRowIds || []);
+
     const result: ImportCommitResult = {
       batchId,
       success: true,
@@ -553,7 +743,34 @@ class ImportService {
       durationMs: 0,
     };
 
+    // Diagnostic logging for commit
+    const statusCounts: Record<string, number> = {};
+    let nullMappedDataCount = 0;
     for (const row of stagingRows) {
+      statusCounts[row.validation_status] = (statusCounts[row.validation_status] || 0) + 1;
+      if (!row.mapped_data) nullMappedDataCount++;
+    }
+    apiLogger.info(
+      { batchId, totalRows: stagingRows.length, statusCounts, nullMappedDataCount, excludedCount: excludedSet.size },
+      'Commit diagnostics: row status breakdown'
+    );
+    if (stagingRows.length > 0) {
+      apiLogger.info(
+        { sampleRow: { validation_status: stagingRows[0].validation_status, mapped_data: stagingRows[0].mapped_data ? Object.keys(stagingRows[0].mapped_data) : null, raw_data_keys: Object.keys(stagingRows[0].raw_data) } },
+        'Commit diagnostics: first row sample'
+      );
+    }
+
+    for (const row of stagingRows) {
+      // Skip rows that are explicitly excluded by the user
+      if (excludedSet.has(row.id)) {
+        result.skipped++;
+        if (!options.dryRun) {
+          await this.db.updateImportStagingRow(row.id, { action_taken: 'skipped' });
+        }
+        continue;
+      }
+
       // Skip invalid rows
       if (row.validation_status === 'invalid') {
         result.skipped++;
@@ -568,30 +785,45 @@ class ImportService {
         continue;
       }
 
+      // Apply any user edits to this row
+      let mappedData = { ...row.mapped_data };
+      if (options.rowEdits && options.rowEdits[row.id]) {
+        mappedData = { ...mappedData, ...options.rowEdits[row.id] };
+      }
+
       result.totalProcessed++;
 
       try {
         if (!options.dryRun) {
-          // Check for duplicate by name and address (with normalization)
-          const navn = String(row.mapped_data.navn || '').trim();
-          const adresse = String(row.mapped_data.adresse || '').trim();
+          // Check for duplicate by name and address
+          const navn = String(mappedData.navn || '').trim();
+          const adresse = String(mappedData.adresse || '').trim();
 
-          // Use normalized values for duplicate detection
-          const normalizedNavn = normalizeCompanyName(navn);
-          const normalizedAdresse = normalizeAddress(adresse);
-
+          // Use raw values for ilike lookup (case-insensitive match in DB)
           const existing = await this.db.findKundeByNameAndAddress(
             organizationId,
-            normalizedNavn,
-            normalizedAdresse
+            navn,
+            adresse
           );
 
-          const kundeData = {
-            ...row.mapped_data,
+          // Only include columns that exist in the kunder table
+          const KUNDER_COLUMNS = new Set([
+            'navn', 'adresse', 'postnummer', 'poststed', 'telefon', 'epost',
+            'lat', 'lng', 'kategori', 'el_type', 'brann_system',
+            'brann_driftstype', 'driftskategori',
+            'siste_el_kontroll', 'neste_el_kontroll', 'el_kontroll_intervall',
+            'siste_brann_kontroll', 'neste_brann_kontroll', 'brann_kontroll_intervall',
+            'siste_kontroll', 'neste_kontroll', 'kontroll_intervall_mnd',
+            'notater',
+          ]);
+          const kundeData: Record<string, unknown> = {
             organization_id: organizationId,
-            import_hash: batch.file_hash,
-            last_import_at: new Date().toISOString(),
           };
+          for (const [key, value] of Object.entries(mappedData)) {
+            if (KUNDER_COLUMNS.has(key) && value !== undefined && value !== null && value !== '') {
+              kundeData[key] = value;
+            }
+          }
 
           if (existing) {
             await this.db.updateKunde(existing.id, kundeData, organizationId);
@@ -797,6 +1029,157 @@ class ImportService {
     await this.db.updateImportBatch(batchId, { status: 'cancelled' });
 
     apiLogger.info({ batchId }, 'Batch cancelled');
+  }
+
+  // ============ FEEDBACK LOOP ============
+
+  /**
+   * Auto-save or update a mapping template when user confirms mappings.
+   * This enables the learning feedback loop - next import with same columns
+   * will automatically use these confirmed mappings.
+   */
+  private async saveOrUpdateMappingTemplate(
+    organizationId: number,
+    fingerprint: string,
+    headers: string[],
+    mappingConfig: ImportMappingConfig,
+    userId: number,
+    explicitSave?: boolean,
+    templateName?: string
+  ): Promise<void> {
+    try {
+      const existing = await this.db.getImportMappingTemplateByFingerprint(organizationId, fingerprint);
+
+      if (existing) {
+        // Update existing template with latest confirmed mappings
+        await this.db.updateImportMappingTemplate(existing.id, {
+          mapping_config: mappingConfig,
+          human_confirmed: true,
+          confirmed_by: userId,
+          confirmed_at: new Date().toISOString(),
+          name: templateName || existing.name,
+        });
+      } else {
+        // Create new auto-saved template
+        await this.db.createImportMappingTemplate({
+          organization_id: organizationId,
+          name: templateName || `Auto-lagret ${new Date().toLocaleDateString('nb-NO')}`,
+          source_column_fingerprint: fingerprint,
+          source_columns: headers,
+          mapping_config: mappingConfig,
+          ai_suggested: false,
+          human_confirmed: true,
+          confirmed_by: userId,
+          confirmed_at: new Date().toISOString(),
+          is_default: explicitSave || false,
+          use_count: 1,
+        });
+      }
+    } catch (err) {
+      apiLogger.warn({ err }, 'Failed to save mapping template, continuing without it');
+    }
+  }
+
+  // ============ MAPPING SUGGESTIONS ============
+
+  /**
+   * Generate mapping suggestions using a 3-tier approach:
+   * 1. Saved template (from previous confirmed imports)
+   * 2. Regex-based pattern matching
+   * 3. AI fallback for remaining unmapped columns
+   */
+  private async generateMappingSuggestions(
+    organizationId: number,
+    headers: string[],
+    columnFingerprint: string,
+    cleanedRows: Record<string, unknown>[],
+    firstRow: Record<string, unknown> | undefined
+  ): Promise<{
+    suggestedMapping: Record<string, string>;
+    recognizedColumns: UploadImportResponse['recognizedColumns'];
+    unmappedHeaders: string[];
+  }> {
+    const suggestedMapping: Record<string, string> = {};
+    const recognizedColumns: UploadImportResponse['recognizedColumns'] = [];
+    const unmappedHeaders: string[] = [];
+
+    // Tier 1: Apply saved template mappings (highest priority)
+    const savedTemplate = await this.db.getImportMappingTemplateByFingerprint(
+      organizationId, columnFingerprint
+    );
+    const templateColumns = new Set<string>();
+    if (savedTemplate?.mapping_config?.mappings) {
+      for (const m of savedTemplate.mapping_config.mappings) {
+        if (headers.includes(m.sourceColumn)) {
+          suggestedMapping[m.sourceColumn] = m.targetField;
+          templateColumns.add(m.sourceColumn);
+        }
+      }
+      await this.db.updateImportMappingTemplate(savedTemplate.id, {
+        use_count: savedTemplate.use_count + 1,
+        last_used_at: new Date().toISOString(),
+      });
+    }
+
+    // Tier 2: Regex-based suggestions for non-template columns
+    const regexSuggestions = suggestColumnMappings(headers);
+    for (const suggestion of regexSuggestions) {
+      if (!suggestedMapping[suggestion.sourceColumn]) {
+        suggestedMapping[suggestion.sourceColumn] = suggestion.targetField;
+      }
+    }
+
+    // Build recognized/unmapped lists
+    for (const header of headers) {
+      if (suggestedMapping[header]) {
+        const regexMatch = regexSuggestions.find(s => s.sourceColumn === header);
+        const isFromTemplate = templateColumns.has(header);
+        const sampleVal = firstRow?.[header];
+        recognizedColumns.push({
+          excelHeader: header,
+          mappedTo: suggestedMapping[header],
+          source: isFromTemplate ? 'saved_template' : 'deterministic',
+          confidence: isFromTemplate ? 0.95 : (regexMatch?.confidence ?? 0.8),
+          sampleValue: typeof sampleVal === 'string' ? sampleVal : String(sampleVal ?? ''),
+        });
+      } else {
+        unmappedHeaders.push(header);
+      }
+    }
+
+    // Tier 3: AI fallback for unmapped columns
+    if (unmappedHeaders.length > 0) {
+      await this.enrichWithAISuggestions(
+        unmappedHeaders, cleanedRows, firstRow, suggestedMapping, recognizedColumns
+      );
+    }
+
+    return { suggestedMapping, recognizedColumns, unmappedHeaders };
+  }
+
+  private async enrichWithAISuggestions(
+    unmappedHeaders: string[],
+    cleanedRows: Record<string, unknown>[],
+    firstRow: Record<string, unknown> | undefined,
+    suggestedMapping: Record<string, string>,
+    recognizedColumns: UploadImportResponse['recognizedColumns']
+  ): Promise<void> {
+    const aiSuggestions = await getAIMappingSuggestions(
+      unmappedHeaders, cleanedRows.slice(0, 3), suggestedMapping
+    );
+    for (const ai of aiSuggestions) {
+      suggestedMapping[ai.sourceColumn] = ai.targetField;
+      const sampleVal = firstRow?.[ai.sourceColumn];
+      recognizedColumns.push({
+        excelHeader: ai.sourceColumn,
+        mappedTo: ai.targetField,
+        source: 'ai',
+        confidence: ai.confidence,
+        sampleValue: typeof sampleVal === 'string' ? sampleVal : String(sampleVal ?? ''),
+      });
+      const idx = unmappedHeaders.indexOf(ai.sourceColumn);
+      if (idx !== -1) unmappedHeaders.splice(idx, 1);
+    }
   }
 
   // ============ HELPERS ============

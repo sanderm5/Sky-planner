@@ -137,12 +137,12 @@ export function validateKunde(kunde: CreateKundeRequest): ValidationError[] | nu
     });
   }
 
-  // Category validation
-  const validCategories = ['El-Kontroll', 'Brannvarsling', 'El-Kontroll + Brannvarsling'];
-  if (kunde.kategori && !validCategories.includes(kunde.kategori)) {
+  // Category validation - allow any non-empty string (categories are industry-specific)
+  // MVP mode may have null/empty kategori, which is allowed
+  if (kunde.kategori !== undefined && kunde.kategori !== null && typeof kunde.kategori !== 'string') {
     errors.push({
       field: 'kategori',
-      message: 'Ugyldig kategori',
+      message: 'Kategori må være tekst',
     });
   }
 

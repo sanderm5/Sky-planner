@@ -35,6 +35,7 @@ apps/web/
 │   │   │   ├── registrer.astro
 │   │   │   ├── glemt-passord.astro
 │   │   │   ├── tilbakestill-passord.astro
+│   │   │   ├── verify-email.astro   # E-postverifisering
 │   │   │   └── success.astro
 │   │   ├── dashboard/       # Bruker-dashboard
 │   │   │   ├── index.astro
@@ -53,7 +54,8 @@ apps/web/
 │   │       │   ├── register.ts
 │   │       │   ├── logout.ts
 │   │       │   ├── glemt-passord.ts
-│   │       │   └── tilbakestill-passord.ts
+│   │       │   ├── tilbakestill-passord.ts
+│   │       │   └── verify-email.ts  # E-postverifisering
 │   │       ├── app/
 │   │       │   └── [...path].ts  # Proxy til app API
 │   │       ├── industries/
@@ -63,14 +65,21 @@ apps/web/
 │   │       │   ├── invoices/
 │   │       │   ├── organization/
 │   │       │   ├── subscription/
-│   │       │   └── users/
+│   │       │   ├── users/
+│   │       │   ├── 2fa/             # 2FA-oppsett og administrasjon
+│   │       │   │   ├── setup.ts
+│   │       │   │   ├── verify.ts
+│   │       │   │   ├── disable.ts
+│   │       │   │   └── status.ts
+│   │       │   └── delete-account.ts # GDPR-kontosletting
 │   │       └── webhooks/
 │   │           └── stripe.ts
 │   ├── components/
 │   │   ├── layout/          # Header, Footer
 │   │   ├── sections/        # Hero, Features, etc.
 │   │   ├── dashboard/       # Dashboard-komponenter
-│   │   └── ui/              # Gjenbrukbare UI-komponenter
+│   │   ├── ui/              # Gjenbrukbare UI-komponenter
+│   │   └── PasswordStrengthIndicator.astro  # Passordstyrke-indikator
 │   ├── layouts/
 │   │   ├── BaseLayout.astro
 │   │   ├── AuthLayout.astro
@@ -113,9 +122,10 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 | Sti | Beskrivelse |
 |-----|-------------|
 | `/auth/login` | Innlogging |
-| `/auth/registrer` | Opprett ny konto |
+| `/auth/registrer` | Opprett ny konto (med passordstyrke-indikator) |
 | `/auth/glemt-passord` | Be om passordtilbakestilling |
 | `/auth/tilbakestill-passord` | Sett nytt passord (med token) |
+| `/auth/verify-email` | E-postverifisering (med token) |
 | `/auth/success` | Bekreftelse etter registrering |
 
 ### Dashboard
@@ -138,11 +148,12 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 ### Autentisering
 | Endpoint | Beskrivelse |
 |----------|-------------|
-| `POST /api/auth/register` | Registrer ny bruker |
+| `POST /api/auth/register` | Registrer ny bruker (med passordvalidering) |
 | `POST /api/auth/login` | Logg inn bruker |
 | `POST /api/auth/logout` | Logg ut bruker |
 | `POST /api/auth/glemt-passord` | Be om passordtilbakestilling |
 | `POST /api/auth/tilbakestill-passord` | Sett nytt passord |
+| `GET /api/auth/verify-email` | Verifiser e-postadresse (med token) |
 
 ### Dashboard
 | Endpoint | Beskrivelse |
@@ -154,6 +165,21 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 | `POST /api/dashboard/subscription/portal` | Stripe kundeportal |
 | `GET /api/dashboard/users` | Hent brukere |
 | `POST /api/dashboard/users` | Inviter bruker |
+
+### Tofaktorautentisering (2FA)
+| Endpoint | Beskrivelse |
+|----------|-------------|
+| `POST /api/dashboard/2fa/setup` | Initialiser 2FA (returnerer hemmelighet, URI, backup-koder) |
+| `POST /api/dashboard/2fa/verify` | Verifiser kode for å aktivere 2FA |
+| `POST /api/dashboard/2fa/disable` | Deaktiver 2FA (krever passord) |
+| `GET /api/dashboard/2fa/status` | Hent 2FA-status |
+
+### GDPR-kontosletting
+| Endpoint | Beskrivelse |
+|----------|-------------|
+| `POST /api/dashboard/delete-account` | Be om kontosletting (30 dagers utsettelse) |
+| `DELETE /api/dashboard/delete-account` | Avbryt ventende sletting |
+| `GET /api/dashboard/delete-account` | Hent slettestatus |
 
 ### Andre
 | Endpoint | Beskrivelse |
@@ -167,8 +193,9 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 
 ## Avhengigheter
 
-- `@skyplanner/auth` - Delt auth-pakke (JWT, cookies)
+- `@skyplanner/auth` - Delt auth-pakke (JWT, cookies, TOTP, passordvalidering)
 - `@skyplanner/database` - Delt database-pakke (Supabase)
+- `@skyplanner/email` - E-postmaler og sending (Resend API)
 - `stripe` - Betalingshåndtering
 - `bcryptjs` - Passord-hashing
 
@@ -197,6 +224,7 @@ Bruker Tailwind CSS med custom konfigurasjon:
 | `DashboardHeader` | Dashboard-header med brukerinfo |
 | `Sidebar` | Dashboard-navigasjon |
 | `StatCard` | Statistikk-kort |
+| `PasswordStrengthIndicator` | Sanntids passordstyrke-feedback (svak/ok/god/sterk) |
 
 ---
 

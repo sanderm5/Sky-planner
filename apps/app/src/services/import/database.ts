@@ -7,6 +7,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { getConfig } from '../../config/env';
 import { dbLogger } from '../logger';
 import type { ImportDbService } from './index';
+import type { ExistingKunde } from './duplicate-detection';
 import type {
   ImportBatch,
   ImportStagingRow,
@@ -24,12 +25,22 @@ let supabaseClient: SupabaseClient | null = null;
 function getSupabase(): SupabaseClient {
   if (!supabaseClient) {
     const config = getConfig();
-    if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY) {
+    const supabaseUrl = config.SUPABASE_URL;
+    // Use service role key (bypasses RLS) like the main database service
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+      || process.env.SUPABASE_SERVICE_KEY
+      || config.SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) {
       throw new Error('Supabase configuration missing');
     }
-    supabaseClient = createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
+    supabaseClient = createClient(supabaseUrl, supabaseKey);
   }
   return supabaseClient;
+}
+
+/** Check if a Supabase error is a "table not found" error (PGRST205) */
+function isTableNotFoundError(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === 'PGRST205' || (error?.message?.includes('Could not find the table') ?? false);
 }
 
 /**
@@ -65,6 +76,10 @@ export function createImportDbService(): ImportDbService {
         .single();
 
       if (error) {
+        if (isTableNotFoundError(error)) {
+          dbLogger.error({ error }, 'Import tables not found. Run migration 006_import_system.sql in Supabase SQL Editor.');
+          throw new Error('Import-tabellene finnes ikke i databasen. Kjør migrering 006_import_system.sql i Supabase SQL Editor.');
+        }
         dbLogger.error({ error }, 'Failed to create import batch');
         throw new Error(`Kunne ikke opprette import-batch: ${error.message}`);
       }
@@ -152,6 +167,10 @@ export function createImportDbService(): ImportDbService {
           })));
 
         if (error) {
+          if (isTableNotFoundError(error)) {
+            dbLogger.error({ error }, 'Import tables not found. Run migration 006_import_system.sql in Supabase SQL Editor.');
+            throw new Error('Import-tabellene finnes ikke i databasen. Kjør migrering 006_import_system.sql i Supabase SQL Editor.');
+          }
           dbLogger.error({ error }, 'Failed to insert staging rows');
           throw new Error(`Kunne ikke lagre staging-rader: ${error.message}`);
         }
@@ -290,6 +309,10 @@ export function createImportDbService(): ImportDbService {
         .order('use_count', { ascending: false });
 
       if (error) {
+        if (isTableNotFoundError(error)) {
+          dbLogger.warn({ error }, 'import_mapping_templates table not found, returning empty list');
+          return [];
+        }
         dbLogger.error({ error }, 'Failed to get mapping templates');
         throw new Error(`Kunne ikke hente maler: ${error.message}`);
       }
@@ -313,6 +336,10 @@ export function createImportDbService(): ImportDbService {
         .single();
 
       if (error && error.code !== 'PGRST116') {
+        if (isTableNotFoundError(error)) {
+          dbLogger.warn({ error }, 'import_mapping_templates table not found, skipping template lookup');
+          return null;
+        }
         dbLogger.error({ error }, 'Failed to get template by fingerprint');
         throw new Error(`Kunne ikke hente mal: ${error.message}`);
       }
@@ -332,6 +359,10 @@ export function createImportDbService(): ImportDbService {
         .single();
 
       if (error) {
+        if (isTableNotFoundError(error)) {
+          dbLogger.warn({ error }, 'import_mapping_templates table not found, skipping template save');
+          return {} as ImportMappingTemplate;
+        }
         dbLogger.error({ error }, 'Failed to create mapping template');
         throw new Error(`Kunne ikke opprette mal: ${error.message}`);
       }
@@ -351,6 +382,10 @@ export function createImportDbService(): ImportDbService {
         .eq('id', templateId);
 
       if (error) {
+        if (isTableNotFoundError(error)) {
+          dbLogger.warn({ error }, 'import_mapping_templates table not found, skipping template update');
+          return;
+        }
         dbLogger.error({ error, templateId }, 'Failed to update mapping template');
         throw new Error(`Kunne ikke oppdatere mal: ${error.message}`);
       }
@@ -383,6 +418,10 @@ export function createImportDbService(): ImportDbService {
         .order('last_seen_at', { ascending: false });
 
       if (error) {
+        if (isTableNotFoundError(error)) {
+          dbLogger.warn({ error }, 'import_column_history table not found, returning empty list');
+          return [];
+        }
         dbLogger.error({ error }, 'Failed to get column history');
         throw new Error(`Kunne ikke hente kolonnehistorikk: ${error.message}`);
       }
@@ -402,6 +441,10 @@ export function createImportDbService(): ImportDbService {
         .insert(data);
 
       if (error) {
+        if (isTableNotFoundError(error)) {
+          dbLogger.warn({ error }, 'import_column_history table not found, skipping');
+          return;
+        }
         dbLogger.error({ error }, 'Failed to create column history');
         throw new Error(`Kunne ikke lagre kolonnehistorikk: ${error.message}`);
       }
@@ -416,6 +459,10 @@ export function createImportDbService(): ImportDbService {
         .eq('id', historyId);
 
       if (error) {
+        if (isTableNotFoundError(error)) {
+          dbLogger.warn({ error }, 'import_column_history table not found, skipping update');
+          return;
+        }
         dbLogger.error({ error, historyId }, 'Failed to update column history');
         throw new Error(`Kunne ikke oppdatere kolonnehistorikk: ${error.message}`);
       }
@@ -507,6 +554,25 @@ export function createImportDbService(): ImportDbService {
         dbLogger.error({ error, id }, 'Failed to delete kunde');
         throw new Error(`Kunne ikke slette kunde: ${error.message}`);
       }
+    },
+
+    // ============ DUPLICATE DETECTION ============
+
+    async getKunderForDuplicateCheck(organizationId: number): Promise<ExistingKunde[]> {
+      const supabase = getSupabase();
+
+      const { data, error } = await supabase
+        .from('kunder')
+        .select('id, navn, adresse, postnummer, epost, telefon')
+        .eq('organization_id', organizationId)
+        .limit(5000);
+
+      if (error) {
+        dbLogger.error({ error }, 'Failed to fetch kunder for duplicate check');
+        throw new Error(`Kunne ikke hente kunder for duplikatsjekk: ${error.message}`);
+      }
+
+      return (data || []) as ExistingKunde[];
     },
   };
 }

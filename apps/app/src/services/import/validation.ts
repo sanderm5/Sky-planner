@@ -16,6 +16,7 @@ import type {
   ImportMappingConfig,
   ColumnMapping,
 } from '../../types/import';
+import { lookupPostnummer } from './postnummer-registry';
 
 // Regex patterns
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,6 +39,7 @@ export interface RowValidationResult {
   hasWarnings: boolean;
   errors: ValidationIssue[];
   warnings: ValidationIssue[];
+  completenessScore: number;  // 0-1: fraction of important fields that have values
 }
 
 /**
@@ -93,6 +95,7 @@ export function validateMappedRow(
     hasWarnings: warnings.length > 0,
     errors,
     warnings,
+    completenessScore: calculateCompleteness(mappedData),
   };
 }
 
@@ -102,151 +105,200 @@ export function validateMappedRow(
 function applyDefaultValidation(mappedData: Record<string, unknown>): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // Navn (name) is required and must be at least 2 characters
-  if (!mappedData.navn || String(mappedData.navn).trim().length < 2) {
-    issues.push({
-      severity: 'error',
-      errorCode: 'REQUIRED_FIELD_MISSING',
-      fieldName: 'navn',
-      message: 'Navn er påkrevd og må være minst 2 tegn',
-      actualValue: mappedData.navn ? String(mappedData.navn) : undefined,
-    });
-  }
-
-  // Adresse (address) is required and must be at least 3 characters
-  if (!mappedData.adresse || String(mappedData.adresse).trim().length < 3) {
-    issues.push({
-      severity: 'error',
-      errorCode: 'REQUIRED_FIELD_MISSING',
-      fieldName: 'adresse',
-      message: 'Adresse er påkrevd og må være minst 3 tegn',
-      actualValue: mappedData.adresse ? String(mappedData.adresse) : undefined,
-    });
-  }
-
-  // Email format validation
-  if (mappedData.epost) {
-    const email = String(mappedData.epost).trim();
-    if (email && !EMAIL_REGEX.test(email)) {
-      issues.push({
-        severity: 'error',
-        errorCode: 'INVALID_EMAIL',
-        fieldName: 'epost',
-        message: 'Ugyldig e-postformat',
-        expectedFormat: 'bruker@domene.no',
-        actualValue: email,
-      });
-    }
-  }
-
-  // Postnummer (4 digits)
-  if (mappedData.postnummer) {
-    const postnummer = String(mappedData.postnummer).trim();
-    if (postnummer && !POSTNUMMER_REGEX.test(postnummer)) {
-      issues.push({
-        severity: 'error',
-        errorCode: 'INVALID_POSTNUMMER',
-        fieldName: 'postnummer',
-        message: 'Postnummer må være 4 siffer',
-        expectedFormat: '0000',
-        actualValue: postnummer,
-      });
-    }
-  }
-
-  // ============ KONTROLLDATOER (påkrevd) ============
-
-  // Siste kontroll (dato for utført) er påkrevd
-  const sisteKontroll = mappedData.siste_kontroll;
-  if (!sisteKontroll || String(sisteKontroll).trim() === '') {
-    issues.push({
-      severity: 'error',
-      errorCode: 'REQUIRED_FIELD_MISSING',
-      fieldName: 'siste_kontroll',
-      message: 'Dato for utført kontroll er påkrevd',
-    });
-  } else {
-    const sisteStr = String(sisteKontroll).trim();
-    if (!DATE_REGEX.test(sisteStr)) {
-      issues.push({
-        severity: 'error',
-        errorCode: 'INVALID_DATE',
-        fieldName: 'siste_kontroll',
-        message: 'Ugyldig datoformat for utført kontroll (forventet YYYY-MM-DD)',
-        expectedFormat: 'YYYY-MM-DD',
-        actualValue: sisteStr,
-      });
-    }
-  }
-
-  // Neste kontroll (dato for neste utførelse) er påkrevd
-  const nesteKontroll = mappedData.neste_kontroll;
-  if (!nesteKontroll || String(nesteKontroll).trim() === '') {
-    issues.push({
-      severity: 'error',
-      errorCode: 'REQUIRED_FIELD_MISSING',
-      fieldName: 'neste_kontroll',
-      message: 'Dato for neste kontroll er påkrevd',
-    });
-  } else {
-    const nesteStr = String(nesteKontroll).trim();
-    if (!DATE_REGEX.test(nesteStr)) {
-      issues.push({
-        severity: 'error',
-        errorCode: 'INVALID_DATE',
-        fieldName: 'neste_kontroll',
-        message: 'Ugyldig datoformat for neste kontroll (forventet YYYY-MM-DD)',
-        expectedFormat: 'YYYY-MM-DD',
-        actualValue: nesteStr,
-      });
-    }
-  }
-
-  // Valider at neste kontroll er etter siste kontroll (STRENG: error, ikke warning)
-  if (sisteKontroll && nesteKontroll) {
-    const sisteStr = String(sisteKontroll).trim();
-    const nesteStr = String(nesteKontroll).trim();
-    if (DATE_REGEX.test(sisteStr) && DATE_REGEX.test(nesteStr)) {
-      const sisteDate = new Date(sisteStr);
-      const nesteDate = new Date(nesteStr);
-
-      if (nesteDate <= sisteDate) {
-        issues.push({
-          severity: 'error',
-          errorCode: 'INVALID_DATE',
-          fieldName: 'neste_kontroll',
-          message: 'Neste kontroll må være etter siste utførte kontroll',
-          actualValue: nesteStr,
-        });
-      }
-
-      // Advarsel for datoer før år 2000 (sannsynlig feil)
-      if (sisteDate.getFullYear() < 2000) {
-        issues.push({
-          severity: 'warning',
-          errorCode: 'INVALID_DATE',
-          fieldName: 'siste_kontroll',
-          message: 'Dato før år 2000 - vennligst verifiser at dette er korrekt',
-          actualValue: sisteStr,
-        });
-      }
-
-      // Advarsel for datoer mer enn 10 år frem i tid
-      const tenYearsFromNow = new Date();
-      tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
-      if (nesteDate > tenYearsFromNow) {
-        issues.push({
-          severity: 'warning',
-          errorCode: 'INVALID_DATE',
-          fieldName: 'neste_kontroll',
-          message: 'Dato mer enn 10 år frem i tid - vennligst verifiser at dette er korrekt',
-          actualValue: nesteStr,
-        });
-      }
-    }
-  }
+  validateRequiredTextField(mappedData, 'navn', 'Navn', 2, issues);
+  validateRequiredTextField(mappedData, 'adresse', 'Adresse', 3, issues);
+  validateEmailField(mappedData, issues);
+  validatePostnummerField(mappedData, issues);
+  validateDateFields(mappedData, issues);
 
   return issues;
+}
+
+function getStringValue(data: Record<string, unknown>, field: string): string {
+  const val = data[field];
+  return typeof val === 'string' ? val.trim() : typeof val === 'number' ? String(val) : '';
+}
+
+function validateRequiredTextField(
+  data: Record<string, unknown>,
+  field: string,
+  label: string,
+  minLength: number,
+  issues: ValidationIssue[]
+): void {
+  const value = getStringValue(data, field);
+  if (value.length < minLength) {
+    issues.push({
+      severity: 'error',
+      errorCode: 'REQUIRED_FIELD_MISSING',
+      fieldName: field,
+      message: `${label} er påkrevd og må være minst ${minLength} tegn`,
+      actualValue: value || undefined,
+    });
+  }
+}
+
+function validateEmailField(data: Record<string, unknown>, issues: ValidationIssue[]): void {
+  const email = getStringValue(data, 'epost');
+  if (!email) return;
+
+  if (!EMAIL_REGEX.test(email)) {
+    issues.push({
+      severity: 'error',
+      errorCode: 'INVALID_EMAIL',
+      fieldName: 'epost',
+      message: 'Ugyldig e-postformat',
+      expectedFormat: 'bruker@domene.no',
+      actualValue: email,
+    });
+    return;
+  }
+
+  const domainFix = suggestEmailDomainFix(email);
+  if (domainFix) {
+    issues.push({
+      severity: 'warning',
+      errorCode: 'INVALID_EMAIL',
+      fieldName: 'epost',
+      message: `Mulig skrivefeil i e-postdomene`,
+      actualValue: email,
+      suggestion: domainFix,
+    });
+  }
+}
+
+function validatePostnummerField(data: Record<string, unknown>, issues: ValidationIssue[]): void {
+  const postnummer = getStringValue(data, 'postnummer');
+  if (!postnummer) return;
+
+  if (!POSTNUMMER_REGEX.test(postnummer)) {
+    issues.push({
+      severity: 'error',
+      errorCode: 'INVALID_POSTNUMMER',
+      fieldName: 'postnummer',
+      message: 'Postnummer må være 4 siffer',
+      expectedFormat: '0000',
+      actualValue: postnummer,
+    });
+    return;
+  }
+
+  const registryEntry = lookupPostnummer(postnummer);
+  if (!registryEntry) {
+    issues.push({
+      severity: 'warning',
+      errorCode: 'INVALID_POSTNUMMER',
+      fieldName: 'postnummer',
+      message: `Postnummer ${postnummer} finnes ikke i det norske postnummerregisteret`,
+      actualValue: postnummer,
+    });
+    return;
+  }
+
+  const poststed = getStringValue(data, 'poststed').toUpperCase();
+  if (poststed && registryEntry.poststed !== poststed) {
+    issues.push({
+      severity: 'warning',
+      errorCode: 'INVALID_POSTNUMMER',
+      fieldName: 'poststed',
+      message: `Poststed "${getStringValue(data, 'poststed')}" stemmer ikke med postnummer ${postnummer} (forventet: ${registryEntry.poststed})`,
+      actualValue: getStringValue(data, 'poststed'),
+      suggestion: registryEntry.poststed,
+    });
+  }
+}
+
+function validateDateFields(data: Record<string, unknown>, issues: ValidationIssue[]): void {
+  // Generic kontroll dates
+  const sisteStr = getStringValue(data, 'siste_kontroll');
+  const nesteStr = getStringValue(data, 'neste_kontroll');
+
+  // Specific kontroll dates (el, brann)
+  const sisteElStr = getStringValue(data, 'siste_el_kontroll');
+  const nesteElStr = getStringValue(data, 'neste_el_kontroll');
+  const sisteFireStr = getStringValue(data, 'siste_brann_kontroll');
+  const nesteFireStr = getStringValue(data, 'neste_brann_kontroll');
+
+  // Only warn (not error) if no date fields at all
+  const hasAnyDate = sisteStr || nesteStr || sisteElStr || nesteElStr || sisteFireStr || nesteFireStr;
+  if (!hasAnyDate) {
+    issues.push({
+      severity: 'warning',
+      errorCode: 'REQUIRED_FIELD_MISSING',
+      fieldName: 'siste_kontroll',
+      message: 'Ingen kontrolldatoer oppgitt - anbefales å legge til',
+    });
+  }
+
+  // Validate format of all date fields that are present
+  if (sisteStr) validateDateFormat(sisteStr, 'siste_kontroll', 'Siste kontroll', issues);
+  if (nesteStr) validateDateFormat(nesteStr, 'neste_kontroll', 'Neste kontroll', issues);
+  if (sisteElStr) validateDateFormat(sisteElStr, 'siste_el_kontroll', 'Siste el-kontroll', issues);
+  if (nesteElStr) validateDateFormat(nesteElStr, 'neste_el_kontroll', 'Neste el-kontroll', issues);
+  if (sisteFireStr) validateDateFormat(sisteFireStr, 'siste_brann_kontroll', 'Siste brannkontroll', issues);
+  if (nesteFireStr) validateDateFormat(nesteFireStr, 'neste_brann_kontroll', 'Neste brannkontroll', issues);
+
+  // Validate date ranges for each pair
+  if (sisteStr && nesteStr) validateDateRange(sisteStr, nesteStr, issues);
+  if (sisteElStr && nesteElStr) validateDateRange(sisteElStr, nesteElStr, issues);
+  if (sisteFireStr && nesteFireStr) validateDateRange(sisteFireStr, nesteFireStr, issues);
+}
+
+function validateDateFormat(
+  value: string,
+  field: string,
+  label: string,
+  issues: ValidationIssue[]
+): void {
+  if (!DATE_REGEX.test(value)) {
+    issues.push({
+      severity: 'error',
+      errorCode: 'INVALID_DATE',
+      fieldName: field,
+      message: `Ugyldig datoformat for ${label.toLowerCase()} (forventet YYYY-MM-DD)`,
+      expectedFormat: 'YYYY-MM-DD',
+      actualValue: value,
+    });
+  }
+}
+
+function validateDateRange(sisteStr: string, nesteStr: string, issues: ValidationIssue[]): void {
+  if (!sisteStr || !nesteStr || !DATE_REGEX.test(sisteStr) || !DATE_REGEX.test(nesteStr)) return;
+
+  const sisteDate = new Date(sisteStr);
+  const nesteDate = new Date(nesteStr);
+
+  if (nesteDate <= sisteDate) {
+    issues.push({
+      severity: 'error',
+      errorCode: 'INVALID_DATE',
+      fieldName: 'neste_kontroll',
+      message: 'Neste kontroll må være etter siste utførte kontroll',
+      actualValue: nesteStr,
+    });
+  }
+
+  if (sisteDate.getFullYear() < 2000) {
+    issues.push({
+      severity: 'warning',
+      errorCode: 'INVALID_DATE',
+      fieldName: 'siste_kontroll',
+      message: 'Dato før år 2000 - vennligst verifiser at dette er korrekt',
+      actualValue: sisteStr,
+    });
+  }
+
+  const tenYearsFromNow = new Date();
+  tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
+  if (nesteDate > tenYearsFromNow) {
+    issues.push({
+      severity: 'warning',
+      errorCode: 'INVALID_DATE',
+      fieldName: 'neste_kontroll',
+      message: 'Dato mer enn 10 år frem i tid - vennligst verifiser at dette er korrekt',
+      actualValue: nesteStr,
+    });
+  }
 }
 
 /**
@@ -590,4 +642,114 @@ function getDefaultValidationRules(fieldName: string): ValidationRule[] {
   }
 
   return rules;
+}
+
+// ============ Completeness Scoring ============
+
+/** Fields tracked for completeness, with weights */
+const COMPLETENESS_FIELDS: Array<{ field: string; weight: number }> = [
+  { field: 'navn', weight: 1 },
+  { field: 'adresse', weight: 1 },
+  { field: 'postnummer', weight: 0.8 },
+  { field: 'poststed', weight: 0.6 },
+  { field: 'telefon', weight: 0.7 },
+  { field: 'epost', weight: 0.7 },
+  { field: 'kontaktperson', weight: 0.5 },
+  { field: 'siste_kontroll', weight: 0.9 },
+  { field: 'neste_kontroll', weight: 0.9 },
+];
+
+function calculateCompleteness(data: Record<string, unknown>): number {
+  let filled = 0;
+  let total = 0;
+
+  for (const { field, weight } of COMPLETENESS_FIELDS) {
+    total += weight;
+    const val = data[field];
+    const hasValue = val !== null && val !== undefined
+      && (typeof val === 'string' ? val.trim() !== '' : true);
+    if (hasValue) {
+      filled += weight;
+    }
+  }
+
+  return total > 0 ? filled / total : 0;
+}
+
+// ============ Email Domain Typo Detection ============
+
+const COMMON_EMAIL_DOMAINS = [
+  'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'live.com',
+  'icloud.com', 'me.com', 'msn.com', 'aol.com', 'protonmail.com',
+  'online.no', 'broadpark.no', 'getmail.no', 'frisurf.no',
+];
+
+export function suggestEmailDomainFix(email: string): string | undefined {
+  const atIndex = email.indexOf('@');
+  if (atIndex < 0) return undefined;
+  const domain = email.slice(atIndex + 1).toLowerCase();
+
+  // Common typos
+  const typoMap: Record<string, string> = {
+    'gmai.com': 'gmail.com',
+    'gmial.com': 'gmail.com',
+    'gamil.com': 'gmail.com',
+    'gnail.com': 'gmail.com',
+    'gmail.no': 'gmail.com',
+    'hotmal.com': 'hotmail.com',
+    'hotmial.com': 'hotmail.com',
+    'hotmai.com': 'hotmail.com',
+    'outlok.com': 'outlook.com',
+    'outllok.com': 'outlook.com',
+    'outlool.com': 'outlook.com',
+    'yahooo.com': 'yahoo.com',
+    'yaho.com': 'yahoo.com',
+  };
+
+  if (typoMap[domain]) {
+    return email.slice(0, atIndex + 1) + typoMap[domain];
+  }
+
+  // Fuzzy check against common domains (edit distance 1)
+  for (const known of COMMON_EMAIL_DOMAINS) {
+    if (domain === known) return undefined; // Already correct
+    if (editDistance1(domain, known)) {
+      return email.slice(0, atIndex + 1) + known;
+    }
+  }
+
+  return undefined;
+}
+
+/** Check if two strings differ by exactly 1 edit (substitution, insertion, or deletion) */
+function editDistance1(a: string, b: string): boolean {
+  const lenDiff = Math.abs(a.length - b.length);
+  if (lenDiff > 1) return false;
+  return lenDiff === 0 ? hasOneSubstitution(a, b) : hasOneInsertion(a, b);
+}
+
+function hasOneSubstitution(a: string, b: string): boolean {
+  let diffs = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) diffs++;
+    if (diffs > 1) return false;
+  }
+  return diffs === 1;
+}
+
+function hasOneInsertion(a: string, b: string): boolean {
+  const shorter = a.length < b.length ? a : b;
+  const longer = a.length < b.length ? b : a;
+  let si = 0, li = 0, diffs = 0;
+  while (si < shorter.length && li < longer.length) {
+    if (shorter[si] === longer[li]) {
+      si++;
+      li++;
+    } else {
+      diffs++;
+      if (diffs > 1) return false;
+      li++;
+    }
+  }
+  return true;
 }

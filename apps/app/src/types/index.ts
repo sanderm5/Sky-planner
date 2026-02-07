@@ -238,6 +238,8 @@ export interface Bruker {
 
 export type OnboardingStage = 'not_started' | 'industry_selected' | 'company_info' | 'map_settings' | 'data_import' | 'completed';
 
+export type AppMode = 'mvp' | 'full';
+
 export interface Organization {
   id: number;
   navn: string;
@@ -266,6 +268,7 @@ export interface Organization {
   current_period_end?: string;
   stripe_customer_id?: string;
   stripe_subscription_id?: string;
+  app_mode?: AppMode; // 'mvp' = enkel versjon, 'full' = komplett (TRE Allservice)
   opprettet?: string;
 }
 
@@ -327,6 +330,14 @@ export interface CreateKundeRequest {
   el_type?: Kunde['el_type'];
   brann_system?: string;
   brann_driftstype?: string;
+  driftskategori?: string;
+  siste_kontroll?: string;
+  neste_kontroll?: string;
+  siste_el_kontroll?: string;
+  neste_el_kontroll?: string;
+  siste_brann_kontroll?: string;
+  neste_brann_kontroll?: string;
+  kontroll_intervall_mnd?: number;
   el_kontroll_intervall?: number;
   brann_kontroll_intervall?: number;
   notater?: string;
@@ -442,6 +453,9 @@ export interface EnvConfig {
   // Re-import Features (konservative defaults - begge av som default)
   REIMPORT_UPDATE_ENABLED?: boolean;
   DELETION_DETECTION_ENABLED?: boolean;
+
+  // Encryption
+  ENCRYPTION_SALT: string;
 }
 
 // ============ Express Extensions ============

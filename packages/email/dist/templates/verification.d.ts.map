@@ -1,0 +1,1 @@
+{"version":3,"file":"verification.d.ts","sourceRoot":"","sources":["../../src/templates/verification.ts"],"names":[],"mappings":"AAAA;;GAEG;AAIH,MAAM,WAAW,qBAAqB;IACpC,QAAQ,EAAE,MAAM,CAAC;IACjB,eAAe,EAAE,MAAM,CAAC;IACxB,gBAAgB,CAAC,EAAE,MAAM,CAAC;CAC3B;AAED,wBAAgB,sBAAsB,CAAC,IAAI,EAAE,qBAAqB,GAAG;IAAE,OAAO,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,MAAM,CAAA;CAAE,CA+BrG"}

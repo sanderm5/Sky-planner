@@ -2,9 +2,6 @@
 import AuthLayout from '../../layouts/AuthLayout.astro';
 import GlassCard from '../../components/ui/GlassCard.astro';
 import Badge from '../../components/ui/Badge.astro';
-
-const url = Astro.url;
-const plan = url.searchParams.get('plan') || 'standard';
 ---
 
 <AuthLayout title="Opprett konto">
@@ -69,70 +66,6 @@ const plan = url.searchParams.get('plan') || 'standard';
         <p class="text-xs text-dark-500 mt-1">Minimum 8 tegn</p>
       </div>
 
-      <div>
-        <label class="input-label">Velg plan</label>
-        <div class="grid grid-cols-3 gap-4">
-          <label class="relative cursor-pointer">
-            <input
-              type="radio"
-              name="plan"
-              value="standard"
-              class="peer sr-only"
-              checked={plan === 'standard'}
-            />
-            <div class="p-4 rounded-xl border border-dark-600 peer-checked:border-primary-500 peer-checked:bg-primary-500/10 transition-all">
-              <div class="font-semibold text-white">Standard</div>
-              <div class="text-sm text-dark-400">499 kr/mnd</div>
-            </div>
-          </label>
-          <label class="relative cursor-pointer">
-            <input
-              type="radio"
-              name="plan"
-              value="premium"
-              class="peer sr-only"
-              checked={plan === 'premium'}
-            />
-            <div class="p-4 rounded-xl border border-dark-600 peer-checked:border-primary-500 peer-checked:bg-primary-500/10 transition-all">
-              <div class="font-semibold text-white">Premium</div>
-              <div class="text-sm text-dark-400">999 kr/mnd</div>
-            </div>
-          </label>
-          <label class="relative cursor-pointer">
-            <input
-              type="radio"
-              name="plan"
-              value="enterprise"
-              class="peer sr-only"
-              checked={plan === 'enterprise'}
-            />
-            <div class="p-4 rounded-xl border border-dark-600 peer-checked:border-primary-500 peer-checked:bg-primary-500/10 transition-all">
-              <div class="font-semibold text-white">Enterprise</div>
-              <div class="text-sm text-dark-400">Faktura</div>
-            </div>
-          </label>
-        </div>
-      </div>
-
-      <div id="enterprise-code-field" class="hidden">
-        <label for="enterpriseCode" class="input-label">Enterprise-kode *</label>
-        <input
-          id="enterpriseCode"
-          type="text"
-          class="input"
-          placeholder="Skriv inn enterprise-koden"
-        />
-      </div>
-
-      <div>
-        <label class="input-label">Velg bransje *</label>
-        <div id="industry-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-64 overflow-y-auto pr-1">
-          <div class="col-span-full text-center text-dark-400 py-4">Laster bransjer...</div>
-        </div>
-        <input type="hidden" id="industryId" name="industryId" required />
-        <p id="industry-error" class="text-xs text-red-400 mt-1 hidden">Velg en bransje</p>
-      </div>
-
       <div class="flex items-start">
         <input
           id="vilkar"
@@ -153,13 +86,13 @@ const plan = url.searchParams.get('plan') || 'standard';
       </div>
 
       <button type="submit" class="btn-primary w-full">
-        <span id="btn-text">Opprett konto</span>
+        <span id="btn-text">Start gratis prøveperiode</span>
         <span id="btn-loading" class="hidden">Oppretter konto...</span>
       </button>
 
       <p class="text-xs text-dark-500 text-center">
-        Etter registrering blir du videresendt til Stripe for å legge inn betalingsinformasjon.
-        Du belastes ikke før prøveperioden er over.
+        Du får tilgang til alle funksjoner i 14 dager.
+        Etter prøveperioden kontakter vi deg for tilbud.
       </p>
     </form>
 
@@ -179,135 +112,6 @@ const plan = url.searchParams.get('plan') || 'standard';
   const errorDiv = document.getElementById('error-message');
   const btnText = document.getElementById('btn-text');
   const btnLoading = document.getElementById('btn-loading');
-  const enterpriseCodeField = document.getElementById('enterprise-code-field');
-  const planRadios = document.querySelectorAll('input[name="plan"]');
-  const industryGrid = document.getElementById('industry-grid');
-  const industryIdInput = document.getElementById('industryId') as HTMLInputElement;
-  const industryError = document.getElementById('industry-error');
-
-  // Sanitize color value to prevent CSS injection
-  function sanitizeColor(color: string): string {
-    // Only allow valid hex colors
-    const hexMatch = color?.match(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/);
-    return hexMatch ? color : '#6b7280';
-  }
-
-  // Sanitize icon class to prevent attribute injection
-  function sanitizeIconClass(icon: string): string {
-    // Only allow fa-* icon names with letters, numbers, and hyphens
-    const iconMatch = icon?.match(/^fa-[a-zA-Z0-9-]+$/);
-    return iconMatch ? icon : 'fa-building';
-  }
-
-  // Create industry card element safely (prevents XSS)
-  function createIndustryCard(industry: { id: number; slug: string; color: string; icon: string; name: string; description?: string }): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'industry-card p-3 rounded-xl border border-dark-600 hover:border-dark-500 transition-all text-left';
-    button.dataset.id = String(industry.id);
-    button.dataset.slug = industry.slug || '';
-
-    const headerDiv = document.createElement('div');
-    headerDiv.className = 'flex items-center gap-2 mb-1';
-
-    const iconSpan = document.createElement('span');
-    iconSpan.className = 'w-8 h-8 rounded-lg flex items-center justify-center text-sm';
-    const safeColor = sanitizeColor(industry.color);
-    iconSpan.style.background = `${safeColor}20`;
-    iconSpan.style.color = safeColor;
-
-    const icon = document.createElement('i');
-    icon.className = `fas ${sanitizeIconClass(industry.icon)}`;
-    iconSpan.appendChild(icon);
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'font-medium text-white text-sm';
-    nameSpan.textContent = industry.name || '';
-
-    headerDiv.appendChild(iconSpan);
-    headerDiv.appendChild(nameSpan);
-    button.appendChild(headerDiv);
-
-    if (industry.description) {
-      const descP = document.createElement('p');
-      descP.className = 'text-xs text-dark-400 line-clamp-2';
-      descP.textContent = industry.description;
-      button.appendChild(descP);
-    }
-
-    return button;
-  }
-
-  // Fetch and render industries
-  async function loadIndustries() {
-    try {
-      const response = await fetch('/api/industries');
-      const data = await response.json();
-
-      if (!response.ok || !data.industries) {
-        throw new Error('Kunne ikke laste bransjer');
-      }
-
-      if (industryGrid) {
-        // Clear existing content safely
-        industryGrid.textContent = '';
-
-        // Create industry cards using safe DOM manipulation
-        data.industries.forEach((industry: any) => {
-          const card = createIndustryCard(industry);
-          industryGrid.appendChild(card);
-        });
-
-        // Add click handlers
-        document.querySelectorAll('.industry-card').forEach(card => {
-          card.addEventListener('click', () => {
-            // Remove selection from all cards
-            document.querySelectorAll('.industry-card').forEach(c => {
-              c.classList.remove('border-primary-500', 'bg-primary-500/10');
-              c.classList.add('border-dark-600');
-            });
-            // Add selection to clicked card
-            card.classList.remove('border-dark-600');
-            card.classList.add('border-primary-500', 'bg-primary-500/10');
-            // Update hidden input
-            const cardEl = card as HTMLElement;
-            industryIdInput.value = cardEl.dataset.id || '';
-            industryError?.classList.add('hidden');
-          });
-        });
-      }
-    } catch (err) {
-      if (industryGrid) {
-        // Clear and show error safely (no innerHTML)
-        industryGrid.textContent = '';
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'col-span-full text-center text-red-400 py-4';
-        errorDiv.textContent = 'Kunne ikke laste bransjer. Prøv å laste siden på nytt.';
-        industryGrid.appendChild(errorDiv);
-      }
-    }
-  }
-
-  // Load industries on page load
-  loadIndustries();
-
-  // Show/hide enterprise code field based on plan selection
-  planRadios.forEach(radio => {
-    radio.addEventListener('change', (e) => {
-      const target = e.target as HTMLInputElement;
-      if (target.value === 'enterprise') {
-        enterpriseCodeField?.classList.remove('hidden');
-      } else {
-        enterpriseCodeField?.classList.add('hidden');
-      }
-    });
-  });
-
-  // Check initial state
-  const initialPlan = (document.querySelector('input[name="plan"]:checked') as HTMLInputElement)?.value;
-  if (initialPlan === 'enterprise') {
-    enterpriseCodeField?.classList.remove('hidden');
-  }
 
   form?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -316,15 +120,6 @@ const plan = url.searchParams.get('plan') || 'standard';
     const firma = (document.getElementById('firma') as HTMLInputElement).value;
     const epost = (document.getElementById('epost') as HTMLInputElement).value;
     const passord = (document.getElementById('passord') as HTMLInputElement).value;
-    const plan = (document.querySelector('input[name="plan"]:checked') as HTMLInputElement)?.value || 'standard';
-    const enterpriseCode = (document.getElementById('enterpriseCode') as HTMLInputElement)?.value || '';
-    const industryId = industryIdInput?.value;
-
-    // Validate industry selection
-    if (!industryId) {
-      industryError?.classList.remove('hidden');
-      return;
-    }
 
     btnText?.classList.add('hidden');
     btnLoading?.classList.remove('hidden');
@@ -334,7 +129,7 @@ const plan = url.searchParams.get('plan') || 'standard';
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ navn, firma, epost, passord, plan, enterpriseCode, industryId: parseInt(industryId) }),
+        body: JSON.stringify({ navn, firma, epost, passord, plan: 'standard' }),
       });
 
       const data = await response.json();
@@ -343,12 +138,9 @@ const plan = url.searchParams.get('plan') || 'standard';
         throw new Error(data.error || 'Registrering feilet');
       }
 
-      if (data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
-      } else if (data.redirectUrl) {
+      if (data.redirectUrl) {
         window.location.href = data.redirectUrl;
       } else {
-        // No redirect URL provided - this shouldn't happen, reset button state
         throw new Error('Registrering fullført, men ingen omdirigering mottatt. Vennligst kontakt support.');
       }
     } catch (err) {

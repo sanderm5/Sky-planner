@@ -5,6 +5,7 @@
 
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { validatePassword } from '@skyplanner/auth';
 import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
@@ -100,9 +101,18 @@ router.post(
       throw Errors.badRequest('Ugyldig e-postformat');
     }
 
-    // Validate password length
-    if (passord.length < 8) {
-      throw Errors.badRequest('Passord må være minst 8 tegn');
+    // Validate password using enhanced validation
+    const passwordResult = validatePassword(passord, {
+      minLength: 10,
+      requireUppercase: true,
+      requireLowercase: true,
+      requireNumber: true,
+      requireSpecial: true,
+      checkCommonPasswords: true,
+      userContext: { email: epost, name: navn },
+    });
+    if (!passwordResult.valid) {
+      throw Errors.badRequest(passwordResult.errors[0]);
     }
 
     // Check quota

@@ -80,7 +80,7 @@ const formatDate = (dateStr?: string) => {
   <!-- Page Header -->
   <div class="mb-8">
     <h1 class="text-2xl font-bold text-white mb-2">Abonnement</h1>
-    <p class="text-dark-400">Administrer ditt abonnement og fakturering.</p>
+    <p class="text-dark-400">Se din abonnementsstatus. Kontakt oss for endringer eller spørsmål.</p>
   </div>
 
   <!-- Current Plan -->
@@ -114,16 +114,15 @@ const formatDate = (dateStr?: string) => {
       </div>
 
       <div class="flex flex-col sm:flex-row gap-3">
-        <button
-          id="manage-billing-btn"
+        <a
+          href="mailto:support@skyplanner.no?subject=Abonnement"
           class="btn-primary"
-          disabled={!organization.stripe_customer_id}
         >
           <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
-          Administrer fakturering
-        </button>
+          Kontakt oss om abonnement
+        </a>
       </div>
     </div>
   </div>
@@ -184,20 +183,13 @@ const formatDate = (dateStr?: string) => {
             <button class="w-full btn-secondary" disabled>
               Nåværende plan
             </button>
-          ) : plan.id === 'premium' ? (
-            <button
-              class="w-full btn-primary upgrade-btn"
-              data-plan={plan.id}
-            >
-              Oppgrader til {plan.name}
-            </button>
           ) : (
-            <button
-              class="w-full btn-secondary downgrade-btn"
-              data-plan={plan.id}
+            <a
+              href={`mailto:support@skyplanner.no?subject=${plan.id === 'premium' ? 'Oppgradering' : 'Nedgradering'} til ${plan.name}`}
+              class={`w-full text-center ${plan.id === 'premium' ? 'btn-primary' : 'btn-secondary'}`}
             >
-              Nedgrader til {plan.name}
-            </button>
+              {plan.id === 'premium' ? 'Kontakt oss for oppgradering' : 'Kontakt oss for endring'}
+            </a>
           )}
         </div>
       ))}
@@ -236,54 +228,4 @@ const formatDate = (dateStr?: string) => {
   </div>
 </DashboardLayout>
 
-<script>
-  // Manage Billing Button
-  const manageBillingBtn = document.getElementById('manage-billing-btn');
-
-  manageBillingBtn?.addEventListener('click', async () => {
-    manageBillingBtn.setAttribute('disabled', 'true');
-    manageBillingBtn.innerHTML = `
-      <svg class="w-5 h-5 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-      </svg>
-      Åpner Stripe...
-    `;
-
-    try {
-      const res = await fetch('/api/dashboard/subscription/portal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      const result = await res.json();
-
-      if (!res.ok) {
-        alert(result.error || 'Noe gikk galt');
-        return;
-      }
-
-      // Redirect to Stripe Customer Portal
-      window.location.href = result.url;
-    } catch (err) {
-      alert('Nettverksfeil. Prøv igjen.');
-    } finally {
-      manageBillingBtn.removeAttribute('disabled');
-      manageBillingBtn.innerHTML = `
-        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-        </svg>
-        Administrer fakturering
-      `;
-    }
-  });
-
-  // Upgrade/Downgrade buttons - redirect to Stripe Portal
-  document.querySelectorAll('.upgrade-btn, .downgrade-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      // For plan changes, we redirect to Stripe Customer Portal
-      // where users can manage their subscription
-      manageBillingBtn?.click();
-    });
-  });
-</script>
+<!-- Stripe billing script removed - using manual invoicing via Fiken -->

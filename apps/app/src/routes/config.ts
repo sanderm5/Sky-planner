@@ -60,7 +60,7 @@ router.get(
 
     // Build config with optional organization overrides
     const currentYear = new Date().getFullYear();
-    const appConfig: AppConfig & { industry?: { id: number; name: string; slug: string; icon?: string; color?: string }; onboardingCompleted?: boolean } = {
+    const appConfig: AppConfig & { industry?: { id: number; name: string; slug: string; icon?: string; color?: string }; onboardingCompleted?: boolean; appMode?: 'mvp' | 'full' } = {
       appName: organization?.brand_title || process.env.APP_NAME || process.env.COMPANY_NAME || 'Kontrollsystem',
       appYear: parseInt(process.env.APP_YEAR || '', 10) || currentYear,
       developerName: process.env.DEVELOPER_NAME || 'Efffekt AS',
@@ -87,6 +87,7 @@ router.get(
         color: industry.color,
       } : undefined,
       onboardingCompleted: organization?.onboarding_completed ?? false,
+      appMode: organization?.app_mode ?? 'mvp',
     };
 
     const response: ApiResponse<typeof appConfig> = {

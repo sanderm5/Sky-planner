@@ -23,6 +23,10 @@ const adminApp = document.getElementById('adminApp');
 const orgPanel = document.getElementById('orgPanel');
 const customerModal = document.getElementById('customerModal');
 const userModal = document.getElementById('userModal');
+const deleteOrgModal = document.getElementById('deleteOrgModal');
+
+// State for delete modal
+let orgToDelete = null;
 
 // ========================================
 // INITIALIZATION
@@ -30,17 +34,7 @@ const userModal = document.getElementById('userModal');
 
 async function initAdminPanel() {
   try {
-    // Get token from localStorage
-    const token = localStorage.getItem('authToken');
-    console.log('[Admin] Token found:', !!token);
-
-    if (!token) {
-      console.log('[Admin] No token, redirecting to login');
-      redirectToLogin();
-      return;
-    }
-
-    // Verify super-admin status
+    // Verify super-admin status (auth via httpOnly cookie)
     const verifyRes = await fetchWithAuth(`${AUTH_API}/verify`);
     console.log('[Admin] Verify response status:', verifyRes.status);
 
@@ -87,7 +81,6 @@ async function initAdminPanel() {
 }
 
 function redirectToLogin() {
-  localStorage.removeItem('authToken');
   window.location.href = '/?redirect=admin';
 }
 
@@ -138,6 +131,18 @@ function setupEventListeners() {
   document.getElementById('userForm').addEventListener('submit', handleUserSubmit);
   document.getElementById('resetPasswordBtn').addEventListener('click', handleResetPassword);
 
+  // Delete organization
+  document.getElementById('deleteOrgBtn').addEventListener('click', () => {
+    if (selectedOrgId) {
+      openDeleteOrgModal(selectedOrgId);
+    }
+  });
+  document.getElementById('closeDeleteOrgModal').addEventListener('click', closeDeleteOrgModal);
+  document.getElementById('cancelDeleteOrgBtn').addEventListener('click', closeDeleteOrgModal);
+  document.querySelector('#deleteOrgModal .modal-backdrop').addEventListener('click', closeDeleteOrgModal);
+  document.getElementById('confirmOrgName').addEventListener('input', validateDeleteConfirmation);
+  document.getElementById('confirmDeleteOrgBtn').addEventListener('click', handleDeleteOrg);
+
   // Login history
   document.getElementById('viewLoginHistoryBtn').addEventListener('click', () => showLoginHistory());
   document.getElementById('backToUsersBtn').addEventListener('click', () => hideLoginHistory());
@@ -152,12 +157,13 @@ function setupEventListeners() {
     loadActivityChart(parseInt(e.target.value));
   });
 
-  // Click outside panel to close
+  // Click outside panel to close (but not when modals are open)
   document.addEventListener('click', (e) => {
     if (orgPanel.classList.contains('open') &&
         !orgPanel.contains(e.target) &&
         !e.target.closest('.btn-view') &&
-        !e.target.closest('.btn-impersonate-small')) {
+        !e.target.closest('.btn-impersonate-small') &&
+        !e.target.closest('.modal')) {
       closePanel();
     }
   });
@@ -167,13 +173,19 @@ function setupEventListeners() {
 // API HELPERS
 // ========================================
 
+function getCsrfToken() {
+  const match = document.cookie.match(/csrf_token=([^;]+)/);
+  return match ? match[1] : '';
+}
+
 async function fetchWithAuth(url, options = {}) {
-  const token = localStorage.getItem('authToken');
+  const csrfToken = getCsrfToken();
   return fetch(url, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
+      'X-CSRF-Token': csrfToken,
       ...options.headers,
     },
   });
@@ -448,7 +460,8 @@ async function loadOrganizations() {
     const data = await res.json();
 
     if (data.success) {
-      organizations = data.data || [];
+      // Handle paginated response format: { organizations: [...], pagination: {...} }
+      organizations = Array.isArray(data.data) ? data.data : (data.data?.organizations || []);
       renderOrganizations(organizations);
     }
   } catch (error) {
@@ -911,7 +924,7 @@ async function loadOrgBilling(orgId) {
             ${sub ? `
               <div class="billing-grid-item">
                 <div class="value">${formatAmount(sub.amount, sub.currency)}</div>
-                <div class="label">Per ${sub.interval === 'month' ? 'mnd' : 'ar'}</div>
+                <div class="label">Per ${sub.interval === 'month' ? 'mnd' : 'år'}</div>
               </div>
               <div class="billing-grid-item">
                 <div class="value">${formatDate(sub.current_period_end)}</div>
@@ -980,7 +993,7 @@ function formatAmount(amount, currency = 'nok') {
 function getInvoiceStatusLabel(status) {
   const labels = {
     'paid': 'Betalt',
-    'open': 'Apen',
+    'open': 'Åpen',
     'draft': 'Utkast',
     'uncollectible': 'Ikke innkrevbar',
     'void': 'Kansellert'
@@ -1029,8 +1042,7 @@ async function impersonateOrg(orgId) {
     const data = await res.json();
 
     if (data.success) {
-      // Store impersonation token and state
-      localStorage.setItem('authToken', data.data.token);
+      // Store impersonation state (token is set via httpOnly cookie by server)
       localStorage.setItem('isImpersonating', 'true');
       localStorage.setItem('impersonatingOrgId', orgId.toString());
       localStorage.setItem('impersonatingOrgName', data.data.organization.navn);
@@ -1160,7 +1172,7 @@ async function editCustomer(customerId) {
 }
 
 async function deleteCustomer(customerId) {
-  if (!confirm('Er du sikker pa at du vil slette denne kunden?')) {
+  if (!confirm('Er du sikker på at du vil slette denne kunden?')) {
     return;
   }
 
@@ -1180,6 +1192,89 @@ async function deleteCustomer(customerId) {
   } catch (error) {
     console.error('Failed to delete customer:', error);
     showError('Kunne ikke slette kunde');
+  }
+}
+
+// ========================================
+// ORGANIZATION DELETION
+// ========================================
+
+function openDeleteOrgModal(orgId) {
+  const org = organizations.find(o => o.id === orgId);
+  if (!org) return;
+
+  orgToDelete = org;
+
+  document.getElementById('deleteOrgName').textContent = org.navn;
+  document.getElementById('confirmOrgName').value = '';
+  document.getElementById('confirmDeleteOrgBtn').disabled = true;
+
+  // Show stats
+  const stats = org.stats || {};
+  document.getElementById('deletionStats').innerHTML = `
+    <div class="stat-item">
+      <i class="fas fa-users"></i>
+      <span><strong>${stats.kundeCount || 0}</strong> kunder</span>
+    </div>
+    <div class="stat-item">
+      <i class="fas fa-user-cog"></i>
+      <span><strong>${stats.brukerCount || 0}</strong> brukere</span>
+    </div>
+  `;
+
+  deleteOrgModal.classList.add('open');
+}
+
+function closeDeleteOrgModal() {
+  deleteOrgModal.classList.remove('open');
+  orgToDelete = null;
+}
+
+function validateDeleteConfirmation() {
+  const input = document.getElementById('confirmOrgName').value.trim();
+  const confirmBtn = document.getElementById('confirmDeleteOrgBtn');
+
+  // Enable button only if org name matches exactly
+  confirmBtn.disabled = !orgToDelete || input !== orgToDelete.navn;
+}
+
+async function handleDeleteOrg() {
+  if (!orgToDelete) return;
+
+  const orgId = orgToDelete.id;
+  const orgName = orgToDelete.navn;
+
+  // Double-confirm
+  if (!confirm(`ADVARSEL: Du er i ferd med å permanent slette "${orgName}" og ALLE tilknyttede data.\n\nDenne handlingen KAN IKKE ANGRES.\n\nEr du helt sikker?`)) {
+    return;
+  }
+
+  const btn = document.getElementById('confirmDeleteOrgBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sletter...';
+
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/organizations/${orgId}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      closeDeleteOrgModal();
+      closePanel();
+      await loadOrganizations();
+      await loadGlobalStats();
+      showSuccess('Bedrift slettet');
+    } else {
+      showError(data.error?.message || 'Kunne ikke slette bedrift');
+    }
+  } catch (error) {
+    console.error('Failed to delete organization:', error);
+    showError('Kunne ikke slette bedrift');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
   }
 }
 
@@ -1214,10 +1309,14 @@ async function handleLogout() {
     console.error('Logout request failed:', error);
   }
 
-  localStorage.removeItem('authToken');
+  // Clear UI state (auth cookie is cleared by server)
   localStorage.removeItem('isImpersonating');
   localStorage.removeItem('impersonatingOrgId');
   localStorage.removeItem('impersonatingOrgName');
+  localStorage.removeItem('userName');
+  localStorage.removeItem('userRole');
+  localStorage.removeItem('userType');
+  localStorage.removeItem('isSuperAdmin');
   window.location.href = '/';
 }
 

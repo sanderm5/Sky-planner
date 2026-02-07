@@ -9,14 +9,13 @@ import type { IntegrationCredentials } from './types';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
-const SALT = 'skyplanner-integration-salt';
 
 /**
  * Derive an encryption key from the JWT secret
  */
 function deriveKey(): Buffer {
   const config = getConfig();
-  return crypto.scryptSync(config.JWT_SECRET, SALT, 32);
+  return crypto.scryptSync(config.JWT_SECRET, config.ENCRYPTION_SALT, 32);
 }
 
 /**

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS avtaler (
   kunde_id INTEGER REFERENCES kunder(id) ON DELETE CASCADE,
   dato DATE NOT NULL,
   klokkeslett TIME,
-  type VARCHAR(50) DEFAULT 'El-Kontroll',
+  type VARCHAR(50),
   beskrivelse TEXT,
   status VARCHAR(20) DEFAULT 'planlagt',
   opprettet_av VARCHAR(100),

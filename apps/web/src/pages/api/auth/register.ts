@@ -1,9 +1,10 @@
 import type { APIRoute } from 'astro';
-import Stripe from 'stripe';
+// import Stripe from 'stripe'; // TEMPORARILY DISABLED - manual invoicing via Fiken
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import * as db from '@skyplanner/database';
 import { createClient } from '@supabase/supabase-js';
+import { validatePassword as validatePasswordStrength } from '@skyplanner/auth';
 
 /**
  * Timing-safe string comparison to prevent timing attacks
@@ -75,39 +76,21 @@ function isValidEmail(email: string): boolean {
   return true;
 }
 
-// Passordvalidering med kompleksitetskrav
-interface PasswordValidationResult {
-  isValid: boolean;
-  errors: string[];
-}
-
-function validatePassword(password: string): PasswordValidationResult {
-  const errors: string[] = [];
-
-  if (password.length < 8) {
-    errors.push('Passord må være minst 8 tegn');
-  }
-
-  if (!/[A-ZÆØÅ]/.test(password)) {
-    errors.push('Passord må inneholde minst én stor bokstav');
-  }
-
-  if (!/[a-zæøå]/.test(password)) {
-    errors.push('Passord må inneholde minst én liten bokstav');
-  }
-
-  if (!/[0-9]/.test(password)) {
-    errors.push('Passord må inneholde minst ett tall');
-  }
-
-  // Require at least one special character for stronger passwords
-  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/.test(password)) {
-    errors.push('Passord må inneholde minst ett spesialtegn (!@#$%^&* osv.)');
-  }
+// Passordvalidering - bruker @skyplanner/auth med forbedret sikkerhet
+function validatePassword(password: string, email?: string, navn?: string): { isValid: boolean; errors: string[] } {
+  const result = validatePasswordStrength(password, {
+    minLength: 10, // Økt fra 8 til 10 tegn
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    checkCommonPasswords: true,
+    userContext: email || navn ? { email, name: navn } : undefined,
+  });
 
   return {
-    isValid: errors.length === 0,
-    errors,
+    isValid: result.valid,
+    errors: result.errors,
   };
 }
 
@@ -145,9 +128,12 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   // Validate environment at request time (not module load)
-  const STRIPE_SECRET_KEY = import.meta.env.STRIPE_SECRET_KEY;
-  const STRIPE_PRICE_STANDARD = import.meta.env.STRIPE_PRICE_STANDARD;
-  const STRIPE_PRICE_PREMIUM = import.meta.env.STRIPE_PRICE_PREMIUM;
+  // Stripe env vars temporarily disabled - manual invoicing via Fiken
+  // const STRIPE_SECRET_KEY = import.meta.env.STRIPE_SECRET_KEY;
+  // const STRIPE_PRICE_STANDARD = import.meta.env.STRIPE_PRICE_STANDARD;
+  // const STRIPE_PRICE_PREMIUM = import.meta.env.STRIPE_PRICE_PREMIUM;
+  // const STRIPE_PRICE_STANDARD_YEARLY = import.meta.env.STRIPE_PRICE_STANDARD_YEARLY;
+  // const STRIPE_PRICE_PREMIUM_YEARLY = import.meta.env.STRIPE_PRICE_PREMIUM_YEARLY;
   const ENTERPRISE_SECRET = import.meta.env.ENTERPRISE_SECRET;
 
   // Initialize database client
@@ -159,6 +145,7 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
     const { navn, epost, passord, firma, plan, enterpriseCode, industryId } = body;
+    // billingInterval not used - Stripe temporarily disabled
 
     if (!navn || !epost || !passord || !firma) {
       return new Response(
@@ -167,30 +154,27 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    if (!industryId) {
-      return new Response(
-        JSON.stringify({ error: 'Velg en bransje' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Validate that the industry exists
+    // Industry is optional for MVP mode - skip validation if not provided
     const supabase = createClient(
       import.meta.env.SUPABASE_URL,
       import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY
     );
-    const { data: industry, error: industryError } = await supabase
-      .from('industry_templates')
-      .select('id')
-      .eq('id', industryId)
-      .eq('aktiv', true)
-      .single();
 
-    if (industryError || !industry) {
-      return new Response(
-        JSON.stringify({ error: 'Ugyldig bransje valgt' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
+    // Only validate industry if one was selected
+    if (industryId) {
+      const { data: industry, error: industryError } = await supabase
+        .from('industry_templates')
+        .select('id')
+        .eq('id', industryId)
+        .eq('aktiv', true)
+        .single();
+
+      if (industryError || !industry) {
+        return new Response(
+          JSON.stringify({ error: 'Ugyldig bransje valgt' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     if (!isValidEmail(epost)) {
@@ -200,7 +184,7 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    const passwordValidation = validatePassword(passord);
+    const passwordValidation = validatePassword(passord, epost, navn);
     if (!passwordValidation.isValid) {
       return new Response(
         JSON.stringify({ error: passwordValidation.errors.join('. ') }),
@@ -241,8 +225,9 @@ export const POST: APIRoute = async ({ request }) => {
           max_brukere: 100,
           stripe_customer_id: undefined,
           subscription_status: 'active',
-          industry_template_id: industryId,
+          industry_template_id: industryId || null, // Optional for MVP
           onboarding_completed: true,
+          app_mode: 'mvp', // Default to MVP mode for new organizations
         });
 
         await db.createKlient({
@@ -277,7 +262,63 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    // Standard/Premium registration requires Stripe
+    // Standard/Premium registration with trial period (no Stripe required)
+    // Stripe payment is temporarily disabled - manual invoicing via Fiken
+    const selectedPlan = plan === 'premium' ? 'premium' : 'standard';
+    const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Transaksjon: opprett organisasjon og bruker atomisk
+    let organization: Awaited<ReturnType<typeof db.createOrganization>> | null = null;
+    try {
+      organization = await db.createOrganization({
+        navn: firma,
+        slug: slug,
+        aktiv: true,
+        plan_type: selectedPlan,
+        max_kunder: selectedPlan === 'premium' ? 500 : 200,
+        max_brukere: selectedPlan === 'premium' ? 10 : 5,
+        stripe_customer_id: undefined,
+        subscription_status: 'trialing',
+        trial_ends_at: trialEndsAt,
+        industry_template_id: industryId || null, // Optional for MVP
+        onboarding_completed: true,
+        app_mode: 'mvp', // Default to MVP mode for new organizations
+      });
+
+      await db.createKlient({
+        navn: navn,
+        epost: epost.toLowerCase(),
+        passord_hash: passwordHash,
+        aktiv: true,
+        organization_id: organization.id,
+      });
+    } catch (error) {
+      // Rollback: slett organisasjonen hvis brukeropprettelse feilet
+      if (organization) {
+        try {
+          await supabase.from('organizations').delete().eq('id', organization.id);
+        } catch (rollbackError) {
+          console.error('Failed to rollback organization:', organization.id, rollbackError);
+        }
+      }
+      throw error;
+    }
+
+    const appUrl = import.meta.env.PUBLIC_APP_URL || 'http://localhost:3000';
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        redirectUrl: appUrl,
+        organizationId: organization.id,
+        message: 'Konto opprettet med 14 dagers prøveperiode',
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+
+    /* STRIPE INTEGRATION - TEMPORARILY DISABLED
+     * Re-enable when switching from manual Fiken invoicing to Stripe payments
+     *
     if (!STRIPE_SECRET_KEY || !STRIPE_PRICE_STANDARD || !STRIPE_PRICE_PREMIUM) {
       console.warn('Stripe not configured - registration disabled');
       return new Response(
@@ -291,12 +332,17 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     const PRICE_IDS = {
-      standard: STRIPE_PRICE_STANDARD,
-      premium: STRIPE_PRICE_PREMIUM,
+      standard: {
+        monthly: STRIPE_PRICE_STANDARD,
+        yearly: STRIPE_PRICE_STANDARD_YEARLY || STRIPE_PRICE_STANDARD,
+      },
+      premium: {
+        monthly: STRIPE_PRICE_PREMIUM,
+        yearly: STRIPE_PRICE_PREMIUM_YEARLY || STRIPE_PRICE_PREMIUM,
+      },
     };
 
-    const selectedPlan = plan === 'premium' ? 'premium' : 'standard';
-    const priceId = PRICE_IDS[selectedPlan];
+    const priceId = PRICE_IDS[selectedPlan][interval];
 
     if (!priceId) {
       return new Response(
@@ -308,66 +354,35 @@ export const POST: APIRoute = async ({ request }) => {
     const stripeCustomer = await stripe.customers.create({
       email: epost.toLowerCase(),
       name: navn,
-      metadata: { company: firma },
+      metadata: {
+        company: firma,
+        billingInterval: interval,
+      },
+      tax: {
+        validate_location: 'deferred',
+      },
     });
 
-    // Transaksjon: opprett organisasjon og bruker atomisk
-    let organization: Awaited<ReturnType<typeof db.createOrganization>> | null = null;
-    try {
-      organization = await db.createOrganization({
-        navn: firma,
-        slug: slug,
-        aktiv: true,
-        plan_type: selectedPlan,
-        max_kunder: selectedPlan === 'premium' ? 500 : 200,
-        max_brukere: selectedPlan === 'premium' ? 10 : 5,
-        stripe_customer_id: stripeCustomer.id,
-        subscription_status: 'incomplete',
-        industry_template_id: industryId,
-        onboarding_completed: true,
-      });
+    organization = await db.createOrganization({
+      navn: firma,
+      slug: slug,
+      aktiv: true,
+      plan_type: selectedPlan,
+      max_kunder: selectedPlan === 'premium' ? 500 : 200,
+      max_brukere: selectedPlan === 'premium' ? 10 : 5,
+      stripe_customer_id: stripeCustomer.id,
+      subscription_status: 'incomplete',
+      industry_template_id: industryId,
+      onboarding_completed: true,
+    });
 
-      await db.createKlient({
-        navn: navn,
-        epost: epost.toLowerCase(),
-        passord_hash: passwordHash,
-        aktiv: true,
-        organization_id: organization.id,
-      });
-    } catch (error) {
-      // Rollback: slett organisasjonen og Stripe-kunden hvis noe feilet
-      const rollbackErrors: string[] = [];
-
-      if (organization) {
-        try {
-          await supabase.from('organizations').delete().eq('id', organization.id);
-        } catch (rollbackError) {
-          const errorMsg = `ORPHANED_ORGANIZATION: id=${organization.id}, name=${firma}`;
-          console.error(errorMsg, rollbackError);
-          rollbackErrors.push(errorMsg);
-        }
-      }
-
-      try {
-        await stripe.customers.del(stripeCustomer.id);
-      } catch (rollbackError) {
-        // Log with enough info to manually clean up orphaned Stripe customers
-        const errorMsg = `ORPHANED_STRIPE_CUSTOMER: customerId=${stripeCustomer.id}, email=${epost}, name=${firma}`;
-        console.error(errorMsg, rollbackError);
-        rollbackErrors.push(errorMsg);
-      }
-
-      // If we have orphaned resources, log them all together for easier monitoring
-      if (rollbackErrors.length > 0) {
-        console.error('REGISTRATION_ROLLBACK_FAILED: Manual cleanup required', {
-          errors: rollbackErrors,
-          originalError: error instanceof Error ? error.message : String(error),
-          timestamp: new Date().toISOString(),
-        });
-      }
-
-      throw error;
-    }
+    await db.createKlient({
+      navn: navn,
+      epost: epost.toLowerCase(),
+      passord_hash: passwordHash,
+      aktiv: true,
+      organization_id: organization.id,
+    });
 
     const session = await stripe.checkout.sessions.create({
       customer: stripeCustomer.id,
@@ -376,11 +391,21 @@ export const POST: APIRoute = async ({ request }) => {
       mode: 'subscription',
       subscription_data: {
         trial_period_days: 14,
-        metadata: { organizationId: organization.id.toString() },
+        metadata: {
+          organizationId: organization.id.toString(),
+          billingInterval: interval,
+        },
       },
+      automatic_tax: { enabled: true },
+      allow_promotion_codes: true,
+      billing_address_collection: 'required',
+      tax_id_collection: { enabled: true },
       success_url: `${import.meta.env.PUBLIC_BASE_URL || 'https://skyplanner.no'}/auth/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${import.meta.env.PUBLIC_BASE_URL || 'https://skyplanner.no'}/auth/registrer`,
-      metadata: { organizationId: organization.id.toString() },
+      metadata: {
+        organizationId: organization.id.toString(),
+        billingInterval: interval,
+      },
     });
 
     await db.updateOrganization(organization.id, {
@@ -395,6 +420,7 @@ export const POST: APIRoute = async ({ request }) => {
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
+    */
   } catch (error) {
     // Log sanitized error - avoid exposing user data or internal details
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';

@@ -4,6 +4,8 @@
  */
 
 import { Router, Response } from 'express';
+import multer from 'multer';
+import * as XLSX from 'xlsx';
 import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
@@ -11,6 +13,22 @@ import { validateKunde } from '../utils/validation';
 import { geocodeCustomerData } from '../services/geocoding';
 import { getWebhookService } from '../services/webhooks';
 import type { AuthenticatedRequest, Kunde, CreateKundeRequest, ApiResponse } from '../types';
+import { cleanImportData } from '../services/import/cleaner';
+
+// Configure multer for Excel file uploads (memory storage)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+  fileFilter: (req, file, cb) => {
+    const allowedExtensions = ['.xlsx', '.xls', '.csv'];
+    const ext = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+    if (allowedExtensions.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Ugyldig filtype. Bruk Excel (.xlsx, .xls) eller CSV.'));
+    }
+  },
+});
 
 const router: Router = Router();
 
@@ -111,7 +129,7 @@ router.get(
   '/kontroll-varsler',
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const dager = Number.parseInt(req.query.dager as string) || 30;
+    const dager = Math.min(Math.max(Number.parseInt(req.query.dager as string, 10) || 30, 1), 365);
 
     const kunder = await dbService.getKontrollVarsler(dager, req.organizationId);
 
@@ -222,6 +240,8 @@ router.post(
         }).catch(err => {
           apiLogger.error({ err, kundeId: kunde.id }, 'Failed to trigger customer.created webhook');
         });
+      }).catch(err => {
+        apiLogger.error({ err }, 'Failed to get webhook service');
       });
     }
 
@@ -299,6 +319,8 @@ router.put(
         ).catch(err => {
           apiLogger.error({ err, kundeId: kunde.id }, 'Failed to trigger customer.updated webhook');
         });
+      }).catch(err => {
+        apiLogger.error({ err }, 'Failed to get webhook service');
       });
     }
 
@@ -352,6 +374,8 @@ router.delete(
         }).catch(err => {
           apiLogger.error({ err, kundeId: id }, 'Failed to trigger customer.deleted webhook');
         });
+      }).catch(err => {
+        apiLogger.error({ err }, 'Failed to get webhook service');
       });
     }
 
@@ -442,5 +466,233 @@ function prepareKundeData(
     organization_id: organizationId,
   };
 }
+
+// ============================================
+// SIMPLE EXCEL/CSV IMPORT (Memory-based)
+// ============================================
+
+/**
+ * POST /api/kunder/import/parse
+ * Parse Excel/CSV file and return data for preview (no database writes)
+ */
+router.post(
+  '/import/parse',
+  upload.single('file'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.file) {
+      throw Errors.badRequest('Ingen fil lastet opp');
+    }
+
+    try {
+      // Parse Excel/CSV file
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+
+      // Convert to JSON with headers
+      const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+      if (rawData.length === 0) {
+        throw Errors.badRequest('Filen inneholder ingen data');
+      }
+
+      // Get headers from first row
+      const headers = Object.keys(rawData[0]);
+
+      // Auto-detect column mappings
+      const suggestedMapping: Record<string, string> = {};
+      const fieldPatterns: Record<string, RegExp[]> = {
+        navn: [/^(kunde)?navn$/i, /^name$/i, /^firma$/i, /^company$/i, /^bedrift$/i],
+        adresse: [/^adresse$/i, /^address$/i, /^gateadresse$/i, /^street$/i],
+        postnummer: [/^post(nummer|nr|kode)$/i, /^zip$/i, /^postal/i],
+        poststed: [/^poststed$/i, /^by$/i, /^city$/i, /^sted$/i],
+        telefon: [/^(tlf|telefon|phone|mobil)$/i, /^tel$/i],
+        epost: [/^(e-?post|email|mail)$/i],
+        kontaktperson: [/^kontakt(person)?$/i, /^contact$/i],
+        kategori: [/^kategori$/i, /^type$/i, /^category$/i],
+        notat: [/^notat(er)?$/i, /^kommentar$/i, /^note/i, /^merknad$/i],
+      };
+
+      headers.forEach(header => {
+        const normalizedHeader = header.toLowerCase().trim();
+        for (const [field, patterns] of Object.entries(fieldPatterns)) {
+          if (patterns.some(pattern => pattern.test(normalizedHeader))) {
+            suggestedMapping[header] = field;
+            break;
+          }
+        }
+      });
+
+      // Run auto-cleaning on all data
+      const { cleanedRows, report: cleaningReport } = cleanImportData(rawData, headers);
+
+      // Prepare preview rows (first 100) - original data
+      const previewRows = rawData.slice(0, 100).map((row, index) => ({
+        _rowIndex: index,
+        ...row
+      }));
+
+      // Prepare cleaned preview rows (first 100)
+      const cleanedPreviewRows = cleanedRows.slice(0, 100).map((row, index) => ({
+        _rowIndex: index,
+        ...row
+      }));
+
+      // Build recognized columns for the mapping UI
+      const recognizedColumns: Array<{ excelHeader: string; mappedTo: string; source: string; sampleValue: string }> = [];
+      const unmappedHeaders: string[] = [];
+
+      headers.forEach(header => {
+        const mappedField = suggestedMapping[header];
+        if (mappedField) {
+          recognizedColumns.push({
+            excelHeader: header,
+            mappedTo: mappedField,
+            source: 'deterministic',
+            sampleValue: String(rawData[0]?.[header] || ''),
+          });
+        } else {
+          unmappedHeaders.push(header);
+        }
+      });
+
+      res.json({
+        success: true,
+        data: {
+          headers,
+          allColumns: headers,
+          suggestedMapping,
+          preview: previewRows,
+          cleanedPreview: cleanedPreviewRows,
+          cleaningReport,
+          totalRows: rawData.length,
+          totalRowsAfterCleaning: cleanedRows.length,
+          totalColumns: headers.length,
+          fileName: req.file.originalname,
+          recognizedColumns,
+          unmappedHeaders,
+          newFields: [],
+        },
+        requestId: req.requestId,
+      });
+    } catch (error) {
+      apiLogger.error({ error, file: req.file.originalname }, 'Error parsing import file');
+      throw Errors.badRequest('Kunne ikke lese filen. Sjekk at det er en gyldig Excel- eller CSV-fil.');
+    }
+  })
+);
+
+/**
+ * POST /api/kunder/import/execute
+ * Import selected customers from parsed data
+ */
+router.post(
+  '/import/execute',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { rows, columnMapping } = req.body as {
+      rows: Array<Record<string, unknown>>;
+      columnMapping: Record<string, string>;
+    };
+
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      throw Errors.badRequest('Ingen rader å importere');
+    }
+
+    if (!columnMapping || !columnMapping.navn || !columnMapping.adresse) {
+      throw Errors.badRequest('Kolonne-mapping for navn og adresse er påkrevd');
+    }
+
+    // Check organization limits
+    const limits = await dbService.getOrganizationLimits(req.organizationId!);
+    if (limits && limits.current_count + rows.length > limits.max_kunder) {
+      throw Errors.forbidden(
+        `Du kan ikke importere ${rows.length} kunder. Maks antall er ${limits.max_kunder}, og du har allerede ${limits.current_count}.`
+      );
+    }
+
+    const results = {
+      created: 0,
+      failed: 0,
+      errors: [] as Array<{ row: number; error: string }>,
+    };
+
+    // Process each row
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      try {
+        // Map columns to customer fields
+        const getField = (field: string): string | undefined => {
+          const col = (columnMapping as Record<string, string | undefined>)[field];
+          if (!col) return undefined;
+          const val = row[col];
+          return val != null ? String(val).trim() || undefined : undefined;
+        };
+        const getIntField = (field: string): number | undefined => {
+          const val = getField(field);
+          return val ? Number(val) || undefined : undefined;
+        };
+
+        const kundeData: CreateKundeRequest = {
+          navn: String(row[columnMapping.navn] || '').trim(),
+          adresse: String(row[columnMapping.adresse] || '').trim(),
+          postnummer: getField('postnummer'),
+          poststed: getField('poststed'),
+          telefon: getField('telefon'),
+          epost: getField('epost'),
+          kontaktperson: getField('kontaktperson'),
+          notater: getField('notat') || getField('notater'),
+          kategori: getField('kategori') || 'El-Kontroll',
+          el_type: getField('el_type'),
+          brann_system: getField('brann_system'),
+          siste_kontroll: getField('siste_kontroll'),
+          neste_kontroll: getField('neste_kontroll'),
+          siste_el_kontroll: getField('siste_el_kontroll'),
+          neste_el_kontroll: getField('neste_el_kontroll'),
+          siste_brann_kontroll: getField('siste_brann_kontroll'),
+          neste_brann_kontroll: getField('neste_brann_kontroll'),
+          kontroll_intervall_mnd: getIntField('kontroll_intervall_mnd'),
+          el_kontroll_intervall: getIntField('el_kontroll_intervall'),
+          brann_kontroll_intervall: getIntField('brann_kontroll_intervall'),
+        };
+
+        // Validate required fields
+        if (!kundeData.navn) {
+          throw new Error('Mangler kundenavn');
+        }
+        if (!kundeData.adresse) {
+          throw new Error('Mangler adresse');
+        }
+
+        // Apply defaults and create customer
+        const dataWithDefaults = prepareKundeData(kundeData, req.organizationId);
+        const newKunde = await dbService.createKunde(dataWithDefaults);
+
+        results.created++;
+
+        // Log audit
+        logAudit(apiLogger, 'IMPORT_KUNDE', req.user!.userId, 'kunde', newKunde.id, {
+          source: 'excel-import',
+          rowIndex: i,
+        });
+
+      } catch (error) {
+        results.failed++;
+        results.errors.push({
+          row: i + 1,
+          error: error instanceof Error ? error.message : 'Ukjent feil',
+        });
+      }
+    }
+
+    const response: ApiResponse<typeof results> = {
+      success: true,
+      data: results,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
 
 export default router;

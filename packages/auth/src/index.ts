@@ -34,3 +34,33 @@ export {
   buildSetCookieHeader,
   buildClearCookieHeader,
 } from './cookies';
+
+// Password validation
+export {
+  validatePassword,
+  assertValidPassword,
+  getPasswordStrengthLabel,
+} from './password-validation';
+
+export type {
+  PasswordValidationResult,
+  PasswordValidationOptions,
+} from './password-validation';
+
+// TOTP (Two-Factor Authentication)
+export {
+  generateTOTPSecret,
+  generateTOTP,
+  verifyTOTP,
+  generateBackupCodes,
+  hashBackupCode,
+  verifyBackupCode,
+  generateTOTPUri,
+  encryptTOTPSecret,
+  decryptTOTPSecret,
+} from './totp';
+
+export type {
+  TOTPSetupData,
+  TOTPVerificationResult,
+} from './totp';

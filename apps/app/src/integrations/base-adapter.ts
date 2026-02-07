@@ -232,12 +232,33 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
             });
             result.created++;
           }
+
+          // Resolve any previous failure record for this customer
+          try {
+            await db.resolveFailedSyncItem(organizationId, this.config.id, external.externalId);
+          } catch { /* non-critical */ }
         } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           result.failed++;
           result.errors.push({
             externalId: external.externalId,
-            error: error instanceof Error ? error.message : 'Unknown error',
+            error: errorMessage,
           });
+
+          // Record failure for retry on next sync
+          try {
+            await db.recordFailedSyncItem(organizationId, {
+              integration_id: this.config.id,
+              external_id: external.externalId,
+              external_source: this.config.slug,
+              error_message: errorMessage,
+            });
+          } catch (recordError) {
+            this.adapterLogger.error(
+              { error: recordError, externalId: external.externalId },
+              'Failed to record sync failure for retry'
+            );
+          }
 
           this.adapterLogger.error(
             { error, externalId: external.externalId },

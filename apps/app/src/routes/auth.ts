@@ -12,6 +12,7 @@ import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { validateLoginRequest } from '../utils/validation';
 import { getConfig } from '../config/env';
 import { blacklistToken, isTokenBlacklisted } from '../services/token-blacklist';
+import { getCookieConfig, buildSetCookieHeader, buildClearCookieHeader } from '@skyplanner/auth';
 import type { AuthenticatedRequest, JWTPayload, ApiResponse } from '../types';
 
 const router: Router = Router();
@@ -86,6 +87,7 @@ interface OrganizationRecord {
   subscription_status?: 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
   trial_ends_at?: string;
   current_period_end?: string;
+  app_mode?: 'mvp' | 'full';
 }
 
 interface LoginAttemptData {
@@ -183,6 +185,20 @@ router.post(
       throw Errors.unauthorized('Feil e-post eller passord');
     }
 
+    // Check if user is deactivated
+    if (!user.aktiv) {
+      await dbService.logLoginAttempt({
+        epost,
+        bruker_navn: user.navn,
+        bruker_type: userType,
+        status: 'feilet',
+        ip_adresse: ip,
+        user_agent: userAgent,
+        feil_melding: 'Bruker deaktivert',
+      });
+      throw Errors.forbidden('Brukeren din er deaktivert. Kontakt administrator for å reaktivere kontoen.');
+    }
+
     // Update last login
     if (userType === 'klient') {
       await dbService.updateKlientLastLogin(user.id);
@@ -231,7 +247,8 @@ router.post(
     });
 
     // Send login notification email (async, don't wait)
-    sendLoginNotification(user, userType, ip, userAgent);
+    sendLoginNotification(user, userType, ip, userAgent)
+      .catch(err => authLogger.error({ err }, 'Failed to send login notification'));
 
     // Build response
     const response: ApiResponse = {
@@ -265,11 +282,21 @@ router.post(
               brandSubtitle: organization.brand_subtitle,
               onboardingCompleted: organization.onboarding_completed ?? false,
               industryTemplateId: organization.industry_template_id ?? null,
+              appMode: organization.app_mode ?? 'mvp',
+              subscriptionStatus: organization.subscription_status ?? null,
+              trialEndsAt: organization.trial_ends_at ?? null,
+              planType: organization.plan_type ?? null,
             }
           : null,
       },
       requestId: req.requestId,
     };
+
+    // Set httpOnly auth cookie (secure alternative to localStorage)
+    const isProduction = getConfig().NODE_ENV === 'production';
+    const cookieConfig = getCookieConfig(isProduction);
+    const cookieHeader = buildSetCookieHeader(token, cookieConfig.options);
+    res.setHeader('Set-Cookie', cookieHeader);
 
     res.json(response);
   })
@@ -402,6 +429,10 @@ router.post(
     await blacklistToken(tokenId, expiresAt, req.user!.userId, req.user!.type, 'logout');
     logAudit(authLogger, 'LOGOUT', req.user!.userId, 'user', req.user!.userId);
 
+    // Clear httpOnly auth cookie
+    const isProduction = getConfig().NODE_ENV === 'production';
+    res.setHeader('Set-Cookie', buildClearCookieHeader(isProduction));
+
     const response: ApiResponse = {
       success: true,
       data: { message: 'Logget ut' },
@@ -519,6 +550,10 @@ router.get(
                 brandSubtitle: organization.brand_subtitle,
                 onboardingCompleted: organization.onboarding_completed ?? false,
                 industryTemplateId: organization.industry_template_id ?? null,
+                appMode: organization.app_mode ?? 'mvp',
+                subscriptionStatus: organization.subscription_status ?? null,
+                trialEndsAt: organization.trial_ends_at ?? null,
+                planType: organization.plan_type ?? null,
               }
             : null,
         },

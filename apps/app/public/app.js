@@ -39,8 +39,10 @@ let currentTheme = localStorage.getItem('theme') || 'dark';
 // Application Configuration
 let appConfig = {};
 
-// Authentication token
-let authToken = localStorage.getItem('authToken');
+// Authentication token (managed via httpOnly cookies, variable kept for backward compat)
+let authToken = null;
+let subscriptionInfo = null; // { status, trialEndsAt, planType } - populated from login/verify
+let accessTokenExpiresAt = null; // Token expiry timestamp - for proactive refresh
 
 // ========================================
 // TAB CLEANUP REGISTRY
@@ -82,6 +84,70 @@ const Logger = {
   },
   error: console.error.bind(console, '[ERROR]')
 };
+
+// ========================================
+// APP MODE HELPERS
+// 'mvp' = Enkel versjon for nye kunder
+// 'full' = Komplett versjon (TRE Allservice)
+// ========================================
+function isFullMode() {
+  return appConfig.appMode === 'full' || localStorage.getItem('appMode') === 'full';
+}
+
+function isMvpMode() {
+  return !isFullMode();
+}
+
+/**
+ * Apply MVP mode UI changes - hide industry-specific elements
+ * Called after DOM is ready and on config changes
+ * MVP = Enkel versjon for alle bransjer
+ * Full = Komplett versjon (TRE Allservice med el/brann)
+ */
+function applyMvpModeUI() {
+  const isMvp = isMvpMode();
+
+  // Elements to hide in MVP mode (industry-specific for el/brann)
+  const mvpHiddenElements = [
+    // Category filter section (El-Kontroll, Brannvarsling, Begge)
+    document.getElementById('categoryFilterButtons')?.closest('.category-filter'),
+    // El-type filter (Landbruk, Næring, Bolig)
+    document.getElementById('elTypeFilter'),
+    // Driftskategori filter (Storfe, Sau, etc.)
+    document.getElementById('driftskategoriFilter'),
+    // Brannsystem filter (Elotec, ICAS, etc.)
+    document.getElementById('brannsystemFilter'),
+    // Color legend (based on el/brann control dates)
+    document.querySelector('.color-legend'),
+    // Dynamic field filters
+    document.getElementById('dynamicFieldFilters'),
+  ];
+
+  mvpHiddenElements.forEach(el => {
+    if (el) {
+      el.style.display = isMvp ? 'none' : '';
+    }
+  });
+
+  // In MVP mode, simplify the filter panel header
+  const filterHeader = document.querySelector('.filter-panel-header h3');
+  if (filterHeader) {
+    filterHeader.innerHTML = isMvp
+      ? '<i class="fas fa-users"></i> Kunder'
+      : '<i class="fas fa-filter"></i> Kunder';
+  }
+
+  Logger.log(`MVP mode UI applied: ${isMvp ? 'MVP (simplified)' : 'Full (TRE Allservice)'}`);
+}
+
+// ========================================
+// CSRF TOKEN HELPER
+// Gets CSRF token from cookie for API requests
+// ========================================
+function getCsrfToken() {
+  const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 // ========================================
 // MODAL SYSTEM - Laila-vennlige dialoger
@@ -227,17 +293,21 @@ const ModalSystem = {
       overlay.style.opacity = '1';
     });
 
-    // Close on escape key
-    const escHandler = (e) => {
+    // Close on escape key (store reference for cleanup in hide())
+    this._escHandler = (e) => {
       if (e.key === 'Escape') {
         this.hide();
-        document.removeEventListener('keydown', escHandler);
       }
     };
-    document.addEventListener('keydown', escHandler);
+    document.addEventListener('keydown', this._escHandler);
   },
 
   hide() {
+    // Clean up escape key listener to prevent memory leaks
+    if (this._escHandler) {
+      document.removeEventListener('keydown', this._escHandler);
+      this._escHandler = null;
+    }
     const overlay = this.container?.querySelector('.modal-system-overlay');
     if (overlay) {
       overlay.style.opacity = '0';
@@ -819,8 +889,16 @@ class ServiceTypeRegistry {
 
   /**
    * Generate category tabs HTML
+   * MVP-modus: Vis kun "Alle" tab for enkel brukeropplevelse
+   * Full mode (TRE Allservice): Vis alle kategorier
    */
   renderCategoryTabs(activeCategory = 'all') {
+    // MVP-modus: Kun vis "Alle" tab - enkel versjon
+    if (isMvpMode()) {
+      return `<button class="kategori-tab active" data-kategori="alle">Alle kunder</button>`;
+    }
+
+    // Full mode (TRE Allservice): Vis alle kategorier
     const serviceTypes = this.getAll();
 
     let html = `<button class="kategori-tab ${activeCategory === 'all' ? 'active' : ''}" data-kategori="alle">Alle</button>`;
@@ -1595,6 +1673,14 @@ function renderDriftskategoriFilter() {
   const container = document.getElementById('driftFilterButtons');
   if (!container) return;
 
+  // MVP-modus: Skjul avanserte filtre
+  const filterContainer = container.parentElement;
+  if (isMvpMode()) {
+    if (filterContainer) filterContainer.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
   // Get unique driftstype values from actual customer data
   const counts = {};
   customers.forEach(c => {
@@ -1612,7 +1698,6 @@ function renderDriftskategoriFilter() {
     .map(([name, count]) => ({ name, count }));
 
   // Hide filter container if no driftstype values
-  const filterContainer = container.parentElement;
   if (filterContainer) {
     filterContainer.style.display = driftstyper.length > 0 ? 'block' : 'none';
   }
@@ -1672,6 +1757,14 @@ function renderBrannsystemFilter() {
   const container = document.getElementById('brannsystemFilterButtons');
   if (!container) return;
 
+  // MVP-modus: Skjul avanserte filtre
+  const filterContainer = container.parentElement;
+  if (isMvpMode()) {
+    if (filterContainer) filterContainer.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
   // Count customers per normalized brannsystem category
   const counts = { 'Elotec': 0, 'ICAS': 0, 'Begge': 0, 'Annet': 0 };
   customers.forEach(c => {
@@ -1685,7 +1778,6 @@ function renderBrannsystemFilter() {
   const categories = Object.entries(counts).filter(([_, count]) => count > 0);
 
   // Hide filter container if no brannsystem values
-  const filterContainer = container.parentElement;
   if (filterContainer) {
     filterContainer.style.display = categories.length > 0 ? 'block' : 'none';
   }
@@ -1744,6 +1836,14 @@ function renderElTypeFilter() {
   const container = document.getElementById('elTypeFilterButtons');
   if (!container) return;
 
+  // MVP-modus: Skjul avanserte filtre
+  const filterContainer = container.parentElement;
+  if (isMvpMode()) {
+    if (filterContainer) filterContainer.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
   // Count customers per el_type
   const counts = {};
   customers.forEach(c => {
@@ -1759,7 +1859,6 @@ function renderElTypeFilter() {
     .map(([name, count]) => ({ name, count }));
 
   // Hide filter container if no values
-  const filterContainer = container.parentElement;
   if (filterContainer) {
     filterContainer.style.display = types.length > 0 ? 'block' : 'none';
   }
@@ -3460,9 +3559,16 @@ async function handleSpaLogin(e) {
   errorMessage.classList.remove('show');
 
   try {
+    const loginHeaders = { 'Content-Type': 'application/json' };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      loginHeaders['X-CSRF-Token'] = csrfToken;
+    }
+
     const response = await fetch('/api/klient/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: loginHeaders,
+      credentials: 'include',
       body: JSON.stringify({ epost: email, passord: password, rememberMe })
     });
 
@@ -3471,23 +3577,13 @@ async function handleSpaLogin(e) {
     const data = rawData.success && rawData.data ? rawData.data : rawData;
 
     if (response.ok && (data.accessToken || data.token)) {
-      // Store auth data - use new token fields with fallback to legacy
+      // Auth is now managed via httpOnly cookies (set by server)
+      // Keep authToken in memory for backward compat during transition
       authToken = data.accessToken || data.token;
-      localStorage.setItem('authToken', authToken);
+      if (data.expiresAt) accessTokenExpiresAt = data.expiresAt;
       localStorage.setItem('userName', data.klient?.navn || data.bruker?.navn || 'Bruker');
       localStorage.setItem('userRole', data.klient?.rolle || data.bruker?.rolle || 'bruker');
       localStorage.setItem('userType', data.klient?.type || 'klient');
-
-      // Store refresh token and expiry times
-      if (data.refreshToken) {
-        localStorage.setItem('refreshToken', data.refreshToken);
-      }
-      if (data.accessTokenExpiresAt) {
-        localStorage.setItem('accessTokenExpiresAt', data.accessTokenExpiresAt);
-      }
-      if (data.refreshTokenExpiresAt) {
-        localStorage.setItem('refreshTokenExpiresAt', data.refreshTokenExpiresAt);
-      }
 
       // Multi-tenancy: Store organization context
       if (data.klient?.organizationId) {
@@ -3504,7 +3600,19 @@ async function handleSpaLogin(e) {
         appConfig.companyName = data.organization.navn || appConfig.companyName;
         appConfig.appName = data.organization.brandTitle || appConfig.appName;
         appConfig.companySubtitle = data.organization.brandSubtitle || appConfig.companySubtitle;
+        // App mode: 'mvp' = enkel versjon, 'full' = komplett (TRE Allservice)
+        appConfig.appMode = data.organization.appMode || 'mvp';
+        localStorage.setItem('appMode', appConfig.appMode);
+
+        // Store subscription info for timer
+        subscriptionInfo = {
+          status: data.organization.subscriptionStatus,
+          trialEndsAt: data.organization.trialEndsAt,
+          planType: data.organization.planType
+        };
+
         applyBranding();
+        applyMvpModeUI();
       }
 
       // Show admin tab if user is admin/bruker
@@ -3532,7 +3640,7 @@ async function handleSpaLogin(e) {
         // Verify super-admin status via API
         try {
           const verifyRes = await fetch('/api/klient/verify', {
-            headers: { 'Authorization': `Bearer ${authToken}` }
+            credentials: 'include'
           });
           const verifyData = await verifyRes.json();
           console.log('[Login Debug] Verify response:', verifyData);
@@ -3642,12 +3750,17 @@ function hideUserBar() {
 // Update onboarding step via API
 async function updateOnboardingStep(step, data = {}) {
   try {
+    const onboardHeaders = {
+      'Content-Type': 'application/json',
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      onboardHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch('/api/onboarding/step', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
+      headers: onboardHeaders,
+      credentials: 'include',
       body: JSON.stringify({ step, data })
     });
     return await response.json();
@@ -3660,11 +3773,16 @@ async function updateOnboardingStep(step, data = {}) {
 // Skip onboarding entirely
 async function skipOnboarding() {
   try {
+    const skipHeaders = {
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      skipHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch('/api/onboarding/skip', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${authToken}`
-      }
+      headers: skipHeaders,
+      credentials: 'include'
     });
     return await response.json();
   } catch (error) {
@@ -3677,9 +3795,7 @@ async function skipOnboarding() {
 async function getOnboardingStatus() {
   try {
     const response = await fetch('/api/onboarding/status', {
-      headers: {
-        'Authorization': `Bearer ${authToken}`
-      }
+      credentials: 'include'
     });
     return await response.json();
   } catch (error) {
@@ -3931,10 +4047,24 @@ function renderCompleteStep() {
 // WIZARD IMPORT STEP - Excel/CSV Import
 // ========================================
 
+// Shared field type map for import mapping (used by both preview and commit)
+const IMPORT_FIELD_TYPE_MAP = {
+  navn: 'string', adresse: 'string', postnummer: 'postnummer', poststed: 'string',
+  telefon: 'phone', epost: 'email', kontaktperson: 'string', notater: 'string',
+  kategori: 'kategori', el_type: 'string', brann_system: 'string',
+  brann_driftstype: 'string', driftskategori: 'string',
+  siste_el_kontroll: 'date', neste_el_kontroll: 'date',
+  siste_brann_kontroll: 'date', neste_brann_kontroll: 'date',
+  siste_kontroll: 'date', neste_kontroll: 'date',
+  kontroll_intervall_mnd: 'integer', el_kontroll_intervall: 'integer',
+  brann_kontroll_intervall: 'integer', ekstern_id: 'string', org_nummer: 'string',
+};
+
 // State management for wizard import
 const wizardImportState = {
-  currentImportStep: 1, // Sub-steps: 1=upload, 2=mapping, 3=preview, 4=results
+  currentImportStep: 1, // Sub-steps: 1=upload, 2=cleaning, 3=mapping, 4=preview, 5=results
   sessionId: null,
+  batchId: null, // Staging batch ID from advanced backend
   previewData: null,
   columnMapping: {},
   categoryMapping: {},
@@ -3949,13 +4079,32 @@ const wizardImportState = {
   aiQuestions: [], // Questions from AI for ambiguous mappings
   questionAnswers: {}, // User answers to AI questions
   requiredMappings: { navn: null, adresse: null }, // User-selected columns for required fields
-  error: null
+  error: null,
+  // Row selection and editing state
+  selectedRows: new Set(), // Set of selected row indices
+  editedRows: {}, // Map of row index to edited values { rowIndex: { field: newValue } }
+  editingCell: null, // Currently editing cell { row: number, field: string }
+  // Cleaning state
+  cleaningReport: null,         // CleaningReport from backend
+  cleanedPreview: null,         // Cleaned rows from backend
+  originalPreview: null,        // Original (uncleaned) rows
+  enabledCleaningRules: {},     // { ruleId: boolean } - user toggles
+  useCleanedData: true,         // Whether to proceed with cleaned data
+  // Pagination & display state
+  cleaningTablePage: 0,         // Current page in cleaning full table
+  previewTablePage: 0,          // Current page in preview table
+  previewShowBeforeAfter: false, // Toggle before/after transformation view
+  fieldToHeaderMapping: {}      // Maps target field -> source header name
 };
+
+// Track if we're in standalone import mode (vs onboarding wizard)
+let standaloneImportMode = false;
 
 // Reset wizard import state
 function resetWizardImportState() {
   wizardImportState.currentImportStep = 1;
   wizardImportState.sessionId = null;
+  wizardImportState.batchId = null;
   wizardImportState.previewData = null;
   wizardImportState.columnMapping = {};
   wizardImportState.categoryMapping = {};
@@ -3971,6 +4120,105 @@ function resetWizardImportState() {
   wizardImportState.questionAnswers = {};
   wizardImportState.requiredMappings = { navn: null, adresse: null };
   wizardImportState.error = null;
+  wizardImportState.selectedRows = new Set();
+  wizardImportState.editedRows = {};
+  wizardImportState.editingCell = null;
+  wizardImportState.cleaningReport = null;
+  wizardImportState.cleanedPreview = null;
+  wizardImportState.originalPreview = null;
+  wizardImportState.enabledCleaningRules = {};
+  wizardImportState.useCleanedData = true;
+  wizardImportState.cleaningTablePage = 0;
+  wizardImportState.previewTablePage = 0;
+  wizardImportState.previewShowBeforeAfter = false;
+  wizardImportState.fieldToHeaderMapping = {};
+}
+
+// Show standalone import modal
+function showImportModal() {
+  standaloneImportMode = true;
+  resetWizardImportState();
+
+  const modal = document.getElementById('importModal');
+  const content = document.getElementById('importModalContent');
+
+  if (!modal || !content) return;
+
+  // Render the import wizard content (reuse existing function)
+  content.innerHTML = renderStandaloneImportWizard();
+
+  // Show the modal
+  modal.classList.remove('hidden');
+
+  // Attach import-specific event listeners
+  attachWizardImportListeners();
+}
+
+// Close standalone import modal
+function closeImportModal() {
+  const modal = document.getElementById('importModal');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+  standaloneImportMode = false;
+
+  // If import was completed, refresh the customer list
+  if (wizardImportState.importResults?.imported > 0) {
+    loadCustomers();
+  }
+
+  resetWizardImportState();
+}
+
+// Render standalone import wizard (without onboarding wrapper)
+function renderStandaloneImportWizard() {
+  const importStep = wizardImportState.currentImportStep;
+
+  return `
+    <!-- Import sub-steps indicator -->
+    <div class="wizard-import-steps">
+      <div class="import-step-indicator ${importStep >= 1 ? 'active' : ''}" data-step="1">
+        <span class="step-number">1</span>
+        <span class="step-label">Last opp</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 2 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 2 ? 'active' : ''}" data-step="2">
+        <span class="step-number">2</span>
+        <span class="step-label">Datarensing</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 3 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 3 ? 'active' : ''}" data-step="3">
+        <span class="step-number">3</span>
+        <span class="step-label">Mapping</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 4 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 4 ? 'active' : ''}" data-step="4">
+        <span class="step-number">4</span>
+        <span class="step-label">Forhåndsvis</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 5 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 5 ? 'active' : ''}" data-step="5">
+        <span class="step-number">5</span>
+        <span class="step-label">Resultat</span>
+      </div>
+    </div>
+
+    <!-- Dynamic content based on sub-step -->
+    <div class="wizard-import-content" id="wizardImportContent">
+      ${renderWizardImportSubStep(importStep)}
+    </div>
+  `;
+}
+
+// Update standalone import modal content
+function updateStandaloneImportContent() {
+  if (!standaloneImportMode) return;
+
+  const content = document.getElementById('importModalContent');
+  if (content) {
+    content.innerHTML = renderStandaloneImportWizard();
+    attachWizardImportListeners();
+  }
 }
 
 /**
@@ -4040,16 +4288,21 @@ function renderWizardImportStep() {
       <div class="import-step-connector ${importStep >= 2 ? 'active' : ''}"></div>
       <div class="import-step-indicator ${importStep >= 2 ? 'active' : ''}" data-step="2">
         <span class="step-number">2</span>
-        <span class="step-label">Mapping</span>
+        <span class="step-label">Datarensing</span>
       </div>
       <div class="import-step-connector ${importStep >= 3 ? 'active' : ''}"></div>
       <div class="import-step-indicator ${importStep >= 3 ? 'active' : ''}" data-step="3">
         <span class="step-number">3</span>
-        <span class="step-label">Forhåndsvis</span>
+        <span class="step-label">Mapping</span>
       </div>
       <div class="import-step-connector ${importStep >= 4 ? 'active' : ''}"></div>
       <div class="import-step-indicator ${importStep >= 4 ? 'active' : ''}" data-step="4">
         <span class="step-number">4</span>
+        <span class="step-label">Forhåndsvis</span>
+      </div>
+      <div class="import-step-connector ${importStep >= 5 ? 'active' : ''}"></div>
+      <div class="import-step-indicator ${importStep >= 5 ? 'active' : ''}" data-step="5">
+        <span class="step-number">5</span>
         <span class="step-label">Resultat</span>
       </div>
     </div>
@@ -4070,6 +4323,8 @@ function renderWizardLoadingState() {
     'uploading': { icon: 'fa-cloud-upload-alt', message: 'Laster opp fil...', isAI: false },
     'parsing': { icon: 'fa-file-excel', message: 'Leser kolonner og rader...', isAI: false },
     'ai-mapping': { icon: 'fa-robot', message: 'AI analyserer kolonner...', isAI: true },
+    'cleaning': { icon: 'fa-broom', message: 'Renser data...', isAI: false },
+    'mapping': { icon: 'fa-columns', message: 'Kobler kolonner til felt...', isAI: false },
     'validating': { icon: 'fa-check-circle', message: 'Validerer data...', isAI: false },
     'importing': { icon: 'fa-database', message: `Importerer kunder...`, isAI: false, showProgress: true }
   };
@@ -4124,14 +4379,348 @@ function renderWizardImportSubStep(step) {
     case 1:
       return renderWizardImportUpload();
     case 2:
-      return renderWizardImportMapping();
+      return renderWizardImportCleaning();
     case 3:
-      return renderWizardImportPreview();
+      return renderWizardImportMapping();
     case 4:
+      return renderWizardImportPreview();
+    case 5:
       return renderWizardImportResults();
     default:
       return renderWizardImportUpload();
   }
+}
+
+// Sub-step 2: Data cleaning preview
+function renderWizardImportCleaning() {
+  const report = wizardImportState.cleaningReport;
+  const totalChanges = report ? (report.totalCellsCleaned + report.totalRowsRemoved) : 0;
+  const data = wizardImportState.previewData;
+  const totalRows = data ? data.totalRows : 0;
+
+  // No issues found
+  if (!report || totalChanges === 0) {
+    return `
+      <div class="wizard-cleaning-container">
+        <div class="wizard-cleaning-summary wizard-cleaning-clean">
+          <i class="fas fa-check-circle"></i>
+          <div>
+            <strong>Ingen problemer funnet</strong>
+            <p>Filen ser bra ut! ${totalRows} rader klare for import.</p>
+          </div>
+        </div>
+        <div class="wizard-import-actions">
+          <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
+            <i class="fas fa-arrow-left"></i> Tilbake
+          </button>
+          <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
+            Gå videre <i class="fas fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Get active changes based on enabled rules
+  const enabledRules = wizardImportState.enabledCleaningRules;
+  const activeCellChanges = report.cellChanges.filter(c => enabledRules[c.ruleId]);
+  const activeRowRemovals = report.rowRemovals.filter(r => enabledRules[r.ruleId]);
+  const activeTotal = activeCellChanges.length + activeRowRemovals.length;
+
+  // Diff table - show max 50 cell changes
+  const maxDiffRows = 50;
+  const visibleChanges = activeCellChanges.slice(0, maxDiffRows);
+  const hasMoreChanges = activeCellChanges.length > maxDiffRows;
+
+  return `
+    <div class="wizard-cleaning-container">
+      <!-- Summary banner -->
+      <div class="wizard-cleaning-summary">
+        <i class="fas fa-broom"></i>
+        <div>
+          <strong>${activeTotal} ${activeTotal === 1 ? 'endring' : 'endringer'} funnet i ${totalRows} rader</strong>
+          <p>${activeCellChanges.length} ${activeCellChanges.length === 1 ? 'celle' : 'celler'} renset, ${activeRowRemovals.length} ${activeRowRemovals.length === 1 ? 'rad' : 'rader'} foreslått fjernet.</p>
+        </div>
+      </div>
+
+      <!-- Rule toggles -->
+      <div class="wizard-cleaning-rules">
+        <h3>Renseregler</h3>
+        <div class="wizard-cleaning-rules-list">
+          ${report.rules.filter(r => r.affectedCount > 0).map(rule => `
+            <label class="wizard-cleaning-rule-toggle">
+              <input type="checkbox" ${enabledRules[rule.ruleId] ? 'checked' : ''}
+                onchange="wizardToggleCleaningRule('${rule.ruleId}', this.checked)">
+              <span class="wizard-cleaning-rule-info">
+                <span class="wizard-cleaning-rule-name">${escapeHtml(rule.name)}</span>
+                <span class="wizard-cleaning-rule-desc">${escapeHtml(rule.description)}</span>
+              </span>
+              <span class="wizard-cleaning-rule-count">${rule.affectedCount} ${rule.category === 'rows' ? (rule.affectedCount === 1 ? 'rad' : 'rader') : (rule.affectedCount === 1 ? 'celle' : 'celler')}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+
+      ${visibleChanges.length > 0 ? `
+      <!-- Diff table -->
+      <div class="wizard-cleaning-diff-section">
+        <h3>Endringsoversikt</h3>
+        <div class="wizard-cleaning-diff-table-wrapper">
+          <table class="wizard-cleaning-diff-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Kolonne</th>
+                <th>Rad</th>
+                <th>Opprinnelig</th>
+                <th>Renset</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${visibleChanges.map((change, i) => `
+                <tr>
+                  <td>${i + 1}</td>
+                  <td>${escapeHtml(change.column)}</td>
+                  <td>${change.rowIndex + 2}</td>
+                  <td class="cell-original">${formatCleaningValue(change.originalValue)}</td>
+                  <td class="cell-cleaned">${formatCleaningValue(change.cleanedValue)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+        ${hasMoreChanges ? `
+          <p class="wizard-cleaning-more">Viser ${maxDiffRows} av ${activeCellChanges.length} endringer</p>
+        ` : ''}
+      </div>
+      ` : ''}
+
+      ${renderCleaningFullTable()}
+
+      ${activeRowRemovals.length > 0 ? `
+      <!-- Removed rows -->
+      <details class="wizard-cleaning-removed">
+        <summary>${activeRowRemovals.length} ${activeRowRemovals.length === 1 ? 'rad' : 'rader'} fjernet</summary>
+        <div class="wizard-cleaning-removed-list">
+          ${activeRowRemovals.map(removal => `
+            <div class="wizard-cleaning-removed-item">
+              <span class="removal-row">Rad ${removal.rowIndex + 2}</span>
+              <span class="removal-reason">${escapeHtml(removal.reason)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+      ` : ''}
+
+      <!-- Actions -->
+      <div class="wizard-import-actions">
+        <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
+          <i class="fas fa-arrow-left"></i> Tilbake
+        </button>
+        <button class="wizard-btn wizard-btn-ghost" onclick="wizardCleaningSkip()">
+          Hopp over rensing
+        </button>
+        <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
+          <i class="fas fa-check"></i> Godkjenn rensing <i class="fas fa-arrow-right"></i>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// Format a value for display in the diff table
+function formatCleaningValue(val) {
+  if (val === null || val === undefined) return '<span class="cleaning-null">(tom)</span>';
+  const str = String(val);
+  if (str === '') return '<span class="cleaning-null">(tom)</span>';
+  // Show whitespace visually
+  const visual = str.replace(/ /g, '\u00B7').replace(/\t/g, '\u2192');
+  return escapeHtml(visual);
+}
+
+// Toggle a cleaning rule on/off
+function wizardToggleCleaningRule(ruleId, enabled) {
+  wizardImportState.enabledCleaningRules[ruleId] = enabled;
+  updateWizardImportContent();
+}
+
+// Pagination for cleaning full table
+function wizardCleaningTablePage(page) {
+  wizardImportState.cleaningTablePage = Math.max(0, page);
+  updateWizardImportContent();
+}
+window.wizardCleaningTablePage = wizardCleaningTablePage;
+
+// Render full data table for cleaning step
+function renderCleaningFullTable() {
+  const originalRows = wizardImportState.originalPreview;
+  const headers = wizardImportState.previewData?.headers || [];
+  const report = wizardImportState.cleaningReport;
+  const enabledRules = wizardImportState.enabledCleaningRules;
+
+  if (!originalRows || originalRows.length === 0 || headers.length === 0) return '';
+
+  // Build change map: "rowIndex|column" -> { originalValue, cleanedValue }
+  const changeMap = new Map();
+  if (report) {
+    for (const change of report.cellChanges) {
+      if (!enabledRules[change.ruleId]) continue;
+      changeMap.set(`${change.rowIndex}|${change.column}`, change);
+    }
+  }
+
+  // Build removed indices set
+  const removedIndices = new Set();
+  if (report) {
+    for (const removal of report.rowRemovals) {
+      if (enabledRules[removal.ruleId]) {
+        removedIndices.add(removal.rowIndex);
+      }
+    }
+  }
+
+  // Pagination
+  const pageSize = 50;
+  const currentPage = wizardImportState.cleaningTablePage || 0;
+  const totalPages = Math.ceil(originalRows.length / pageSize);
+  const validPage = Math.min(currentPage, totalPages - 1);
+  const startIdx = validPage * pageSize;
+  const pageRows = originalRows.slice(startIdx, startIdx + pageSize);
+
+  // Show max 8 columns, scrollable
+  const maxCols = 8;
+  const displayHeaders = headers.slice(0, maxCols);
+  const hasMoreColumns = headers.length > maxCols;
+
+  return `
+    <div class="wizard-cleaning-fulltable-section">
+      <h3><i class="fas fa-table"></i> Fullstendig dataoversikt</h3>
+      <p class="wizard-section-desc">${originalRows.length} rader totalt. Endrede celler er markert. Fjernede rader er gjennomstreket.</p>
+      <div class="wizard-cleaning-fulltable-wrapper">
+        <table class="wizard-cleaning-fulltable">
+          <thead>
+            <tr>
+              <th>#</th>
+              ${displayHeaders.map(h => `<th>${escapeHtml(h)}</th>`).join('')}
+              ${hasMoreColumns ? '<th>...</th>' : ''}
+            </tr>
+          </thead>
+          <tbody>
+            ${pageRows.map((row, i) => {
+              const globalIdx = row._rowIndex !== undefined ? row._rowIndex : (startIdx + i);
+              const isRemoved = removedIndices.has(globalIdx);
+              return `
+                <tr class="${isRemoved ? 'row-removed' : ''}">
+                  <td>${globalIdx + 2}</td>
+                  ${displayHeaders.map(col => {
+                    const change = changeMap.get(`${globalIdx}|${col}`);
+                    const value = isRemoved
+                      ? String(row[col] ?? '')
+                      : (change ? String(change.cleanedValue ?? '') : String(row[col] ?? ''));
+                    const cellClass = change && !isRemoved ? 'cell-was-cleaned' : '';
+                    const title = change && !isRemoved
+                      ? `Opprinnelig: ${String(change.originalValue ?? '(tom)')}`
+                      : (isRemoved ? 'Denne raden fjernes' : '');
+                    return `<td class="${cellClass}" ${title ? `title="${escapeHtml(title)}"` : ''}>${escapeHtml(value || '-')}</td>`;
+                  }).join('')}
+                  ${hasMoreColumns ? '<td>...</td>' : ''}
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${totalPages > 1 ? `
+        <div class="wizard-cleaning-pagination">
+          <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
+            onclick="wizardCleaningTablePage(${validPage - 1})" ${validPage === 0 ? 'disabled' : ''}>
+            <i class="fas fa-chevron-left"></i> Forrige
+          </button>
+          <span>Side ${validPage + 1} av ${totalPages}</span>
+          <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
+            onclick="wizardCleaningTablePage(${validPage + 1})" ${validPage >= totalPages - 1 ? 'disabled' : ''}>
+            Neste <i class="fas fa-chevron-right"></i>
+          </button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Go back from cleaning step to upload
+function wizardCleaningBack() {
+  wizardImportState.currentImportStep = 1;
+  updateWizardImportContent();
+}
+
+// Skip cleaning and proceed with original data
+function wizardCleaningSkip() {
+  wizardImportState.useCleanedData = false;
+  wizardImportState.currentImportStep = 3;
+  updateWizardImportContent();
+}
+
+// Approve cleaning and proceed to mapping
+function wizardCleaningApprove() {
+  wizardImportState.useCleanedData = true;
+
+  // Apply enabled rules to compute effective cleaned data
+  const effectiveData = getEffectiveCleanedData();
+  if (effectiveData) {
+    wizardImportState.previewData = {
+      ...wizardImportState.previewData,
+      preview: effectiveData,
+      totalRows: effectiveData.length,
+    };
+  }
+
+  wizardImportState.currentImportStep = 3;
+  updateWizardImportContent();
+}
+
+// Compute effective cleaned data based on enabled rules
+function getEffectiveCleanedData() {
+  const report = wizardImportState.cleaningReport;
+  const originalRows = wizardImportState.originalPreview;
+  if (!report || !originalRows) return null;
+
+  const enabledRules = wizardImportState.enabledCleaningRules;
+
+  // Start with deep copy of original rows
+  let rows = originalRows.map(row => ({ ...row }));
+
+  // Apply enabled row removals (collect indices to remove)
+  const removedIndices = new Set();
+  for (const removal of report.rowRemovals) {
+    if (enabledRules[removal.ruleId]) {
+      removedIndices.add(removal.rowIndex);
+    }
+  }
+  rows = rows.filter((row, i) => !removedIndices.has(row._rowIndex !== undefined ? row._rowIndex : i));
+
+  // Build a map of cell changes by (rowIndex, column) for enabled rules
+  const changeMap = new Map();
+  for (const change of report.cellChanges) {
+    if (!enabledRules[change.ruleId]) continue;
+    if (removedIndices.has(change.rowIndex)) continue; // Row was removed
+    const key = `${change.rowIndex}|${change.column}`;
+    // Later rules overwrite earlier ones (they are applied in order)
+    changeMap.set(key, change.cleanedValue);
+  }
+
+  // Apply cell changes
+  for (const row of rows) {
+    const rowIdx = row._rowIndex !== undefined ? row._rowIndex : -1;
+    for (const [key, cleanedValue] of changeMap) {
+      const [changeRowIdx, column] = key.split('|');
+      if (Number(changeRowIdx) === rowIdx) {
+        row[column] = cleanedValue;
+      }
+    }
+  }
+
+  // Re-index rows
+  return rows.map((row, i) => ({ ...row, _rowIndex: i }));
 }
 
 // Sub-step 1: File upload
@@ -4269,78 +4858,68 @@ function isSameColumnSelected() {
 
 // Render REQUIRED field selectors - user MUST confirm these before import
 function renderRequiredFieldSelectors(data) {
-  const allColumns = data.allColumns || [];
-  const requiredFields = data.requiredFields || {};
+  const allColumns = data.allColumns || data.headers || [];
   const currentMappings = wizardImportState.requiredMappings;
 
   if (allColumns.length === 0) {
     return '';
   }
 
-  const navnConfidence = requiredFields.navn?.confidence || 0;
-  const adresseConfidence = requiredFields.adresse?.confidence || 0;
+  const bothMapped = currentMappings.navn && currentMappings.adresse &&
+    currentMappings.navn !== '-- Velg kolonne --' && currentMappings.adresse !== '-- Velg kolonne --';
 
   return `
-    <div class="wizard-required-fields">
-      <div class="wizard-required-header">
-        <i class="fas fa-exclamation-circle"></i>
-        <span>Bekreft kolonner for kundenavn og adresse</span>
-      </div>
-      <p class="wizard-required-desc">Velg hvilke kolonner som inneholder kundenavn og adresse. Dette er påkrevd for import.</p>
+    <div class="wizard-required-fields ${bothMapped ? 'wizard-fields-ok' : ''}">
+      ${bothMapped ? `
+        <div class="wizard-required-header wizard-header-success">
+          <i class="fas fa-check-circle"></i>
+          <span>Kolonner gjenkjent automatisk</span>
+        </div>
+        <p class="wizard-required-desc">Endre hvis noe er feil.</p>
+      ` : `
+        <div class="wizard-required-header">
+          <i class="fas fa-columns"></i>
+          <span>Velg kolonner</span>
+        </div>
+        <p class="wizard-required-desc">Velg hvilken kolonne som er kundenavn og adresse.</p>
+      `}
 
       <div class="wizard-required-grid">
         <div class="wizard-required-row">
           <label>
             <i class="fas fa-user"></i>
-            Kundenavn *
+            Kundenavn
           </label>
           <select id="navnColumnSelect" onchange="updateRequiredMapping('navn', this.value)" class="wizard-required-select">
             <option value="">-- Velg kolonne --</option>
             ${allColumns.map(col => `
               <option value="${escapeHtml(col)}" ${currentMappings.navn === col ? 'selected' : ''}>
                 ${escapeHtml(col)}
-                ${requiredFields.navn?.suggestedColumn === col ? ' (Anbefalt)' : ''}
               </option>
             `).join('')}
           </select>
-          ${navnConfidence > 0 && navnConfidence < 0.8 ? `
-            <span class="confidence-warning" title="AI er ${Math.round(navnConfidence * 100)}% sikker">
-              <i class="fas fa-question-circle"></i>
-            </span>
-          ` : ''}
         </div>
 
         <div class="wizard-required-row">
           <label>
             <i class="fas fa-map-marker-alt"></i>
-            Adresse *
+            Adresse
           </label>
           <select id="adresseColumnSelect" onchange="updateRequiredMapping('adresse', this.value)" class="wizard-required-select">
             <option value="">-- Velg kolonne --</option>
             ${allColumns.map(col => `
               <option value="${escapeHtml(col)}" ${currentMappings.adresse === col ? 'selected' : ''}>
                 ${escapeHtml(col)}
-                ${requiredFields.adresse?.suggestedColumn === col ? ' (Anbefalt)' : ''}
               </option>
             `).join('')}
           </select>
-          ${adresseConfidence > 0 && adresseConfidence < 0.8 ? `
-            <span class="confidence-warning" title="AI er ${Math.round(adresseConfidence * 100)}% sikker">
-              <i class="fas fa-question-circle"></i>
-            </span>
-          ` : ''}
         </div>
       </div>
 
       ${isSameColumnSelected() ? `
         <div class="wizard-required-warning wizard-required-error">
           <i class="fas fa-times-circle"></i>
-          <span>Kundenavn og adresse kan ikke bruke samme kolonne. Velg forskjellige kolonner.</span>
-        </div>
-      ` : !areRequiredFieldsMapped() ? `
-        <div class="wizard-required-warning">
-          <i class="fas fa-exclamation-triangle"></i>
-          <span>Du må velge kolonner for kundenavn og adresse før import</span>
+          <span>Kundenavn og adresse kan ikke bruke samme kolonne.</span>
         </div>
       ` : ''}
     </div>
@@ -4390,22 +4969,14 @@ function renderWizardImportMapping() {
         </div>
       </div>
 
-      <!-- AI Status indicator -->
-      ${data.aiEnabled ? `
-        <div class="wizard-ai-status wizard-ai-enabled">
-          <i class="fas fa-robot"></i>
-          <span>
-            <strong>AI-assistert mapping aktivert</strong>
-            ${aiMappedCount > 0 ? `- ${aiMappedCount} kolonner mappet av AI` : ''}
-            ${data.aiModelUsed ? `<span class="ai-model">(${data.aiModelUsed})</span>` : ''}
-          </span>
-        </div>
-      ` : `
-        <div class="wizard-ai-status wizard-ai-disabled">
-          <i class="fas fa-info-circle"></i>
-          <span>AI-mapping er ikke aktivert. Kun standard kolonnenavnmapping brukes.</span>
-        </div>
-      `}
+      <!-- Mapping Status indicator -->
+      <div class="wizard-ai-status wizard-ai-enabled">
+        <i class="fas fa-magic"></i>
+        <span>
+          <strong>Automatisk kolonnemap</strong>
+          ${aiMappedCount > 0 ? `- ${aiMappedCount} kolonner gjenkjent` : '- Velg kolonner manuelt nedenfor'}
+        </span>
+      </div>
 
       <!-- REQUIRED: Column selection for name and address -->
       ${renderRequiredFieldSelectors(data)}
@@ -4495,10 +5066,10 @@ function renderWizardImportMapping() {
       <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
         <i class="fas fa-arrow-left"></i> Tilbake
       </button>
-      <button class="wizard-btn wizard-btn-primary wizard-btn-import"
-        onclick="wizardStartImport()"
+      <button class="wizard-btn wizard-btn-primary"
+        onclick="wizardImportNext()"
         ${!areRequiredFieldsMapped() ? 'disabled title="Velg kolonner for kundenavn og adresse først"' : ''}>
-        <i class="fas fa-download"></i> Importer ${data.totalRows || 0} kunder
+        Forhåndsvis <i class="fas fa-arrow-right"></i>
       </button>
     </div>
   `;
@@ -4655,9 +5226,28 @@ function renderWizardImportPreview() {
     `;
   }
 
-  // Build preview table
-  const previewRows = preview.slice(0, 10);
-  const displayColumns = ['navn', 'adresse', 'postnummer', 'poststed', 'epost', 'telefon'];
+  // Determine display columns dynamically from mapped data
+  const sampleRow = preview[0] || {};
+  const allMappedFields = Object.keys(sampleRow).filter(k =>
+    !k.startsWith('_') && k !== 'hasError' && k !== 'hasWarning' &&
+    k !== 'errorMessage' && k !== 'validationErrors' && k !== 'fieldErrors'
+  );
+  const standardFields = ['navn', 'adresse', 'postnummer', 'poststed', 'epost', 'telefon', 'kontaktperson', 'kategori', 'siste_kontroll', 'neste_kontroll'];
+  const displayColumns = [
+    ...standardFields.filter(f => allMappedFields.includes(f)),
+    ...allMappedFields.filter(f => !standardFields.includes(f))
+  ];
+
+  // Paginated preview
+  const previewPageSize = 50;
+  const previewPage = wizardImportState.previewTablePage || 0;
+  const previewTotalPages = Math.ceil(preview.length / previewPageSize);
+  const validPreviewPage = Math.min(previewPage, Math.max(0, previewTotalPages - 1));
+  const previewRows = preview.slice(validPreviewPage * previewPageSize, (validPreviewPage + 1) * previewPageSize);
+
+  // Before/after toggle state
+  const showBeforeAfter = wizardImportState.previewShowBeforeAfter;
+  const fieldToHeader = wizardImportState.fieldToHeaderMapping || {};
 
   return `
     <div class="wizard-import-preview">
@@ -4736,50 +5326,133 @@ function renderWizardImportPreview() {
 
       ${categoryMappingHtml}
 
-      <!-- Preview table -->
+      <!-- Preview table with selection -->
       <div class="wizard-preview-table-wrapper">
-        <h4><i class="fas fa-table"></i> Forhåndsvisning (${Math.min(10, previewRows.length)} av ${stats.totalRows || 0} rader)</h4>
-        <table class="wizard-preview-table">
+        <div class="wizard-preview-header">
+          <h4><i class="fas fa-table"></i> Forhåndsvisning (${preview.length} rader)</h4>
+          <div class="wizard-preview-controls">
+            <label class="wizard-toggle-label">
+              <input type="checkbox" ${showBeforeAfter ? 'checked' : ''}
+                onchange="wizardToggleBeforeAfter(this.checked)">
+              <span>Vis transformasjoner</span>
+            </label>
+            <div class="wizard-selection-actions">
+              <button class="wizard-btn wizard-btn-small" onclick="wizardSelectAllRows()">
+                <i class="fas fa-check-square"></i> Velg alle
+              </button>
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectAllRows()">
+                <i class="fas fa-square"></i> Velg ingen
+              </button>
+              <span class="wizard-selection-count" id="wizardSelectionCount">
+                ${getSelectedRowCount()} av ${stats.validRows || 0} valgt
+              </span>
+            </div>
+          </div>
+        </div>
+        <p class="wizard-edit-hint"><i class="fas fa-info-circle"></i> Dobbeltklikk på en celle for å redigere</p>
+        <table class="wizard-preview-table wizard-preview-table-editable">
           <thead>
             <tr>
-              <th>#</th>
+              <th class="col-checkbox">
+                <input type="checkbox" id="wizardSelectAllCheckbox" onchange="wizardToggleAllRows(this.checked)" ${areAllRowsSelected(previewRows) ? 'checked' : ''}>
+              </th>
+              <th class="col-rownum">#</th>
               ${displayColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
-              <th>Status</th>
+              <th class="col-status">Status</th>
             </tr>
           </thead>
           <tbody>
-            ${previewRows.map((row, index) => `
-              <tr class="${row.hasError ? 'row-error' : row.hasWarning ? 'row-warning' : ''}">
-                <td>${index + 1}</td>
-                ${displayColumns.map(col => `
-                  <td>${escapeHtml(row[col] || '-')}</td>
-                `).join('')}
-                <td>
-                  ${row.hasError ? `<span class="status-error" title="${escapeHtml(row.errorMessage || 'Feil')}"><i class="fas fa-times-circle"></i></span>` :
+            ${previewRows.map((row, localIdx) => {
+              const globalIdx = validPreviewPage * previewPageSize + localIdx;
+              const isSelected = wizardImportState.selectedRows.has(globalIdx);
+              const rowEdits = wizardImportState.editedRows[globalIdx] || {};
+              const rowClass = !isSelected ? 'row-excluded' : (row.hasError ? 'row-error' : (row.hasWarning ? 'row-warning' : 'row-valid'));
+
+              return `
+              <tr class="${rowClass}" data-row-index="${globalIdx}">
+                <td class="col-checkbox">
+                  <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="wizardToggleRow(${globalIdx}, this.checked)">
+                </td>
+                <td class="col-rownum">${globalIdx + 1}</td>
+                ${displayColumns.map(col => {
+                  const originalValue = row[col] || '';
+                  const editedValue = rowEdits[col];
+                  const displayValue = editedValue !== undefined ? editedValue : originalValue;
+                  const isEdited = editedValue !== undefined && editedValue !== originalValue;
+                  const hasFieldError = row.fieldErrors && row.fieldErrors[col];
+
+                  // Before/after transformation comparison
+                  const sourceHeader = fieldToHeader[col];
+                  const rawVal = row._rawValues ? String(row._rawValues[sourceHeader] || row._rawValues[col] || '') : '';
+                  const mappedVal = row._mappedValues ? String(row._mappedValues[col] || '') : '';
+                  const wasTransformed = showBeforeAfter && rawVal && mappedVal && rawVal !== mappedVal;
+
+                  const cellTitle = wasTransformed
+                    ? `Fra fil: ${String(rawVal)}`
+                    : (hasFieldError ? escapeHtml(hasFieldError) : (isEdited ? 'Redigert (original: ' + escapeHtml(originalValue) + ')' : 'Dobbeltklikk for å redigere'));
+
+                  return `
+                  <td class="import-cell-editable ${isEdited ? 'cell-edited' : ''} ${hasFieldError ? 'cell-error' : ''} ${wasTransformed ? 'cell-transformed' : ''}"
+                      data-row="${globalIdx}"
+                      data-field="${col}"
+                      data-original="${escapeHtml(originalValue)}"
+                      ondblclick="wizardStartCellEdit(${globalIdx}, '${col}')"
+                      title="${escapeHtml(cellTitle)}">
+                    ${wasTransformed ? `<span class="cell-before">${escapeHtml(rawVal)}</span> <i class="fas fa-arrow-right cell-arrow"></i> <span class="cell-after">${escapeHtml(mappedVal)}</span>` : escapeHtml(displayValue || '-')}
+                  </td>
+                `;}).join('')}
+                <td class="col-status">
+                  ${!isSelected ? '<span class="status-excluded" title="Ikke valgt for import"><i class="fas fa-minus-circle"></i></span>' :
+                    row.hasError ? `<span class="status-error" title="${escapeHtml(row.errorMessage || 'Feil')}"><i class="fas fa-times-circle"></i></span>` :
                     row.hasWarning ? `<span class="status-warning" title="${escapeHtml(row.warningMessage || 'Advarsel')}"><i class="fas fa-exclamation-triangle"></i></span>` :
                     '<span class="status-ok"><i class="fas fa-check-circle"></i></span>'}
                 </td>
               </tr>
-            `).join('')}
+            `;}).join('')}
           </tbody>
         </table>
       </div>
 
+      ${previewTotalPages > 1 ? `
+        <div class="wizard-preview-pagination">
+          <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
+            onclick="wizardPreviewTablePage(${validPreviewPage - 1})" ${validPreviewPage === 0 ? 'disabled' : ''}>
+            <i class="fas fa-chevron-left"></i> Forrige
+          </button>
+          <span>Side ${validPreviewPage + 1} av ${previewTotalPages}</span>
+          <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
+            onclick="wizardPreviewTablePage(${validPreviewPage + 1})" ${validPreviewPage >= previewTotalPages - 1 ? 'disabled' : ''}>
+            Neste <i class="fas fa-chevron-right"></i>
+          </button>
+        </div>
+      ` : ''}
+
       ${stats.errors > 0 ? `
         <div class="wizard-preview-warning">
           <i class="fas fa-info-circle"></i>
-          <p>${stats.errors} rad(er) har feil og vil ikke bli importert. Du kan fortsette med de gyldige radene.</p>
+          <p>${stats.errors} rad(er) har feil og vil ikke bli importert. Du kan redigere eller fjerne dem fra utvalget.</p>
         </div>
       ` : ''}
+
+      ${renderErrorGrouping(preview)}
+
+      ${data.qualityReport ? renderQualityReport(data.qualityReport) : ''}
     </div>
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
         <i class="fas fa-arrow-left"></i> Tilbake
       </button>
-      <button class="wizard-btn wizard-btn-primary" onclick="wizardStartImport()" ${stats.validRows === 0 ? 'disabled' : ''}>
-        <i class="fas fa-file-import"></i> Importer ${stats.validRows || 0} kunder
-      </button>
+      <div class="wizard-footer-right">
+        ${wizardImportState.batchId ? `
+          <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport som CSV">
+            <i class="fas fa-download"></i> Feilrapport
+          </button>
+        ` : ''}
+        <button class="wizard-btn wizard-btn-primary" onclick="wizardStartImport()" ${getSelectedValidRowCount() === 0 ? 'disabled' : ''}>
+          <i class="fas fa-file-import"></i> Importer ${getSelectedValidRowCount()} kunder
+        </button>
+      </div>
     </div>
   `;
 }
@@ -4802,23 +5475,25 @@ function renderWizardImportResults() {
       <h2>${isSuccess ? 'Import fullført!' : 'Import delvis fullført'}</h2>
 
       <div class="wizard-results-stats">
-        <div class="result-stat success">
-          <i class="fas fa-check"></i>
-          <span class="stat-value">${results.importedCount || 0}</span>
-          <span class="stat-label">Kunder importert</span>
-        </div>
-        ${results.autoFixedCount > 0 ? `
-          <div class="result-stat auto-fixed">
-            <i class="fas fa-magic"></i>
-            <span class="stat-value">${results.autoFixedCount}</span>
-            <span class="stat-label">Automatisk korrigert</span>
+        ${results.createdCount > 0 ? `
+          <div class="result-stat success">
+            <i class="fas fa-plus"></i>
+            <span class="stat-value">${results.createdCount}</span>
+            <span class="stat-label">Nye kunder opprettet</span>
           </div>
         ` : ''}
-        ${results.newFieldsCreated > 0 ? `
+        ${results.updatedCount > 0 ? `
           <div class="result-stat info">
-            <i class="fas fa-plus-circle"></i>
-            <span class="stat-value">${results.newFieldsCreated}</span>
-            <span class="stat-label">Nye felt opprettet</span>
+            <i class="fas fa-sync-alt"></i>
+            <span class="stat-value">${results.updatedCount}</span>
+            <span class="stat-label">Eksisterende oppdatert</span>
+          </div>
+        ` : ''}
+        ${!results.createdCount && !results.updatedCount ? `
+          <div class="result-stat success">
+            <i class="fas fa-check"></i>
+            <span class="stat-value">${results.importedCount || 0}</span>
+            <span class="stat-label">Kunder importert</span>
           </div>
         ` : ''}
         ${results.skippedCount > 0 ? `
@@ -4837,11 +5512,10 @@ function renderWizardImportResults() {
         ` : ''}
       </div>
 
-      ${results.importedCount > 0 ? `
+      ${results.importedCount > 0 || results.createdCount > 0 || results.updatedCount > 0 ? `
         <p class="wizard-results-message">
           Kundene er nå tilgjengelige i systemet. Du kan se dem på kartet etter at oppsettet er fullført.
-          ${results.autoFixedCount > 0 ? `<br><br><i class="fas fa-magic"></i> <strong>${results.autoFixedCount} kunder</strong> ble automatisk korrigert (manglende data ble utfylt).` : ''}
-          ${results.newFieldsCreated > 0 ? `<br><strong>${results.newFieldsCreated} nye felt</strong> ble automatisk opprettet basert på kolonnene i filen.` : ''}
+          ${results.durationMs ? `<br><small>Importert på ${(results.durationMs / 1000).toFixed(1)} sekunder.</small>` : ''}
         </p>
       ` : ''}
 
@@ -4850,7 +5524,7 @@ function renderWizardImportResults() {
           <h4><i class="fas fa-exclamation-triangle"></i> Feil under import</h4>
           <ul>
             ${results.errors.slice(0, 5).map(err => `
-              <li>${escapeHtml(err.row ? `Rad ${err.row}: ` : '')}${escapeHtml(err.message || 'Ukjent feil')}</li>
+              <li>${escapeHtml((err.rowNumber || err.row) ? `Rad ${err.rowNumber || err.row}: ` : '')}${escapeHtml(err.error || err.message || 'Ukjent feil')}</li>
             `).join('')}
             ${results.errors.length > 5 ? `<li>...og ${results.errors.length - 5} flere feil</li>` : ''}
           </ul>
@@ -4859,12 +5533,251 @@ function renderWizardImportResults() {
     </div>
 
     <div class="wizard-footer wizard-footer-center">
-      <button class="wizard-btn wizard-btn-primary" onclick="wizardImportComplete()">
-        Fortsett til neste steg <i class="fas fa-arrow-right"></i>
-      </button>
+      ${results.batchId ? `
+        <button class="wizard-btn wizard-btn-secondary" onclick="wizardRollbackImport()" title="Angre hele importen">
+          <i class="fas fa-undo"></i> Angre import
+        </button>
+      ` : ''}
+      ${results.errorCount > 0 ? `
+        <button class="wizard-btn wizard-btn-secondary" onclick="wizardReimportFailed()" title="Prøv å importere feilede rader på nytt">
+          <i class="fas fa-redo"></i> Reimporter feilede (${results.errorCount})
+        </button>
+      ` : ''}
+      ${results.batchId ? `
+        <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport">
+          <i class="fas fa-download"></i> Feilrapport
+        </button>
+      ` : ''}
+      ${standaloneImportMode ? `
+        <button class="wizard-btn wizard-btn-primary" onclick="closeImportModal()">
+          <i class="fas fa-check"></i> Ferdig
+        </button>
+      ` : `
+        <button class="wizard-btn wizard-btn-primary" onclick="wizardImportComplete()">
+          Fortsett til neste steg <i class="fas fa-arrow-right"></i>
+        </button>
+      `}
     </div>
   `;
 }
+
+// ========================================
+// ROW SELECTION AND EDITING FUNCTIONS
+// ========================================
+
+// Initialize row selection when preview data is loaded
+function initializeRowSelection() {
+  const data = wizardImportState.previewData;
+  if (!data || !data.preview) return;
+
+  // Select all valid rows by default
+  wizardImportState.selectedRows = new Set();
+  data.preview.forEach((row, index) => {
+    if (!row.hasError) {
+      wizardImportState.selectedRows.add(index);
+    }
+  });
+}
+
+// Get count of selected rows
+function getSelectedRowCount() {
+  return wizardImportState.selectedRows.size;
+}
+
+// Get count of selected valid rows (for import)
+function getSelectedValidRowCount() {
+  const data = wizardImportState.previewData;
+  if (!data || !data.preview) return 0;
+
+  let count = 0;
+  wizardImportState.selectedRows.forEach(index => {
+    if (data.preview[index] && !data.preview[index].hasError) {
+      count++;
+    }
+  });
+  return count;
+}
+
+// Check if all valid rows are selected
+function areAllRowsSelected(previewRows) {
+  if (!previewRows || previewRows.length === 0) return false;
+
+  for (let i = 0; i < previewRows.length; i++) {
+    if (!previewRows[i].hasError && !wizardImportState.selectedRows.has(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Toggle single row selection
+function wizardToggleRow(rowIndex, isSelected) {
+  if (isSelected) {
+    wizardImportState.selectedRows.add(rowIndex);
+  } else {
+    wizardImportState.selectedRows.delete(rowIndex);
+  }
+  updateSelectionDisplay();
+}
+
+// Toggle all rows
+function wizardToggleAllRows(isSelected) {
+  const data = wizardImportState.previewData;
+  if (!data || !data.preview) return;
+
+  if (isSelected) {
+    data.preview.forEach((row, index) => {
+      if (!row.hasError) {
+        wizardImportState.selectedRows.add(index);
+      }
+    });
+  } else {
+    wizardImportState.selectedRows.clear();
+  }
+  updateWizardImportContent();
+}
+
+// Select all valid rows
+function wizardSelectAllRows() {
+  wizardToggleAllRows(true);
+}
+
+// Deselect all rows
+function wizardDeselectAllRows() {
+  wizardToggleAllRows(false);
+}
+
+// Update selection count display
+function updateSelectionDisplay() {
+  const countEl = document.getElementById('wizardSelectionCount');
+  const data = wizardImportState.previewData;
+  if (countEl && data && data.stats) {
+    countEl.textContent = `${getSelectedRowCount()} av ${data.stats.validRows || 0} valgt`;
+  }
+
+  // Update select all checkbox
+  const selectAllCheckbox = document.getElementById('wizardSelectAllCheckbox');
+  if (selectAllCheckbox && data && data.preview) {
+    selectAllCheckbox.checked = areAllRowsSelected(data.preview.slice(0, 10));
+  }
+
+  // Update import button
+  const importBtn = document.querySelector('.wizard-footer .wizard-btn-primary');
+  if (importBtn) {
+    const count = getSelectedValidRowCount();
+    importBtn.disabled = count === 0;
+    importBtn.innerHTML = `<i class="fas fa-file-import"></i> Importer ${count} kunder`;
+  }
+
+  // Update row styling
+  document.querySelectorAll('.wizard-preview-table tbody tr').forEach(row => {
+    const index = parseInt(row.dataset.rowIndex);
+    const isSelected = wizardImportState.selectedRows.has(index);
+    const checkbox = row.querySelector('input[type="checkbox"]');
+    if (checkbox) checkbox.checked = isSelected;
+
+    // Update row class
+    row.classList.toggle('row-excluded', !isSelected);
+  });
+}
+
+// Start editing a cell
+function wizardStartCellEdit(rowIndex, field) {
+  const cell = document.querySelector(`td[data-row="${rowIndex}"][data-field="${field}"]`);
+  if (!cell) return;
+
+  const originalValue = cell.dataset.original || '';
+  const currentValue = wizardImportState.editedRows[rowIndex]?.[field] ?? originalValue;
+
+  // Create input element
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cell-edit-input';
+  input.value = currentValue;
+
+  // Clear cell and add input
+  cell.innerHTML = '';
+  cell.appendChild(input);
+  cell.classList.add('cell-editing');
+
+  // Focus and select all
+  input.focus();
+  input.select();
+
+  // Handle blur (save)
+  input.addEventListener('blur', () => {
+    wizardSaveCellEdit(rowIndex, field, input.value, originalValue);
+  });
+
+  // Handle keyboard
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      wizardCancelCellEdit(rowIndex, field, originalValue);
+    } else if (e.key === 'Tab') {
+      // Allow tab to save and move to next cell
+      input.blur();
+    }
+  });
+
+  wizardImportState.editingCell = { row: rowIndex, field };
+}
+
+// Save cell edit
+function wizardSaveCellEdit(rowIndex, field, newValue, originalValue) {
+  const cell = document.querySelector(`td[data-row="${rowIndex}"][data-field="${field}"]`);
+  if (!cell) return;
+
+  // Store edited value if different from original
+  if (newValue !== originalValue) {
+    if (!wizardImportState.editedRows[rowIndex]) {
+      wizardImportState.editedRows[rowIndex] = {};
+    }
+    wizardImportState.editedRows[rowIndex][field] = newValue;
+  } else {
+    // Remove edit if reverted to original
+    if (wizardImportState.editedRows[rowIndex]) {
+      delete wizardImportState.editedRows[rowIndex][field];
+      if (Object.keys(wizardImportState.editedRows[rowIndex]).length === 0) {
+        delete wizardImportState.editedRows[rowIndex];
+      }
+    }
+  }
+
+  // Update cell display
+  const isEdited = newValue !== originalValue;
+  cell.innerHTML = escapeHtml(newValue || '-');
+  cell.classList.remove('cell-editing');
+  cell.classList.toggle('cell-edited', isEdited);
+  cell.title = isEdited ? `Redigert (original: ${originalValue})` : 'Dobbeltklikk for å redigere';
+
+  wizardImportState.editingCell = null;
+}
+
+// Cancel cell edit
+function wizardCancelCellEdit(rowIndex, field, originalValue) {
+  const cell = document.querySelector(`td[data-row="${rowIndex}"][data-field="${field}"]`);
+  if (!cell) return;
+
+  const currentValue = wizardImportState.editedRows[rowIndex]?.[field] ?? originalValue;
+  const isEdited = currentValue !== originalValue;
+
+  cell.innerHTML = escapeHtml(currentValue || '-');
+  cell.classList.remove('cell-editing');
+  cell.classList.toggle('cell-edited', isEdited);
+
+  wizardImportState.editingCell = null;
+}
+
+// Expose functions to window for onclick handlers
+window.wizardToggleRow = wizardToggleRow;
+window.wizardToggleAllRows = wizardToggleAllRows;
+window.wizardSelectAllRows = wizardSelectAllRows;
+window.wizardDeselectAllRows = wizardDeselectAllRows;
+window.wizardStartCellEdit = wizardStartCellEdit;
 
 // Update column mapping
 function updateWizardMapping(field, value) {
@@ -4889,14 +5802,14 @@ function updateWizardCategoryMapping(original, value) {
 
 // Validate required mappings
 function validateWizardMapping() {
-  const mapping = wizardImportState.columnMapping;
+  const required = wizardImportState.requiredMappings;
   const errors = [];
 
-  if (mapping.navn === undefined || mapping.navn === '') {
-    errors.push('Kundenavn er påkrevd');
+  if (!required.navn || required.navn === '' || required.navn === '-- Velg kolonne --') {
+    errors.push('Kundenavn er påkrevd - velg kolonne for navn');
   }
-  if (mapping.adresse === undefined || mapping.adresse === '') {
-    errors.push('Adresse er påkrevd');
+  if (!required.adresse || required.adresse === '' || required.adresse === '-- Velg kolonne --') {
+    errors.push('Adresse er påkrevd - velg kolonne for adresse');
   }
 
   return errors;
@@ -4914,8 +5827,8 @@ function wizardImportBack() {
 async function wizardImportNext() {
   const currentStep = wizardImportState.currentImportStep;
 
-  if (currentStep === 2) {
-    // Validate mapping before proceeding
+  if (currentStep === 3) {
+    // Validate mapping before proceeding (mapping is now step 3)
     const errors = validateWizardMapping();
     if (errors.length > 0) {
       showMessage(errors.join('. '), 'error');
@@ -4924,7 +5837,7 @@ async function wizardImportNext() {
 
     // Call preview API with mapping
     await wizardFetchPreview();
-  } else if (currentStep < 4) {
+  } else if (currentStep < 5) {
     wizardImportState.currentImportStep++;
     updateWizardImportContent();
   }
@@ -5064,55 +5977,70 @@ async function wizardHandleFileSelect(file) {
       }
     }, 1200);
 
-    const response = await fetch('/api/kunder/import-excel/preview', {
+    const importPreviewHeaders = {
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      importPreviewHeaders['X-CSRF-Token'] = csrfToken;
+    }
+    const response = await fetch('/api/import/upload', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${authToken}`
-      },
+      headers: importPreviewHeaders,
+      credentials: 'include',
       body: formData
     });
 
     const result = await response.json();
 
     if (!response.ok || !result.success) {
-      throw new Error(result.error || 'Kunne ikke behandle filen');
+      const errorMsg = result.error?.message || (typeof result.error === 'string' ? result.error : null) || 'Kunne ikke behandle filen';
+      throw new Error(errorMsg);
     }
 
-    // Store preview data
-    wizardImportState.sessionId = result.sessionId;
+    // Store batch ID from staging backend
+    wizardImportState.batchId = result.data.batchId;
+
+    // Store preview data in memory
     wizardImportState.previewData = result.data;
 
-    // Store AI questions for low confidence mappings
-    if (result.data.lowConfidenceMappings && result.data.lowConfidenceMappings.length > 0) {
-      wizardImportState.aiQuestions = result.data.lowConfidenceMappings
-        .filter(m => m.confidence >= 0.5 && m.confidence < 0.8)
-        .slice(0, 3); // Max 3 questions
+    // Store original and cleaned preview data for the cleaning step
+    wizardImportState.originalPreview = result.data.originalPreview;
+    wizardImportState.cleanedPreview = result.data.cleanedPreview || result.data.originalPreview;
+    wizardImportState.cleaningReport = result.data.cleaningReport || null;
+
+    // Initialize cleaning rule toggles (all enabled by default)
+    if (result.data.cleaningReport && result.data.cleaningReport.rules) {
+      const enabledRules = {};
+      result.data.cleaningReport.rules.forEach(rule => {
+        enabledRules[rule.ruleId] = rule.enabled;
+      });
+      wizardImportState.enabledCleaningRules = enabledRules;
     }
 
-    // Initialize required field mappings from server suggestions
-    if (result.data.requiredFields) {
-      wizardImportState.requiredMappings = {
-        navn: result.data.requiredFields.navn?.currentMapping ||
-              result.data.requiredFields.navn?.suggestedColumn ||
-              (result.data.allColumns?.[0] || null),
-        adresse: result.data.requiredFields.adresse?.currentMapping ||
-                 result.data.requiredFields.adresse?.suggestedColumn ||
-                 (result.data.allColumns?.[1] || null)
-      };
-      console.log('[DEBUG] Required mappings initialized:', wizardImportState.requiredMappings);
-      console.log('[DEBUG] From requiredFields:', result.data.requiredFields);
-    } else {
-      console.log('[DEBUG] No requiredFields in response');
+    // Initialize required field mappings from suggested mapping
+    const suggestedMapping = result.data.suggestedMapping || {};
+    const headers = result.data.headers || [];
+
+    // Find which header maps to 'navn' and 'adresse'
+    let navnHeader = null;
+    let adresseHeader = null;
+    for (const [header, field] of Object.entries(suggestedMapping)) {
+      if (field === 'navn') navnHeader = header;
+      if (field === 'adresse') adresseHeader = header;
     }
 
-    // Convert backend mapping format to frontend format
-    const backendMapping = result.data.suggestedMapping || {};
-    const headers = result.data.headers || result.data.allColumns || [];
+    wizardImportState.requiredMappings = {
+      navn: navnHeader || headers[0] || null,
+      adresse: adresseHeader || headers[1] || null
+    };
+    console.log('[DEBUG] Required mappings initialized:', wizardImportState.requiredMappings);
+
+    // Convert backend mapping format to frontend format (header -> field becomes field -> headerIndex)
+    const backendMapping = suggestedMapping;
     wizardImportState.columnMapping = convertBackendToFrontendMapping(backendMapping, headers);
 
     wizardImportState.validCategories = result.data.validCategories || [];
     wizardImportState.isLoading = false;
-    wizardImportState.currentImportStep = 2;
 
     // Pre-fill category mapping with suggestions
     if (result.data.categoryMatches) {
@@ -5123,6 +6051,8 @@ async function wizardHandleFileSelect(file) {
       });
     }
 
+    // Always go to cleaning step first (step 2)
+    wizardImportState.currentImportStep = 2;
     updateWizardImportContent();
 
   } catch (error) {
@@ -5133,56 +6063,224 @@ async function wizardHandleFileSelect(file) {
   }
 }
 
-// Fetch preview with column mapping
+// Apply mapping and show preview (all in memory, no backend call)
 async function wizardFetchPreview() {
-  wizardImportState.isLoading = true;
-  updateWizardImportContent();
-
-  try {
-    // Convert frontend mapping to backend format before sending
-    const headers = wizardImportState.previewData?.headers || [];
-    const backendMapping = convertFrontendToBackendMapping(wizardImportState.columnMapping, headers);
-
-    const response = await fetch('/api/kunder/import-excel/preview', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${authToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        sessionId: wizardImportState.sessionId,
-        columnMapping: backendMapping,
-        categoryMapping: wizardImportState.categoryMapping
-      })
-    });
-
-    const result = await response.json();
-
-    if (!response.ok || !result.success) {
-      throw new Error(result.error || 'Kunne ikke hente forhåndsvisning');
-    }
-
-    wizardImportState.previewData = result.data;
-    wizardImportState.isLoading = false;
-    wizardImportState.currentImportStep = 3;
-
-    // Update category matches if they changed
-    if (result.data.categoryMatches) {
-      result.data.categoryMatches.forEach(match => {
-        if (match.suggested && !wizardImportState.categoryMapping[match.original]) {
-          wizardImportState.categoryMapping[match.original] = match.suggested.id;
-        }
-      });
-    }
-
+  const data = wizardImportState.previewData;
+  if (!data || !data.preview) {
+    wizardImportState.error = 'Ingen data å vise';
     updateWizardImportContent();
-
-  } catch (error) {
-    console.error('Wizard preview error:', error);
-    wizardImportState.isLoading = false;
-    wizardImportState.error = error.message || 'En feil oppstod under henting av forhåndsvisning';
-    updateWizardImportContent();
+    return;
   }
+
+  // Validate required mappings
+  const { navn, adresse } = wizardImportState.requiredMappings;
+  if (!navn || !adresse) {
+    showMessage('Du må velge kolonner for navn og adresse', 'warning');
+    return;
+  }
+
+  // Build reverse mapping: field -> header (from columnMapping which is field -> headerIndex)
+  const headers = data.headers || [];
+  const fieldToHeader = {};
+  for (const [field, headerIndex] of Object.entries(wizardImportState.columnMapping)) {
+    if (headerIndex !== undefined && headers[headerIndex]) {
+      fieldToHeader[field] = headers[headerIndex];
+    }
+  }
+  // Ensure required fields are in the mapping
+  fieldToHeader['navn'] = navn;
+  fieldToHeader['adresse'] = adresse;
+
+  // Store field→header mapping for before/after comparison in preview
+  wizardImportState.fieldToHeaderMapping = { ...fieldToHeader };
+
+  // If we have a batchId, use the staging API for mapping + validation
+  if (wizardImportState.batchId) {
+    try {
+      wizardImportState.isLoading = true;
+      wizardImportState.loadingPhase = 'validating';
+      updateWizardImportContent();
+
+      const csrfToken = getCsrfToken();
+      const apiHeaders = { 'Content-Type': 'application/json' };
+      if (csrfToken) apiHeaders['X-CSRF-Token'] = csrfToken;
+
+      // Build ImportMappingConfig for the staging API
+      const mappings = [];
+      for (const [field, header] of Object.entries(fieldToHeader)) {
+        mappings.push({
+          sourceColumn: header,
+          targetField: field,
+          targetFieldType: IMPORT_FIELD_TYPE_MAP[field] || 'string',
+          required: field === 'navn' || field === 'adresse',
+        });
+      }
+
+      const mappingConfig = {
+        version: '1.0',
+        mappings,
+        options: {
+          skipHeaderRows: 1,
+          skipEmptyRows: true,
+          trimWhitespace: true,
+          duplicateDetection: 'name_address',
+          duplicateAction: 'skip',
+          stopOnFirstError: false,
+          maxErrors: 0,
+          dateFormat: 'DD.MM.YYYY',
+          fallbackDateFormats: ['YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'],
+          autoCreateCategories: false,
+        }
+      };
+
+      // Step 1: Apply mapping to staging rows
+      const mappingResponse = await fetch(`/api/import/batches/${wizardImportState.batchId}/mapping`, {
+        method: 'POST',
+        headers: apiHeaders,
+        credentials: 'include',
+        body: JSON.stringify({ mappingConfig })
+      });
+
+      const mappingResult = await mappingResponse.json();
+      if (!mappingResponse.ok || !mappingResult.success) {
+        throw new Error(mappingResult.error || 'Mapping feilet');
+      }
+
+      // Step 2: Validate mapped data
+      const validateResponse = await fetch(`/api/import/batches/${wizardImportState.batchId}/validate`, {
+        method: 'POST',
+        headers: apiHeaders,
+        credentials: 'include',
+      });
+
+      const validateResult = await validateResponse.json();
+      if (!validateResponse.ok || !validateResult.success) {
+        throw new Error(validateResult.error || 'Validering feilet');
+      }
+
+      // Step 3: Get preview with errors
+      const previewResponse = await fetch(`/api/import/batches/${wizardImportState.batchId}/preview?showErrors=true&limit=200`, {
+        method: 'GET',
+        headers: apiHeaders,
+        credentials: 'include',
+      });
+
+      const previewResult = await previewResponse.json();
+      if (!previewResponse.ok || !previewResult.success) {
+        throw new Error(previewResult.error || 'Forhåndsvisning feilet');
+      }
+
+      const previewData = previewResult.data;
+      const validationData = validateResult.data;
+
+      // Convert staging preview rows to format compatible with existing frontend
+      const mappedPreview = previewData.previewRows.map((row, index) => {
+        const hasError = row.validationStatus === 'invalid';
+        const hasWarning = row.validationStatus === 'warning';
+        const errorMessages = (row.errors || []).map(e => e.message).join('; ');
+
+        // Use mapped_data for display, fall back to raw values
+        const rawValues = row.values || {};
+        const displayData = row.mappedValues || rawValues;
+
+        return {
+          ...rawValues,
+          _rowIndex: index,
+          _stagingRowId: row.stagingRowId || row.rowNumber, // Use actual DB ID for exclusion/edits
+          _selected: !hasError,
+          _rawValues: rawValues,        // Preserve raw for before/after comparison
+          _mappedValues: displayData,   // Preserve mapped for before/after comparison
+          hasError,
+          hasWarning,
+          errorMessage: errorMessages,
+          validationErrors: row.errors || [],
+          ...displayData
+        };
+      });
+
+      // Update preview data with validated results
+      wizardImportState.previewData = {
+        ...data,
+        preview: mappedPreview,
+        stats: {
+          totalRows: previewData.totalRows,
+          validRows: validationData.validCount,
+          warnings: validationData.warningCount,
+          errors: validationData.errorCount,
+        }
+      };
+
+      wizardImportState.isLoading = false;
+      wizardImportState.currentImportStep = 4;
+      initializeRowSelection();
+      updateWizardImportContent();
+      return;
+
+    } catch (error) {
+      console.error('Staging API preview error:', error);
+      wizardImportState.isLoading = false;
+      // Fall through to client-side preview as fallback
+    }
+  }
+
+  // Fallback: Client-side mapping preview (when no batchId)
+  let validRows = 0;
+  let errorRows = 0;
+
+  const mappedPreview = data.preview.map((row, index) => {
+    const mappedRow = { ...row };
+    const navnValue = String(row[navn] || '').trim();
+    const adresseValue = String(row[adresse] || '').trim();
+
+    let hasError = false;
+    let errorMessage = '';
+
+    if (!navnValue) {
+      hasError = true;
+      errorMessage = 'Mangler navn';
+    } else if (!adresseValue) {
+      hasError = true;
+      errorMessage = 'Mangler adresse';
+    }
+
+    if (hasError) {
+      errorRows++;
+    } else {
+      validRows++;
+    }
+
+    const mappedFields = {};
+    for (const [field, header] of Object.entries(fieldToHeader)) {
+      mappedFields[field] = String(row[header] || '').trim();
+    }
+
+    return {
+      ...mappedRow,
+      _rowIndex: index,
+      _selected: !hasError,
+      _rawValues: { ...row },
+      _mappedValues: { ...mappedFields },
+      hasError,
+      errorMessage,
+      ...mappedFields
+    };
+  });
+
+  wizardImportState.previewData = {
+    ...data,
+    preview: mappedPreview,
+    stats: {
+      totalRows: data.totalRows,
+      validRows: validRows,
+      warnings: 0,
+      errors: errorRows
+    }
+  };
+
+  wizardImportState.isLoading = false;
+  wizardImportState.currentImportStep = 4;
+  initializeRowSelection();
+  updateWizardImportContent();
 }
 
 // Execute import - sends requiredMappings to override AI mapping
@@ -5206,75 +6304,259 @@ async function wizardStartImport(confirmUpdate = false, confirmDeletions = false
     return;
   }
 
+  // Get selected rows (with any edits applied)
+  const previewData = wizardImportState.previewData;
+  const allRows = previewData?.preview || [];
+  const selectedRows = allRows.filter((row, idx) => wizardImportState.selectedRows.has(idx));
+
+  // Apply any edits to selected rows (use original _rowIndex for edit lookup)
+  const rowsToImport = selectedRows.map(row => {
+    const originalIndex = row._rowIndex !== undefined ? row._rowIndex : 0;
+    const edits = wizardImportState.editedRows[originalIndex] || {};
+    return { ...row, ...edits };
+  });
+
+  // Build column mapping (header name -> field name)
+  const columnMapping = {
+    navn: navn,
+    adresse: adresse
+  };
+
+  // Add other mappings from wizardImportState.columnMapping if available
+  const headers = previewData?.headers || [];
+  for (const [field, headerIndex] of Object.entries(wizardImportState.columnMapping)) {
+    if (headerIndex !== undefined && headers[headerIndex]) {
+      columnMapping[field] = headers[headerIndex];
+    }
+  }
+
   // Log what we're sending for debugging
-  console.log('Starting import with mappings:', { navn, adresse, confirmUpdate, confirmDeletions });
+  console.log('Starting import with:', {
+    selectedCount: rowsToImport.length,
+    columnMapping: columnMapping
+  });
 
   wizardImportState.isLoading = true;
   wizardImportState.loadingPhase = 'importing';
   wizardImportState.loadingProgress = 0;
   wizardImportState.importedSoFar = 0;
-  wizardImportState.totalToImport = wizardImportState.previewData?.totalRows || 0;
+  wizardImportState.totalToImport = rowsToImport.length;
   updateWizardImportContent();
 
   try {
-    const response = await fetch('/api/kunder/import-excel/execute', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${authToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        sessionId: wizardImportState.sessionId,
-        requiredMappings: wizardImportState.requiredMappings, // User's column selection for navn and adresse
-        confirmUpdate,
-        confirmDeletions
-      })
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      // Check if server requires confirmation
-      if (result.requireConfirmation === 'update') {
-        wizardImportState.isLoading = false;
-        updateWizardImportContent();
-        // Ask user to confirm update
-        if (confirm(`${result.updateCount} eksisterende kunder vil bli oppdatert.\n\nVil du fortsette?`)) {
-          return wizardStartImport(true, confirmDeletions);
-        }
-        return;
-      }
-      if (result.requireConfirmation === 'deletions') {
-        wizardImportState.isLoading = false;
-        updateWizardImportContent();
-        // Inform user about records not in import (no deletion, just info)
-        if (confirm(`${result.notInImportCount} eksisterende kunder finnes ikke i importfilen.\n\nDisse vil IKKE bli slettet. Trykk OK for å fortsette.`)) {
-          return wizardStartImport(confirmUpdate, true);
-        }
-        return;
-      }
-      // Extract error message from various response formats
-      const errorMsg = typeof result.error === 'string'
-        ? result.error
-        : (result.error?.message || result.message || 'Import feilet');
-      throw new Error(errorMsg);
+    const executeHeaders = {
+      'Content-Type': 'application/json'
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      executeHeaders['X-CSRF-Token'] = csrfToken;
     }
 
-    wizardImportState.importResults = result;
-    wizardImportState.isLoading = false;
-    wizardImportState.currentImportStep = 4;
+    // Use staging commit API if we have a batchId, otherwise fall back to simple API
+    if (wizardImportState.batchId) {
+      const batchId = wizardImportState.batchId;
 
-    updateWizardImportContent();
+      // --- Step 1: Apply column mapping ---
+      wizardImportState.loadingPhase = 'mapping';
+      updateWizardImportContent();
 
-    // Refresh customer list in background
-    if (result.importedCount > 0) {
-      refreshCustomerData();
+      // Build ImportMappingConfig from frontend state
+      const mappingHeaders = wizardImportState.previewData?.headers || [];
+      const mappings = [];
+
+      // Add required mappings (navn, adresse) from requiredMappings (header names)
+      for (const [field, headerName] of Object.entries(wizardImportState.requiredMappings)) {
+        if (headerName) {
+          const idx = mappingHeaders.indexOf(headerName);
+          mappings.push({
+            sourceColumn: headerName,
+            sourceColumnIndex: idx >= 0 ? idx : undefined,
+            targetField: field,
+            targetFieldType: IMPORT_FIELD_TYPE_MAP[field] || 'string',
+            required: true,
+            humanConfirmed: true,
+          });
+        }
+      }
+
+      // Add other mappings from columnMapping (field -> headerIndex)
+      for (const [field, headerIndex] of Object.entries(wizardImportState.columnMapping)) {
+        // Skip if already added via requiredMappings
+        if (field === 'navn' || field === 'adresse') continue;
+        if (headerIndex === undefined || headerIndex === '') continue;
+        const sourceColumn = mappingHeaders[headerIndex];
+        if (!sourceColumn) continue;
+        mappings.push({
+          sourceColumn: sourceColumn,
+          sourceColumnIndex: parseInt(headerIndex, 10),
+          targetField: field,
+          targetFieldType: IMPORT_FIELD_TYPE_MAP[field] || 'string',
+          required: false,
+          humanConfirmed: true,
+        });
+      }
+
+      const mappingConfig = {
+        version: '1.0',
+        mappings: mappings,
+        options: {
+          skipHeaderRows: 1,
+          skipEmptyRows: true,
+          trimWhitespace: true,
+          duplicateDetection: 'name_address',
+          duplicateAction: 'skip',
+          stopOnFirstError: false,
+          maxErrors: 0,
+          dateFormat: 'DD.MM.YYYY',
+          fallbackDateFormats: ['YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'],
+          autoCreateCategories: false,
+        }
+      };
+
+      console.log('[Import] Applying mapping config:', mappingConfig);
+
+      const mappingResponse = await fetch(`/api/import/batches/${batchId}/mapping`, {
+        method: 'POST',
+        headers: executeHeaders,
+        credentials: 'include',
+        body: JSON.stringify({ mappingConfig })
+      });
+
+      const mappingResult = await mappingResponse.json();
+      if (!mappingResponse.ok || !mappingResult.success) {
+        const msg = mappingResult.error?.message || mappingResult.message || 'Mapping feilet';
+        throw new Error(msg);
+      }
+      console.log('[Import] Mapping applied:', mappingResult.data);
+
+      // --- Step 2: Validate ---
+      wizardImportState.loadingPhase = 'validating';
+      wizardImportState.loadingProgress = 30;
+      updateWizardImportContent();
+
+      const validateResponse = await fetch(`/api/import/batches/${batchId}/validate`, {
+        method: 'POST',
+        headers: executeHeaders,
+        credentials: 'include',
+        body: JSON.stringify({})
+      });
+
+      const validateResult = await validateResponse.json();
+      if (!validateResponse.ok || !validateResult.success) {
+        const msg = validateResult.error?.message || validateResult.message || 'Validering feilet';
+        throw new Error(msg);
+      }
+      console.log('[Import] Validation result:', validateResult.data);
+
+      // --- Step 3: Commit ---
+      wizardImportState.loadingPhase = 'importing';
+      wizardImportState.loadingProgress = 60;
+      updateWizardImportContent();
+
+      // Build excluded row IDs from deselected rows
+      const allRows = wizardImportState.previewData?.preview || [];
+      const excludedRowIds = [];
+      allRows.forEach((row, idx) => {
+        if (!wizardImportState.selectedRows.has(idx)) {
+          // Use staging row number if available
+          if (row._stagingRowId) {
+            excludedRowIds.push(row._stagingRowId);
+          }
+        }
+      });
+
+      // Build row edits keyed by staging row ID
+      const rowEdits = {};
+      for (const [rowIdx, edits] of Object.entries(wizardImportState.editedRows)) {
+        const row = allRows[parseInt(rowIdx)];
+        if (row && row._stagingRowId) {
+          rowEdits[row._stagingRowId] = edits;
+        }
+      }
+
+      const response = await fetch(`/api/import/batches/${batchId}/commit`, {
+        method: 'POST',
+        headers: executeHeaders,
+        credentials: 'include',
+        body: JSON.stringify({
+          dryRun: false,
+          excludedRowIds,
+          rowEdits,
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        const errorMsg = typeof result.error === 'string'
+          ? result.error
+          : (result.error?.message || result.message || 'Import feilet');
+        throw new Error(errorMsg);
+      }
+
+      wizardImportState.importResults = {
+        success: true,
+        importedCount: result.data.created + result.data.updated,
+        createdCount: result.data.created,
+        updatedCount: result.data.updated,
+        skippedCount: result.data.skipped,
+        errorCount: result.data.failed,
+        errors: result.data.errors || [],
+        batchId: wizardImportState.batchId,
+        durationMs: result.data.durationMs,
+      };
+      wizardImportState.isLoading = false;
+      wizardImportState.currentImportStep = 5;
+
+      updateWizardImportContent();
+
+      if (result.data.created > 0 || result.data.updated > 0) {
+        refreshCustomerData();
+      }
+
+    } else {
+      // Fallback: Simple import API (no staging)
+      const response = await fetch('/api/kunder/import/execute', {
+        method: 'POST',
+        headers: executeHeaders,
+        credentials: 'include',
+        body: JSON.stringify({
+          rows: rowsToImport,
+          columnMapping: columnMapping
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        const errorMsg = typeof result.error === 'string'
+          ? result.error
+          : (result.error?.message || result.message || 'Import feilet');
+        throw new Error(errorMsg);
+      }
+
+      wizardImportState.importResults = {
+        success: true,
+        importedCount: result.data.created,
+        createdCount: result.data.created,
+        updatedCount: 0,
+        skippedCount: 0,
+        errorCount: result.data.failed,
+        errors: result.data.errors || []
+      };
+      wizardImportState.isLoading = false;
+      wizardImportState.currentImportStep = 5;
+
+      updateWizardImportContent();
+
+      if (result.data.created > 0) {
+        refreshCustomerData();
+      }
     }
 
   } catch (error) {
     console.error('Wizard import execute error:', error);
     wizardImportState.isLoading = false;
-    // Ensure error is always a string, not an object
     let errorMsg = 'En feil oppstod under import';
     if (typeof error === 'string') {
       errorMsg = error;
@@ -5289,6 +6571,47 @@ async function wizardStartImport(confirmUpdate = false, confirmDeletions = false
 }
 
 // Refresh customer data after import
+// Rollback a committed import batch
+async function wizardRollbackImport() {
+  const results = wizardImportState.importResults;
+  if (!results || !results.batchId) {
+    showMessage('Ingen import å angre', 'error');
+    return;
+  }
+
+  if (!confirm('Er du sikker på at du vil angre hele importen? Alle opprettede kunder vil bli slettet.')) {
+    return;
+  }
+
+  try {
+    const apiHeaders = { 'Content-Type': 'application/json' };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) apiHeaders['X-CSRF-Token'] = csrfToken;
+
+    const response = await fetch(`/api/import/batches/${results.batchId}/rollback`, {
+      method: 'POST',
+      headers: apiHeaders,
+      credentials: 'include',
+      body: JSON.stringify({ reason: 'Bruker angret importen' })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error?.message || (typeof result.error === 'string' ? result.error : null) || 'Kunne ikke angre importen');
+    }
+
+    showMessage(`Import angret: ${result.data.recordsDeleted} kunder slettet`, 'success');
+    resetWizardImportState();
+    updateWizardImportContent();
+    refreshCustomerData();
+
+  } catch (error) {
+    console.error('Rollback error:', error);
+    showMessage(error.message || 'Kunne ikke angre importen', 'error');
+  }
+}
+
 async function refreshCustomerData() {
   try {
     // This will be available after wizard completes and app loads
@@ -5298,6 +6621,161 @@ async function refreshCustomerData() {
   } catch (error) {
     console.error('Error refreshing customer data:', error);
   }
+}
+
+// ========================================
+// ERROR GROUPING & QUALITY REPORT
+// ========================================
+
+function renderErrorGrouping(preview) {
+  if (!preview || !Array.isArray(preview)) return '';
+
+  // Collect errors grouped by type
+  const errorGroups = {};
+  for (const row of preview) {
+    if (!row.fieldErrors) continue;
+    for (const [field, message] of Object.entries(row.fieldErrors)) {
+      const key = `${field}:${message}`;
+      if (!errorGroups[key]) {
+        errorGroups[key] = { field, message, count: 0, rows: [] };
+      }
+      errorGroups[key].count++;
+      errorGroups[key].rows.push(row);
+    }
+  }
+
+  const groups = Object.values(errorGroups).sort((a, b) => b.count - a.count);
+  if (groups.length === 0) return '';
+
+  return `
+    <div class="wizard-error-groups">
+      <h4><i class="fas fa-layer-group"></i> Feilsammendrag</h4>
+      <div class="error-group-list">
+        ${groups.slice(0, 8).map(group => `
+          <div class="error-group-item">
+            <div class="error-group-info">
+              <span class="error-group-field">${escapeHtml(group.field)}</span>
+              <span class="error-group-message">${escapeHtml(group.message)}</span>
+              <span class="error-group-count">${group.count} rader</span>
+            </div>
+            ${group.field === 'epost' && group.message.includes('skrivefeil') ? `
+              <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeHtml(group.field)}', '${escapeHtml(group.message)}')">
+                <i class="fas fa-magic"></i> Fiks alle
+              </button>
+            ` : `
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeHtml(group.field)}', '${escapeHtml(group.message)}')">
+                <i class="fas fa-minus-circle"></i> Fjern fra import
+              </button>
+            `}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderQualityReport(report) {
+  if (!report) return '';
+
+  const scoreColor = report.overallScore >= 80 ? 'success' : report.overallScore >= 60 ? 'warning' : 'error';
+
+  return `
+    <div class="wizard-quality-report">
+      <h4><i class="fas fa-chart-bar"></i> Kvalitetsrapport</h4>
+      <div class="quality-score-bar">
+        <div class="quality-score-fill ${scoreColor}" style="width: ${report.overallScore}%"></div>
+        <span class="quality-score-label">${report.overallScore}%</span>
+      </div>
+      ${report.suggestions && report.suggestions.length > 0 ? `
+        <ul class="quality-suggestions">
+          ${report.suggestions.map(s => `<li><i class="fas fa-lightbulb"></i> ${escapeHtml(s)}</li>`).join('')}
+        </ul>
+      ` : ''}
+    </div>
+  `;
+}
+
+function wizardFixAllSimilar(field, message) {
+  const preview = wizardImportState.previewData?.preview;
+  if (!preview) return;
+
+  let fixCount = 0;
+  for (let i = 0; i < preview.length; i++) {
+    const row = preview[i];
+    if (row.fieldErrors && row.fieldErrors[field] === message && row.suggestion && row.suggestion[field]) {
+      if (!wizardImportState.editedRows[i]) wizardImportState.editedRows[i] = {};
+      wizardImportState.editedRows[i][field] = row.suggestion[field];
+      fixCount++;
+    }
+  }
+
+  if (fixCount > 0) {
+    showMessage(`${fixCount} felt korrigert automatisk`, 'success');
+    updateWizardImportContent();
+  }
+}
+
+function wizardDeselectErrorRows(field, message) {
+  const preview = wizardImportState.previewData?.preview;
+  if (!preview) return;
+
+  let count = 0;
+  for (let i = 0; i < preview.length; i++) {
+    if (preview[i].fieldErrors && preview[i].fieldErrors[field] === message) {
+      wizardImportState.selectedRows.delete(i);
+      count++;
+    }
+  }
+
+  if (count > 0) {
+    showMessage(`${count} rader fjernet fra import`, 'info');
+    updateWizardImportContent();
+  }
+}
+
+async function wizardDownloadErrorReport() {
+  const batchId = wizardImportState.batchId;
+  if (!batchId) {
+    showMessage('Ingen batch tilgjengelig for feilrapport', 'error');
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/import/batches/${batchId}/error-report`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) throw new Error('Kunne ikke laste ned feilrapport');
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `feilrapport-batch-${batchId}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Download error:', error);
+    showMessage(error.message || 'Kunne ikke laste ned feilrapport', 'error');
+  }
+}
+
+async function wizardReimportFailed() {
+  const results = wizardImportState.importResults;
+  if (!results || !results.batchId) {
+    showMessage('Ingen import å reimportere', 'error');
+    return;
+  }
+
+  showMessage('Setter opp reimport av feilede rader...', 'info');
+
+  // Go back to preview step with only failed rows selected
+  wizardImportState.currentImportStep = 4; // Preview step
+  // The batchId is preserved, so re-validating will re-fetch the batch
+  wizardImportState.importResults = null;
+  updateWizardImportContent();
 }
 
 // Attach event listeners for current step
@@ -5764,15 +7242,34 @@ window.handleSkipOnboarding = handleSkipOnboarding;
 window.useAddressAsRouteStart = useAddressAsRouteStart;
 window.completeOnboardingWizard = completeOnboardingWizard;
 
+// Pagination for preview table
+function wizardPreviewTablePage(page) {
+  wizardImportState.previewTablePage = Math.max(0, page);
+  updateWizardImportContent();
+}
+
+// Toggle before/after transformation view in preview
+function wizardToggleBeforeAfter(show) {
+  wizardImportState.previewShowBeforeAfter = show;
+  updateWizardImportContent();
+}
+
 // Export wizard import functions for onclick handlers
 window.skipWizardImport = skipWizardImport;
 window.wizardImportBack = wizardImportBack;
 window.wizardImportNext = wizardImportNext;
 window.wizardStartImport = wizardStartImport;
+window.wizardRollbackImport = wizardRollbackImport;
+window.wizardReimportFailed = wizardReimportFailed;
+window.wizardDownloadErrorReport = wizardDownloadErrorReport;
+window.wizardFixAllSimilar = wizardFixAllSimilar;
+window.wizardDeselectErrorRows = wizardDeselectErrorRows;
 window.wizardImportComplete = wizardImportComplete;
 window.wizardImportRetry = wizardImportRetry;
 window.updateWizardMapping = updateWizardMapping;
 window.updateWizardCategoryMapping = updateWizardCategoryMapping;
+window.wizardPreviewTablePage = wizardPreviewTablePage;
+window.wizardToggleBeforeAfter = wizardToggleBeforeAfter;
 
 // ========================================
 // CONTEXT TIPS - First-time user guidance
@@ -6010,225 +7507,6 @@ function resetContextTips() {
   localStorage.removeItem('shownContextTips');
 }
 
-// ========================================
-// SETTINGS MODAL & USER PREFERENCES
-// ========================================
-
-// User preferences (loaded from localStorage)
-let userPreferences = {
-  defaultCategory: 'all',
-  visibleColumns: ['telefon', 'epost', 'nesteKontroll', 'kategori', 'poststed'],
-  warningDays: 30,
-  mapMode: 'satellite',
-  mapZoom: 6,
-  markerSize: 'medium'
-};
-
-// Load preferences from localStorage
-function loadUserPreferences() {
-  const saved = localStorage.getItem('userPreferences');
-  if (saved) {
-    try {
-      userPreferences = { ...userPreferences, ...JSON.parse(saved) };
-      Logger.log('User preferences loaded:', userPreferences);
-    } catch (e) {
-      Logger.warn('Could not parse saved preferences');
-    }
-  }
-}
-
-// Save preferences to localStorage
-function saveUserPreferences() {
-  localStorage.setItem('userPreferences', JSON.stringify(userPreferences));
-  Logger.log('User preferences saved:', userPreferences);
-}
-
-// Open settings modal
-function openSettingsModal() {
-  Logger.log('openSettingsModal() called');
-  const modal = document.getElementById('settingsModal');
-  if (!modal) {
-    Logger.warn('Settings modal element not found');
-    return;
-  }
-
-  modal.classList.remove('hidden');
-  Logger.log('Settings modal opened');
-  loadSettingsData();
-}
-
-// Close settings modal
-function closeSettingsModal() {
-  const modal = document.getElementById('settingsModal');
-  if (modal) {
-    modal.classList.add('hidden');
-  }
-}
-
-// Load current settings into the modal
-async function loadSettingsData() {
-  // Populate category dropdown from ServiceTypeRegistry
-  const categorySelect = document.getElementById('settingsDefaultCategory');
-  if (categorySelect) {
-    const serviceTypes = serviceTypeRegistry.getAll();
-    let options = '<option value="all">Alle kategorier</option>';
-    serviceTypes.forEach(st => {
-      const selected = userPreferences.defaultCategory === st.slug ? 'selected' : '';
-      options += `<option value="${st.slug}" ${selected}>${st.name}</option>`;
-    });
-    categorySelect.innerHTML = options;
-  }
-
-  // Load display preferences
-  const warningDaysSelect = document.getElementById('settingsWarningDays');
-  if (warningDaysSelect) {
-    warningDaysSelect.value = userPreferences.warningDays.toString();
-  }
-
-  // Load map preferences
-  const mapModeSelect = document.getElementById('settingsMapMode');
-  if (mapModeSelect) {
-    mapModeSelect.value = userPreferences.mapMode;
-  }
-
-  const mapZoomSlider = document.getElementById('settingsMapZoom');
-  const mapZoomValue = document.getElementById('settingsMapZoomValue');
-  if (mapZoomSlider) {
-    mapZoomSlider.value = userPreferences.mapZoom;
-    if (mapZoomValue) mapZoomValue.textContent = userPreferences.mapZoom;
-  }
-
-  const markerSizeSelect = document.getElementById('settingsMarkerSize');
-  if (markerSizeSelect) {
-    markerSizeSelect.value = userPreferences.markerSize;
-  }
-
-  // Load column visibility checkboxes
-  const columnMap = {
-    telefon: 'colTelefon',
-    epost: 'colEpost',
-    nesteKontroll: 'colNesteKontroll',
-    kategori: 'colKategori',
-    poststed: 'colPoststed'
-  };
-
-  Object.entries(columnMap).forEach(([key, id]) => {
-    const checkbox = document.getElementById(id);
-    if (checkbox) {
-      checkbox.checked = userPreferences.visibleColumns.includes(key);
-    }
-  });
-}
-
-// Save settings from modal
-async function saveSettings() {
-  const saveBtn = document.getElementById('saveSettingsBtn');
-  const originalText = saveBtn?.textContent;
-
-  if (saveBtn) {
-    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Lagrer...';
-    saveBtn.disabled = true;
-  }
-
-  try {
-    // Save display preferences
-    const categorySelect = document.getElementById('settingsDefaultCategory');
-    if (categorySelect) {
-      userPreferences.defaultCategory = categorySelect.value;
-    }
-
-    const warningDaysSelect = document.getElementById('settingsWarningDays');
-    if (warningDaysSelect) {
-      userPreferences.warningDays = parseInt(warningDaysSelect.value, 10);
-    }
-
-    // Save map preferences
-    const mapModeSelect = document.getElementById('settingsMapMode');
-    if (mapModeSelect) {
-      userPreferences.mapMode = mapModeSelect.value;
-    }
-
-    const mapZoomSlider = document.getElementById('settingsMapZoom');
-    if (mapZoomSlider) {
-      userPreferences.mapZoom = parseInt(mapZoomSlider.value, 10);
-    }
-
-    const markerSizeSelect = document.getElementById('settingsMarkerSize');
-    if (markerSizeSelect) {
-      userPreferences.markerSize = markerSizeSelect.value;
-    }
-
-    // Save column visibility
-    userPreferences.visibleColumns = [];
-    const columnMap = {
-      telefon: 'colTelefon',
-      epost: 'colEpost',
-      nesteKontroll: 'colNesteKontroll',
-      kategori: 'colKategori',
-      poststed: 'colPoststed'
-    };
-
-    Object.entries(columnMap).forEach(([key, id]) => {
-      const checkbox = document.getElementById(id);
-      if (checkbox?.checked) {
-        userPreferences.visibleColumns.push(key);
-      }
-    });
-
-    // Save to localStorage
-    saveUserPreferences();
-
-    // Apply preferences to UI
-    applyPreferences();
-
-    // Close modal
-    closeSettingsModal();
-
-    // Show success feedback
-    showToast('Innstillinger lagret', 'success');
-
-  } catch (error) {
-    console.error('Error saving settings:', error);
-    showMessage('Kunne ikke lagre innstillinger. Prøv igjen.', 'error');
-  } finally {
-    if (saveBtn) {
-      saveBtn.textContent = originalText;
-      saveBtn.disabled = false;
-    }
-  }
-}
-
-// Apply user preferences to the UI
-function applyPreferences() {
-  // Apply default category filter
-  if (userPreferences.defaultCategory && userPreferences.defaultCategory !== 'all') {
-    selectedCategory = userPreferences.defaultCategory;
-  }
-
-  // Apply map mode
-  if (userPreferences.mapMode !== mapMode) {
-    toggleNightMode();
-  }
-
-  // Apply marker size via CSS custom property
-  const scale = userPreferences.markerSize === 'small' ? '0.85' :
-                userPreferences.markerSize === 'large' ? '1.15' : '1';
-  document.documentElement.style.setProperty('--marker-scale', scale);
-
-  // Apply map zoom if map exists
-  if (map && userPreferences.mapZoom) {
-    // Only set zoom on initial load, not every preference change
-  }
-
-  // Update map legend with current service types
-  updateMapLegend();
-
-  // Refresh displays if customers are loaded
-  if (customers && customers.length > 0) {
-    renderCustomerAdmin();
-    renderMarkers(customers);
-  }
-}
 
 // Apply industry changes to entire UI
 function applyIndustryChanges() {
@@ -6248,6 +7526,9 @@ function applyIndustryChanges() {
   // Update filter panel categories (right side panel)
   renderFilterPanelCategories();
   renderDriftskategoriFilter();
+
+  // Apply MVP mode UI changes (hide industry-specific elements)
+  applyMvpModeUI();
 
   // Update all dropdowns that depend on service types
   updateServiceTypeDropdowns();
@@ -6558,72 +7839,8 @@ function showToast(message, type = 'info') {
   }, 3000);
 }
 
-// Initialize settings event listeners
-function initSettingsEventListeners() {
-  // Direct event listeners for settings modal buttons (more reliable than delegation)
-  const closeBtn = document.getElementById('closeSettingsModal');
-  const cancelBtn = document.getElementById('cancelSettingsBtn');
-  const saveBtn = document.getElementById('saveSettingsBtn');
-  const settingsModal = document.getElementById('settingsModal');
-
-  if (closeBtn) {
-    closeBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closeSettingsModal();
-    });
-  }
-
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closeSettingsModal();
-    });
-  }
-
-  if (saveBtn) {
-    saveBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      saveSettings();
-    });
-  }
-
-  // Backdrop click to close
-  if (settingsModal) {
-    settingsModal.addEventListener('click', (e) => {
-      if (e.target === settingsModal) {
-        closeSettingsModal();
-      }
-    });
-  }
-
-  // Settings tab switching
-  document.querySelectorAll('.settings-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      const tabId = tab.dataset.settingsTab;
-
-      // Update tab active state
-      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-
-      // Update pane visibility
-      document.querySelectorAll('.settings-pane').forEach(p => p.classList.remove('active'));
-      const pane = document.getElementById('settings-' + tabId);
-      if (pane) pane.classList.add('active');
-    });
-  });
-
-  // Zoom slider value display
-  const zoomSlider = document.getElementById('settingsMapZoom');
-  const zoomValue = document.getElementById('settingsMapZoomValue');
-  if (zoomSlider && zoomValue) {
-    zoomSlider.addEventListener('input', () => {
-      zoomValue.textContent = zoomSlider.value;
-    });
-  }
-
+// Initialize misc event listeners
+function initMiscEventListeners() {
   // Excel/CSV Import functionality
   initExcelImport();
 
@@ -7685,30 +8902,36 @@ function handleLogout() {
   // Stop proactive token refresh
   stopTokenRefresh();
 
-  // Revoke refresh token on server (fire and forget)
-  const refreshToken = localStorage.getItem('refreshToken');
-  if (refreshToken) {
-    fetch('/api/klient/logout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken })
-    }).catch(() => {});
+  // Revoke session on server (cookie-based auth)
+  const logoutHeaders = { 'Content-Type': 'application/json' };
+  const csrfToken = getCsrfToken();
+  if (csrfToken) {
+    logoutHeaders['X-CSRF-Token'] = csrfToken;
   }
+  fetch('/api/klient/logout', {
+    method: 'POST',
+    headers: logoutHeaders,
+    credentials: 'include'
+  }).catch(err => console.error('Logout request failed:', err));
 
   authToken = null;
   isSuperAdmin = false;
-  localStorage.removeItem('authToken');
-  localStorage.removeItem('refreshToken');
-  localStorage.removeItem('accessTokenExpiresAt');
-  localStorage.removeItem('refreshTokenExpiresAt');
   localStorage.removeItem('userName');
   localStorage.removeItem('userRole');
   localStorage.removeItem('userType');
   localStorage.removeItem('isSuperAdmin');
+  localStorage.removeItem('isImpersonating');
+  localStorage.removeItem('impersonatingOrgName');
   // Multi-tenancy: Clear organization data
   localStorage.removeItem('organizationId');
   localStorage.removeItem('organizationSlug');
   localStorage.removeItem('organizationName');
+  // Clear app mode and industry (prevents stale settings on next login)
+  localStorage.removeItem('appMode');
+  localStorage.removeItem('industrySlug');
+  localStorage.removeItem('industryName');
+  // Reset appConfig to default
+  appConfig.appMode = 'mvp';
   // Clear impersonation data
   localStorage.removeItem('isImpersonating');
   localStorage.removeItem('impersonatingOrgId');
@@ -7720,12 +8943,17 @@ function handleLogout() {
 // Stop impersonation and return to admin panel (for super-admins)
 async function stopImpersonation() {
   try {
+    const stopImpHeaders = {
+      'Content-Type': 'application/json',
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      stopImpHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch('/api/super-admin/stop-impersonation', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      }
+      headers: stopImpHeaders,
+      credentials: 'include'
     });
 
     const data = await response.json();
@@ -7735,11 +8963,6 @@ async function stopImpersonation() {
       localStorage.removeItem('isImpersonating');
       localStorage.removeItem('impersonatingOrgId');
       localStorage.removeItem('impersonatingOrgName');
-
-      // Update token with admin token (no org context)
-      if (data.data.token) {
-        localStorage.setItem('authToken', data.data.token);
-      }
 
       // Redirect to admin panel
       window.location.href = '/admin';
@@ -7757,14 +8980,8 @@ async function stopImpersonation() {
 async function checkExistingAuth() {
   // First, try SSO verification (checks both Bearer token and SSO cookie)
   try {
-    const headers = {};
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-
     const response = await fetch('/api/klient/verify', {
-      headers,
-      credentials: 'include' // Include cookies for SSO
+      credentials: 'include'
     });
 
     if (response.ok) {
@@ -7774,10 +8991,9 @@ async function checkExistingAuth() {
         // SSO session found or token is valid
         const { token, user, organization } = data.data;
 
-        // Store fresh token from SSO session
+        // Keep token in memory (cookie is the primary auth mechanism)
         if (token) {
           authToken = token;
-          localStorage.setItem('authToken', token);
         }
 
         // Update user info
@@ -7803,6 +9019,16 @@ async function checkExistingAuth() {
           appConfig.logoUrl = organization.logoUrl;
           appConfig.primaryColor = organization.primaryColor;
           appConfig.brandTitle = organization.brandTitle || organization.navn;
+          // App mode: 'mvp' = enkel versjon, 'full' = komplett (TRE Allservice)
+          appConfig.appMode = organization.appMode || 'mvp';
+          localStorage.setItem('appMode', appConfig.appMode);
+
+          // Store subscription info for timer
+          subscriptionInfo = {
+            status: organization.subscriptionStatus,
+            trialEndsAt: organization.trialEndsAt,
+            planType: organization.planType
+          };
 
           // Load full tenant config (includes industry/service types) and apply branding
           await reloadConfigWithAuth();
@@ -7820,7 +9046,7 @@ async function checkExistingAuth() {
   if (authToken) {
     try {
       const response = await fetch('/api/klient/dashboard', {
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        credentials: 'include'
       });
 
       if (response.ok) {
@@ -7853,10 +9079,9 @@ let refreshPromise = null;
 
 // Check if access token is expiring soon (within 2 minutes)
 function isAccessTokenExpiringSoon() {
-  const expiresAt = localStorage.getItem('accessTokenExpiresAt');
-  if (!expiresAt) return false;
+  if (!accessTokenExpiresAt) return false;
 
-  const expiryTime = parseInt(expiresAt, 10);
+  const expiryTime = typeof accessTokenExpiresAt === 'number' ? accessTokenExpiresAt : parseInt(accessTokenExpiresAt, 10);
   const bufferTime = 2 * 60 * 1000; // 2 minutes before expiry
   return Date.now() > (expiryTime - bufferTime);
 }
@@ -7868,36 +9093,25 @@ async function refreshAccessToken() {
     return refreshPromise;
   }
 
-  const refreshToken = localStorage.getItem('refreshToken');
-  if (!refreshToken) {
-    return false;
-  }
-
   isRefreshingToken = true;
   refreshPromise = (async () => {
     try {
+      const refreshHeaders = { 'Content-Type': 'application/json' };
+      const csrfToken = getCsrfToken();
+      if (csrfToken) {
+        refreshHeaders['X-CSRF-Token'] = csrfToken;
+      }
       const response = await fetch('/api/klient/refresh', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken })
+        headers: refreshHeaders,
+        credentials: 'include'
       });
 
       if (response.ok) {
         const data = await response.json();
 
-        // Update stored tokens
+        // Tokens are managed via httpOnly cookies
         authToken = data.accessToken || data.token;
-        localStorage.setItem('authToken', authToken);
-
-        if (data.refreshToken) {
-          localStorage.setItem('refreshToken', data.refreshToken);
-        }
-        if (data.accessTokenExpiresAt) {
-          localStorage.setItem('accessTokenExpiresAt', data.accessTokenExpiresAt);
-        }
-        if (data.refreshTokenExpiresAt) {
-          localStorage.setItem('refreshTokenExpiresAt', data.refreshTokenExpiresAt);
-        }
 
         Logger.log('Access token refreshed successfully');
         return true;
@@ -7929,10 +9143,9 @@ function setupTokenRefresh() {
 
   // Check every minute for token expiry
   tokenRefreshInterval = setInterval(async () => {
-    const expiresAt = localStorage.getItem('accessTokenExpiresAt');
-    if (!expiresAt) return;
+    if (!accessTokenExpiresAt) return;
 
-    const expiryTime = parseInt(expiresAt, 10);
+    const expiryTime = typeof accessTokenExpiresAt === 'number' ? accessTokenExpiresAt : parseInt(accessTokenExpiresAt, 10);
     const now = Date.now();
     const fiveMinutes = 5 * 60 * 1000;
 
@@ -7978,11 +9191,16 @@ async function apiFetch(url, options = {}) {
     ...options.headers
   };
 
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
+  // Add CSRF token for state-changing methods
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
   }
 
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetch(url, { ...options, headers, credentials: 'include' });
 
   // Handle 401 - try to refresh token once, then logout if still failing
   if (response.status === 401) {
@@ -8078,40 +9296,33 @@ function decodeJWT(token) {
 
 /**
  * Initializes the subscription countdown timer
+ * Only shows for users with active trial period
  */
 function initSubscriptionTimer() {
-  const token = localStorage.getItem('authToken');
-  if (!token) return;
-
-  const payload = decodeJWT(token);
-  if (!payload) return;
-
-  const { subscriptionStatus, trialEndsAt, currentPeriodEnd } = payload;
-
-  // Only show timer for trial or near-expiring subscriptions
-  if (subscriptionStatus !== 'trialing' && subscriptionStatus !== 'active') return;
-
-  // Determine which date to count down to
-  let targetDate = null;
-  let timerLabel = '';
-
-  if (subscriptionStatus === 'trialing' && trialEndsAt) {
-    targetDate = new Date(trialEndsAt);
-    timerLabel = 'Prøveperiode';
-  } else if (subscriptionStatus === 'active' && currentPeriodEnd) {
-    // Only show for active subscriptions if ending soon (within 7 days)
-    const endDate = new Date(currentPeriodEnd);
-    const daysLeft = Math.floor((endDate - new Date()) / (1000 * 60 * 60 * 24));
-    if (daysLeft <= 7) {
-      targetDate = endDate;
-      timerLabel = 'Fornyes om';
-    }
-  }
-
-  if (!targetDate) {
+  // Skip timer for enterprise plans - they don't have trials
+  if (subscriptionInfo?.planType === 'enterprise') {
     hideSubscriptionTimer();
     return;
   }
+
+  if (!subscriptionInfo) return;
+
+  const { status: subscriptionStatus, trialEndsAt } = subscriptionInfo;
+
+  // Only show timer for trialing subscriptions
+  if (subscriptionStatus !== 'trialing') {
+    hideSubscriptionTimer();
+    return;
+  }
+
+  // Only show for trialing with valid end date
+  if (!trialEndsAt) {
+    hideSubscriptionTimer();
+    return;
+  }
+
+  const targetDate = new Date(trialEndsAt);
+  const timerLabel = 'Prøveperiode';
 
   // Start the countdown
   updateSubscriptionTimer(targetDate, timerLabel);
@@ -8461,6 +9672,9 @@ async function loadConfig() {
     renderFilterPanelCategories();
     renderDriftskategoriFilter();
 
+    // Apply MVP mode UI changes (hide industry-specific elements)
+    applyMvpModeUI();
+
     Logger.log('Application configuration loaded:', appConfig);
     Logger.log('Route planning configured:', appConfig.orsApiKeyConfigured);
   } catch (error) {
@@ -8700,13 +9914,8 @@ function adjustColor(hex, percent) {
 // Reload config with auth token (after login for tenant-specific branding)
 async function reloadConfigWithAuth() {
   try {
-    const token = localStorage.getItem('authToken');
-    if (!token) return;
-
     const response = await fetch('/api/config', {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
+      credentials: 'include'
     });
 
     if (response.ok) {
@@ -8735,6 +9944,7 @@ async function reloadConfigWithAuth() {
       updateControlSectionHeaders();
       renderFilterPanelCategories();
       renderDriftskategoriFilter();
+      applyMvpModeUI();
       applyBranding();
       Logger.log('Tenant-specific config loaded:', appConfig.organizationSlug);
     }
@@ -10378,12 +11588,17 @@ async function planRoute() {
   try {
 
     // Use server-side proxy for route optimization (protects API key)
+    const optimizeHeaders = {
+      'Content-Type': 'application/json',
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      optimizeHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch('/api/routes/optimize', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
+      headers: optimizeHeaders,
+      credentials: 'include',
       body: JSON.stringify({
         jobs: selectedCustomerData.map((c, i) => ({
           id: i + 1,
@@ -10444,12 +11659,17 @@ async function planSimpleRoute(customerData) {
     ];
 
     // Use server-side proxy for directions (protects API key)
+    const directionsHeaders = {
+      'Content-Type': 'application/json',
+    };
+    const dirCsrfToken = getCsrfToken();
+    if (dirCsrfToken) {
+      directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
+    }
     const response = await fetch('/api/routes/directions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
+      headers: directionsHeaders,
+      credentials: 'include',
       body: JSON.stringify({
         coordinates: coordinates
       })
@@ -10533,12 +11753,17 @@ async function drawRoute(orderedCustomers) {
 
   try {
     // Use server-side proxy for directions (protects API key)
+    const directionsHeaders = {
+      'Content-Type': 'application/json',
+    };
+    const dirCsrfToken = getCsrfToken();
+    if (dirCsrfToken) {
+      directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
+    }
     const response = await fetch('/api/routes/directions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
+      headers: directionsHeaders,
+      credentials: 'include',
       body: JSON.stringify({ coordinates })
     });
 
@@ -10766,8 +11991,8 @@ async function updateRouteAfterReorder() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
       },
+      credentials: 'include',
       body: JSON.stringify({ coordinates })
     });
 
@@ -11888,7 +13113,9 @@ function addCustomer() {
 
   // Vis kontroll-seksjoner basert på valgt kategori (eller default)
   const kategoriSelect = document.getElementById('kategori');
-  const selectedKategori = kategoriSelect ? kategoriSelect.value : 'El-Kontroll';
+  // MVP: ingen default kategori, Full mode: El-Kontroll som default
+  const defaultKategori = isMvpMode() ? '' : 'El-Kontroll';
+  const selectedKategori = kategoriSelect ? kategoriSelect.value : defaultKategori;
   updateControlSectionsVisibility(selectedKategori);
 
   // Reset email settings to defaults
@@ -11909,12 +13136,38 @@ function addCustomer() {
   customerModal.classList.remove('hidden');
 }
 
-// Vis/skjul kontroll-seksjoner basert på kategori
+// Vis/skjul kontroll-seksjoner basert på kategori og app mode
 function updateControlSectionsVisibility(kategori) {
   const elSection = document.getElementById('elKontrollSection');
   const brannSection = document.getElementById('brannvarslingSection');
+  const mvpSection = document.getElementById('mvpKontrollSection');
+  const driftskategoriGroup = document.getElementById('driftskategori')?.closest('.form-group');
+  const kategoriGroup = document.getElementById('kategori')?.closest('.form-group');
+
+  console.log('[MVP Debug] updateControlSectionsVisibility called:', {
+    kategori,
+    appMode: appConfig.appMode,
+    isMvpMode: isMvpMode(),
+    mvpSectionFound: !!mvpSection
+  });
 
   if (!elSection || !brannSection) return;
+
+  // MVP-modus: Vis enkel oppfølgings-seksjon, skjul avanserte seksjoner
+  if (isMvpMode()) {
+    console.log('[MVP Debug] Setting MVP mode - showing mvpSection');
+    elSection.style.display = 'none';
+    brannSection.style.display = 'none';
+    if (mvpSection) mvpSection.style.display = 'block';
+    if (driftskategoriGroup) driftskategoriGroup.style.display = 'none';
+    if (kategoriGroup) kategoriGroup.style.display = 'none';
+    return;
+  }
+
+  // Full mode (TRE Allservice): Skjul MVP-seksjon, vis avanserte basert på kategori
+  if (mvpSection) mvpSection.style.display = 'none';
+  if (driftskategoriGroup) driftskategoriGroup.style.display = 'block';
+  if (kategoriGroup) kategoriGroup.style.display = 'block';
 
   const kat = (kategori || '').toLowerCase();
 
@@ -12010,7 +13263,11 @@ async function saveCustomer(e) {
     }
   }
 
-  const kategori = document.getElementById('kategori').value || 'El-Kontroll';
+  // MVP: ingen kategori (null), Full mode: bruk dropdown-verdi eller El-Kontroll som default
+  let kategori = null;
+  if (!isMvpMode()) {
+    kategori = document.getElementById('kategori').value || 'El-Kontroll';
+  }
 
   const data = {
     navn: document.getElementById('navn').value,
@@ -13238,21 +14495,17 @@ function checkLoginStatus() {
     return true;
   }
 
-  // Check both old and new token storage
-  const token = localStorage.getItem('authToken') || localStorage.getItem('klientToken');
-  const navn = localStorage.getItem('userName') || localStorage.getItem('klientNavn');
-  const rolle = localStorage.getItem('userRole') || localStorage.getItem('klientEpost');
+  // Auth is now cookie-based - check stored user info
+  const navn = localStorage.getItem('userName');
+  const rolle = localStorage.getItem('userRole');
   const userBar = document.getElementById('userBar');
   const userNameDisplay = document.getElementById('userNameDisplay');
 
-  // Require login - redirect to login page if not authenticated
-  if (!token) {
+  // If no stored user info, redirect to login (cookie will be validated server-side)
+  if (!navn) {
     window.location.href = '/login.html';
     return false;
   }
-
-  // Update global authToken
-  authToken = token;
 
   // Multi-tenancy: Reload config with auth to get tenant-specific branding
   reloadConfigWithAuth();
@@ -13277,39 +14530,44 @@ function logoutUser(logoutAllDevices = false) {
   // Stop proactive token refresh
   stopTokenRefresh();
 
-  const token = localStorage.getItem('authToken') || localStorage.getItem('klientToken');
-  const refreshToken = localStorage.getItem('refreshToken');
-
-  // Send logout request with refresh token for server-side revocation
-  if (token || refreshToken) {
-    fetch('/api/klient/logout', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({
-        refreshToken: refreshToken,
-        logoutAll: logoutAllDevices
-      })
-    }).catch(() => {});
+  // Send logout request (cookie-based auth, server clears cookie)
+  const logoutHeaders = { 'Content-Type': 'application/json' };
+  const csrfToken = getCsrfToken();
+  if (csrfToken) {
+    logoutHeaders['X-CSRF-Token'] = csrfToken;
   }
+  fetch('/api/klient/logout', {
+    method: 'POST',
+    headers: logoutHeaders,
+    credentials: 'include',
+    body: JSON.stringify({ logoutAll: logoutAllDevices })
+  }).catch(() => {
+    // Retry once after 1 second to ensure token is blacklisted
+    setTimeout(() => {
+      fetch('/api/klient/logout', {
+        method: 'POST',
+        headers: logoutHeaders,
+        credentials: 'include',
+        body: JSON.stringify({ logoutAll: logoutAllDevices })
+      }).catch(err => console.error('Logout retry failed:', err));
+    }, 1000);
+  });
 
-  // Clear all token storage
-  localStorage.removeItem('authToken');
-  localStorage.removeItem('refreshToken');
-  localStorage.removeItem('accessTokenExpiresAt');
-  localStorage.removeItem('refreshTokenExpiresAt');
+  // Clear UI-related localStorage (keep non-auth items)
   localStorage.removeItem('userName');
   localStorage.removeItem('userRole');
   localStorage.removeItem('userType');
-  localStorage.removeItem('klientToken');
-  localStorage.removeItem('klientNavn');
-  localStorage.removeItem('klientEpost');
+  localStorage.removeItem('isSuperAdmin');
+  localStorage.removeItem('isImpersonating');
+  localStorage.removeItem('impersonatingOrgName');
   // Multi-tenancy: Clear organization data
   localStorage.removeItem('organizationId');
   localStorage.removeItem('organizationSlug');
   localStorage.removeItem('organizationName');
+  // Clear app mode and industry
+  localStorage.removeItem('appMode');
+  localStorage.removeItem('industrySlug');
+  localStorage.removeItem('industryName');
 
   // Reset auth state
   authToken = null;
@@ -13319,6 +14577,28 @@ function logoutUser(logoutAllDevices = false) {
 
 // Event listeners
 document.addEventListener('DOMContentLoaded', async () => {
+  // Attach event listeners for elements previously using inline handlers (CSP security)
+  const stopImpersonationBtn = document.getElementById('stopImpersonationBtn');
+  if (stopImpersonationBtn) stopImpersonationBtn.addEventListener('click', () => stopImpersonation());
+
+  const smartDaysAhead = document.getElementById('smartDaysAhead');
+  if (smartDaysAhead) smartDaysAhead.addEventListener('input', function() {
+    document.getElementById('smartDaysAheadValue').textContent = this.value + ' dager';
+  });
+
+  const smartMaxCustomers = document.getElementById('smartMaxCustomers');
+  if (smartMaxCustomers) smartMaxCustomers.addEventListener('input', function() {
+    document.getElementById('smartMaxCustomersValue').textContent = this.value + ' kunder';
+  });
+
+  const smartClusterRadius = document.getElementById('smartClusterRadius');
+  if (smartClusterRadius) smartClusterRadius.addEventListener('input', function() {
+    document.getElementById('smartClusterRadiusValue').textContent = this.value + ' km';
+  });
+
+  const refreshSmartBtn = document.getElementById('refreshSmartRecommendationsBtn');
+  if (refreshSmartBtn) refreshSmartBtn.addEventListener('click', () => renderSmartRecommendations());
+
   // Initialize theme immediately (before any content renders)
   initializeTheme();
 
@@ -13423,9 +14703,6 @@ function initializeApp() {
   // Initialize DOM references
   initDOMElements();
 
-  // Load user preferences from localStorage
-  loadUserPreferences();
-
   // Initialize map features (clustering, borders, etc.)
   // The base map is already created by initSharedMap()
   initMap();
@@ -13449,14 +14726,14 @@ function initializeApp() {
   // Setup event listeners
   setupEventListeners();
 
-  // Initialize settings modal event listeners
-  initSettingsEventListeners();
-
-  // Apply user preferences to UI
-  applyPreferences();
+  // Initialize misc event listeners (import, map legend)
+  initMiscEventListeners();
 
   // Update map legend with current service types
   updateMapLegend();
+
+  // Apply MVP mode UI changes based on organization settings
+  applyMvpModeUI();
 
   Logger.log('initializeApp() complete');
 }
@@ -13471,13 +14748,6 @@ function setupEventListeners() {
 
   // Theme toggle button (UI light/dark mode)
   document.getElementById('themeToggleBtn')?.addEventListener('click', toggleTheme);
-
-  // Settings button - direct event listener for reliability
-  document.getElementById('settingsBtn')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openSettingsModal();
-  });
 
   // Dashboard action cards
   document.querySelectorAll('.dashboard-actions .action-card').forEach(card => {
@@ -13528,6 +14798,8 @@ function setupEventListeners() {
 
   // Customer admin tab
   document.getElementById('addCustomerBtnTab')?.addEventListener('click', addCustomer);
+  document.getElementById('importCustomersBtn')?.addEventListener('click', showImportModal);
+  document.getElementById('closeImportModal')?.addEventListener('click', closeImportModal);
   document.getElementById('customerSearchInput')?.addEventListener('input', (e) => {
     customerAdminSearch = e.target.value;
     renderCustomerAdmin();
@@ -14809,7 +16081,7 @@ async function loadAdminData() {
 async function loadTeamMembers() {
   try {
     const response = await fetch('/api/team-members', {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -14946,12 +16218,17 @@ async function saveTeamMember(e) {
     const url = isEdit ? `/api/team-members/${memberId}` : '/api/team-members';
     const method = isEdit ? 'PUT' : 'POST';
 
+    const teamMemberHeaders = {
+      'Content-Type': 'application/json',
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      teamMemberHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch(url, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      },
+      headers: teamMemberHeaders,
+      credentials: 'include',
       body: JSON.stringify(data)
     });
 
@@ -14976,9 +16253,15 @@ async function deleteTeamMember(member) {
   if (!confirmed) return;
 
   try {
+    const deleteHeaders = {};
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      deleteHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch(`/api/team-members/${member.id}`, {
       method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      headers: deleteHeaders,
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15135,7 +16418,7 @@ function formatRelativeTime(dateString) {
 async function loadLoginStats() {
   try {
     const response = await fetch('/api/login-logg/stats', {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15161,7 +16444,7 @@ async function loadLoginLog(append = false) {
     }
 
     const response = await fetch(`/api/login-logg?limit=${LOGIN_LOG_LIMIT}&offset=${loginLogOffset}`, {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15455,7 +16738,7 @@ async function loadSuperAdminData() {
 async function loadGlobalStatistics() {
   try {
     const response = await fetch('/api/super-admin/statistics', {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15484,7 +16767,7 @@ function updateElement(id, value) {
 async function loadOrganizations() {
   try {
     const response = await fetch('/api/super-admin/organizations', {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15494,7 +16777,9 @@ async function loadOrganizations() {
 
     const result = await response.json();
     if (result.success) {
-      superAdminOrganizations = result.data || [];
+      // Support paginated response format
+      const data = result.data;
+      superAdminOrganizations = Array.isArray(data) ? data : (data.organizations || []);
       renderOrganizationList();
     }
   } catch (error) {
@@ -15574,7 +16859,7 @@ async function selectOrganization(orgId) {
   try {
     // Load organization details
     const response = await fetch(`/api/super-admin/organizations/${orgId}`, {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15617,7 +16902,7 @@ function renderSelectedOrganization() {
 async function loadOrgCustomers(orgId) {
   try {
     const response = await fetch(`/api/super-admin/organizations/${orgId}/kunder`, {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15671,7 +16956,7 @@ function renderOrgCustomers(customers) {
 async function loadOrgUsers(orgId) {
   try {
     const response = await fetch(`/api/super-admin/organizations/${orgId}/brukere`, {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) {
@@ -15745,7 +17030,7 @@ async function editOrgCustomer(kundeId) {
   try {
     // Fetch customer data
     const response = await fetch(`/api/super-admin/organizations/${selectedOrgId}/kunder`, {
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include'
     });
 
     if (!response.ok) return;
@@ -15769,9 +17054,15 @@ async function deleteOrgCustomer(kundeId) {
   }
 
   try {
+    const deleteHeaders = {};
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      deleteHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch(`/api/super-admin/organizations/${selectedOrgId}/kunder/${kundeId}`, {
       method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${authToken}` }
+      headers: deleteHeaders,
+      credentials: 'include'
     });
 
     if (response.ok) {
@@ -15891,12 +17182,17 @@ async function saveSuperAdminCustomer(e) {
       method = 'PUT';
     }
 
+    const saHeaders = {
+      'Content-Type': 'application/json'
+    };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      saHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch(url, {
       method,
-      headers: {
-        'Authorization': `Bearer ${authToken}`,
-        'Content-Type': 'application/json'
-      },
+      headers: saHeaders,
+      credentials: 'include',
       body: JSON.stringify(data)
     });
 

@@ -48,81 +48,141 @@ function isValidRedirect(requestedPath: string): boolean {
   return false;
 }
 
-// Rate limiting for login attempts - in-memory store
-const loginAttempts = new Map<string, { count: number; lockoutUntil: number }>();
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
-const ATTEMPT_WINDOW = 15 * 60 * 1000; // 15 minutes
+// Rate limiting for login attempts with exponential backoff - in-memory store
+// For production, consider using Redis for distributed rate limiting
+interface LoginAttemptRecord {
+  count: number;
+  lockoutUntil: number;
+  firstAttempt: number;
+}
 
-function checkLoginRateLimit(ip: string): { allowed: boolean; retryAfter?: number } {
+const loginAttempts = new Map<string, LoginAttemptRecord>();
+
+// Exponential lockout durations in milliseconds
+// After each failed attempt, the lockout period increases
+const LOCKOUT_DURATIONS = [
+  0,                    // 1st attempt: no lockout
+  0,                    // 2nd attempt: no lockout
+  60 * 1000,            // 3rd attempt: 1 minute
+  5 * 60 * 1000,        // 4th attempt: 5 minutes
+  15 * 60 * 1000,       // 5th attempt: 15 minutes
+  60 * 60 * 1000,       // 6th attempt: 1 hour
+  24 * 60 * 60 * 1000,  // 7th+ attempt: 24 hours
+];
+
+// Window after which failed attempts are forgotten (24 hours)
+const ATTEMPT_RESET_WINDOW = 24 * 60 * 60 * 1000;
+
+/**
+ * Get lockout duration based on attempt count (exponential backoff)
+ */
+function getLockoutDuration(attemptCount: number): number {
+  if (attemptCount <= 0) return 0;
+  const index = Math.min(attemptCount - 1, LOCKOUT_DURATIONS.length - 1);
+  return LOCKOUT_DURATIONS[index];
+}
+
+/**
+ * Check if IP is rate limited for login attempts
+ */
+function checkLoginRateLimit(ip: string): { allowed: boolean; retryAfter?: number; attemptCount?: number } {
   const now = Date.now();
   const record = loginAttempts.get(ip);
 
-  // Cleanup old entries periodically
+  // Cleanup old entries periodically (1% chance per request)
   if (Math.random() < 0.01) {
     for (const [key, value] of loginAttempts.entries()) {
-      if (now > value.lockoutUntil && value.count === 0) {
+      // Remove records older than reset window with no active lockout
+      if (now - value.firstAttempt > ATTEMPT_RESET_WINDOW && now >= value.lockoutUntil) {
         loginAttempts.delete(key);
       }
     }
   }
 
   if (!record) {
-    return { allowed: true };
+    return { allowed: true, attemptCount: 0 };
+  }
+
+  // Reset if attempt window has passed
+  if (now - record.firstAttempt > ATTEMPT_RESET_WINDOW) {
+    loginAttempts.delete(ip);
+    return { allowed: true, attemptCount: 0 };
   }
 
   // Check if still in lockout
   if (now < record.lockoutUntil) {
     const retryAfter = Math.ceil((record.lockoutUntil - now) / 1000);
-    return { allowed: false, retryAfter };
+    return { allowed: false, retryAfter, attemptCount: record.count };
   }
 
-  // Reset if lockout has expired
-  if (now >= record.lockoutUntil && record.count >= MAX_ATTEMPTS) {
-    record.count = 0;
-    record.lockoutUntil = 0;
-  }
-
-  return { allowed: true };
+  return { allowed: true, attemptCount: record.count };
 }
 
-function recordFailedLogin(ip: string): void {
+/**
+ * Record a failed login attempt and apply exponential backoff
+ */
+function recordFailedLogin(ip: string): { lockoutDuration: number; attemptCount: number } {
   const now = Date.now();
-  const record = loginAttempts.get(ip);
+  let record = loginAttempts.get(ip);
 
   if (!record) {
-    loginAttempts.set(ip, { count: 1, lockoutUntil: 0 });
-    return;
+    record = { count: 1, lockoutUntil: 0, firstAttempt: now };
+    loginAttempts.set(ip, record);
+  } else {
+    record.count++;
   }
 
-  record.count++;
+  // Calculate lockout duration based on attempt count
+  const lockoutDuration = getLockoutDuration(record.count);
 
-  // Trigger lockout if max attempts reached
-  if (record.count >= MAX_ATTEMPTS) {
-    record.lockoutUntil = now + LOCKOUT_DURATION;
+  if (lockoutDuration > 0) {
+    record.lockoutUntil = now + lockoutDuration;
   }
+
+  return { lockoutDuration, attemptCount: record.count };
 }
 
+/**
+ * Clear login attempts on successful login
+ */
 function clearLoginAttempts(ip: string): void {
   loginAttempts.delete(ip);
+}
+
+/**
+ * Format lockout duration for user-friendly message
+ */
+function formatLockoutMessage(retryAfter: number): string {
+  const minutes = Math.ceil(retryAfter / 60);
+  const hours = Math.ceil(retryAfter / 3600);
+
+  if (retryAfter < 60) {
+    return `${retryAfter} sekund${retryAfter === 1 ? '' : 'er'}`;
+  } else if (retryAfter < 3600) {
+    return `${minutes} minutt${minutes === 1 ? '' : 'er'}`;
+  } else {
+    return `${hours} time${hours === 1 ? '' : 'r'}`;
+  }
 }
 
 export const POST: APIRoute = async ({ request, clientAddress }) => {
   // Get client IP for rate limiting
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || clientAddress || 'unknown';
 
-  // Check rate limit
+  // Check rate limit with exponential backoff
   const rateLimit = checkLoginRateLimit(ip);
   if (!rateLimit.allowed) {
+    const lockoutMessage = formatLockoutMessage(rateLimit.retryAfter || 60);
     return new Response(
       JSON.stringify({
-        error: `For mange innloggingsforsøk. Prøv igjen om ${Math.max(1, Math.ceil((rateLimit.retryAfter || 0) / 60))} minutt${Math.ceil((rateLimit.retryAfter || 0) / 60) === 1 ? '' : 'er'}.`,
+        error: `For mange innloggingsforsøk. Prøv igjen om ${lockoutMessage}.`,
+        attemptCount: rateLimit.attemptCount,
       }),
       {
         status: 429,
         headers: {
           'Content-Type': 'application/json',
-          'Retry-After': String(rateLimit.retryAfter || 900),
+          'Retry-After': String(rateLimit.retryAfter || 60),
         },
       }
     );

@@ -74,6 +74,26 @@ router.post(
       throw Errors.badRequest('Ingen fil lastet opp');
     }
 
+    // Validate file content by checking magic bytes
+    const buffer = req.file.buffer;
+    const ext = req.file.originalname.toLowerCase().slice(req.file.originalname.lastIndexOf('.'));
+    if (ext === '.xlsx' || ext === '.xls') {
+      const xlsxMagic = [0x50, 0x4B, 0x03, 0x04]; // ZIP/XLSX
+      const xlsMagic = [0xD0, 0xCF, 0x11, 0xE0];   // OLE2/XLS
+      const isXlsx = buffer.length >= 4 && xlsxMagic.every((b, i) => buffer[i] === b);
+      const isXls = buffer.length >= 4 && xlsMagic.every((b, i) => buffer[i] === b);
+      if (!isXlsx && !isXls) {
+        throw Errors.badRequest('Filen ser ikke ut som en gyldig Excel-fil. Kontroller filformatet.');
+      }
+    } else if (ext === '.csv') {
+      // CSV should be valid text - check for binary content in first 1000 bytes
+      const sample = buffer.subarray(0, Math.min(1000, buffer.length));
+      const hasNullBytes = sample.includes(0);
+      if (hasNullBytes) {
+        throw Errors.badRequest('Filen ser ikke ut som en gyldig CSV-fil. Kontroller filformatet.');
+      }
+    }
+
     const importService = getImportService();
 
     const result = await importService.uploadAndParse(
@@ -314,7 +334,11 @@ router.post(
       req.organizationId!,
       batchId,
       req.user!.userId,
-      { dryRun: body.dryRun }
+      {
+        dryRun: body.dryRun,
+        excludedRowIds: body.excludedRowIds,
+        rowEdits: body.rowEdits,
+      }
     );
 
     if (!body.dryRun) {
@@ -475,6 +499,57 @@ router.delete(
     };
 
     res.json(response);
+  })
+);
+
+// ============ ERROR REPORT ============
+
+/**
+ * GET /api/import/batches/:id/error-report
+ * Download validation errors as CSV
+ */
+router.get(
+  '/batches/:id/error-report',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const batchId = Number(req.params.id);
+    if (isNaN(batchId)) {
+      throw Errors.badRequest('Ugyldig batch-ID');
+    }
+
+    const service = getImportService();
+    const orgId = req.user!.organizationId!;
+
+    // Verify batch exists and belongs to org
+    const preview = await service.getPreview(orgId, batchId, {
+      limit: 10000,
+      offset: 0,
+      showErrors: true,
+    });
+
+    // Build CSV from preview rows with errors
+    const csvLines: string[] = ['Rad;Felt;Alvorlighetsgrad;Feilkode;Melding;Verdi;Forslag'];
+
+    for (const row of preview.previewRows) {
+      if (!row.errors || row.errors.length === 0) continue;
+      for (const err of row.errors) {
+        const line = [
+          row.rowNumber,
+          err.field_name || '',
+          err.severity,
+          err.error_code,
+          `"${(err.message || '').replaceAll('"', '""')}"`,
+          `"${((err as any).actual_value || '').replaceAll('"', '""')}"`,
+          `"${((err as any).suggestion || '').replaceAll('"', '""')}"`,
+        ].join(';');
+        csvLines.push(line);
+      }
+    }
+
+    const csv = csvLines.join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="feilrapport-batch-${batchId}.csv"`);
+    res.send('\uFEFF' + csv); // BOM for Excel compatibility
   })
 );
 

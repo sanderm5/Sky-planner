@@ -4,6 +4,8 @@
 
 // ============ Organization & Subscription ============
 
+export type AppMode = 'mvp' | 'full';
+
 export interface Organization {
   id: number;
   navn: string;
@@ -22,6 +24,9 @@ export interface Organization {
   // Industry/onboarding
   industry_template_id?: number;
   onboarding_completed?: boolean;
+
+  // App mode: 'mvp' = enkel versjon, 'full' = komplett (TRE Allservice)
+  app_mode?: AppMode;
 
   // Stripe integration
   stripe_customer_id?: string;
