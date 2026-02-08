@@ -4,6 +4,11 @@
  */
 
 import 'dotenv/config';
+import { initSentry, Sentry } from './services/sentry';
+
+// Initialize Sentry before anything else
+initSentry();
+
 import express, { Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -406,6 +411,7 @@ app.get('*', (req, res) => {
 
 // ===== ERROR HANDLING =====
 app.use(notFoundHandler);
+Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 // ===== START SERVER =====

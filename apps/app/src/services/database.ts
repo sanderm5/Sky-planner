@@ -288,6 +288,9 @@ class DatabaseService {
     try {
       this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN company_poststed TEXT`);
     } catch { /* Column may already exist */ }
+    try {
+      this.sqlite.exec(`ALTER TABLE organizations ADD COLUMN app_mode TEXT DEFAULT 'mvp'`);
+    } catch { /* Column may already exist */ }
 
     // Ruter tables
     this.sqlite.exec(`
@@ -829,27 +832,46 @@ class DatabaseService {
 
     if (!this.sqlite) throw new Error('Database not initialized');
 
-    // Complex query to get customers needing control
-    const params = [organizationId, dager, dager, dager, dager];
+    // Check app_mode for this organization
+    const org = await this.getOrganizationById(organizationId);
+    const appMode = org?.app_mode ?? 'mvp';
 
+    if (appMode === 'full') {
+      // Full mode: filter by El-Kontroll/Brannvarsling categories
+      const params = [organizationId, dager, dager, dager, dager];
+      const sql = `
+        SELECT * FROM kunder
+        WHERE organization_id = ? AND kategori IN ('El-Kontroll', 'Brannvarsling', 'El-Kontroll + Brannvarsling')
+          AND (
+            (kategori IN ('El-Kontroll', 'El-Kontroll + Brannvarsling') AND
+              (neste_el_kontroll <= date('now', '+' || ? || ' days')
+              OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NOT NULL
+                  AND date(siste_el_kontroll, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') <= date('now', '+' || ? || ' days'))
+              OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NULL)))
+            OR (kategori IN ('Brannvarsling', 'El-Kontroll + Brannvarsling') AND
+              (neste_brann_kontroll <= date('now', '+' || ? || ' days')
+              OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NOT NULL
+                  AND date(siste_brann_kontroll, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') <= date('now', '+' || ? || ' days'))
+              OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NULL)))
+          )
+        ORDER BY navn COLLATE NOCASE
+      `;
+      return this.sqlite.prepare(sql).all(...params) as Kunde[];
+    }
+
+    // MVP mode: use generic kontroll dates (no category filter)
+    const params = [organizationId, dager, dager];
     const sql = `
       SELECT * FROM kunder
-      WHERE organization_id = ? AND kategori IN ('El-Kontroll', 'Brannvarsling', 'El-Kontroll + Brannvarsling')
+      WHERE organization_id = ?
         AND (
-          (kategori IN ('El-Kontroll', 'El-Kontroll + Brannvarsling') AND
-            (neste_el_kontroll <= date('now', '+' || ? || ' days')
-            OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NOT NULL
-                AND date(siste_el_kontroll, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') <= date('now', '+' || ? || ' days'))
-            OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NULL)))
-          OR (kategori IN ('Brannvarsling', 'El-Kontroll + Brannvarsling') AND
-            (neste_brann_kontroll <= date('now', '+' || ? || ' days')
-            OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NOT NULL
-                AND date(siste_brann_kontroll, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') <= date('now', '+' || ? || ' days'))
-            OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NULL)))
+          neste_kontroll <= date('now', '+' || ? || ' days')
+          OR (neste_kontroll IS NULL AND siste_kontroll IS NOT NULL
+              AND date(siste_kontroll, '+' || COALESCE(kontroll_intervall_mnd, 12) || ' months') <= date('now', '+' || ? || ' days'))
+          OR (neste_kontroll IS NULL AND siste_kontroll IS NULL AND kontroll_intervall_mnd IS NOT NULL)
         )
       ORDER BY navn COLLATE NOCASE
     `;
-
     return this.sqlite.prepare(sql).all(...params) as Kunde[];
   }
 

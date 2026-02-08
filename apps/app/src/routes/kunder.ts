@@ -12,7 +12,7 @@ import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { validateKunde } from '../utils/validation';
 import { geocodeCustomerData } from '../services/geocoding';
 import { getWebhookService } from '../services/webhooks';
-import type { AuthenticatedRequest, Kunde, CreateKundeRequest, ApiResponse } from '../types';
+import type { AuthenticatedRequest, Kunde, CreateKundeRequest, ApiResponse, Organization } from '../types';
 import { cleanImportData } from '../services/import/cleaner';
 
 // Configure multer for Excel file uploads (memory storage)
@@ -60,6 +60,7 @@ interface KundeDbService {
     organizationId?: number
   ): Promise<number>;
   getOrganizationLimits(organizationId: number): Promise<{ max_kunder: number; current_count: number } | null>;
+  getOrganizationById(id: number): Promise<Organization | null>;
 }
 
 let dbService: KundeDbService;
@@ -213,8 +214,12 @@ router.post(
       }
     }
 
+    // Determine app mode for this organization
+    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
+    const appMode = (org?.app_mode ?? 'mvp') as 'mvp' | 'full';
+
     // Prepare kunde data with defaults
-    const kundeData = prepareKundeData(req.body, req.organizationId);
+    const kundeData = prepareKundeData(req.body, req.organizationId, appMode);
 
     // Geocode address if needed
     const geocodedData = await geocodeCustomerData(kundeData);
@@ -280,8 +285,12 @@ router.put(
       throw Errors.notFound('Kunde');
     }
 
+    // Determine app mode
+    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
+    const appMode = (org?.app_mode ?? 'mvp') as 'mvp' | 'full';
+
     // Prepare data (without organization_id - can't change tenant)
-    const kundeData = prepareKundeData(req.body);
+    const kundeData = prepareKundeData(req.body, undefined, appMode);
 
     const kunde = await dbService.updateKunde(id, kundeData, req.organizationId);
     if (!kunde) {
@@ -442,20 +451,30 @@ router.post(
  */
 function prepareKundeData(
   body: CreateKundeRequest,
-  organizationId?: number
+  organizationId?: number,
+  appMode: 'mvp' | 'full' = 'mvp'
 ): CreateKundeRequest & { organization_id?: number } {
-  const kategori = body.kategori || 'El-Kontroll';
+  // MVP mode: don't force category defaults
+  const kategori = appMode === 'full'
+    ? (body.kategori || 'El-Kontroll')
+    : (body.kategori || undefined);
 
-  // Determine intervals based on category and type
   let elIntervall = body.el_kontroll_intervall;
   let brannIntervall = body.brann_kontroll_intervall;
 
-  if (kategori === 'El-Kontroll' || kategori === 'El-Kontroll + Brannvarsling') {
-    elIntervall = elIntervall || (body.el_type === 'Bolig' ? 60 : body.el_type === 'Næring' ? 12 : 36);
-  }
+  // Only apply category-based interval defaults in full mode
+  if (appMode === 'full' && kategori) {
+    if (kategori === 'El-Kontroll' || kategori === 'El-Kontroll + Brannvarsling') {
+      if (!elIntervall) {
+        if (body.el_type === 'Bolig') elIntervall = 60;
+        else if (body.el_type === 'Næring') elIntervall = 12;
+        else elIntervall = 36;
+      }
+    }
 
-  if (kategori === 'Brannvarsling' || kategori === 'El-Kontroll + Brannvarsling') {
-    brannIntervall = brannIntervall || 12; // Always 12 months for fire alarms
+    if (kategori === 'Brannvarsling' || kategori === 'El-Kontroll + Brannvarsling') {
+      brannIntervall = brannIntervall || 12;
+    }
   }
 
   return {
@@ -602,6 +621,10 @@ router.post(
       throw Errors.badRequest('Kolonne-mapping for navn og adresse er påkrevd');
     }
 
+    // Determine app mode
+    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
+    const appMode = (org?.app_mode ?? 'mvp') as 'mvp' | 'full';
+
     // Check organization limits
     const limits = await dbService.getOrganizationLimits(req.organizationId!);
     if (limits && limits.current_count + rows.length > limits.max_kunder) {
@@ -642,7 +665,7 @@ router.post(
           epost: getField('epost'),
           kontaktperson: getField('kontaktperson'),
           notater: getField('notat') || getField('notater'),
-          kategori: getField('kategori') || 'El-Kontroll',
+          kategori: getField('kategori') || (appMode === 'full' ? 'El-Kontroll' : undefined),
           el_type: getField('el_type'),
           brann_system: getField('brann_system'),
           siste_kontroll: getField('siste_kontroll'),
@@ -665,7 +688,7 @@ router.post(
         }
 
         // Apply defaults and create customer
-        const dataWithDefaults = prepareKundeData(kundeData, req.organizationId);
+        const dataWithDefaults = prepareKundeData(kundeData, req.organizationId, appMode);
         const newKunde = await dbService.createKunde(dataWithDefaults);
 
         results.created++;

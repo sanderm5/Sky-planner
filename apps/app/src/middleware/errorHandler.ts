@@ -4,6 +4,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { Sentry } from '../services/sentry';
 import { logger, logError } from '../services/logger';
 import type { AuthenticatedRequest, ApiError, ApiResponse } from '../types';
 
@@ -102,6 +103,17 @@ export function errorHandler(
     userId: authReq.user?.userId,
     organizationId: authReq.organizationId,
   });
+
+  // Report server errors to Sentry
+  if (statusCode >= 500) {
+    Sentry.withScope((scope) => {
+      scope.setTag('errorCode', errorCode);
+      scope.setExtra('requestId', requestId);
+      if (authReq.user?.userId) scope.setUser({ id: String(authReq.user.userId) });
+      if (authReq.organizationId) scope.setTag('organizationId', String(authReq.organizationId));
+      Sentry.captureException(err);
+    });
+  }
 
   // Build error response
   const errorResponse: ApiResponse = {

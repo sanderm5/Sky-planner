@@ -7,7 +7,7 @@ import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
-import type { AuthenticatedRequest, Avtale, ApiResponse, CreateAvtaleRequest } from '../types';
+import type { AuthenticatedRequest, Avtale, ApiResponse, CreateAvtaleRequest, Organization } from '../types';
 
 const router: Router = Router();
 
@@ -29,6 +29,7 @@ interface AvtaleDbService {
   updateAvtale(id: number, data: Partial<Avtale>, organizationId?: number): Promise<AvtaleMedKunde | null>;
   deleteAvtale(id: number, organizationId?: number): Promise<boolean>;
   completeAvtale(id: number, organizationId?: number): Promise<boolean>;
+  getOrganizationById(id: number): Promise<Organization | null>;
 }
 
 // WebSocket broadcast function (optional)
@@ -128,8 +129,14 @@ router.post(
       throw Errors.badRequest('Ugyldig klokkeslett format (bruk HH:MM eller HH:MM:SS)');
     }
 
-    if (type && !['El-Kontroll', 'Brannvarsling'].includes(type)) {
-      throw Errors.badRequest('Type må være "El-Kontroll" eller "Brannvarsling"');
+    // Validate type based on app_mode
+    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
+    const appMode = org?.app_mode ?? 'mvp';
+
+    if (appMode === 'full') {
+      if (type && !['El-Kontroll', 'Brannvarsling'].includes(type)) {
+        throw Errors.badRequest('Type må være "El-Kontroll" eller "Brannvarsling"');
+      }
     }
 
     if (status && !['planlagt', 'fullført'].includes(status)) {
@@ -140,7 +147,7 @@ router.post(
       kunde_id: kunde_id ? Number.parseInt(kunde_id) : undefined,
       dato,
       klokkeslett,
-      type: type || 'El-Kontroll',
+      type: appMode === 'full' ? (type || 'El-Kontroll') : (type || undefined),
       beskrivelse,
       organization_id: req.organizationId,
       opprettet_av: opprettet_av || req.user?.epost,
@@ -192,8 +199,14 @@ router.put(
       throw Errors.badRequest('Ugyldig klokkeslett format (bruk HH:MM eller HH:MM:SS)');
     }
 
-    if (type && !['El-Kontroll', 'Brannvarsling'].includes(type)) {
-      throw Errors.badRequest('Type må være "El-Kontroll" eller "Brannvarsling"');
+    // Validate type based on app_mode
+    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
+    const appMode = org?.app_mode ?? 'mvp';
+
+    if (appMode === 'full') {
+      if (type && !['El-Kontroll', 'Brannvarsling'].includes(type)) {
+        throw Errors.badRequest('Type må være "El-Kontroll" eller "Brannvarsling"');
+      }
     }
 
     if (status && !['planlagt', 'fullført'].includes(status)) {

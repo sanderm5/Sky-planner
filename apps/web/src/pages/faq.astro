@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Schema from '../components/seo/Schema.astro';
 import GlassCard from '../components/ui/GlassCard.astro';
 import Badge from '../components/ui/Badge.astro';
 import CTA from '../components/sections/CTA.astro';
@@ -99,9 +100,14 @@ const faqCategories = [
     ]
   },
 ];
+
+const allFaqItems = faqCategories.flatMap((cat) =>
+  cat.questions.map((faq) => ({ question: faq.q, answer: faq.a }))
+);
 ---
 
 <BaseLayout title="FAQ" description="Ofte stilte spørsmål om Sky Planner. Finn svar på spørsmål om priser, funksjoner, sikkerhet og mer.">
+  <Schema type="faq" faqItems={allFaqItems} />
   <!-- Hero Section -->
   <section class="pt-32 pb-16 px-4 sm:px-6 lg:px-8">
     <div class="container-wide text-center">

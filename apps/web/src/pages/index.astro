@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Schema from '../components/seo/Schema.astro';
 import Hero from '../components/sections/Hero.astro';
 import Features from '../components/sections/Features.astro';
 import HowItWorks from '../components/sections/HowItWorks.astro';
@@ -10,6 +11,7 @@ import CTA from '../components/sections/CTA.astro';
 ---
 
 <BaseLayout title="Hjem" description="Skyplanner - Kundeadministrasjon og ruteplanlegging for servicebedrifter. Start din gratis prøveperiode i dag.">
+  <Schema type="software" />
   <Hero />
   <Features />
   <HowItWorks />
