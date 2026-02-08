@@ -14,7 +14,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
   });
 
   // Verify authentication
-  const token = cookies.get('auth_token')?.value;
+  const token = cookies.get('skyplanner_session')?.value;
   if (!token) {
     return new Response(JSON.stringify({ error: 'Ikke autentisert' }), {
       status: 401,

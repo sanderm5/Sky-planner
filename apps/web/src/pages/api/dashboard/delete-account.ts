@@ -23,7 +23,7 @@ type AuthResult =
  * Helper to verify auth and return payload or error response
  */
 function verifyAuth(cookies: { get: (name: string) => { value: string } | undefined }): AuthResult {
-  const token = cookies.get('auth_token')?.value;
+  const token = cookies.get('skyplanner_session')?.value;
   if (!token) {
     return {
       success: false,
