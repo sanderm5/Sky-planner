@@ -8,9 +8,9 @@ ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS deletion_requested_by INTEGER;
 
--- ============ Add soft delete columns to klienter ============
+-- ============ Add soft delete columns to klient ============
 
-ALTER TABLE klienter
+ALTER TABLE klient
 ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 -- ============ Add soft delete columns to brukere ============
@@ -24,14 +24,14 @@ ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS account_deletion_requests (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  requested_by INTEGER NOT NULL REFERENCES klienter(id) ON DELETE CASCADE,
+  requested_by INTEGER NOT NULL REFERENCES klient(id) ON DELETE CASCADE,
   requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   scheduled_deletion_at TIMESTAMPTZ NOT NULL,
   reason TEXT,
   status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'cancelled', 'completed')),
   completed_at TIMESTAMPTZ,
   cancelled_at TIMESTAMPTZ,
-  cancelled_by INTEGER REFERENCES klienter(id),
+  cancelled_by INTEGER REFERENCES klient(id),
   stripe_cancellation_id VARCHAR(255),
   data_export_url TEXT,
   data_export_expires_at TIMESTAMPTZ,
@@ -73,8 +73,8 @@ BEGIN
     RETURN FALSE;
   END IF;
 
-  -- Mark all klienter in the organization as deleted
-  UPDATE klienter
+  -- Mark all klient in the organization as deleted
+  UPDATE klient
   SET deleted_at = v_now
   WHERE organization_id = p_organization_id
     AND deleted_at IS NULL;
@@ -171,8 +171,8 @@ BEGIN
   -- Delete import sessions and staged data
   DELETE FROM import_sessions WHERE organization_id = p_organization_id;
 
-  -- Delete klienter
-  DELETE FROM klienter WHERE organization_id = p_organization_id;
+  -- Delete klient
+  DELETE FROM klient WHERE organization_id = p_organization_id;
 
   -- Delete subscription events
   DELETE FROM subscription_events WHERE organization_id = p_organization_id;
@@ -229,7 +229,7 @@ BEGIN
   WHERE id = v_request.organization_id;
 
   -- Remove soft-delete flags from users
-  UPDATE klienter
+  UPDATE klient
   SET deleted_at = NULL
   WHERE organization_id = v_request.organization_id;
 
@@ -254,7 +254,7 @@ SELECT
   k.epost AS requester_email
 FROM account_deletion_requests adr
 JOIN organizations o ON o.id = adr.organization_id
-JOIN klienter k ON k.id = adr.requested_by
+JOIN klient k ON k.id = adr.requested_by
 WHERE adr.status = 'pending'
   AND adr.scheduled_deletion_at > NOW();
 

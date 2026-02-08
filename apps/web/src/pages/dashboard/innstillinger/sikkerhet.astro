@@ -135,7 +135,7 @@ const isFullMode = (organization as any).app_mode === 'full';
             Bruk en autentiseringsapp (Google Authenticator, Authy, 1Password) for å skanne koden.
           </p>
           <div class="flex justify-center mb-4 bg-white rounded-xl p-4">
-            <canvas id="qr-canvas"></canvas>
+            <img id="qr-image" width="200" height="200" alt="QR-kode for 2FA" />
           </div>
           <details class="mb-4">
             <summary class="text-dark-400 text-sm cursor-pointer hover:text-dark-300">Kan du ikke skanne? Skriv inn manuelt</summary>
@@ -310,15 +310,8 @@ const isFullMode = (organization as any).app_mode === 'full';
 
           setupData = data.data;
 
-          // Generate QR code on canvas
-          var canvas = document.getElementById('qr-canvas');
-          if (window.QRCode) {
-            window.QRCode.toCanvas(canvas, data.data.uri, {
-              width: 200,
-              margin: 2,
-              color: { dark: '#000000', light: '#ffffff' }
-            });
-          }
+          // Set QR code from server-generated data URL
+          document.getElementById('qr-image').src = data.data.qrDataUrl;
 
           // Show manual secret
           document.getElementById('manual-secret').textContent = data.data.secret;
@@ -474,12 +467,6 @@ const isFullMode = (organization as any).app_mode === 'full';
       document.getElementById('disable-password').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') document.getElementById('btn-confirm-disable').click();
       });
-
-      // Load QR code library from CDN (lightweight, no bundler needed)
-      var script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js';
-      script.onload = function() { window.QRCode = QRCode; };
-      document.head.appendChild(script);
 
       // Init
       fetchStatus();

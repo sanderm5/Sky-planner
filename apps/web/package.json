@@ -17,6 +17,8 @@
     "@astrojs/sitemap": "^3.7.0",
     "@astrojs/tailwind": "^5.1.2",
     "@astrojs/vercel": "^9.0.4",
+    "@sentry/astro": "^10.38.0",
+    "@sentry/node": "^10.38.0",
     "@skyplanner/auth": "workspace:*",
     "@skyplanner/database": "workspace:*",
     "@skyplanner/email": "workspace:*",

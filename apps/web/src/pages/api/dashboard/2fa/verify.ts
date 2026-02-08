@@ -56,7 +56,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     // Get user with TOTP secret
     const client = db.getSupabaseClient();
     const { data: klient, error: fetchError } = await client
-      .from('klienter')
+      .from('klient')
       .select('id, epost, totp_secret_encrypted, totp_enabled')
       .eq('id', payload.userId)
       .single();
@@ -103,7 +103,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
     // Enable 2FA
     await client
-      .from('klienter')
+      .from('klient')
       .update({
         totp_enabled: true,
         totp_verified_at: new Date().toISOString(),

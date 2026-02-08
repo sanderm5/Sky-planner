@@ -1,9 +1,9 @@
 -- 014_two_factor_auth.sql
 -- Optional Two-Factor Authentication (TOTP)
 
--- ============ Add 2FA columns to klienter ============
+-- ============ Add 2FA columns to klient ============
 
-ALTER TABLE klienter
+ALTER TABLE klient
 ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT,
 ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS totp_verified_at TIMESTAMPTZ,
@@ -103,8 +103,8 @@ CREATE POLICY totp_audit_service_only ON totp_audit_log
 
 -- ============ Comments ============
 
-COMMENT ON COLUMN klienter.totp_secret_encrypted IS 'Encrypted TOTP secret (AES-256-GCM)';
-COMMENT ON COLUMN klienter.totp_enabled IS 'Whether 2FA is enabled for this user';
-COMMENT ON COLUMN klienter.backup_codes_hash IS 'Hashed backup recovery codes';
+COMMENT ON COLUMN klient.totp_secret_encrypted IS 'Encrypted TOTP secret (AES-256-GCM)';
+COMMENT ON COLUMN klient.totp_enabled IS 'Whether 2FA is enabled for this user';
+COMMENT ON COLUMN klient.backup_codes_hash IS 'Hashed backup recovery codes';
 COMMENT ON TABLE totp_pending_sessions IS 'Short-lived sessions for 2FA verification during login';
 COMMENT ON TABLE totp_audit_log IS 'Audit trail for all 2FA-related actions';

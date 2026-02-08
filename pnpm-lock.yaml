@@ -193,6 +193,12 @@ importers:
       '@astrojs/vercel':
         specifier: ^9.0.4
         version: 9.0.4(@aws-sdk/credential-provider-web-identity@3.972.1)(astro@5.16.15(@types/node@20.19.30)(@vercel/functions@2.2.13(@aws-sdk/credential-provider-web-identity@3.972.1))(jiti@1.21.7)(rollup@4.56.0)(terser@5.46.0)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2))(rollup@4.56.0)
+      '@sentry/astro':
+        specifier: ^10.38.0
+        version: 10.38.0(astro@5.16.15(@types/node@20.19.30)(@vercel/functions@2.2.13(@aws-sdk/credential-provider-web-identity@3.972.1))(jiti@1.21.7)(rollup@4.56.0)(terser@5.46.0)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2))
+      '@sentry/node':
+        specifier: ^10.38.0
+        version: 10.38.0
       '@skyplanner/auth':
         specifier: workspace:*
         version: link:../../packages/auth

@@ -105,6 +105,12 @@ import GlassCard from '../../components/ui/GlassCard.astro';
         throw new Error(data.error || 'Innlogging feilet');
       }
 
+      // 2FA required — redirect to verification page
+      if (data.requires2FA && data.sessionToken) {
+        window.location.href = `/auth/verify-2fa?session=${encodeURIComponent(data.sessionToken)}`;
+        return;
+      }
+
       if (data.redirectUrl) {
         window.location.href = data.redirectUrl;
       }

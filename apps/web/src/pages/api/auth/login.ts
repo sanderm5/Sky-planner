@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import * as db from '@skyplanner/database';
 import * as auth from '@skyplanner/auth';
 import type { JWTPayload } from '@skyplanner/auth';
@@ -263,6 +264,40 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     // Login successful - clear rate limit counter
     clearLoginAttempts(ip);
+
+    // Check if user has 2FA enabled
+    const supabase = db.getSupabaseClient();
+    const tableName = userType === 'klient' ? 'klient' : 'brukere';
+    const { data: totpData } = await supabase
+      .from(tableName)
+      .select('totp_enabled')
+      .eq('id', user.id)
+      .single();
+
+    if (totpData?.totp_enabled) {
+      // 2FA is enabled — create pending session instead of JWT
+      const sessionToken = crypto.randomBytes(32).toString('hex');
+      const sessionTokenHash = crypto.createHash('sha256').update(sessionToken).digest('hex');
+
+      await supabase.from('totp_pending_sessions').insert({
+        user_id: user.id,
+        user_type: userType,
+        session_token_hash: sessionTokenHash,
+        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(), // 5 minutes
+        ip_address: ip,
+      });
+
+      return new Response(
+        JSON.stringify({
+          requires2FA: true,
+          sessionToken,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
 
     let organization = null;
     if (user.organization_id) {

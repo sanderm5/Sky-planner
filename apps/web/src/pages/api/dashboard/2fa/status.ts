@@ -43,7 +43,7 @@ export const GET: APIRoute = async ({ cookies }): Promise<Response> => {
   try {
     const client = db.getSupabaseClient();
     const { data: klient, error } = await client
-      .from('klienter')
+      .from('klient')
       .select('totp_enabled, totp_verified_at, totp_recovery_codes_used, backup_codes_hash')
       .eq('id', payload.userId)
       .single();

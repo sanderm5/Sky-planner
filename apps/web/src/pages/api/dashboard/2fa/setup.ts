@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import * as db from '@skyplanner/database';
 import * as auth from '@skyplanner/auth';
+import QRCode from 'qrcode';
 
 /**
  * POST /api/dashboard/2fa/setup
@@ -46,7 +47,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
     // Get user with 2FA status using direct query
     const client = db.getSupabaseClient();
     const { data: klient, error: fetchError } = await client
-      .from('klienter')
+      .from('klient')
       .select('id, epost, totp_enabled')
       .eq('id', payload.userId)
       .single();
@@ -77,7 +78,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
     // Hash backup codes for storage
     const hashedBackupCodes = backupCodes.map((code) => auth.hashBackupCode(code));
     await client
-      .from('klienter')
+      .from('klient')
       .update({
         totp_secret_encrypted: encryptedSecret,
         backup_codes_hash: hashedBackupCodes,
@@ -93,13 +94,21 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
       metadata: {},
     });
 
+    // Generate QR code as data URL server-side
+    const qrDataUrl = await QRCode.toDataURL(uri, {
+      width: 200,
+      margin: 2,
+      color: { dark: '#000000', light: '#ffffff' },
+    });
+
     return new Response(
       JSON.stringify({
         success: true,
         data: {
-          secret, // User needs this to add to their authenticator app
-          uri, // otpauth:// URI for QR code
-          backupCodes, // Show these once, user must save them
+          secret,
+          uri,
+          qrDataUrl,
+          backupCodes,
         },
       }),
       {
