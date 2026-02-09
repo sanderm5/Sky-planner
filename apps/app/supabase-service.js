@@ -77,6 +77,8 @@ async function createKunde(kunde) {
     external_id: kunde.external_id,
     last_sync_at: kunde.last_sync_at,
     prosjektnummer: kunde.prosjektnummer,
+    kundenummer: kunde.kundenummer,
+    faktura_epost: kunde.faktura_epost,
   };
 
   const { data, error } = await getClient()
@@ -89,8 +91,8 @@ async function createKunde(kunde) {
   return data;
 }
 
-async function updateKunde(id, kunde) {
-  const { data, error } = await getClient()
+async function updateKunde(id, kunde, organizationId) {
+  let query = getClient()
     .from('kunder')
     .update({
       navn: kunde.navn,
@@ -121,16 +123,23 @@ async function updateKunde(id, kunde) {
       external_id: kunde.external_id,
       last_sync_at: kunde.last_sync_at,
       prosjektnummer: kunde.prosjektnummer,
+      kundenummer: kunde.kundenummer,
+      faktura_epost: kunde.faktura_epost,
     })
-    .eq('id', id)
-    .select()
-    .single();
+    .eq('id', id);
+
+  // SECURITY: Always filter by organization_id to prevent cross-tenant modification
+  if (organizationId) {
+    query = query.eq('organization_id', organizationId);
+  }
+
+  const { data, error } = await query.select().single();
 
   if (error) throw error;
   return data;
 }
 
-async function deleteKunde(id) {
+async function deleteKunde(id, organizationId) {
   // First delete related email settings
   await getClient()
     .from('email_innstillinger')
@@ -144,16 +153,23 @@ async function deleteKunde(id) {
     .eq('kunde_id', id);
 
   // Finally delete the customer
-  const { error } = await getClient()
+  // SECURITY: Always filter by organization_id to prevent cross-tenant deletion
+  let query = getClient()
     .from('kunder')
     .delete()
     .eq('id', id);
+
+  if (organizationId) {
+    query = query.eq('organization_id', organizationId);
+  }
+
+  const { error } = await query;
 
   if (error) throw error;
   return { success: true };
 }
 
-async function getKunderByOmrade(omrade) {
+async function getKunderByOmrade(omrade, organizationId) {
   // Sanitize input to prevent PostgREST filter injection
   // Remove special characters that could be used for injection
   const sanitizedOmrade = String(omrade)
@@ -166,16 +182,23 @@ async function getKunderByOmrade(omrade) {
     return [];
   }
 
-  const { data, error } = await getClient()
+  let query = getClient()
     .from('kunder')
     .select('*')
     .or(`poststed.ilike.%${sanitizedOmrade}%,adresse.ilike.%${sanitizedOmrade}%`);
+
+  // SECURITY: Always filter by organization_id to prevent cross-tenant data access
+  if (organizationId) {
+    query = query.eq('organization_id', organizationId);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return data;
 }
 
-async function getKontrollVarsler(dagerFrem = 30) {
+async function getKontrollVarsler(dagerFrem = 30, organizationId = null) {
   // Validate dagerFrem to prevent abuse - max 365 days
   const validDager = Math.max(1, Math.min(365, Number.parseInt(dagerFrem) || 30));
 
@@ -184,11 +207,18 @@ async function getKontrollVarsler(dagerFrem = 30) {
   futureDate.setDate(futureDate.getDate() + validDager);
   const futureDateStr = futureDate.toISOString().split('T')[0];
 
-  const { data, error } = await getClient()
+  let query = getClient()
     .from('kunder')
     .select('*')
     .or(`neste_kontroll.lte.${futureDateStr},neste_kontroll.is.null`)
     .order('neste_kontroll', { ascending: true, nullsFirst: false });
+
+  // SECURITY: Always filter by organization_id to prevent cross-tenant data access
+  if (organizationId) {
+    query = query.eq('organization_id', organizationId);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
   return data;

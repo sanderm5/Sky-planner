@@ -107,9 +107,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const cspDirectives = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://js.stripe.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
     "img-src 'self' data: https: blob:",
-    "font-src 'self' https://fonts.gstatic.com",
+    "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com",
     "connect-src 'self' https://api.stripe.com https://*.supabase.co",
     "frame-src https://js.stripe.com https://hooks.stripe.com",
     "object-src 'none'",

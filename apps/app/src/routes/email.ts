@@ -19,7 +19,7 @@ interface EmailDbService {
   getEmailHistorikk(organizationId: number, kundeId?: number | null, limit?: number): Promise<EmailVarsel[]>;
   getEmailStats(organizationId: number): Promise<{ pending: number; sent: number; failed: number }>;
   getUpcomingEmails(organizationId: number, daysAhead: number): Promise<(Kunde & { dager_til_kontroll: number })[]>;
-  getKundeById(id: number, organizationId?: number): Promise<Kunde | null>;
+  getKundeById(id: number, organizationId: number): Promise<Kunde | null>;
 }
 
 // Email service interface (will be injected)
@@ -171,7 +171,7 @@ router.get(
     }
 
     // Verifiser at kunden tilhører denne organisasjonen
-    const kunde = await dbService.getKundeById(kundeId, req.organizationId);
+    const kunde = await dbService.getKundeById(kundeId, req.organizationId!);
     if (!kunde) {
       throw Errors.notFound('Kunde');
     }
@@ -315,7 +315,7 @@ router.post(
       throw Errors.badRequest('Kunde-ID er påkrevd');
     }
 
-    const kunde = await dbService.getKundeById(Number.parseInt(kundeId));
+    const kunde = await dbService.getKundeById(Number.parseInt(kundeId), req.organizationId!);
     if (!kunde) {
       throw Errors.notFound('Kunde');
     }

@@ -201,6 +201,10 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
         try {
           const kundeData = this.mapToKunde(external);
 
+          // Geocode address to get map coordinates
+          const { geocodeCustomerData } = await import('../services/geocoding');
+          const geocodedData = await geocodeCustomerData(kundeData);
+
           // Check if customer already exists (by external ID)
           const existing = await db.getKundeByExternalId(
             organizationId,
@@ -210,11 +214,11 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
 
           if (existing) {
             // Check if data has changed
-            const hasChanges = this.hasDataChanged(existing as unknown as Record<string, unknown>, kundeData);
+            const hasChanges = this.hasDataChanged(existing as unknown as Record<string, unknown>, geocodedData);
 
             if (hasChanges) {
               await db.updateKunde(existing.id, {
-                ...kundeData,
+                ...geocodedData,
                 last_sync_at: new Date().toISOString(),
               }, organizationId);
               result.updated++;
@@ -224,7 +228,7 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
           } else {
             // Create new customer
             await db.createKunde({
-              ...kundeData,
+              ...geocodedData,
               organization_id: organizationId,
               external_source: this.config.slug,
               external_id: external.externalId,
@@ -293,6 +297,7 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
     const fieldsToCompare = [
       'navn', 'adresse', 'postnummer', 'poststed',
       'telefon', 'epost', 'kontaktperson', 'prosjektnummer',
+      'kundenummer', 'faktura_epost', 'notater', 'kategori',
     ];
 
     for (const field of fieldsToCompare) {

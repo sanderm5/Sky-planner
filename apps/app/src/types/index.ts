@@ -87,6 +87,24 @@ export interface TemplateInterval {
   is_default: boolean;
 }
 
+// ============ Organization Service Types ============
+
+export interface OrganizationServiceType {
+  id: number;
+  organization_id: number;
+  name: string;
+  slug: string;
+  icon: string;
+  color: string;
+  default_interval_months: number;
+  description?: string;
+  sort_order: number;
+  aktiv: boolean;
+  source: 'template' | 'manual' | 'tripletex';
+  source_ref?: string;
+  created_at?: string;
+}
+
 // ============ Database Models ============
 
 export interface Kunde {
@@ -137,6 +155,15 @@ export interface Kunde {
   import_hash?: string;     // Hash for detecting changes
   last_import_at?: string;  // Last import timestamp
   prosjektnummer?: string;  // Project number(s) from accounting system
+  kundenummer?: string;     // Customer number from accounting system
+  faktura_epost?: string;   // Invoice email from accounting system
+  org_nummer?: string;      // Organization number
+
+  // Lifecycle tracking
+  lifecycle_stage?: string;
+  inquiry_sent_date?: string;
+  last_visit_date?: string;
+  job_confirmed_type?: string;
 }
 
 export interface Rute {
@@ -149,6 +176,10 @@ export interface Rute {
   status: 'planlagt' | 'fullført';
   opprettet?: string;
   organization_id?: number;
+  // Field work execution
+  execution_started_at?: string;
+  execution_ended_at?: string;
+  current_stop_index?: number;
 }
 
 export interface RuteKunde {
@@ -244,6 +275,39 @@ export interface Bruker {
 export type OnboardingStage = 'not_started' | 'industry_selected' | 'company_info' | 'map_settings' | 'data_import' | 'completed';
 
 export type AppMode = 'mvp' | 'full';
+
+// ============ Feature Module System ============
+
+export type FeatureCategory = 'kart' | 'integrasjon' | 'feltarbeid' | 'kommunikasjon';
+
+export type PlanType = 'free' | 'standard' | 'premium' | 'enterprise';
+
+export interface FeatureDefinition {
+  id: number;
+  key: string;
+  name: string;
+  description?: string;
+  category?: FeatureCategory;
+  default_enabled: boolean;
+  dependencies?: string[];
+  config_schema?: Record<string, unknown>;
+  aktiv: boolean;
+  sort_order: number;
+}
+
+export interface OrganizationFeature {
+  id: number;
+  organization_id: number;
+  feature_key: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  activated_at?: string;
+}
+
+export interface FeatureWithStatus extends FeatureDefinition {
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
 
 export interface Organization {
   id: number;
@@ -413,6 +477,27 @@ export interface AppConfig {
   companyName?: string;
   companySubtitle?: string;
   webUrl?: string;
+  enabledFeatures?: string[];
+  featureConfigs?: Record<string, Record<string, unknown>>;
+  industry?: {
+    id: number;
+    name: string;
+    slug: string;
+    icon?: string;
+    color?: string;
+  };
+  onboardingCompleted?: boolean;
+  appMode?: 'mvp' | 'full';
+  serviceTypes?: Array<{
+    id: number;
+    name: string;
+    slug: string;
+    icon: string;
+    color: string;
+    defaultInterval: number;
+    description?: string;
+  }>;
+  mapboxAccessToken?: string;
 }
 
 export interface EnvConfig {
@@ -466,6 +551,9 @@ export interface EnvConfig {
 
   // Tripletex
   TRIPLETEX_ENV: 'test' | 'production';
+
+  // Mapbox
+  MAPBOX_ACCESS_TOKEN?: string;
 }
 
 // ============ Express Extensions ============

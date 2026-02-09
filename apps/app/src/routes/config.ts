@@ -4,10 +4,10 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, extractToken } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { getConfig } from '../config/env';
-import type { AppConfig, ApiResponse, Organization, JWTPayload, AuthenticatedRequest, IndustryTemplate } from '../types';
+import type { AppConfig, ApiResponse, Organization, JWTPayload, AuthenticatedRequest, IndustryTemplate, OrganizationServiceType } from '../types';
 import jwt from 'jsonwebtoken';
 
 const router: Router = Router();
@@ -16,6 +16,9 @@ const router: Router = Router();
 interface ConfigDbService {
   getOrganizationById(id: number): Promise<Organization | null>;
   getIndustryTemplateById?(id: number): Promise<IndustryTemplate | null>;
+  getEnabledFeatureKeys?(organizationId: number): Promise<string[]>;
+  getEnabledFeaturesWithConfig?(organizationId: number): Promise<{ key: string; config: Record<string, unknown> }[]>;
+  getOrganizationServiceTypes?(organizationId: number): Promise<OrganizationServiceType[]>;
 }
 
 let dbService: ConfigDbService;
@@ -39,11 +42,10 @@ router.get(
     let organization: Organization | null = null;
     let industry: IndustryTemplate | null = null;
 
-    // Try to get organization context from auth header (optional)
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
+    // Try to get organization context from auth (Bearer token or SSO cookie)
+    const token = extractToken(req as AuthenticatedRequest);
+    if (token) {
       try {
-        const token = authHeader.substring(7);
         const decoded = jwt.verify(token, envConfig.JWT_SECRET) as JWTPayload;
         if (decoded.organizationId) {
           organization = await dbService.getOrganizationById(decoded.organizationId);
@@ -58,17 +60,61 @@ router.get(
       }
     }
 
+    // Fetch enabled features for this organization
+    // All features are default-enabled — fallback list used when table doesn't exist yet
+    const ALL_FEATURES = [
+      'hover_tooltip', 'context_menu', 'lifecycle_colors', 'tripletex_projects',
+      'field_work', 'email_templates', 'ekk_integration', 'outlook_sync',
+    ];
+    let enabledFeatures: string[] = ALL_FEATURES;
+    let featureConfigs: Record<string, Record<string, unknown>> = {};
+    if (organization && dbService.getEnabledFeaturesWithConfig) {
+      try {
+        const featuresWithConfig = await dbService.getEnabledFeaturesWithConfig(organization.id);
+        if (featuresWithConfig.length > 0) {
+          enabledFeatures = featuresWithConfig.map(f => f.key);
+          for (const f of featuresWithConfig) {
+            if (f.config && Object.keys(f.config).length > 0) {
+              featureConfigs[f.key] = f.config;
+            }
+          }
+        }
+      } catch {
+        // Features table may not exist yet - use ALL_FEATURES fallback
+      }
+    }
+
+    // Fetch organization service types (dynamic categories)
+    let serviceTypes: Array<{ id: number; name: string; slug: string; icon: string; color: string; defaultInterval: number; description?: string }> = [];
+    if (organization && dbService.getOrganizationServiceTypes) {
+      try {
+        const orgServiceTypes = await dbService.getOrganizationServiceTypes(organization.id);
+        serviceTypes = orgServiceTypes.map(st => ({
+          id: st.id,
+          name: st.name,
+          slug: st.slug,
+          icon: st.icon,
+          color: st.color,
+          defaultInterval: st.default_interval_months,
+          description: st.description || undefined,
+        }));
+      } catch {
+        // Table may not exist yet - continue without service types
+      }
+    }
+
     // Build config with optional organization overrides
     const currentYear = new Date().getFullYear();
     const appConfig: AppConfig & { industry?: { id: number; name: string; slug: string; icon?: string; color?: string }; onboardingCompleted?: boolean; appMode?: 'mvp' | 'full' } = {
       appName: organization?.brand_title || process.env.APP_NAME || process.env.COMPANY_NAME || 'Kontrollsystem',
-      appYear: parseInt(process.env.APP_YEAR || '', 10) || currentYear,
+      appYear: Number.parseInt(process.env.APP_YEAR || '', 10) || currentYear,
       developerName: process.env.DEVELOPER_NAME || 'Efffekt AS',
       primaryColor: organization?.primary_color || '#10b981',
       logoUrl: organization?.logo_url || undefined,
       mapCenterLat: organization?.map_center_lat || envConfig.MAP_CENTER_LAT,
       mapCenterLng: organization?.map_center_lng || envConfig.MAP_CENTER_LNG,
       mapZoom: envConfig.MAP_ZOOM,
+      mapboxAccessToken: envConfig.MAPBOX_ACCESS_TOKEN || undefined,
       orsApiKeyConfigured: Boolean(envConfig.ORS_API_KEY),
       routeStartLat: envConfig.ROUTE_START_LAT,
       routeStartLng: envConfig.ROUTE_START_LNG,
@@ -78,6 +124,8 @@ router.get(
       companyName: organization?.navn || process.env.COMPANY_NAME,
       companySubtitle: organization?.brand_subtitle || process.env.COMPANY_SUBTITLE || 'Kontrollsystem',
       webUrl: envConfig.WEB_URL || undefined,
+      enabledFeatures,
+      featureConfigs: Object.keys(featureConfigs).length > 0 ? featureConfigs : undefined,
       // Include industry information
       industry: industry ? {
         id: industry.id,
@@ -88,6 +136,7 @@ router.get(
       } : undefined,
       onboardingCompleted: organization?.onboarding_completed ?? false,
       appMode: organization?.app_mode ?? 'mvp',
+      serviceTypes: serviceTypes.length > 0 ? serviceTypes : undefined,
     };
 
     const response: ApiResponse<typeof appConfig> = {

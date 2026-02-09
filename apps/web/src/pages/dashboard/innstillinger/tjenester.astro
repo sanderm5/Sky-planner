@@ -1,0 +1,418 @@
+---
+import DashboardLayout from '../../../layouts/DashboardLayout.astro';
+import { requireAuth, isAuthError } from '../../../middleware/auth';
+import * as db from '@skyplanner/database';
+
+// Initialize Supabase client
+db.getSupabaseClient({
+  supabaseUrl: import.meta.env.SUPABASE_URL,
+  supabaseKey: import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY,
+});
+
+// Auth check
+const authResult = await requireAuth(Astro);
+if (isAuthError(authResult)) return authResult;
+
+const { user, organization } = authResult;
+const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https://app.skyplanner.no') : '';
+---
+
+<DashboardLayout
+  title="Tjenestekategorier"
+  user={user}
+  organization={organization}
+  currentPath="/dashboard/innstillinger"
+>
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-white mb-2">Innstillinger</h1>
+    <p class="text-dark-400">Administrer tjenestekategoriene dine.</p>
+  </div>
+
+  <!-- Settings Navigation -->
+  <div class="mb-8 flex flex-wrap gap-2">
+    <a href="/dashboard/innstillinger" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Generelt
+    </a>
+    <a href="/dashboard/innstillinger/tjenester" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+      Tjenestekategorier
+    </a>
+    <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Integrasjoner
+    </a>
+    <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      API-nøkler
+    </a>
+    <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Webhooks
+    </a>
+    <a href="/dashboard/innstillinger/sikkerhet" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Sikkerhet
+    </a>
+    <a href="/dashboard/innstillinger/personvern" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Personvern
+    </a>
+  </div>
+
+  <!-- Service Types Section -->
+  <div class="glass-card p-6 mb-6">
+    <div class="flex items-start justify-between mb-6">
+      <div>
+        <h2 class="text-lg font-semibold text-white mb-1">Tjenestekategorier</h2>
+        <p class="text-dark-400 text-sm">Definer hvilke typer tjenester din bedrift utfører. Disse brukes for filtrering, kartmarkører og kontrollintervaller.</p>
+      </div>
+      <button id="btn-add" class="btn btn-primary text-sm">
+        <i class="fas fa-plus mr-1.5"></i> Legg til
+      </button>
+    </div>
+
+    <!-- Loading state -->
+    <div id="loading" class="text-center py-12">
+      <div class="inline-block w-8 h-8 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin mb-3"></div>
+      <p class="text-dark-400 text-sm">Laster tjenestekategorier...</p>
+    </div>
+
+    <!-- Empty state -->
+    <div id="empty" class="hidden text-center py-12">
+      <div class="w-16 h-16 rounded-full bg-dark-700/50 flex items-center justify-center mx-auto mb-4">
+        <i class="fas fa-tags text-2xl text-dark-500"></i>
+      </div>
+      <h3 class="text-white font-medium mb-2">Ingen tjenestekategorier</h3>
+      <p class="text-dark-400 text-sm mb-4">Opprett din første tjenestekategori, eller importer fra en bransjemal.</p>
+      <button id="btn-add-empty" class="btn btn-primary text-sm">
+        <i class="fas fa-plus mr-1.5"></i> Legg til kategori
+      </button>
+    </div>
+
+    <!-- Service types table -->
+    <div id="table-container" class="hidden">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-dark-700 text-dark-400 text-xs uppercase tracking-wider">
+            <th class="text-left pb-3 pl-2">Farge</th>
+            <th class="text-left pb-3">Navn</th>
+            <th class="text-left pb-3">Ikon</th>
+            <th class="text-left pb-3">Intervall</th>
+            <th class="text-left pb-3">Kilde</th>
+            <th class="text-right pb-3 pr-2">Handlinger</th>
+          </tr>
+        </thead>
+        <tbody id="service-types-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Error state -->
+    <div id="error" class="hidden text-center py-8">
+      <p class="text-red-400 text-sm mb-3" id="error-msg">Kunne ikke laste tjenestekategorier.</p>
+      <button id="btn-retry" class="btn btn-secondary text-sm">Prøv igjen</button>
+    </div>
+  </div>
+
+  <!-- Info box -->
+  <div class="glass-card p-6 border-l-4 border-l-blue-500/50">
+    <h3 class="text-white font-medium mb-2"><i class="fas fa-info-circle text-blue-400 mr-2"></i>Om tjenestekategorier</h3>
+    <ul class="text-dark-400 text-sm space-y-1.5">
+      <li>Kategorier brukes til å filtrere kunder på kartet og i kundelisten.</li>
+      <li>Hver kategori får sin egen farge på kartmarkørene.</li>
+      <li>Når du synkroniserer fra Tripletex, opprettes kategorier automatisk fra kundekategoriene.</li>
+      <li>Standard kontrollintervall brukes som forslag ved opprettelse av nye kunder.</li>
+    </ul>
+  </div>
+
+  <!-- Add/Edit Modal -->
+  <div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-dark-800 border border-dark-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+      <h3 id="modal-title" class="text-lg font-semibold text-white mb-6">Ny tjenestekategori</h3>
+      <form id="modal-form" class="space-y-5">
+        <div>
+          <label class="block text-sm font-medium text-dark-300 mb-1.5">Navn *</label>
+          <input type="text" id="field-name" class="input w-full" placeholder="F.eks. VVS, Ventilasjon, El-kontroll..." required maxlength="100">
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-dark-300 mb-1.5">Farge</label>
+            <input type="color" id="field-color" class="w-full h-10 rounded-lg cursor-pointer bg-dark-700 border border-dark-600" value="#F97316">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-dark-300 mb-1.5">Intervall (mnd)</label>
+            <select id="field-interval" class="input w-full">
+              <option value="6">6 måneder</option>
+              <option value="12" selected>1 år</option>
+              <option value="24">2 år</option>
+              <option value="36">3 år</option>
+              <option value="48">4 år</option>
+              <option value="60">5 år</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-dark-300 mb-1.5">Ikon</label>
+          <div id="icon-picker" class="grid grid-cols-8 gap-2">
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-wrench"><i class="fas fa-wrench"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-bolt"><i class="fas fa-bolt"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-fire"><i class="fas fa-fire"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-fan"><i class="fas fa-fan"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-faucet"><i class="fas fa-faucet"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-shield-alt"><i class="fas fa-shield-alt"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-thermometer-half"><i class="fas fa-thermometer-half"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-building"><i class="fas fa-building"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-solar-panel"><i class="fas fa-solar-panel"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-tools"><i class="fas fa-tools"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-hard-hat"><i class="fas fa-hard-hat"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-plug"><i class="fas fa-plug"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-tractor"><i class="fas fa-tractor"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-home"><i class="fas fa-home"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-cog"><i class="fas fa-cog"></i></button>
+            <button type="button" class="icon-btn p-2 rounded-lg bg-dark-700/50 border border-dark-600 hover:bg-dark-600/50 text-dark-300 hover:text-white transition-colors" data-icon="fa-check-circle"><i class="fas fa-check-circle"></i></button>
+          </div>
+          <input type="hidden" id="field-icon" value="fa-wrench">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-dark-300 mb-1.5">Beskrivelse (valgfritt)</label>
+          <input type="text" id="field-description" class="input w-full" placeholder="Kort beskrivelse av tjenesten...">
+        </div>
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" id="btn-cancel" class="btn btn-secondary">Avbryt</button>
+          <button type="submit" id="btn-save" class="btn btn-primary">
+            <i class="fas fa-save mr-1.5"></i> Lagre
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script define:vars={{ apiBaseUrl }}>
+  const tokenKey = 'skyplanner_token';
+  let serviceTypes = [];
+  let editingId = null;
+  let selectedIcon = 'fa-wrench';
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return match ? match[1] : '';
+  }
+
+  function getHeaders(includeCsrf = false) {
+    const token = localStorage.getItem(tokenKey) || getCookie('skyplanner_session');
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...(includeCsrf ? { 'X-CSRF-Token': getCsrfToken() } : {}),
+    };
+  }
+
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp(`${name}=([^;]+)`));
+    return match ? match[1] : null;
+  }
+
+  function sourceLabel(source) {
+    if (source === 'template') return 'Bransjemal';
+    if (source === 'tripletex') return 'Tripletex';
+    return 'Manuell';
+  }
+
+  function intervalLabel(months) {
+    if (months < 12) return `${months} mnd`;
+    if (months === 12) return '1 år';
+    if (months % 12 === 0) return `${months / 12} år`;
+    return `${months} mnd`;
+  }
+
+  async function loadServiceTypes() {
+    document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('table-container').classList.add('hidden');
+    document.getElementById('empty').classList.add('hidden');
+    document.getElementById('error').classList.add('hidden');
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/app/service-types`, {
+        headers: getHeaders(),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error?.message || data.error || 'Feil ved lasting');
+
+      serviceTypes = data.data || [];
+      document.getElementById('loading').classList.add('hidden');
+
+      if (serviceTypes.length === 0) {
+        document.getElementById('empty').classList.remove('hidden');
+      } else {
+        renderTable();
+        document.getElementById('table-container').classList.remove('hidden');
+      }
+    } catch (err) {
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('error').classList.remove('hidden');
+      document.getElementById('error-msg').textContent = err.message || 'Kunne ikke laste tjenestekategorier.';
+    }
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('service-types-body');
+    tbody.innerHTML = serviceTypes.map(st => `
+      <tr class="border-b border-dark-700/50 hover:bg-dark-700/20 transition-colors">
+        <td class="py-3 pl-2">
+          <div class="w-8 h-8 rounded-full" style="background: ${escapeHtml(st.color)}"></div>
+        </td>
+        <td class="py-3">
+          <span class="text-white font-medium">${escapeHtml(st.name)}</span>
+          ${st.description ? `<span class="block text-dark-400 text-xs mt-0.5">${escapeHtml(st.description)}</span>` : ''}
+        </td>
+        <td class="py-3">
+          <i class="fas ${escapeHtml(st.icon)} text-dark-300"></i>
+        </td>
+        <td class="py-3 text-dark-300 text-sm">${intervalLabel(st.default_interval_months)}</td>
+        <td class="py-3">
+          <span class="text-xs px-2 py-0.5 rounded-full ${st.source === 'tripletex' ? 'bg-blue-500/10 text-blue-400' : st.source === 'template' ? 'bg-green-500/10 text-green-400' : 'bg-dark-600/50 text-dark-300'}">${sourceLabel(st.source)}</span>
+        </td>
+        <td class="py-3 pr-2 text-right">
+          <button class="text-dark-400 hover:text-white p-1.5 transition-colors" data-action="edit" data-id="${st.id}" title="Rediger">
+            <i class="fas fa-pen text-xs"></i>
+          </button>
+          <button class="text-dark-400 hover:text-red-400 p-1.5 transition-colors" data-action="delete" data-id="${st.id}" data-name="${escapeHtml(st.name)}" title="Slett">
+            <i class="fas fa-trash text-xs"></i>
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function openModal(st = null) {
+    editingId = st ? st.id : null;
+    document.getElementById('modal-title').textContent = st ? 'Rediger tjenestekategori' : 'Ny tjenestekategori';
+    document.getElementById('field-name').value = st ? st.name : '';
+    document.getElementById('field-color').value = st ? st.color : '#F97316';
+    document.getElementById('field-interval').value = st ? st.default_interval_months : 12;
+    document.getElementById('field-description').value = st ? (st.description || '') : '';
+
+    selectedIcon = st ? st.icon : 'fa-wrench';
+    document.getElementById('field-icon').value = selectedIcon;
+    document.querySelectorAll('.icon-btn').forEach(btn => {
+      btn.classList.toggle('ring-2', btn.dataset.icon === selectedIcon);
+      btn.classList.toggle('ring-primary-500', btn.dataset.icon === selectedIcon);
+      btn.classList.toggle('text-white', btn.dataset.icon === selectedIcon);
+    });
+
+    document.getElementById('modal').classList.remove('hidden');
+    document.getElementById('modal').classList.add('flex');
+    document.getElementById('field-name').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.add('hidden');
+    document.getElementById('modal').classList.remove('flex');
+    editingId = null;
+  }
+
+  async function saveServiceType(e) {
+    e.preventDefault();
+    const name = document.getElementById('field-name').value.trim();
+    if (!name) return;
+
+    const body = {
+      name,
+      icon: document.getElementById('field-icon').value,
+      color: document.getElementById('field-color').value,
+      default_interval_months: parseInt(document.getElementById('field-interval').value, 10),
+      description: document.getElementById('field-description').value.trim() || undefined,
+    };
+
+    const btn = document.getElementById('btn-save');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i> Lagrer...';
+
+    try {
+      const url = editingId
+        ? `${apiBaseUrl}/api/app/service-types/${editingId}`
+        : `${apiBaseUrl}/api/app/service-types`;
+      const method = editingId ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: getHeaders(true),
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke lagre');
+
+      closeModal();
+      await loadServiceTypes();
+    } catch (err) {
+      alert(err.message || 'Feil ved lagring');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-save mr-1.5"></i> Lagre';
+    }
+  }
+
+  async function deleteServiceType(id, name) {
+    if (!confirm(`Slett "${name}"? Kategorien fjernes fra kartvisningen.`)) return;
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/app/service-types/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders(true),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke slette');
+      await loadServiceTypes();
+    } catch (err) {
+      alert(err.message || 'Feil ved sletting');
+    }
+  }
+
+  // Event listeners
+  document.getElementById('btn-add')?.addEventListener('click', () => openModal());
+  document.getElementById('btn-add-empty')?.addEventListener('click', () => openModal());
+  document.getElementById('btn-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('btn-retry')?.addEventListener('click', loadServiceTypes);
+  document.getElementById('modal-form')?.addEventListener('submit', saveServiceType);
+
+  // Close modal on backdrop click
+  document.getElementById('modal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('modal')) closeModal();
+  });
+
+  // Icon picker
+  document.getElementById('icon-picker')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.icon-btn');
+    if (!btn) return;
+    selectedIcon = btn.dataset.icon;
+    document.getElementById('field-icon').value = selectedIcon;
+    document.querySelectorAll('.icon-btn').forEach(b => {
+      b.classList.toggle('ring-2', b.dataset.icon === selectedIcon);
+      b.classList.toggle('ring-primary-500', b.dataset.icon === selectedIcon);
+      b.classList.toggle('text-white', b.dataset.icon === selectedIcon);
+    });
+  });
+
+  // Table actions (edit/delete)
+  document.getElementById('service-types-body')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const id = parseInt(btn.dataset.id, 10);
+    if (btn.dataset.action === 'edit') {
+      const st = serviceTypes.find(s => s.id === id);
+      if (st) openModal(st);
+    } else if (btn.dataset.action === 'delete') {
+      deleteServiceType(id, btn.dataset.name);
+    }
+  });
+
+  // Escape to close modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // Initial load
+  loadServiceTypes();
+</script>
+</DashboardLayout>

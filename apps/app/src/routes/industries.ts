@@ -289,6 +289,36 @@ router.post(
       throw Errors.internal('Kunne ikke oppdatere organisasjon: ' + updateError.message);
     }
 
+    // Copy template service types to organization for customization
+    try {
+      const { data: templateTypes } = await supabase
+        .from('template_service_types')
+        .select('*')
+        .eq('template_id', industry.id)
+        .eq('aktiv', true)
+        .order('sort_order', { ascending: true });
+
+      if (templateTypes && templateTypes.length > 0) {
+        const rows = templateTypes.map((t: any) => ({
+          organization_id: organizationId,
+          name: t.name,
+          slug: t.slug,
+          icon: t.icon || 'fa-wrench',
+          color: t.color || '#F97316',
+          default_interval_months: t.default_interval_months || 12,
+          description: t.description || null,
+          sort_order: t.sort_order || 0,
+          source: 'template',
+          source_ref: String(t.id),
+        }));
+        await supabase
+          .from('organization_service_types')
+          .upsert(rows, { onConflict: 'organization_id,slug', ignoreDuplicates: true });
+      }
+    } catch {
+      // Table may not exist yet - continue without copying service types
+    }
+
     const response: ApiResponse = {
       success: true,
       data: {

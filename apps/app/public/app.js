@@ -86,11 +86,35 @@ const Logger = {
 };
 
 // ========================================
-// APP MODE HELPERS
-// 'mvp' = Enkel versjon for nye kunder
-// 'full' = Komplett versjon (TRE Allservice)
+// FEATURE MODULE SYSTEM
+// Granular per-organization feature flags
+// Replaces binary app_mode (mvp/full)
 // ========================================
+
+/**
+ * Check if a specific feature module is enabled for this organization.
+ * Features are loaded from the server config endpoint.
+ */
+function hasFeature(key) {
+  return appConfig.enabledFeatures?.includes(key) ?? false;
+}
+
+/**
+ * Get the configuration for a specific feature module.
+ * Returns empty object if feature has no config or is not enabled.
+ */
+function getFeatureConfig(key) {
+  return appConfig.featureConfigs?.[key] ?? {};
+}
+
+// Backwards-compatible helpers (used by existing code)
+// These check enabledFeatures first, then fall back to legacy app_mode
 function isFullMode() {
+  // If features are loaded, check for industry-specific features
+  if (appConfig.enabledFeatures && appConfig.enabledFeatures.length > 0) {
+    return hasFeature('lifecycle_colors') || hasFeature('context_menu');
+  }
+  // Legacy fallback
   return appConfig.appMode === 'full' || localStorage.getItem('appMode') === 'full';
 }
 
@@ -99,27 +123,20 @@ function isMvpMode() {
 }
 
 /**
- * Apply MVP mode UI changes - hide industry-specific elements
- * Called after DOM is ready and on config changes
- * MVP = Enkel versjon for alle bransjer
- * Full = Komplett versjon (TRE Allservice med el/brann)
+ * Apply feature-based UI changes - hide/show elements based on enabled features.
+ * Called after DOM is ready and on config changes.
+ * Replaces the old binary MVP/full mode with granular feature checks.
  */
 function applyMvpModeUI() {
   const isMvp = isMvpMode();
 
-  // Elements to hide in MVP mode (industry-specific for el/brann)
+  // Elements to hide when industry-specific features are not enabled
+  // Note: categoryFilterButtons is NOT hidden here — categories are shown for all companies
   const mvpHiddenElements = [
-    // Category filter section (El-Kontroll, Brannvarsling, Begge)
-    document.getElementById('categoryFilterButtons')?.closest('.category-filter'),
-    // El-type filter (Landbruk, Næring, Bolig)
     document.getElementById('elTypeFilter'),
-    // Driftskategori filter (Storfe, Sau, etc.)
     document.getElementById('driftskategoriFilter'),
-    // Brannsystem filter (Elotec, ICAS, etc.)
     document.getElementById('brannsystemFilter'),
-    // Color legend (based on el/brann control dates)
     document.querySelector('.color-legend'),
-    // Dynamic field filters
     document.getElementById('dynamicFieldFilters'),
   ];
 
@@ -129,7 +146,6 @@ function applyMvpModeUI() {
     }
   });
 
-  // In MVP mode, simplify the filter panel header
   const filterHeader = document.querySelector('.filter-panel-header h3');
   if (filterHeader) {
     filterHeader.innerHTML = isMvp
@@ -137,7 +153,10 @@ function applyMvpModeUI() {
       : '<i class="fas fa-filter"></i> Kunder';
   }
 
-  Logger.log(`MVP mode UI applied: ${isMvp ? 'MVP (simplified)' : 'Full (TRE Allservice)'}`);
+  Logger.log(`Feature mode UI applied: ${isMvp ? 'MVP (simplified)' : 'Full (features enabled)'}`);
+  if (appConfig.enabledFeatures?.length) {
+    Logger.log('Enabled features:', appConfig.enabledFeatures.join(', '));
+  }
 }
 
 // ========================================
@@ -506,6 +525,11 @@ const svgIcons = {
     <path d="M17 8l-5.5 5.5"/>
     <path d="M6 10l1 3"/>
     <path d="M18 10l-1 3"/>
+  </svg>`,
+
+  // Generisk service - Wrench (skiftenøkkel)
+  'service': `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
   </svg>`
 };
 
@@ -533,7 +557,8 @@ const industryPalettes = {
   'vinduspuss':          { light: '#7DD3FC', primary: '#38BDF8', dark: '#0EA5E9' },
   'avfallshandtering':   { light: '#4ADE80', primary: '#16A34A', dark: '#15803D' },
   'vedlikehold-bygg':    { light: '#B45309', primary: '#92400E', dark: '#78350F' },
-  'serviceavtaler-generell': { light: '#C4B5FD', primary: '#A855F7', dark: '#9333EA' }
+  'serviceavtaler-generell': { light: '#C4B5FD', primary: '#A855F7', dark: '#9333EA' },
+  'service':                 { light: '#60A5FA', primary: '#3B82F6', dark: '#2563EB' }
 };
 
 // ========================================
@@ -717,31 +742,21 @@ class ServiceTypeRegistry {
       });
     }
 
-    // Fallback: Add default service types if none were loaded
+    // Fallback: Generic service type if none were loaded from config
+    // This only happens for unauthenticated requests (login page) or orgs without service types
     if (this.serviceTypes.size === 0) {
-      this.serviceTypes.set('el-kontroll', {
-        id: 1,
-        name: 'El-Kontroll',
-        slug: 'el-kontroll',
-        icon: 'fa-bolt',
-        color: '#F59E0B',
+      this.serviceTypes.set('service', {
+        id: 0,
+        name: 'Service',
+        slug: 'service',
+        icon: 'fa-wrench',
+        color: '#F97316',
         defaultInterval: 12,
-        description: 'Elektrisk kontroll',
+        description: 'Generell tjeneste',
         subtypes: [],
         equipmentTypes: []
       });
-      this.serviceTypes.set('brannvarsling', {
-        id: 2,
-        name: 'Brannvarsling',
-        slug: 'brannvarsling',
-        icon: 'fa-fire',
-        color: '#DC2626',
-        defaultInterval: 12,
-        description: 'Brannvarslingssystem',
-        subtypes: [],
-        equipmentTypes: []
-      });
-      Logger.log('Using default service types (El-Kontroll, Brannvarsling)');
+      Logger.log('Using generic fallback service type (no types configured for this org)');
     }
 
     this.intervals = config.intervals || [];
@@ -889,16 +904,8 @@ class ServiceTypeRegistry {
 
   /**
    * Generate category tabs HTML
-   * MVP-modus: Vis kun "Alle" tab for enkel brukeropplevelse
-   * Full mode (TRE Allservice): Vis alle kategorier
    */
   renderCategoryTabs(activeCategory = 'all') {
-    // MVP-modus: Kun vis "Alle" tab - enkel versjon
-    if (isMvpMode()) {
-      return `<button class="kategori-tab active" data-kategori="alle">Alle kunder</button>`;
-    }
-
-    // Full mode (TRE Allservice): Vis alle kategorier
     const serviceTypes = this.getAll();
 
     let html = `<button class="kategori-tab ${activeCategory === 'all' ? 'active' : ''}" data-kategori="alle">Alle</button>`;
@@ -1149,11 +1156,8 @@ class ServiceTypeRegistry {
         .replace(/[\u0300-\u036f]/g, ''); // Remove accents
     };
 
-    // Helper to get SVG or fallback to FontAwesome
+    // Helper to get icon HTML - white FontAwesome icon on colored marker background
     const getIconHtml = (st) => {
-      if (svgIcons[st.slug]) {
-        return `<span class="marker-svg-icon">${svgIcons[st.slug]}</span>`;
-      }
       return `<i class="fas ${st.icon}"></i>`;
     };
 
@@ -1383,6 +1387,19 @@ class ServiceTypeRegistry {
       const d = new Date(dato);
       return d.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' });
     };
+
+    // MVP-modus: vis enkel kontrollinfo med service-ikon
+    if (isMvpMode()) {
+      const sisteKontroll = customer.siste_kontroll || customer.siste_el_kontroll;
+      return `
+        <div class="popup-control-info">
+          <p class="popup-status ${controlStatus.class}">
+            <strong><span class="marker-svg-icon" style="display:inline-block;width:14px;height:14px;vertical-align:middle;color:#3B82F6;">${svgIcons['service']}</span> Neste kontroll:</strong>
+            <span class="control-days">${escapeHtml(controlStatus.label)}</span>
+          </p>
+          ${sisteKontroll ? `<p style="font-size: 11px; color: #888; margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+        </div>`;
+    }
 
     const isCombined = kategori.includes('+');
 
@@ -1646,6 +1663,126 @@ function renderFilterPanelCategories() {
 
   container.innerHTML = html;
   attachCategoryFilterHandlers();
+  attachCategoryDropHandlers();
+}
+
+/**
+ * No-op: drop handlers are handled by custom drag system
+ */
+function attachCategoryDropHandlers() {}
+
+// ========================================
+// MARKER DRAG-TO-CATEGORY SYSTEM
+// ========================================
+
+let dragGhost = null;
+let dragHoveredBtn = null;
+
+/**
+ * Start custom drag from a map marker
+ */
+function startMarkerDrag(customerId, x, y) {
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+
+  // Create floating ghost element
+  dragGhost = document.createElement('div');
+  dragGhost.className = 'drag-ghost';
+  dragGhost.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.navn)}`;
+  dragGhost.style.left = x + 'px';
+  dragGhost.style.top = y + 'px';
+  document.body.appendChild(dragGhost);
+  document.body.classList.add('marker-dragging');
+}
+
+/**
+ * Update ghost position and highlight drop target
+ */
+function updateMarkerDrag(x, y) {
+  if (!dragGhost) return;
+  dragGhost.style.left = x + 'px';
+  dragGhost.style.top = y + 'px';
+
+  // Check which category button is under cursor
+  const elUnder = document.elementFromPoint(x, y);
+  const btn = elUnder?.closest('.category-btn');
+
+  if (dragHoveredBtn && dragHoveredBtn !== btn) {
+    dragHoveredBtn.classList.remove('drop-hover');
+  }
+
+  if (btn && btn.dataset.category && btn.dataset.category !== 'all') {
+    btn.classList.add('drop-hover');
+    dragHoveredBtn = btn;
+  } else {
+    dragHoveredBtn = null;
+  }
+}
+
+/**
+ * End drag - assign category if dropped on a button
+ */
+function endMarkerDrag(customerId) {
+  const targetCategory = dragHoveredBtn?.dataset?.category;
+
+  // Clean up
+  if (dragGhost) {
+    dragGhost.remove();
+    dragGhost = null;
+  }
+  if (dragHoveredBtn) {
+    dragHoveredBtn.classList.remove('drop-hover');
+    dragHoveredBtn = null;
+  }
+  document.body.classList.remove('marker-dragging');
+
+  // Assign category if valid target
+  if (targetCategory && targetCategory !== 'all') {
+    assignCustomerCategory(customerId, targetCategory);
+  }
+}
+
+/**
+ * Assign a category to a customer via drag-and-drop
+ */
+async function assignCustomerCategory(customerId, categoryName) {
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+
+  if (customer.kategori === categoryName) {
+    showToast('Kunden har allerede denne kategorien', 'info');
+    return;
+  }
+
+  try {
+    const response = await apiFetch(`/api/kunder/${customerId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        navn: customer.navn,
+        adresse: customer.adresse,
+        postnummer: customer.postnummer,
+        poststed: customer.poststed,
+        telefon: customer.telefon,
+        epost: customer.epost,
+        lat: customer.lat,
+        lng: customer.lng,
+        kategori: categoryName
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || 'Kunne ikke oppdatere kategori');
+    }
+
+    // Update local data and re-render
+    customer.kategori = categoryName;
+    renderMarkers(customers.filter(c => c.lat && c.lng));
+    updateCategoryFilterCounts();
+    showToast(`${escapeHtml(customer.navn)} flyttet til ${escapeHtml(categoryName)}`, 'success');
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
 }
 
 /**
@@ -3392,17 +3529,13 @@ function switchToTab(tabName) {
 // SPA VIEW MANAGEMENT
 // ========================================
 
-// Get Mapbox access token - prefer server config, fallback to env
-// SECURITY: Token should be set in server environment variable MAPBOX_ACCESS_TOKEN
+// Get Mapbox access token from server config
 function getMapboxToken() {
-  // Use server-provided token from appConfig if available
   if (appConfig.mapboxAccessToken) {
     return appConfig.mapboxAccessToken;
   }
-  // Fallback for initial map display before config loads
-  // This token should be rotated and moved to server-side config
-  Logger.warn('Using fallback Mapbox token - configure MAPBOX_ACCESS_TOKEN in server environment');
-  return 'pk.eyJ1Ijoic2FuZGVyc29sdXRpb25zIiwiYSI6ImNta3JmdWt1eTB6MXgzZHNhaG5wcTV1amkifQ.dbxR-eIxqQRT3y0kw71-2g';
+  Logger.error('Mapbox token mangler - sett MAPBOX_ACCESS_TOKEN i server-miljøvariabler');
+  return '';
 }
 
 // Initialize the shared map (used for both login background and app)
@@ -3615,7 +3748,7 @@ async function handleSpaLogin(e) {
         applyMvpModeUI();
       }
 
-      // Show admin tab if user is admin/bruker
+      // Show admin tab and manage button if user is admin/bruker
       const isAdmin = data.klient?.type === 'bruker' || data.klient?.rolle === 'admin';
       const adminTab = document.getElementById('adminTab');
       if (adminTab) {
@@ -3723,7 +3856,7 @@ function showUserBar() {
     if (userNameDisplay) userNameDisplay.textContent = userName;
   }
 
-  // Show admin tab if user is admin/bruker
+  // Show admin tab and manage button if user is admin/bruker
   const isAdmin = userType === 'bruker' || userRole === 'admin';
   const adminTab = document.getElementById('adminTab');
   if (adminTab) {
@@ -4094,7 +4227,8 @@ const wizardImportState = {
   cleaningTablePage: 0,         // Current page in cleaning full table
   previewTablePage: 0,          // Current page in preview table
   previewShowBeforeAfter: false, // Toggle before/after transformation view
-  fieldToHeaderMapping: {}      // Maps target field -> source header name
+  fieldToHeaderMapping: {},     // Maps target field -> source header name
+  showMethodChoice: true        // Show import method choice (integration vs file) before upload
 };
 
 // Track if we're in standalone import mode (vs onboarding wizard)
@@ -4132,6 +4266,7 @@ function resetWizardImportState() {
   wizardImportState.previewTablePage = 0;
   wizardImportState.previewShowBeforeAfter = false;
   wizardImportState.fieldToHeaderMapping = {};
+  wizardImportState.showMethodChoice = true;
 }
 
 // Show standalone import modal
@@ -4269,8 +4404,70 @@ function getSampleValueForColumn(sampleData, columnIndex, headers) {
   return String(value);
 }
 
+// Render import method choice (integration vs file upload)
+function renderWizardImportMethodChoice() {
+  return `
+    <div class="wizard-step-header">
+      <h1><i class="fas fa-download"></i> Importer kunder</h1>
+      <p>Velg hvordan du vil hente inn dine eksisterende kunder.</p>
+    </div>
+
+    <div class="wizard-import-method-choice">
+      <div class="wizard-method-card" onclick="selectImportMethodIntegration()">
+        <div class="wizard-method-icon">
+          <i class="fas fa-plug"></i>
+        </div>
+        <h3>Regnskapssystem</h3>
+        <p>Koble til Tripletex, Fiken eller PowerOffice og synkroniser kunder automatisk.</p>
+        <span class="wizard-method-action">Koble til <i class="fas fa-external-link-alt"></i></span>
+      </div>
+
+      <div class="wizard-method-card" onclick="selectImportMethodFile()">
+        <div class="wizard-method-icon">
+          <i class="fas fa-file-excel"></i>
+        </div>
+        <h3>Excel / CSV</h3>
+        <p>Last opp en fil med kundedata. AI-assistert mapping hjelper deg med kolonnene.</p>
+        <span class="wizard-method-action">Last opp fil <i class="fas fa-arrow-right"></i></span>
+      </div>
+    </div>
+
+    <div class="wizard-footer">
+      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
+        <i class="fas fa-arrow-left"></i> Tilbake
+      </button>
+      <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
+        Hopp over <i class="fas fa-forward"></i>
+      </button>
+    </div>
+  `;
+}
+
+// Handle integration method selection in onboarding wizard
+function selectImportMethodIntegration() {
+  const webUrl = appConfig.webUrl || '';
+  window.open(webUrl + '/dashboard/innstillinger/integrasjoner', '_blank');
+  showToast('Koble til regnskapssystemet i fanen som ble apnet. Kom tilbake hit for a fortsette oppsettet.', 'info', 8000);
+}
+
+// Handle file import method selection in onboarding wizard
+function selectImportMethodFile() {
+  wizardImportState.showMethodChoice = false;
+  // Re-render the import step to show file upload
+  const container = document.querySelector('.wizard-content[data-step="import"]');
+  if (container) {
+    container.innerHTML = renderWizardImportStep();
+    attachWizardImportListeners();
+  }
+}
+
 // Render wizard import step
 function renderWizardImportStep() {
+  // Show method choice screen if not yet selected (only in onboarding wizard, not standalone)
+  if (wizardImportState.showMethodChoice && !standaloneImportMode) {
+    return renderWizardImportMethodChoice();
+  }
+
   const importStep = wizardImportState.currentImportStep;
 
   return `
@@ -8374,15 +8571,24 @@ function initExcelImport() {
 
         if (selectedCategories.length > 0) {
           progressText.textContent = `Oppretter ${selectedCategories.length} nye kategorier...`;
-          try {
-            await apiFetch('/api/fields/categories/bulk', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ categories: selectedCategories })
-            });
-          } catch (catError) {
-            console.warn('Could not create categories:', catError);
+          for (const cat of selectedCategories) {
+            try {
+              await apiFetch('/api/service-types', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: cat.name,
+                  icon: cat.icon || 'fa-wrench',
+                  color: cat.color || '#F97316',
+                  default_interval_months: cat.default_interval_months || 12,
+                })
+              });
+            } catch (catError) {
+              console.warn(`Could not create category ${cat.name}:`, catError);
+            }
           }
+          await loadOrganizationCategories();
+          renderFilterPanelCategories();
         }
 
         progressFill.style.width = '10%';
@@ -8601,6 +8807,10 @@ function transitionToAppView() {
       if (!map._zoomControl) {
         map._zoomControl = L.control.zoom({ position: 'topright' }).addTo(map);
       }
+      // Block browser context menu on map area to prevent it interfering with marker context menus
+      map.getContainer().addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+      });
     }
   }, 1000);
 
@@ -9649,7 +9859,8 @@ async function loadConfig() {
   try {
     // Use regular fetch for config - no auth required
     const response = await fetch('/api/config');
-    appConfig = await response.json();
+    const configResponse = await response.json();
+    appConfig = configResponse.data || configResponse;
 
     // Initialize service type registry from config
     serviceTypeRegistry.loadFromConfig(appConfig);
@@ -9922,22 +10133,26 @@ async function reloadConfigWithAuth() {
       const configResponse = await response.json();
       appConfig = configResponse.data || configResponse;
 
-      // Use industry from server config (source of truth) instead of localStorage
-      const serverIndustry = appConfig.industry;
-      if (serverIndustry && serverIndustry.slug) {
-        // Sync localStorage with server value
-        localStorage.setItem('industrySlug', serverIndustry.slug);
-        localStorage.setItem('industryName', serverIndustry.name || serverIndustry.slug);
-        await serviceTypeRegistry.loadFromIndustry(serverIndustry.slug);
-        Logger.log('Industry loaded from server:', serverIndustry.slug);
+      // Load service types: prefer org-specific types from config, fall back to industry template
+      if (appConfig.serviceTypes && appConfig.serviceTypes.length > 0) {
+        // Org has custom service types (from organization_service_types table)
+        serviceTypeRegistry.loadFromConfig(appConfig);
+        Logger.log('Service types loaded from org config:', appConfig.serviceTypes.length);
       } else {
-        // Fallback to localStorage if server doesn't have industry
-        const industrySlug = localStorage.getItem('industrySlug');
-        if (industrySlug) {
-          await serviceTypeRegistry.loadFromIndustry(industrySlug);
+        // Fall back to industry template service types
+        const serverIndustry = appConfig.industry;
+        if (serverIndustry && serverIndustry.slug) {
+          localStorage.setItem('industrySlug', serverIndustry.slug);
+          localStorage.setItem('industryName', serverIndustry.name || serverIndustry.slug);
+          await serviceTypeRegistry.loadFromIndustry(serverIndustry.slug);
+          Logger.log('Industry loaded from server:', serverIndustry.slug);
         } else {
-          // Reload service type registry with tenant-specific config
-          serviceTypeRegistry.loadFromConfig(appConfig);
+          const industrySlug = localStorage.getItem('industrySlug');
+          if (industrySlug) {
+            await serviceTypeRegistry.loadFromIndustry(industrySlug);
+          } else {
+            serviceTypeRegistry.loadFromConfig(appConfig);
+          }
         }
       }
 
@@ -10173,8 +10388,90 @@ async function loadCustomers() {
     updateOverdueBadge();
     renderMissingData(); // Update missing data badge and lists
     updateDashboard(); // Update dashboard stats
+    updateGettingStartedBanner(); // Show/hide getting started banner
   } catch (error) {
     console.error('Feil ved lasting av kunder:', error);
+  }
+}
+
+// Show or hide the getting started banner based on customer count
+function updateGettingStartedBanner() {
+  const existing = document.getElementById('gettingStartedBanner');
+
+  // Remove banner if customers exist
+  if (customers.length > 0) {
+    if (existing) existing.remove();
+    return;
+  }
+
+  // Don't show if user has dismissed it
+  if (localStorage.getItem('gettingStartedDismissed') === 'true') {
+    return;
+  }
+
+  // Don't show if banner already exists
+  if (existing) return;
+
+  // Create and insert banner
+  const banner = document.createElement('div');
+  banner.id = 'gettingStartedBanner';
+  banner.className = 'getting-started-banner';
+  banner.innerHTML = renderGettingStartedBanner();
+
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer) {
+    mapContainer.appendChild(banner);
+  }
+}
+
+// Render getting started banner HTML
+function renderGettingStartedBanner() {
+  const webUrl = appConfig.webUrl || '';
+
+  return `
+    <div class="getting-started-header">
+      <div>
+        <h2>Velkommen til Sky Planner!</h2>
+        <p>Legg til dine kunder for a komme i gang.</p>
+      </div>
+      <button class="getting-started-close" onclick="dismissGettingStartedBanner()" title="Lukk">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="getting-started-cards">
+      <div class="getting-started-card" onclick="window.open('${escapeHtml(webUrl)}/dashboard/innstillinger/integrasjoner', '_blank')">
+        <div class="getting-started-card-icon">
+          <i class="fas fa-plug"></i>
+        </div>
+        <h3>Koble til regnskapssystem</h3>
+        <p>Synkroniser kunder fra Tripletex, Fiken eller PowerOffice.</p>
+      </div>
+      <div class="getting-started-card" onclick="showImportModal()">
+        <div class="getting-started-card-icon">
+          <i class="fas fa-file-excel"></i>
+        </div>
+        <h3>Importer fra Excel / CSV</h3>
+        <p>Last opp en fil med dine eksisterende kundedata.</p>
+      </div>
+      <div class="getting-started-card" onclick="dismissGettingStartedBanner(); addCustomer();">
+        <div class="getting-started-card-icon">
+          <i class="fas fa-plus-circle"></i>
+        </div>
+        <h3>Legg til manuelt</h3>
+        <p>Opprett kunder en og en direkte i systemet.</p>
+      </div>
+    </div>
+  `;
+}
+
+// Dismiss getting started banner
+function dismissGettingStartedBanner() {
+  localStorage.setItem('gettingStartedDismissed', 'true');
+  const banner = document.getElementById('gettingStartedBanner');
+  if (banner) {
+    banner.style.opacity = '0';
+    banner.style.transform = 'translateY(-20px)';
+    setTimeout(() => banner.remove(), 300);
   }
 }
 
@@ -10495,24 +10792,59 @@ function createClusterIcon(cluster) {
   });
 }
 
-// Check if customer needs control soon - prioritizes el-kontroll for generic check
+// Check if customer needs control soon - includes lifecycle stages when feature is enabled
 function getControlStatus(customer) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Lifecycle-aware statuses (checked first, override date-based if active)
+  if (hasFeature('lifecycle_colors')) {
+    // Recently visited → dim/faded (low priority, already done)
+    if (customer.last_visit_date) {
+      const visitDate = new Date(customer.last_visit_date);
+      const daysSinceVisit = Math.ceil((today - visitDate) / (1000 * 60 * 60 * 24));
+      if (daysSinceVisit <= 14) {
+        return { status: 'besøkt', label: `Besøkt ${daysSinceVisit}d siden`, class: 'status-visited', date: visitDate.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' }), daysUntil: null };
+      }
+    }
+
+    // Inquiry sent → purple pulsing (waiting for response)
+    if (customer.inquiry_sent_date) {
+      const inquiryDate = new Date(customer.inquiry_sent_date);
+      const daysSinceInquiry = Math.ceil((today - inquiryDate) / (1000 * 60 * 60 * 24));
+      if (daysSinceInquiry <= 30) {
+        return { status: 'forespørsel', label: `Forespørsel sendt ${daysSinceInquiry}d siden`, class: 'status-inquiry', date: inquiryDate.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' }), daysUntil: null };
+      }
+    }
+
+    // Job confirmed → colored border based on type
+    if (customer.job_confirmed_type) {
+      const typeLabels = { a: 'Type A', b: 'Type B', begge: 'Begge' };
+      const typeLabel = typeLabels[customer.job_confirmed_type] || customer.job_confirmed_type;
+      const statusClass = customer.job_confirmed_type === 'begge' ? 'status-confirmed-both' :
+        customer.job_confirmed_type === 'b' ? 'status-confirmed-b' : 'status-confirmed-a';
+      return { status: 'bekreftet', label: `Bekreftet: ${typeLabel}`, class: statusClass, date: null, daysUntil: null };
+    }
+  }
+
+  // Standard date-based control status
   const nextDate = getNextControlDate(customer);
 
   if (!nextDate) {
     return { status: 'ukjent', label: 'Ikke registrert', class: 'status-unknown', date: null, daysUntil: null };
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
   const dateFormatted = nextDate.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' });
 
   if (daysUntil < 0) {
     return { status: 'forfalt', label: `${Math.abs(daysUntil)} dager over`, class: 'status-overdue', date: dateFormatted, daysUntil };
+  } else if (daysUntil <= 7) {
+    return { status: 'denne-uke', label: `${daysUntil} dager`, class: 'status-this-week', date: dateFormatted, daysUntil };
   } else if (daysUntil <= 30) {
     return { status: 'snart', label: `${daysUntil} dager`, class: 'status-soon', date: dateFormatted, daysUntil };
+  } else if (daysUntil <= 60) {
+    return { status: 'neste-mnd', label: `${daysUntil} dager`, class: 'status-next-month', date: dateFormatted, daysUntil };
   } else if (daysUntil <= 90) {
     return { status: 'ok', label: `${daysUntil} dager`, class: 'status-ok', date: dateFormatted, daysUntil };
   }
@@ -10678,11 +11010,14 @@ function generatePopupContent(customer) {
       <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
         ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
       </button>
-      <button class="btn btn-small ${bulkSelectedCustomers.has(customer.id) ? 'btn-success' : 'btn-complete'}"
+      <button class="btn btn-small btn-success" data-action="quickMarkVisited" data-customer-id="${customer.id}">
+        <i class="fas fa-check"></i> Besøkt
+      </button>
+      <button class="btn btn-small ${bulkSelectedCustomers.has(customer.id) ? 'btn-warning' : 'btn-complete'}"
               data-action="toggleBulkSelect"
               data-customer-id="${customer.id}">
-        <i class="fas ${bulkSelectedCustomers.has(customer.id) ? 'fa-check-circle' : 'fa-check'}"></i>
-        ${bulkSelectedCustomers.has(customer.id) ? 'Valgt' : 'Marker ferdig'}
+        <i class="fas ${bulkSelectedCustomers.has(customer.id) ? 'fa-check-circle' : 'fa-list'}"></i>
+        ${bulkSelectedCustomers.has(customer.id) ? 'I avhuking' : 'Legg til avhuking'}
       </button>
       <button class="btn btn-small btn-secondary" data-action="editCustomer" data-customer-id="${customer.id}">
         Rediger
@@ -10696,6 +11031,325 @@ function generatePopupContent(customer) {
     </div>
   `;
 }
+
+// ========================================
+// CONTEXT MENU (Feature: context_menu)
+// Right-click menu on map markers
+// ========================================
+
+let activeContextMenu = null;
+let contextMenuCustomerId = null;
+
+function showMarkerContextMenu(customer, x, y) {
+  closeContextMenu();
+  contextMenuCustomerId = customer.id;
+
+  const menu = document.createElement('div');
+  menu.className = 'marker-context-menu';
+  menu.setAttribute('role', 'menu');
+
+  const isSelected = selectedCustomers.has(customer.id);
+  const isBulkSelected = bulkSelectedCustomers.has(customer.id);
+  const hasEmail = customer.epost && customer.epost.trim() !== '';
+
+  // Build menu items dynamically based on enabled features
+  let menuHtml = `
+    <div class="context-menu-header">${escapeHtml(customer.navn)}</div>
+    <div class="context-menu-item" role="menuitem" data-action="ctx-details" data-id="${customer.id}">
+      <i class="fas fa-info-circle"></i> Se detaljer
+    </div>
+    <div class="context-menu-item" role="menuitem" data-action="ctx-navigate" data-lat="${customer.lat}" data-lng="${customer.lng}">
+      <i class="fas fa-directions"></i> Naviger hit
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" role="menuitem" data-action="ctx-add-route" data-id="${customer.id}">
+      <i class="fas fa-route"></i> ${isSelected ? 'Fjern fra rute' : 'Legg til i rute'}
+    </div>
+    <div class="context-menu-item" role="menuitem" data-action="ctx-mark-complete" data-id="${customer.id}">
+      <i class="fas ${isBulkSelected ? 'fa-check-circle' : 'fa-check'}"></i> ${isBulkSelected ? 'Fjern ferdig-markering' : 'Marker som ferdig'}
+    </div>`;
+
+  // Email option (feature: email_templates or always if email exists)
+  if (hasEmail) {
+    menuHtml += `
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" role="menuitem" data-action="ctx-email" data-id="${customer.id}">
+      <i class="fas fa-envelope"></i> Send e-post
+    </div>`;
+  }
+
+  // Tripletex project creation (feature: tripletex_projects)
+  if (hasFeature('tripletex_projects') && appConfig.integrations?.tripletex?.active !== false) {
+    const categories = getFeatureConfig('tripletex_projects')?.project_categories || [
+      { key: 'elkontroll', label: '01 - Elkontroll' },
+      { key: 'arskontroll', label: '02 - Årskontroll' },
+      { key: 'begge', label: '03 - Begge' }
+    ];
+
+    menuHtml += `
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item context-menu-parent" role="menuitem">
+      <span><i class="fas fa-folder-plus"></i> Opprett prosjekt</span>
+      <i class="fas fa-chevron-right context-menu-arrow"></i>
+      <div class="context-menu-submenu" role="menu">
+        ${categories.map(cat => `
+          <div class="context-menu-item" role="menuitem" data-action="ctx-create-project" data-id="${customer.id}" data-type="${escapeHtml(cat.key)}">
+            ${escapeHtml(cat.label)}
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+  }
+
+  // Push/sync customer to Tripletex (if Tripletex is connected)
+  if (appConfig.integrations?.tripletex?.active !== false) {
+    const isLinked = customer.external_source === 'tripletex' && customer.external_id;
+    menuHtml += `
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" role="menuitem" data-action="ctx-push-tripletex" data-id="${customer.id}">
+      <i class="fas ${isLinked ? 'fa-sync' : 'fa-cloud-upload-alt'}"></i> ${isLinked ? 'Oppdater i Tripletex' : 'Opprett i Tripletex'}
+    </div>`;
+  }
+
+  menu.innerHTML = menuHtml;
+
+  // Position menu within viewport bounds
+  document.body.appendChild(menu);
+  const menuRect = menu.getBoundingClientRect();
+  const viewportW = window.innerWidth;
+  const viewportH = window.innerHeight;
+
+  if (x + menuRect.width > viewportW) x = viewportW - menuRect.width - 8;
+  if (y + menuRect.height > viewportH) y = viewportH - menuRect.height - 8;
+  if (x < 8) x = 8;
+  if (y < 8) y = 8;
+
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+
+  activeContextMenu = menu;
+
+  // Event delegation for menu items
+  menu.addEventListener('click', handleContextMenuClick);
+
+  // Close on outside click (deferred to avoid immediate close)
+  requestAnimationFrame(() => {
+    document.addEventListener('click', closeContextMenu, { once: true });
+    document.addEventListener('contextmenu', closeContextMenu, { once: true });
+  });
+
+  // Close on Escape key
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      closeContextMenu();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+}
+
+function closeContextMenu() {
+  if (activeContextMenu) {
+    activeContextMenu.remove();
+    activeContextMenu = null;
+    contextMenuCustomerId = null;
+  }
+}
+
+function handleContextMenuClick(e) {
+  const item = e.target.closest('[data-action]');
+  if (!item) return;
+
+  const action = item.dataset.action;
+  const id = Number(item.dataset.id);
+
+  closeContextMenu();
+
+  switch (action) {
+    case 'ctx-details':
+      editCustomer(id);
+      break;
+    case 'ctx-navigate': {
+      const lat = Number(item.dataset.lat);
+      const lng = Number(item.dataset.lng);
+      navigateToCustomer(lat, lng);
+      break;
+    }
+    case 'ctx-add-route':
+      toggleCustomerSelection(id);
+      break;
+    case 'ctx-mark-complete':
+      toggleBulkSelectFromMap(id);
+      break;
+    case 'ctx-email':
+      // Open email dialog for this customer
+      if (typeof openEmailDialog === 'function') {
+        openEmailDialog(id);
+      } else {
+        // Fallback: open customer edit dialog on contact tab
+        editCustomer(id);
+      }
+      break;
+    case 'ctx-create-project': {
+      const projectType = item.dataset.type;
+      createTripletexProjectFromMenu(id, projectType);
+      break;
+    }
+    case 'ctx-push-tripletex':
+      pushCustomerToTripletex(id);
+      break;
+  }
+}
+
+// Create a Tripletex project from the map context menu
+async function createTripletexProjectFromMenu(kundeId, projectType) {
+  try {
+    showNotification('Oppretter prosjekt i Tripletex...', 'info');
+
+    const featureConfig = getFeatureConfig('tripletex_projects');
+    const categories = featureConfig?.project_categories || [];
+    const matchedCategory = categories.find(c => c.key === projectType);
+
+    const response = await apiFetch('/api/integrations/tripletex/create-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kunde_id: kundeId,
+        category_id: matchedCategory?.tripletex_category_id || null,
+        description: matchedCategory?.label || projectType,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      showNotification(`Prosjekt ${data.data.projectNumber} opprettet i Tripletex`, 'success');
+
+      // Update the local customer data with the new project number
+      const customer = customers.find(c => c.id === kundeId);
+      if (customer) {
+        const existing = customer.prosjektnummer ? customer.prosjektnummer.split(', ') : [];
+        existing.push(data.data.projectNumber);
+        customer.prosjektnummer = existing.join(', ');
+      }
+    } else {
+      showNotification(data.error || 'Kunne ikke opprette prosjekt', 'error');
+    }
+  } catch (error) {
+    console.error('Tripletex project creation failed:', error);
+    showNotification('Feil ved opprettelse av prosjekt i Tripletex', 'error');
+  }
+}
+
+// Push (create or update) a customer to Tripletex
+async function pushCustomerToTripletex(kundeId) {
+  try {
+    const customer = customers.find(c => c.id === kundeId);
+    const isUpdate = customer?.external_source === 'tripletex' && customer?.external_id;
+    showNotification(isUpdate ? 'Oppdaterer kunde i Tripletex...' : 'Oppretter kunde i Tripletex...', 'info');
+
+    const response = await apiFetch('/api/integrations/tripletex/push-customer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kunde_id: kundeId }),
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      showNotification(data.message, 'success');
+
+      // Update local customer data with Tripletex link
+      if (customer && data.data.action === 'created') {
+        customer.external_source = 'tripletex';
+        customer.external_id = String(data.data.tripletexId);
+        if (data.data.customerNumber) {
+          customer.kundenummer = String(data.data.customerNumber);
+        }
+      }
+    } else {
+      showNotification(data.error || 'Kunne ikke sende kunde til Tripletex', 'error');
+    }
+  } catch (error) {
+    console.error('Tripletex customer push failed:', error);
+    showNotification('Feil ved sending av kunde til Tripletex', 'error');
+  }
+}
+
+// ========================================
+// HOVER TOOLTIP (Feature: hover_tooltip)
+// Lightweight info on marker hover
+// ========================================
+
+let activeTooltipEl = null;
+
+function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
+  hideMarkerTooltip();
+
+  const controlStatus = getControlStatus(customer);
+
+  // Get service type summary
+  let serviceInfo = 'Ikke spesifisert';
+  if (customer.services && customer.services.length > 0) {
+    serviceInfo = customer.services.map(s => s.service_type_name).filter(Boolean).join(', ');
+  } else if (customer.kategori) {
+    serviceInfo = customer.kategori;
+  }
+
+  const tooltip = document.createElement('div');
+  tooltip.className = 'marker-hover-tooltip';
+  tooltip.innerHTML = `
+    <div class="tooltip-header">${escapeHtml(customer.navn)}</div>
+    <div class="tooltip-body">
+      <div class="tooltip-row"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.adresse || '')}</div>
+      ${customer.telefon ? `<div class="tooltip-row"><i class="fas fa-phone"></i> ${escapeHtml(customer.telefon)}</div>` : ''}
+      <div class="tooltip-service"><i class="fas fa-tools"></i> ${escapeHtml(serviceInfo)}</div>
+      <div class="tooltip-status ${controlStatus.class}">${escapeHtml(controlStatus.label)}</div>
+    </div>
+  `;
+
+  document.body.appendChild(tooltip);
+
+  // Position: use mouse coordinates if available, fall back to marker icon position
+  const tooltipRect = tooltip.getBoundingClientRect();
+  let left, top;
+
+  if (mouseEvent) {
+    left = mouseEvent.clientX + 12;
+    top = mouseEvent.clientY - 10;
+  } else if (markerIconEl) {
+    const rect = markerIconEl.getBoundingClientRect();
+    left = rect.left + rect.width / 2 + 12;
+    top = rect.top - 4;
+  } else {
+    left = 100;
+    top = 100;
+  }
+
+  // Keep within viewport
+  if (left + tooltipRect.width > window.innerWidth) {
+    left = (mouseEvent ? mouseEvent.clientX : left) - tooltipRect.width - 12;
+  }
+  if (top + tooltipRect.height > window.innerHeight) {
+    top = window.innerHeight - tooltipRect.height - 8;
+  }
+  if (left < 4) left = 4;
+  if (top < 4) top = 4;
+
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+
+  activeTooltipEl = tooltip;
+}
+
+function hideMarkerTooltip() {
+  if (activeTooltipEl) {
+    activeTooltipEl.remove();
+    activeTooltipEl = null;
+  }
+}
+
+// ========================================
 
 // Render markers on map
 let renderMarkersRetryCount = 0;
@@ -10768,20 +11422,29 @@ function renderMarkers(customerData) {
       // Create marker with simplified label (performance optimization)
       const shortName = customer.navn.length > 20 ? customer.navn.substring(0, 18) + '...' : customer.navn;
 
-      // Show warning icon for overdue or soon (within 30 days)
-      const showWarning = controlStatus.status === 'forfalt' || controlStatus.status === 'snart';
+      // Show warning icon for urgent statuses
+      const showWarning = controlStatus.status === 'forfalt' || controlStatus.status === 'denne-uke' || controlStatus.status === 'snart';
       const warningBadge = showWarning ? '<span class="marker-warning-badge">!</span>' : '';
 
       // Determine category icon dynamically from ServiceTypeRegistry
-      const defaultSt = serviceTypeRegistry.getDefaultServiceType();
-      const kategori = customer.kategori || defaultSt.name;
-      const categoryIcon = serviceTypeRegistry.getIconForCategory(kategori);
-      const categoryClass = serviceTypeRegistry.getCategoryClass(kategori);
+      let categoryIcon, categoryClass;
+      const serviceTypes = serviceTypeRegistry.getAll();
+      if (customer.kategori && serviceTypes.length > 0) {
+        categoryIcon = serviceTypeRegistry.getIconForCategory(customer.kategori);
+        categoryClass = serviceTypeRegistry.getCategoryClass(customer.kategori);
+      } else if (serviceTypes.length > 0) {
+        const defaultSt = serviceTypeRegistry.getDefaultServiceType();
+        categoryIcon = serviceTypeRegistry.getIconForCategory(defaultSt.name);
+        categoryClass = serviceTypeRegistry.getCategoryClass(defaultSt.name);
+      } else {
+        categoryIcon = `<span class="marker-svg-icon">${svgIcons['service']}</span>`;
+        categoryClass = 'service';
+      }
 
       const icon = L.divIcon({
         className: `custom-marker-with-label ${isSelected ? 'selected' : ''} ${controlStatus.class}`,
         html: `
-          <div class="marker-icon ${categoryClass}" data-status="${controlStatus.status}">
+          <div class="marker-icon ${categoryClass} ${controlStatus.class}" data-status="${controlStatus.status}">
             ${categoryIcon}
             ${warningBadge}
           </div>
@@ -10789,8 +11452,8 @@ function renderMarkers(customerData) {
             <span class="marker-name">${escapeHtml(shortName)}</span>
           </div>
         `,
-        iconSize: [180, 40],
-        iconAnchor: [20, 30]
+        iconSize: [42, 42],
+        iconAnchor: [21, 35]
       });
 
       // Lazy popup - generate content only when opened (performance optimization)
@@ -10805,6 +11468,111 @@ function renderMarkers(customerData) {
 
       marker.on('click', () => {
         marker.openPopup();
+      });
+
+      // Context menu (right-click on PC, long-press on mobile)
+      // Leaflet contextmenu event on marker
+      marker.on('contextmenu', (e) => {
+        L.DomEvent.stopPropagation(e);
+        L.DomEvent.preventDefault(e);
+        showMarkerContextMenu(customer, e.originalEvent.clientX, e.originalEvent.clientY);
+      });
+
+      // Also attach native contextmenu to DOM element for reliability
+      // Leaflet's divIcon can miss events depending on click target within the icon
+      marker.on('add', () => {
+        const el = marker.getElement();
+        if (el) {
+          el.addEventListener('contextmenu', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            showMarkerContextMenu(customer, ev.clientX, ev.clientY);
+          });
+        }
+      });
+
+      // Long-press for mobile (500ms threshold)
+      let longPressTimer = null;
+      marker.on('touchstart', (e) => {
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          const touch = e.originalEvent.touches[0];
+          if (touch) {
+            showMarkerContextMenu(customer, touch.clientX, touch.clientY);
+          }
+        }, 500);
+      });
+      marker.on('touchend touchmove', () => {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      });
+
+      // Hover tooltip (PC only - mouseover)
+      if (hasFeature('hover_tooltip')) {
+        marker.on('mouseover', (e) => {
+          if (window.innerWidth > 768 && !marker.isPopupOpen()) {
+            showMarkerTooltip(customer, e.target._icon, e.originalEvent);
+          }
+        });
+        marker.on('mouseout', () => {
+          hideMarkerTooltip();
+        });
+        marker.on('popupopen', () => {
+          hideMarkerTooltip();
+        });
+      }
+
+      // Drag-to-category: custom drag with mousedown/mousemove/mouseup
+      marker.on('add', () => {
+        const el = marker.getElement();
+        if (el && !el.dataset.dragInit) {
+          el.dataset.dragInit = 'true';
+          el.dataset.customerId = String(customer.id);
+          let dragTimeout = null;
+
+          el.addEventListener('mousedown', (ev) => {
+            if (ev.button !== 0) return; // Only left click
+            const startX = ev.clientX;
+            const startY = ev.clientY;
+            let isDragging = false;
+
+            // Start drag after holding 300ms (avoids conflict with click)
+            dragTimeout = setTimeout(() => {
+              isDragging = true;
+              map.dragging.disable();
+              startMarkerDrag(customer.id, startX, startY);
+            }, 300);
+
+            const onMouseMove = (moveEv) => {
+              // Cancel if mouse moved significantly before timeout (user is panning)
+              if (!isDragging) {
+                const dist = Math.abs(moveEv.clientX - startX) + Math.abs(moveEv.clientY - startY);
+                if (dist > 10) {
+                  clearTimeout(dragTimeout);
+                  document.removeEventListener('mousemove', onMouseMove);
+                  document.removeEventListener('mouseup', onMouseUp);
+                }
+                return;
+              }
+              updateMarkerDrag(moveEv.clientX, moveEv.clientY);
+            };
+
+            const onMouseUp = () => {
+              clearTimeout(dragTimeout);
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
+              if (isDragging) {
+                endMarkerDrag(customer.id);
+                map.dragging.enable();
+              }
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+          });
+        }
       });
 
       // Collect marker for staggered animation
@@ -10929,8 +11697,8 @@ function updateBulkSelectionUI() {
         <button class="btn btn-secondary btn-sm" onclick="clearBulkSelection()">
           <i class="fas fa-times"></i> Avbryt
         </button>
-        <button class="btn btn-success btn-sm" onclick="openBulkCompleteModal()">
-          <i class="fas fa-check"></i> Marker som ferdig
+        <button class="btn btn-success btn-sm" onclick="executeAvhuking()">
+          <i class="fas fa-check"></i> Marker som besøkt
         </button>
       </div>
     </div>
@@ -10959,6 +11727,9 @@ function renderAvhukingTab() {
   const badge = document.getElementById('avhukingBadge');
   const clearBtn = document.getElementById('clearAvhukingBtn');
   const completeBtn = document.getElementById('completeAvhukingBtn');
+  const optionsPanel = document.getElementById('avhukingOptions');
+  const actionsPanel = document.getElementById('avhukingActions');
+  const dateInput = document.getElementById('avhukingDate');
 
   if (!container) return;
 
@@ -10975,6 +11746,32 @@ function renderAvhukingTab() {
     badge.style.display = count > 0 ? 'inline-flex' : 'none';
   }
 
+  // Show/hide options and actions panels
+  if (optionsPanel) optionsPanel.style.display = count > 0 ? 'block' : 'none';
+  if (actionsPanel) actionsPanel.style.display = count > 0 ? 'flex' : 'none';
+
+  // Set default date to today if not already set
+  if (dateInput && !dateInput.value) {
+    dateInput.value = new Date().toISOString().split('T')[0];
+  }
+
+  // Render dynamic kontroll type checkboxes from serviceTypeRegistry
+  const kontrollContainer = document.getElementById('avhukingKontrollTypes');
+  if (kontrollContainer && !kontrollContainer.dataset.initialized) {
+    const serviceTypes = serviceTypeRegistry.getAll();
+    if (serviceTypes.length > 0) {
+      kontrollContainer.innerHTML = serviceTypes.map(st => `
+        <label class="avhuking-checkbox-label">
+          <input type="checkbox" class="avhuking-kontroll-cb" data-slug="${escapeHtml(st.slug)}" checked>
+          <span><i class="fas ${escapeHtml(st.icon || 'fa-wrench')}" style="color:${escapeHtml(st.color || '#F97316')}"></i> ${escapeHtml(st.name)}</span>
+        </label>
+      `).join('');
+    } else {
+      kontrollContainer.innerHTML = '<p class="avhuking-kontroll-hint">Ingen tjenestetyper konfigurert</p>';
+    }
+    kontrollContainer.dataset.initialized = 'true';
+  }
+
   // Enable/disable buttons
   if (clearBtn) clearBtn.disabled = count === 0;
   if (completeBtn) completeBtn.disabled = count === 0;
@@ -10985,7 +11782,7 @@ function renderAvhukingTab() {
       <div class="avhuking-empty">
         <i class="fas fa-clipboard-list"></i>
         <p>Ingen kunder valgt</p>
-        <span>Klikk på en kunde i kartet og velg "Marker ferdig"</span>
+        <span>Klikk "Legg til avhuking" på en kunde i kartet</span>
       </div>
     `;
     return;
@@ -10997,16 +11794,11 @@ function renderAvhukingTab() {
     .filter(c => c);
 
   container.innerHTML = selectedCustomers.map(c => {
-    const kategoriClass = c.kategori === 'El-Kontroll' ? 'el' :
-                          c.kategori === 'Brannvarsling' ? 'brann' :
-                          c.kategori === 'El-Kontroll + Brannvarsling' ? 'begge' : '';
-
     return `
       <div class="avhuking-item" data-id="${c.id}">
         <div class="avhuking-item-info">
           <span class="avhuking-item-name">${escapeHtml(c.navn)}</span>
-          <span class="avhuking-item-address">${escapeHtml(c.adresse || '')}, ${escapeHtml(c.poststed || '')}</span>
-          <span class="avhuking-item-kategori ${kategoriClass}">${escapeHtml(c.kategori || 'Ukjent')}</span>
+          <span class="avhuking-item-address">${escapeHtml(c.adresse || '')}${c.poststed ? `, ${escapeHtml(c.poststed)}` : ''}</span>
         </div>
         <div class="avhuking-item-actions">
           <button class="btn btn-small btn-secondary" data-action="focusAvhukingCustomer" data-customer-id="${c.id}" title="Vis på kart">
@@ -11020,6 +11812,7 @@ function renderAvhukingTab() {
     `;
   }).join('');
 }
+
 
 // Remove customer from avhuking list
 function removeFromAvhuking(customerId) {
@@ -11052,8 +11845,8 @@ function toggleBulkSelectFromMap(customerId) {
   if (popup) {
     const bulkBtn = popup.querySelector('[data-action="toggleBulkSelect"]');
     if (bulkBtn) {
-      bulkBtn.className = `btn btn-small ${isNowSelected ? 'btn-success' : 'btn-complete'}`;
-      bulkBtn.innerHTML = `<i class="fas ${isNowSelected ? 'fa-check-circle' : 'fa-check'}"></i> ${isNowSelected ? 'Valgt' : 'Marker ferdig'}`;
+      bulkBtn.className = `btn btn-small ${isNowSelected ? 'btn-warning' : 'btn-complete'}`;
+      bulkBtn.innerHTML = `<i class="fas ${isNowSelected ? 'fa-check-circle' : 'fa-list'}"></i> ${isNowSelected ? 'I avhuking' : 'Legg til avhuking'}`;
     }
   }
 
@@ -11089,176 +11882,88 @@ function toggleSelectAllVisible() {
   renderCustomerAdmin();
 }
 
-// Open modal to complete controls for selected customers
-function openBulkCompleteModal() {
+// Execute avhuking - mark selected customers as visited using inline controls
+async function executeAvhuking() {
   if (bulkSelectedCustomers.size === 0) {
     showNotification('Velg minst én kunde først');
     return;
   }
 
-  // Get selected customer names for display
-  const selectedNames = Array.from(bulkSelectedCustomers)
-    .map(id => customers.find(c => c.id === id))
-    .filter(c => c)
-    .map(c => c.navn);
-
-  // Determine what control types are available
-  const selectedCustomerData = Array.from(bulkSelectedCustomers)
-    .map(id => customers.find(c => c.id === id))
-    .filter(c => c);
-
-  const hasEl = selectedCustomerData.some(c =>
-    c.kategori === 'El-Kontroll' || c.kategori === 'El-Kontroll + Brannvarsling'
-  );
-  const hasBrann = selectedCustomerData.some(c =>
-    c.kategori === 'Brannvarsling' || c.kategori === 'El-Kontroll + Brannvarsling'
-  );
-
-  const modal = document.createElement('div');
-  modal.className = 'modal-overlay';
-  modal.id = 'bulkCompleteModal';
-  modal.innerHTML = `
-    <div class="modal bulk-complete-modal">
-      <div class="modal-header">
-        <h3><i class="fas fa-check-circle"></i> Marker som ferdig</h3>
-        <button class="modal-close" id="bulkCloseBtn">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p class="bulk-info">
-          <strong>${bulkSelectedCustomers.size}</strong> kunde${bulkSelectedCustomers.size > 1 ? 'r' : ''} valgt:
-        </p>
-        <div class="bulk-customer-list">
-          ${selectedNames.slice(0, 10).map(n => `<span class="bulk-customer-tag">${escapeHtml(n)}</span>`).join('')}
-          ${selectedNames.length > 10 ? `<span class="bulk-customer-more">+${selectedNames.length - 10} flere...</span>` : ''}
-        </div>
-
-        <div class="form-group">
-          <label>Hvilken kontroll er utført?</label>
-          <div class="control-type-options">
-            <label class="control-option ${!hasEl ? 'disabled' : ''}">
-              <input type="checkbox" id="bulkCompleteEl" ${hasEl ? 'checked' : 'disabled'}>
-              <span class="control-option-label">
-                <i class="fas fa-bolt"></i> El-kontroll
-              </span>
-            </label>
-            <label class="control-option ${!hasBrann ? 'disabled' : ''}">
-              <input type="checkbox" id="bulkCompleteBrann" ${hasBrann ? 'checked' : 'disabled'}>
-              <span class="control-option-label">
-                <i class="fas fa-fire"></i> Brannvarsling
-              </span>
-            </label>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label for="bulkCompleteDate">Kontrolldato</label>
-          <input type="date" id="bulkCompleteDate" value="${new Date().toISOString().split('T')[0]}">
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="bulkCancelBtn">Avbryt</button>
-        <button class="btn btn-success" id="bulkConfirmBtn">
-          <i class="fas fa-check"></i> Bekreft fullført
-        </button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(modal);
-
-  // Add event listeners after modal is in DOM
-  const closeBtn = document.getElementById('bulkCloseBtn');
-  const cancelBtn = document.getElementById('bulkCancelBtn');
-  const confirmBtn = document.getElementById('bulkConfirmBtn');
-
-  if (closeBtn) closeBtn.addEventListener('click', closeBulkCompleteModal);
-  if (cancelBtn) cancelBtn.addEventListener('click', closeBulkCompleteModal);
-  if (confirmBtn) confirmBtn.addEventListener('click', executeBulkComplete);
-
-  // Close modal when clicking outside (on backdrop)
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      closeBulkCompleteModal();
-    }
-  });
-
-  setTimeout(() => modal.classList.add('visible'), 10);
-}
-
-// Close the bulk complete modal
-function closeBulkCompleteModal() {
-  const modal = document.getElementById('bulkCompleteModal');
-  if (modal) {
-    modal.classList.remove('visible');
-    setTimeout(() => modal.remove(), 300);
-  }
-}
-
-// Execute bulk complete - update all selected customers
-async function executeBulkComplete() {
-  const elCheckbox = document.getElementById('bulkCompleteEl');
-  const brannCheckbox = document.getElementById('bulkCompleteBrann');
-  const dateInput = document.getElementById('bulkCompleteDate');
-
-  const elChecked = elCheckbox ? elCheckbox.checked : false;
-  const brannChecked = brannCheckbox ? brannCheckbox.checked : false;
-  const dateValue = dateInput ? dateInput.value : null;
-
-  Logger.log('executeBulkComplete called:', { elChecked, brannChecked, dateValue, size: bulkSelectedCustomers.size });
-
-  if (!elChecked && !brannChecked) {
-    showNotification('Velg minst én kontrolltype');
-    return;
-  }
+  const dateInput = document.getElementById('avhukingDate');
+  const dateValue = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
 
   if (!dateValue) {
     showNotification('Velg en dato');
     return;
   }
 
+  // Read dynamic kontroll checkboxes
+  const kontrollCheckboxes = document.querySelectorAll('.avhuking-kontroll-cb:checked');
+  const selectedSlugs = Array.from(kontrollCheckboxes).map(cb => cb.dataset.slug);
+
   const customerIds = Array.from(bulkSelectedCustomers);
-  Logger.log('Sending bulk-complete for:', customerIds);
 
   try {
-    const response = await apiFetch('/api/kunder/bulk-complete', {
+    const response = await apiFetch('/api/kunder/mark-visited', {
       method: 'POST',
       body: JSON.stringify({
-        customerIds,
-        completeEl: elChecked,
-        completeBrann: brannChecked,
-        completedDate: dateValue
+        kunde_ids: customerIds,
+        visited_date: dateValue,
+        service_type_slugs: selectedSlugs
       })
     });
 
-    Logger.log('Response status:', response.status, response.ok);
     const result = await response.json();
-    Logger.log('Response data:', result);
 
     if (response.ok && result.success) {
-      showNotification(`${result.updated} kunde${result.updated > 1 ? 'r' : ''} oppdatert`);
+      const msg = selectedSlugs.length > 0
+        ? `${result.data.updated} kunder markert som besøkt (kontrolldatoer oppdatert)`
+        : `${result.data.updated} kunder markert som besøkt`;
+      showNotification(msg);
 
-      // Close modal and clear selection
-      closeBulkCompleteModal();
       clearBulkSelection();
-
-      // Reload customers to get updated data (this also calls renderMarkers and renderCustomerAdmin)
       await loadCustomers();
       renderAvhukingTab();
     } else {
-      showNotification(result.error || result.message || 'Kunne ikke oppdatere kunder', 'error');
+      const errMsg = typeof result.error === 'string' ? result.error : (result.message || 'Kunne ikke oppdatere kunder');
+      showNotification(errMsg, 'error');
     }
   } catch (error) {
-    console.error('Feil ved bulk-oppdatering:', error);
+    console.error('Feil ved avhuking:', error);
     showNotification('Feil ved oppdatering: ' + error.message, 'error');
+  }
+}
+
+// Quick mark a single customer as visited from map popup
+async function quickMarkVisited(customerId) {
+  try {
+    const response = await apiFetch('/api/kunder/mark-visited', {
+      method: 'POST',
+      body: JSON.stringify({
+        kunde_ids: [customerId],
+        visited_date: new Date().toISOString().split('T')[0]
+      })
+    });
+
+    const result = await response.json();
+    if (response.ok && result.success) {
+      const customer = customers.find(c => c.id === customerId);
+      showNotification(`${customer?.navn || 'Kunde'} markert som besøkt`);
+      await loadCustomers();
+    } else {
+      showNotification(typeof result.error === 'string' ? result.error : 'Kunne ikke markere som besøkt', 'error');
+    }
+  } catch (error) {
+    console.error('Feil ved rask avhuking:', error);
+    showNotification('Feil ved oppdatering', 'error');
   }
 }
 
 // Make functions globally available
 window.clearBulkSelection = clearBulkSelection;
 window.toggleSelectAllVisible = toggleSelectAllVisible;
-window.openBulkCompleteModal = openBulkCompleteModal;
-window.closeBulkCompleteModal = closeBulkCompleteModal;
-window.executeBulkComplete = executeBulkComplete;
+window.executeAvhuking = executeAvhuking;
+window.quickMarkVisited = quickMarkVisited;
 
 // Search/filter customers
 function filterCustomers() {
@@ -12182,7 +12887,8 @@ function renderSavedRoutes() {
         ${route.planlagt_dato ? `<p class="route-date">Planlagt: ${formatDate(route.planlagt_dato)}</p>` : ''}
         <div class="route-item-actions">
           <button class="btn btn-small btn-primary" data-action="loadSavedRoute" data-route-id="${route.id}">Last inn</button>
-          ${route.status !== 'fullført' ? `<button class="btn btn-small btn-success" data-action="completeRoute" data-route-id="${route.id}">Fullfør</button>` : ''}
+          ${route.status !== 'fullført' ? `<button class="btn btn-small btn-field-work" data-action="startFieldWork" data-route-id="${route.id}"><i class="fas fa-route"></i> Kjør rute</button>` : ''}
+          ${route.status !== 'fullført' ? `<button class="btn btn-small btn-success" data-action="markRouteVisited" data-route-id="${route.id}"><i class="fas fa-check"></i> Marker besøkt</button>` : ''}
           <button class="btn btn-small btn-danger" data-action="deleteRoute" data-route-id="${route.id}">Slett</button>
         </div>
       </div>
@@ -12243,6 +12949,62 @@ async function completeRoute(routeId) {
   }
 }
 
+// Mark all customers in a route as visited (new flow)
+async function markRouteVisited(routeId) {
+  try {
+    const response = await apiFetch(`/api/ruter/${routeId}`);
+    if (!response.ok) throw new Error('Kunne ikke laste ruten');
+    const routeData = await response.json();
+
+    const kunder = routeData.data?.kunder || [];
+    if (kunder.length === 0) {
+      showNotification('Ruten har ingen kunder', 'error');
+      return;
+    }
+
+    const kundeIds = kunder.map(k => k.id);
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get all active service type slugs for kontroll update
+    const allServiceTypes = serviceTypeRegistry.getAll();
+    const allSlugs = allServiceTypes.map(st => st.slug);
+
+    const msg = allSlugs.length > 0
+      ? `Marker ${kunder.length} kunder som besøkt og oppdater kontrolldatoer?`
+      : `Marker ${kunder.length} kunder som besøkt?`;
+
+    const confirmed = await showConfirm(msg, 'Marker besøkt');
+    if (!confirmed) return;
+
+    const markResponse = await apiFetch('/api/kunder/mark-visited', {
+      method: 'POST',
+      body: JSON.stringify({
+        kunde_ids: kundeIds,
+        visited_date: today,
+        service_type_slugs: allSlugs
+      })
+    });
+
+    const result = await markResponse.json();
+    if (markResponse.ok && result.success) {
+      // Also mark route status as completed
+      await apiFetch(`/api/ruter/${routeId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify({ dato: today, kontrollType: 'both' })
+      });
+
+      await loadRoutes();
+      await loadCustomers();
+      showNotification(`${result.data.updated} kunder markert som besøkt`);
+    } else {
+      showNotification(typeof result.error === 'string' ? result.error : 'Kunne ikke markere ruten', 'error');
+    }
+  } catch (error) {
+    console.error('Feil ved rute-avhuking:', error);
+    showNotification('Kunne ikke markere ruten. Prøv igjen.', 'error');
+  }
+}
+
 // Delete a saved route
 async function deleteRoute(routeId) {
   const confirmed = await showConfirm(
@@ -12258,6 +13020,472 @@ async function deleteRoute(routeId) {
     console.error('Feil ved sletting av rute:', error);
     showMessage('Kunne ikke slette ruten. Prøv igjen.', 'error');
   }
+}
+
+// ========================================
+// FIELD WORK MODE (Feature: field_work)
+// Full-screen route execution UI
+// ========================================
+
+let fieldWorkState = null; // { ruteId, kunder, currentIndex, visits, startedAt }
+
+async function startFieldWork(routeId) {
+  try {
+    // Load the route with customers
+    const response = await apiFetch(`/api/ruter/${routeId}`);
+    if (!response.ok) throw new Error('Kunne ikke laste ruten');
+    const routeData = await response.json();
+
+    if (!routeData.data?.kunder || routeData.data.kunder.length === 0) {
+      showNotification('Ruten har ingen kunder', 'error');
+      return;
+    }
+
+    // Start execution on backend
+    await apiFetch(`/api/ruter/${routeId}/start-execution`, { method: 'POST' });
+
+    // Initialize field work state
+    fieldWorkState = {
+      ruteId: routeId,
+      routeName: routeData.data.navn,
+      kunder: routeData.data.kunder.sort((a, b) => (a.rekkefolge || 0) - (b.rekkefolge || 0)),
+      currentIndex: 0,
+      visits: {},
+      startedAt: new Date(),
+    };
+
+    renderFieldWorkUI();
+  } catch (error) {
+    console.error('Failed to start field work:', error);
+    showNotification('Kunne ikke starte feltarbeid', 'error');
+  }
+}
+
+function renderFieldWorkUI() {
+  if (!fieldWorkState) return;
+
+  const { kunder, currentIndex, routeName, visits } = fieldWorkState;
+  const current = kunder[currentIndex];
+  const completedCount = Object.values(visits).filter(v => v.completed).length;
+  const progress = Math.round((completedCount / kunder.length) * 100);
+
+  // Create or get the field work overlay
+  let overlay = document.getElementById('fieldWorkOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'fieldWorkOverlay';
+    overlay.className = 'field-work-overlay';
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `
+    <div class="fw-header">
+      <div class="fw-header-left">
+        <button class="fw-close-btn" onclick="endFieldWork()"><i class="fas fa-times"></i></button>
+        <span class="fw-title">${escapeHtml(routeName)}</span>
+      </div>
+      <div class="fw-progress">
+        <span>${completedCount}/${kunder.length}</span>
+        <div class="fw-progress-bar"><div class="fw-progress-fill" style="width:${progress}%"></div></div>
+      </div>
+    </div>
+
+    <div class="fw-body">
+      <div class="fw-customer-nav">
+        <button class="fw-nav-btn" onclick="fieldWorkNav(-1)" ${currentIndex === 0 ? 'disabled' : ''}>
+          <i class="fas fa-chevron-left"></i>
+        </button>
+        <div class="fw-customer-info">
+          <div class="fw-stop-number">Stopp ${currentIndex + 1} av ${kunder.length}</div>
+          <h2 class="fw-customer-name">${escapeHtml(current.navn)}</h2>
+          <div class="fw-customer-address">
+            <i class="fas fa-map-marker-alt"></i> ${escapeHtml(current.adresse || '')}${current.poststed ? `, ${escapeHtml(current.poststed)}` : ''}
+          </div>
+          ${current.telefon ? `<a class="fw-phone-link" href="tel:${escapeHtml(current.telefon)}"><i class="fas fa-phone"></i> ${escapeHtml(current.telefon)}</a>` : ''}
+        </div>
+        <button class="fw-nav-btn" onclick="fieldWorkNav(1)" ${currentIndex === kunder.length - 1 ? 'disabled' : ''}>
+          <i class="fas fa-chevron-right"></i>
+        </button>
+      </div>
+
+      <div class="fw-visit-form">
+        <div class="fw-actions fw-actions-primary">
+          <button class="fw-btn fw-btn-complete ${visits[current.id]?.completed ? 'fw-btn-completed' : ''}" onclick="completeFieldWorkVisit()">
+            <i class="fas ${visits[current.id]?.completed ? 'fa-check-circle' : 'fa-check'}"></i>
+            ${visits[current.id]?.completed ? 'Fullført' : 'Marker fullført'}
+          </button>
+        </div>
+        <div class="fw-actions fw-actions-secondary">
+          <button class="fw-btn fw-btn-navigate" onclick="navigateToFieldWorkCustomer()">
+            <i class="fas fa-directions"></i> Naviger
+          </button>
+        </div>
+        <div class="fw-form-group">
+          <label>Kommentar</label>
+          <textarea id="fwComment" class="fw-textarea" rows="2" placeholder="Valgfritt notat...">${escapeHtml(visits[current.id]?.comment || '')}</textarea>
+        </div>
+        ${appConfig.appMode === 'full' ? `
+        <div class="fw-form-group">
+          <label>Materialer brukt</label>
+          <input id="fwMaterials" class="fw-input" type="text" placeholder="Kommaseparert liste..." value="${escapeHtml((visits[current.id]?.materials_used || []).join(', '))}">
+        </div>
+        <div class="fw-form-group">
+          <label>Utstyr registrert</label>
+          <input id="fwEquipment" class="fw-input" type="text" placeholder="Kommaseparert liste..." value="${escapeHtml((visits[current.id]?.equipment_registered || []).join(', '))}">
+        </div>
+        ` : ''}
+      </div>
+    </div>
+
+    <div class="fw-stop-dots">
+      ${kunder.map((k, i) => `<div class="fw-dot ${i === currentIndex ? 'fw-dot-active' : ''} ${visits[k.id]?.completed ? 'fw-dot-completed' : ''}" onclick="fieldWorkGoTo(${i})"></div>`).join('')}
+    </div>
+  `;
+
+  overlay.classList.add('active');
+}
+
+function fieldWorkNav(delta) {
+  if (!fieldWorkState) return;
+  saveFieldWorkFormData();
+  const newIndex = fieldWorkState.currentIndex + delta;
+  if (newIndex >= 0 && newIndex < fieldWorkState.kunder.length) {
+    fieldWorkState.currentIndex = newIndex;
+    renderFieldWorkUI();
+  }
+}
+
+function fieldWorkGoTo(index) {
+  if (!fieldWorkState) return;
+  saveFieldWorkFormData();
+  fieldWorkState.currentIndex = index;
+  renderFieldWorkUI();
+}
+
+function saveFieldWorkFormData() {
+  if (!fieldWorkState) return;
+  const current = fieldWorkState.kunder[fieldWorkState.currentIndex];
+  const comment = document.getElementById('fwComment')?.value || '';
+  const materialsEl = document.getElementById('fwMaterials');
+  const equipmentEl = document.getElementById('fwEquipment');
+
+  if (!fieldWorkState.visits[current.id]) {
+    fieldWorkState.visits[current.id] = { completed: false };
+  }
+  fieldWorkState.visits[current.id].comment = comment;
+  if (materialsEl) {
+    fieldWorkState.visits[current.id].materials_used = materialsEl.value ? materialsEl.value.split(',').map(s => s.trim()).filter(Boolean) : [];
+  }
+  if (equipmentEl) {
+    fieldWorkState.visits[current.id].equipment_registered = equipmentEl.value ? equipmentEl.value.split(',').map(s => s.trim()).filter(Boolean) : [];
+  }
+}
+
+async function completeFieldWorkVisit() {
+  if (!fieldWorkState) return;
+  saveFieldWorkFormData();
+
+  const current = fieldWorkState.kunder[fieldWorkState.currentIndex];
+  const visitData = fieldWorkState.visits[current.id] || {};
+  const wasCompleted = visitData.completed;
+
+  // Toggle completion
+  visitData.completed = !wasCompleted;
+  fieldWorkState.visits[current.id] = visitData;
+
+  try {
+    await apiFetch(`/api/ruter/${fieldWorkState.ruteId}/visit-customer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kunde_id: current.id,
+        completed: visitData.completed,
+        comment: visitData.comment,
+        materials_used: visitData.materials_used,
+        equipment_registered: visitData.equipment_registered,
+      }),
+    });
+
+    // Auto-advance to next unvisited if completing
+    if (visitData.completed && fieldWorkState.currentIndex < fieldWorkState.kunder.length - 1) {
+      const nextUnvisited = fieldWorkState.kunder.findIndex(
+        (k, i) => i > fieldWorkState.currentIndex && !fieldWorkState.visits[k.id]?.completed
+      );
+      if (nextUnvisited >= 0) {
+        fieldWorkState.currentIndex = nextUnvisited;
+      } else {
+        fieldWorkState.currentIndex = Math.min(fieldWorkState.currentIndex + 1, fieldWorkState.kunder.length - 1);
+      }
+    }
+
+    renderFieldWorkUI();
+  } catch (error) {
+    console.error('Failed to record visit:', error);
+    showNotification('Kunne ikke lagre besøk', 'error');
+  }
+}
+
+function navigateToFieldWorkCustomer() {
+  if (!fieldWorkState) return;
+  const current = fieldWorkState.kunder[fieldWorkState.currentIndex];
+  if (current.lat && current.lng) {
+    // Open in external maps app
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${current.lat},${current.lng}`;
+    window.open(mapsUrl, '_blank');
+  }
+}
+
+async function endFieldWork() {
+  if (!fieldWorkState) return;
+
+  saveFieldWorkFormData();
+  const completedCount = Object.values(fieldWorkState.visits).filter(v => v.completed).length;
+
+  const confirmed = await showConfirm(
+    `Avslutt feltarbeid? ${completedCount} av ${fieldWorkState.kunder.length} kunder besøkt.`,
+    'Avslutt feltarbeid'
+  );
+  if (!confirmed) return;
+
+  try {
+    await apiFetch(`/api/ruter/${fieldWorkState.ruteId}/end-execution`, { method: 'POST' });
+  } catch (error) {
+    console.error('Failed to end field work:', error);
+  }
+
+  // Remove overlay
+  const overlay = document.getElementById('fieldWorkOverlay');
+  if (overlay) {
+    overlay.classList.remove('active');
+    setTimeout(() => overlay.remove(), 300);
+  }
+
+  fieldWorkState = null;
+  showNotification(`Feltarbeid avsluttet. ${completedCount} kunder besøkt.`, 'success');
+  await loadRoutes();
+  await loadCustomers();
+}
+
+// ========================================
+// EMAIL DIALOG (Feature: email_templates)
+// ========================================
+
+let emailDialogState = {
+  kundeId: null,
+  templates: [],
+  selectedTemplateId: null,
+};
+
+async function openEmailDialog(kundeId) {
+  const customer = allCustomers.find(c => c.id === kundeId);
+  if (!customer) {
+    showNotification('Kunde ikke funnet', 'error');
+    return;
+  }
+
+  if (!customer.epost) {
+    showNotification('Kunden har ingen e-postadresse', 'error');
+    return;
+  }
+
+  emailDialogState.kundeId = kundeId;
+
+  // Fetch templates
+  try {
+    const res = await apiFetch('/api/customer-emails/templates');
+    emailDialogState.templates = res.data || [];
+  } catch {
+    showNotification('Kunne ikke hente e-postmaler', 'error');
+    return;
+  }
+
+  renderEmailDialog(customer);
+}
+
+function renderEmailDialog(customer) {
+  // Remove existing dialog
+  const existing = document.querySelector('.email-dialog-overlay');
+  if (existing) existing.remove();
+
+  const templates = emailDialogState.templates;
+  const firstTemplate = templates[0];
+  emailDialogState.selectedTemplateId = firstTemplate?.id || null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'email-dialog-overlay';
+  overlay.innerHTML = `
+    <div class="email-dialog">
+      <div class="email-dialog-header">
+        <h3><i class="fas fa-envelope"></i> Send e-post</h3>
+        <button class="email-dialog-close" onclick="closeEmailDialog()"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="email-dialog-body">
+        <div class="email-dialog-recipient">
+          <label>Til:</label>
+          <span>${escapeHtml(customer.navn)} &lt;${escapeHtml(customer.epost)}&gt;</span>
+        </div>
+
+        <div class="email-dialog-field">
+          <label for="emailTemplateSelect">Velg mal:</label>
+          <select id="emailTemplateSelect" class="email-dialog-select" onchange="onEmailTemplateChange()">
+            ${templates.map(t => `<option value="${t.id}">${escapeHtml(t.name)} (${escapeHtml(t.category)})</option>`).join('')}
+          </select>
+        </div>
+
+        <div id="emailCustomFields" class="email-dialog-custom-fields" style="display:none">
+          <div class="email-dialog-field">
+            <label for="emailCustomSubject">Emne:</label>
+            <input id="emailCustomSubject" type="text" class="email-dialog-input" placeholder="Skriv emne...">
+          </div>
+          <div class="email-dialog-field">
+            <label for="emailCustomMessage">Melding:</label>
+            <textarea id="emailCustomMessage" class="email-dialog-textarea" rows="4" placeholder="Skriv melding..."></textarea>
+          </div>
+        </div>
+
+        <div class="email-dialog-preview-section">
+          <button class="email-dialog-preview-btn" onclick="previewEmail()">
+            <i class="fas fa-eye"></i> Forhåndsvis
+          </button>
+          <div id="emailPreviewContainer" class="email-preview-container" style="display:none">
+            <div class="email-preview-subject" id="emailPreviewSubject"></div>
+            <iframe id="emailPreviewFrame" class="email-preview-frame"></iframe>
+          </div>
+        </div>
+      </div>
+      <div class="email-dialog-footer">
+        <button class="btn btn-secondary" onclick="closeEmailDialog()">Avbryt</button>
+        <button class="btn btn-primary email-send-btn" onclick="sendEmailFromDialog()">
+          <i class="fas fa-paper-plane"></i> Send e-post
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Close on backdrop click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeEmailDialog();
+  });
+
+  // Show custom fields for "generell" template
+  onEmailTemplateChange();
+}
+
+function onEmailTemplateChange() {
+  const select = document.getElementById('emailTemplateSelect');
+  if (!select) return;
+  emailDialogState.selectedTemplateId = Number(select.value);
+
+  const template = emailDialogState.templates.find(t => t.id === emailDialogState.selectedTemplateId);
+  const customFields = document.getElementById('emailCustomFields');
+  if (customFields) {
+    customFields.style.display = template?.category === 'generell' ? 'block' : 'none';
+  }
+
+  // Hide preview when template changes
+  const previewContainer = document.getElementById('emailPreviewContainer');
+  if (previewContainer) previewContainer.style.display = 'none';
+}
+
+async function previewEmail() {
+  if (!emailDialogState.selectedTemplateId || !emailDialogState.kundeId) return;
+
+  const customVariables = {};
+  const template = emailDialogState.templates.find(t => t.id === emailDialogState.selectedTemplateId);
+  if (template?.category === 'generell') {
+    const subjectEl = document.getElementById('emailCustomSubject');
+    const messageEl = document.getElementById('emailCustomMessage');
+    if (subjectEl) customVariables.emne = subjectEl.value;
+    if (messageEl) customVariables.melding = messageEl.value;
+  }
+
+  try {
+    const res = await apiFetch('/api/customer-emails/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template_id: emailDialogState.selectedTemplateId,
+        kunde_id: emailDialogState.kundeId,
+        custom_variables: customVariables,
+      }),
+    });
+
+    const previewContainer = document.getElementById('emailPreviewContainer');
+    const subjectEl = document.getElementById('emailPreviewSubject');
+    const frameEl = document.getElementById('emailPreviewFrame');
+
+    if (previewContainer && subjectEl && frameEl) {
+      previewContainer.style.display = 'block';
+      subjectEl.textContent = `Emne: ${res.data.subject}`;
+      // Write HTML into iframe for safe rendering
+      const doc = frameEl.contentDocument || frameEl.contentWindow.document;
+      doc.open();
+      doc.write(res.data.html);
+      doc.close();
+    }
+  } catch {
+    showNotification('Kunne ikke generere forhåndsvisning', 'error');
+  }
+}
+
+async function sendEmailFromDialog() {
+  if (!emailDialogState.selectedTemplateId || !emailDialogState.kundeId) return;
+
+  const sendBtn = document.querySelector('.email-send-btn');
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+  }
+
+  const customVariables = {};
+  const template = emailDialogState.templates.find(t => t.id === emailDialogState.selectedTemplateId);
+  if (template?.category === 'generell') {
+    const subjectEl = document.getElementById('emailCustomSubject');
+    const messageEl = document.getElementById('emailCustomMessage');
+    if (subjectEl) customVariables.emne = subjectEl.value;
+    if (messageEl) customVariables.melding = messageEl.value;
+
+    if (!customVariables.emne || !customVariables.melding) {
+      showNotification('Fyll inn emne og melding', 'error');
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Send e-post';
+      }
+      return;
+    }
+  }
+
+  try {
+    await apiFetch('/api/customer-emails/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template_id: emailDialogState.selectedTemplateId,
+        kunde_id: emailDialogState.kundeId,
+        custom_variables: customVariables,
+      }),
+    });
+
+    showNotification('E-post sendt!', 'success');
+    closeEmailDialog();
+
+    // Refresh customers to update lifecycle colors
+    await loadCustomers();
+  } catch (err) {
+    showNotification(err.message || 'Kunne ikke sende e-post', 'error');
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Send e-post';
+    }
+  }
+}
+
+function closeEmailDialog() {
+  const overlay = document.querySelector('.email-dialog-overlay');
+  if (overlay) overlay.remove();
+  emailDialogState = { kundeId: null, templates: [], selectedTemplateId: null };
 }
 
 // Populate dynamic dropdowns from ServiceTypeRegistry
@@ -12406,9 +13634,21 @@ async function loadOrganizationFields() {
  */
 async function loadOrganizationCategories() {
   try {
-    const response = await apiFetch('/api/fields/categories');
+    const response = await apiFetch('/api/service-types');
     if (response.ok) {
-      organizationCategories = await response.json();
+      const result = await response.json();
+      organizationCategories = result.data || result;
+
+      // Sync serviceTypeRegistry so sidebar/filter UI stays up to date
+      if (appConfig) {
+        appConfig.serviceTypes = organizationCategories.map(cat => ({
+          id: cat.id, name: cat.name, slug: cat.slug,
+          icon: cat.icon, color: cat.color,
+          defaultInterval: cat.default_interval_months,
+        }));
+        serviceTypeRegistry.loadFromConfig(appConfig);
+      }
+
       Logger.log('Loaded organization categories:', organizationCategories.length);
     }
   } catch (error) {
@@ -12853,6 +14093,45 @@ async function confirmDeleteField(id) {
 /**
  * Render organization categories in admin panel
  */
+/**
+ * Open category list modal (from gear icon)
+ */
+function openCategoryListModal() {
+  renderCategoryListItems();
+  document.getElementById('categoryListModal').classList.remove('hidden');
+}
+
+/**
+ * Render category list inside the list modal
+ */
+function renderCategoryListItems() {
+  const container = document.getElementById('categoryListItems');
+  if (!container) return;
+
+  if (organizationCategories.length === 0) {
+    container.innerHTML = '<p style="text-align: center; color: var(--color-text-muted); padding: 16px 0;">Ingen kategorier enda.</p>';
+    return;
+  }
+
+  container.innerHTML = organizationCategories.map(cat => `
+    <div class="category-list-item">
+      <div class="category-list-info">
+        <i class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
+        <span>${escapeHtml(cat.name)}</span>
+        <span class="category-list-meta">${cat.default_interval_months || 12} mnd</span>
+      </div>
+      <div class="category-list-actions">
+        <button class="btn-icon" onclick="document.getElementById('categoryListModal').classList.add('hidden'); openCategoryModal(${cat.id});" title="Rediger">
+          <i class="fas fa-edit"></i>
+        </button>
+        <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
 function renderAdminCategories() {
   const listContainer = document.getElementById('categoriesList');
   const emptyContainer = document.getElementById('categoriesEmpty');
@@ -12899,16 +14178,55 @@ function renderAdminCategories() {
 /**
  * Open category modal for adding/editing
  */
+const CATEGORY_ICONS = [
+  'fa-wrench', 'fa-bolt', 'fa-fire', 'fa-fan',
+  'fa-faucet', 'fa-shield-alt', 'fa-thermometer-half', 'fa-building',
+  'fa-solar-panel', 'fa-tools', 'fa-hard-hat', 'fa-plug',
+  'fa-tractor', 'fa-home', 'fa-cog', 'fa-check-circle'
+];
+
+function renderCategoryIconPicker(selectedIcon) {
+  const container = document.getElementById('categoryIconPicker');
+  if (!container) return;
+
+  container.innerHTML = CATEGORY_ICONS.map(icon => `
+    <button type="button" class="icon-btn ${icon === selectedIcon ? 'selected' : ''}"
+            data-icon="${escapeHtml(icon)}" title="${escapeHtml(icon.replace('fa-', ''))}"
+            onclick="selectCategoryIcon(this, '${escapeHtml(icon)}')">
+      <i class="fas ${escapeHtml(icon)}"></i>
+    </button>
+  `).join('');
+}
+
+function selectCategoryIcon(btn, icon) {
+  document.querySelectorAll('#categoryIconPicker .icon-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('categoryIcon').value = icon;
+  console.log('[Category] Icon selected:', icon);
+}
+
+function updateCategoryColorPreview(color) {
+  const preview = document.getElementById('categoryColorPreview');
+  if (preview) preview.style.background = color;
+}
+
 function openCategoryModal(categoryId = null) {
   const modal = document.getElementById('categoryModal');
   const title = document.getElementById('categoryModalTitle');
   const deleteBtn = document.getElementById('deleteCategoryBtn');
+  const sourceGroup = document.getElementById('categorySourceGroup');
 
   // Reset form
   document.getElementById('categoryForm').reset();
   document.getElementById('categoryId').value = '';
-  document.getElementById('categoryColor').value = '#6B7280';
+  document.getElementById('categorySlug').value = '';
+  document.getElementById('categoryColor').value = '#F97316';
   document.getElementById('categoryInterval').value = '12';
+  document.getElementById('categoryIcon').value = 'fa-wrench';
+  document.getElementById('categoryDescription').value = '';
+  sourceGroup.style.display = 'none';
+  updateCategoryColorPreview('#F97316');
+  renderCategoryIconPicker('fa-wrench');
 
   if (categoryId) {
     const category = organizationCategories.find(c => c.id === categoryId);
@@ -12918,9 +14236,22 @@ function openCategoryModal(categoryId = null) {
     document.getElementById('categoryId').value = category.id;
     document.getElementById('categoryName').value = category.name;
     document.getElementById('categorySlug').value = category.slug;
-    document.getElementById('categoryIcon').value = category.icon || 'fa-tag';
-    document.getElementById('categoryColor').value = category.color || '#6B7280';
-    document.getElementById('categoryInterval').value = category.default_interval_months || 12;
+    document.getElementById('categoryIcon').value = category.icon || 'fa-wrench';
+    document.getElementById('categoryColor').value = category.color || '#F97316';
+    document.getElementById('categoryInterval').value = String(category.default_interval_months || 12);
+    document.getElementById('categoryDescription').value = category.description || '';
+
+    updateCategoryColorPreview(category.color || '#F97316');
+    renderCategoryIconPicker(category.icon || 'fa-wrench');
+
+    // Show source badge
+    if (category.source) {
+      sourceGroup.style.display = 'block';
+      const badge = document.getElementById('categorySourceBadge');
+      const sourceLabels = { template: 'Bransjemal', tripletex: 'Tripletex', manual: 'Manuell' };
+      badge.textContent = sourceLabels[category.source] || 'Manuell';
+      badge.className = 'source-badge ' + (category.source || 'manual');
+    }
 
     deleteBtn.style.display = 'inline-block';
   } else {
@@ -12938,16 +14269,42 @@ async function saveCategory(event) {
   event.preventDefault();
 
   const id = document.getElementById('categoryId').value;
+  const name = document.getElementById('categoryName').value.trim();
+  if (!name) return;
+
+  // Use existing slug when editing, auto-generate for new
+  let slug = document.getElementById('categorySlug').value;
+  if (!slug) {
+    slug = name.toLowerCase()
+      .replace(/[æ]/g, 'ae').replace(/[ø]/g, 'o').replace(/[å]/g, 'a')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  const description = document.getElementById('categoryDescription').value.trim();
+  const icon = document.getElementById('categoryIcon').value;
+  const color = document.getElementById('categoryColor').value;
   const data = {
-    name: document.getElementById('categoryName').value,
-    slug: document.getElementById('categorySlug').value,
-    icon: document.getElementById('categoryIcon').value,
-    color: document.getElementById('categoryColor').value,
-    default_interval_months: parseInt(document.getElementById('categoryInterval').value) || 12
+    name,
+    slug,
+    icon,
+    color,
+    default_interval_months: parseInt(document.getElementById('categoryInterval').value) || 12,
+    description: description || undefined
   };
 
+  // Remember old name so we can update local customers if renamed
+  let oldName = null;
+  if (id) {
+    const existing = organizationCategories.find(c => c.id === parseInt(id));
+    if (existing && existing.name !== name) {
+      oldName = existing.name;
+    }
+  }
+
+  console.log('[Category] Saving:', data, oldName ? `(renaming from "${oldName}")` : '');
+
   try {
-    const url = id ? `/api/fields/categories/${id}` : '/api/fields/categories';
+    const url = id ? `/api/service-types/${id}` : '/api/service-types';
     const method = id ? 'PUT' : 'POST';
 
     const response = await apiFetch(url, {
@@ -12958,12 +14315,25 @@ async function saveCategory(event) {
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.error || 'Kunne ikke lagre kategori');
+      throw new Error(error.error?.message || error.error || 'Kunne ikke lagre kategori');
+    }
+
+    // Update local customers if category was renamed (backend already updated DB)
+    if (oldName) {
+      customers.forEach(c => {
+        if (c.kategori === oldName) {
+          c.kategori = name;
+        }
+      });
     }
 
     // Reload categories and close modal
     await loadOrganizationCategories();
     renderAdminCategories();
+    renderFilterPanelCategories();
+    renderCategoryListItems();
+    renderMarkers(customers.filter(c => c.lat && c.lng));
+    updateCategoryFilterCounts();
     document.getElementById('categoryModal').classList.add('hidden');
 
     showToast('Kategori lagret', 'success');
@@ -12980,11 +14350,15 @@ async function confirmDeleteCategory(id) {
   if (!confirmed) return;
 
   try {
-    const response = await apiFetch(`/api/fields/categories/${id}`, { method: 'DELETE' });
+    const response = await apiFetch(`/api/service-types/${id}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('Kunne ikke slette kategori');
 
     await loadOrganizationCategories();
     renderAdminCategories();
+    renderFilterPanelCategories();
+    renderCategoryListItems();
+    renderMarkers(customers.filter(c => c.lat && c.lng));
+    updateCategoryFilterCounts();
     showToast('Kategori slettet', 'success');
   } catch (error) {
     showToast(error.message, 'error');
@@ -13069,7 +14443,7 @@ async function updateSortOrder(container, type) {
     for (const update of updates) {
       const endpoint = type === 'fields'
         ? `/api/fields/${update.id}`
-        : `/api/fields/categories/${update.id}`;
+        : `/api/service-types/${update.id}`;
 
       await apiFetch(endpoint, {
         method: 'PUT',
@@ -15373,6 +16747,12 @@ function setupEventListeners() {
       case 'completeRoute':
         completeRoute(Number.parseInt(actionEl.dataset.routeId));
         break;
+      case 'startFieldWork':
+        startFieldWork(Number.parseInt(actionEl.dataset.routeId));
+        break;
+      case 'markRouteVisited':
+        markRouteVisited(Number.parseInt(actionEl.dataset.routeId));
+        break;
       case 'deleteRoute':
         deleteRoute(Number.parseInt(actionEl.dataset.routeId));
         break;
@@ -15427,6 +16807,10 @@ function setupEventListeners() {
         const avtaleId = Number.parseInt(actionEl.dataset.avtaleId);
         const avtale = avtaler.find(a => a.id === avtaleId);
         if (avtale) openAvtaleModal(avtale);
+        break;
+      case 'quickMarkVisited':
+        e.stopPropagation();
+        quickMarkVisited(Number.parseInt(actionEl.dataset.customerId));
         break;
       case 'toggleBulkSelect':
         e.stopPropagation();
@@ -15489,7 +16873,7 @@ function setupEventListeners() {
 
   // Avhuking tab button handlers
   document.getElementById('clearAvhukingBtn')?.addEventListener('click', clearBulkSelection);
-  document.getElementById('completeAvhukingBtn')?.addEventListener('click', openBulkCompleteModal);
+  document.getElementById('completeAvhukingBtn')?.addEventListener('click', executeAvhuking);
 }
 
 // Open email client to contact customer about scheduling control
@@ -16597,6 +17981,10 @@ function initFieldsManagementUI() {
   // Category buttons
   document.getElementById('addCategoryBtn')?.addEventListener('click', () => openCategoryModal());
   document.getElementById('addFirstCategoryBtn')?.addEventListener('click', () => openCategoryModal());
+  document.getElementById('manageCategoriesBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openCategoryModal();
+  });
 
   // Category modal
   document.getElementById('closeCategoryModal')?.addEventListener('click', () => {
@@ -16611,18 +17999,33 @@ function initFieldsManagementUI() {
     if (categoryId) confirmDeleteCategory(parseInt(categoryId));
   });
 
-  // Auto-generate slug from name
+  // Auto-generate slug from name (only for new categories)
   document.getElementById('categoryName')?.addEventListener('input', (e) => {
     const slugInput = document.getElementById('categorySlug');
-    if (slugInput) {
+    const idInput = document.getElementById('categoryId');
+    // Only auto-generate slug for new categories (no id yet)
+    if (slugInput && !idInput?.value) {
       slugInput.value = e.target.value.toLowerCase()
         .replace(/[æ]/g, 'ae')
         .replace(/[ø]/g, 'o')
         .replace(/[å]/g, 'a')
-        .replace(/[^a-z0-9]/g, '-')
-        .replace(/-+/g, '-')
+        .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '');
     }
+  });
+
+  // Icon picker grid click handler
+  document.getElementById('categoryIconPicker')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.icon-btn');
+    if (!btn) return;
+    document.querySelectorAll('#categoryIconPicker .icon-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('categoryIcon').value = btn.dataset.icon;
+  });
+
+  // Color preview update
+  document.getElementById('categoryColor')?.addEventListener('input', (e) => {
+    updateCategoryColorPreview(e.target.value);
   });
 }
 

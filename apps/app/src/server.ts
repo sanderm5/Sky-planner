@@ -52,6 +52,11 @@ import docsRoutes from './routes/docs';
 import cronRoutes from './routes/cron';
 import integrationWebhooksRoutes from './routes/integration-webhooks';
 import exportRoutes, { initExportRoutes } from './routes/export';
+import featuresRoutes, { initFeaturesRoutes } from './routes/features';
+import serviceTypesRoutes, { initServiceTypesRoutes } from './routes/service-types';
+import customerEmailRoutes, { initCustomerEmailRoutes } from './routes/customer-emails';
+import ekkRoutes, { initEkkRoutes } from './routes/ekk';
+import outlookRoutes, { initOutlookRoutes } from './routes/outlook';
 import { csrfTokenMiddleware, csrfProtection, getCsrfTokenHandler } from './middleware/csrf';
 import type { AuthenticatedRequest } from './types';
 
@@ -86,6 +91,21 @@ async function initializeApp() {
 
   // Initialize export routes
   initExportRoutes(db as Parameters<typeof initExportRoutes>[0]);
+
+  // Initialize features routes
+  initFeaturesRoutes(db as Parameters<typeof initFeaturesRoutes>[0]);
+
+  // Initialize service types routes
+  initServiceTypesRoutes(db as Parameters<typeof initServiceTypesRoutes>[0]);
+
+  // Initialize customer email routes
+  initCustomerEmailRoutes(db as Parameters<typeof initCustomerEmailRoutes>[0]);
+
+  // Initialize EKK routes
+  initEkkRoutes(db as any);
+
+  // Initialize Outlook routes
+  initOutlookRoutes(db as any);
 
   return db;
 }
@@ -149,7 +169,7 @@ app.use(
 // I produksjon: Krever eksplisitt ALLOWED_ORIGINS, eller fallback til skyplanner.no domener
 // I development: Kun localhost-origins tillates for å forhindre CSRF via exposed dev-miljø
 const SAFE_DEFAULT_ORIGINS = ['https://skyplanner.no', 'https://app.skyplanner.no', 'https://www.skyplanner.no'];
-const DEV_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:4321', 'http://127.0.0.1:3000', 'http://127.0.0.1:4321'];
+const DEV_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:4321', 'http://127.0.0.1:3000', 'http://127.0.0.1:3001', 'http://127.0.0.1:4321'];
 app.use(
   cors({
     origin: config.NODE_ENV === 'production'
@@ -293,6 +313,11 @@ app.use('/api/email', emailRoutes);
 app.use('/api', configRoutes);  // Routes include /config and /routes/*
 app.use('/api/industries', industriesRoutes);
 app.use('/api/integrations', requireTenantAuth, requireActiveSubscription, integrationsRoutes);
+app.use('/api/features', requireTenantAuth, featuresRoutes);
+app.use('/api/service-types', requireTenantAuth, serviceTypesRoutes);
+app.use('/api/customer-emails', requireTenantAuth, requireActiveSubscription, customerEmailRoutes);
+app.use('/api/ekk', requireTenantAuth, requireActiveSubscription, ekkRoutes);
+app.use('/api/outlook', requireTenantAuth, requireActiveSubscription, outlookRoutes);
 
 // Import routes (Excel import with staging)
 app.use('/api/import', requireTenantAuth, requireActiveSubscription, importRoutes);

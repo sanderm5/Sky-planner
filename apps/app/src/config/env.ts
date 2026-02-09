@@ -207,6 +207,9 @@ export function validateEnvironment(): EnvConfig {
     // Tripletex environment (test uses api.tripletex.io, production uses tripletex.no)
     TRIPLETEX_ENV: (getEnvString('TRIPLETEX_ENV', 'production') as 'test' | 'production'),
 
+    // Mapbox
+    MAPBOX_ACCESS_TOKEN: getEnvString('MAPBOX_ACCESS_TOKEN'),
+
     // Encryption - require in production, fallback for dev
     ENCRYPTION_SALT: (() => {
       const salt = getEnvString('ENCRYPTION_SALT');

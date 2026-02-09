@@ -5,7 +5,7 @@
 
 import { dbLogger } from './logger';
 import { getConfig } from '../config/env';
-import type { Kunde, Organization, Rute, Avtale, Kontaktlogg, EmailInnstilling, EmailVarsel } from '../types';
+import type { Kunde, Organization, Rute, Avtale, Kontaktlogg, EmailInnstilling, EmailVarsel, OrganizationServiceType } from '../types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -44,10 +44,10 @@ interface SupabaseService {
   getKundeById(id: number): Promise<Kunde | null>;
   getKundeByIdAndTenant(id: number, organizationId: number): Promise<Kunde | null>;
   createKunde(data: Partial<Kunde>): Promise<Kunde>;
-  updateKunde(id: number, data: Partial<Kunde>): Promise<Kunde | null>;
-  deleteKunde(id: number): Promise<boolean>;
-  getKontrollVarsler(dager: number): Promise<Kunde[]>;
-  getKunderByOmrade(omrade: string): Promise<Kunde[]>;
+  updateKunde(id: number, data: Partial<Kunde>, organizationId?: number): Promise<Kunde | null>;
+  deleteKunde(id: number, organizationId?: number): Promise<boolean>;
+  getKontrollVarsler(dager: number, organizationId?: number): Promise<Kunde[]>;
+  getKunderByOmrade(omrade: string, organizationId?: number): Promise<Kunde[]>;
 
   getKlientByEpost(epost: string): Promise<KlientRecord | null>;
   getBrukerByEpost(epost: string): Promise<BrukerRecord | null>;
@@ -677,6 +677,55 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_active_sessions_expires ON active_sessions(expires_at);
     `);
 
+    // Feature module tables
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS feature_definitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        category TEXT,
+        default_enabled INTEGER DEFAULT 0,
+        dependencies TEXT,
+        config_schema TEXT,
+        aktiv INTEGER DEFAULT 1,
+        sort_order INTEGER DEFAULT 0
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS organization_features (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id INTEGER NOT NULL,
+        feature_key TEXT NOT NULL,
+        enabled INTEGER DEFAULT 0,
+        config TEXT DEFAULT '{}',
+        activated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(organization_id, feature_key),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (feature_key) REFERENCES feature_definitions(key) ON DELETE CASCADE
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_org_features_org ON organization_features(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_org_features_enabled ON organization_features(organization_id, feature_key);
+    `);
+
+    // Seed default features if empty
+    const featureCount = this.sqlite.prepare('SELECT COUNT(*) as count FROM feature_definitions').get() as { count: number };
+    if (featureCount.count === 0) {
+      this.sqlite.exec(`
+        INSERT INTO feature_definitions (key, name, description, category, default_enabled, sort_order) VALUES
+          ('hover_tooltip', 'Hover-tooltip', 'Vis kundeinfo ved hover/trykk', 'kart', 1, 10),
+          ('context_menu', 'Kontekstmeny', 'Hoyreklikk-meny på kartmarkorer', 'kart', 0, 20),
+          ('lifecycle_colors', 'Livssyklus-fargekoding', 'Fargekoding basert på kundestatus', 'kart', 0, 30),
+          ('tripletex_projects', 'Tripletex-prosjekter', 'Prosjekter i Tripletex fra kartet', 'integrasjon', 0, 40),
+          ('field_work', 'Feltarbeid-modus', 'Ruter med kundebesok og materiell', 'feltarbeid', 0, 50),
+          ('email_templates', 'E-postmaler', 'Send e-post med konfigurerbare maler', 'kommunikasjon', 0, 60)
+      `);
+    }
+
     dbLogger.info('SQLite tables initialized');
   }
 
@@ -825,7 +874,7 @@ class DatabaseService {
     if (!existing) return null;
 
     if (this.type === 'supabase' && this.supabase) {
-      return this.supabase.updateKunde(id, data);
+      return this.supabase.updateKunde(id, data, organizationId);
     }
 
     if (!this.sqlite) throw new Error('Database not initialized');
@@ -839,7 +888,10 @@ class DatabaseService {
       'lat', 'lng', 'notater', 'kategori', 'el_type', 'brann_system', 'brann_driftstype',
       'siste_el_kontroll', 'neste_el_kontroll', 'el_kontroll_intervall',
       'siste_brann_kontroll', 'neste_brann_kontroll', 'brann_kontroll_intervall',
-      'prosjektnummer',
+      'siste_kontroll', 'neste_kontroll', 'kontroll_intervall_mnd',
+      'prosjektnummer', 'kundenummer', 'faktura_epost',
+      'external_source', 'external_id', 'last_sync_at',
+      'lifecycle_stage', 'inquiry_sent_date', 'last_visit_date', 'job_confirmed_type',
     ];
 
     for (const field of updateableFields) {
@@ -869,7 +921,7 @@ class DatabaseService {
     this.validateTenantContext(organizationId, 'deleteKunde');
 
     if (this.type === 'supabase' && this.supabase) {
-      return this.supabase.deleteKunde(id);
+      return this.supabase.deleteKunde(id, organizationId);
     }
 
     if (!this.sqlite) throw new Error('Database not initialized');
@@ -888,20 +940,14 @@ class DatabaseService {
     this.validateTenantContext(organizationId, 'getKunderByOmrade');
 
     if (this.type === 'supabase' && this.supabase) {
-      const kunder = await this.supabase.getKunderByOmrade(omrade);
-      return kunder.filter(k => k.organization_id === organizationId);
+      return this.supabase.getKunderByOmrade(omrade, organizationId);
     }
 
     if (!this.sqlite) throw new Error('Database not initialized');
 
-    const sql = organizationId
-      ? 'SELECT * FROM kunder WHERE organization_id = ? AND (poststed LIKE ? OR adresse LIKE ?) ORDER BY navn COLLATE NOCASE'
-      : 'SELECT * FROM kunder WHERE poststed LIKE ? OR adresse LIKE ? ORDER BY navn COLLATE NOCASE';
-
+    const sql = 'SELECT * FROM kunder WHERE organization_id = ? AND (poststed LIKE ? OR adresse LIKE ?) ORDER BY navn COLLATE NOCASE';
     const pattern = `%${omrade}%`;
-    return (organizationId
-      ? this.sqlite.prepare(sql).all(organizationId, pattern, pattern)
-      : this.sqlite.prepare(sql).all(pattern, pattern)) as Kunde[];
+    return this.sqlite.prepare(sql).all(organizationId, pattern, pattern) as Kunde[];
   }
 
   /**
@@ -912,8 +958,7 @@ class DatabaseService {
     this.validateTenantContext(organizationId, 'getKontrollVarsler');
 
     if (this.type === 'supabase' && this.supabase) {
-      const kunder = await this.supabase.getKontrollVarsler(dager);
-      return kunder.filter(k => k.organization_id === organizationId);
+      return this.supabase.getKontrollVarsler(dager, organizationId);
     }
 
     if (!this.sqlite) throw new Error('Database not initialized');
@@ -1044,6 +1089,74 @@ class DatabaseService {
     });
 
     return transaction();
+  }
+
+  /**
+   * Mark customers as visited, with optional kontroll date update.
+   * Always updates last_visit_date.
+   * Accepts dynamic service_type_slugs from organization_service_types.
+   * Maps known slugs to legacy kontroll columns, and always updates generic siste/neste_kontroll.
+   * Works with both Supabase and SQLite.
+   */
+  async markVisited(
+    kundeIds: number[],
+    visitedDate: string,
+    serviceTypeSlugs: string[],
+    organizationId: number
+  ): Promise<number> {
+    this.validateTenantContext(organizationId, 'markVisited');
+    if (kundeIds.length === 0) return 0;
+
+    // Look up intervals from organization service types
+    let serviceTypes: Array<{ slug: string; default_interval_months: number }> = [];
+    if (serviceTypeSlugs.length > 0) {
+      const allTypes = await this.getOrganizationServiceTypes(organizationId);
+      serviceTypes = allTypes
+        .filter(st => serviceTypeSlugs.includes(st.slug))
+        .map(st => ({ slug: st.slug, default_interval_months: st.default_interval_months || 12 }));
+    }
+
+    let updated = 0;
+
+    for (const kundeId of kundeIds) {
+      const kunde = await this.getKundeById(kundeId, organizationId);
+      if (!kunde) continue;
+
+      const updateData: Record<string, unknown> = {
+        last_visit_date: visitedDate,
+      };
+
+      if (serviceTypes.length > 0) {
+        // Always update generic kontroll columns with the shortest interval
+        const shortestInterval = Math.min(...serviceTypes.map(st => st.default_interval_months));
+        const nextGenericDate = new Date(visitedDate);
+        nextGenericDate.setMonth(nextGenericDate.getMonth() + shortestInterval);
+        updateData.siste_kontroll = visitedDate;
+        updateData.neste_kontroll = nextGenericDate.toISOString().split('T')[0];
+
+        // Map known slugs to legacy columns for backward compatibility
+        for (const st of serviceTypes) {
+          if (st.slug === 'el-kontroll') {
+            const interval = kunde.el_kontroll_intervall || st.default_interval_months;
+            const nextDate = new Date(visitedDate);
+            nextDate.setMonth(nextDate.getMonth() + interval);
+            updateData.siste_el_kontroll = visitedDate;
+            updateData.neste_el_kontroll = nextDate.toISOString().split('T')[0];
+          } else if (st.slug === 'brannvarsling') {
+            const interval = kunde.brann_kontroll_intervall || st.default_interval_months;
+            const nextDate = new Date(visitedDate);
+            nextDate.setMonth(nextDate.getMonth() + interval);
+            updateData.siste_brann_kontroll = visitedDate;
+            updateData.neste_brann_kontroll = nextDate.toISOString().split('T')[0];
+          }
+        }
+      }
+
+      const result = await this.updateKunde(kundeId, updateData as Partial<Kunde>, organizationId);
+      if (result) updated++;
+    }
+
+    return updated;
   }
 
   // ============ AUTH METHODS ============
@@ -2001,7 +2114,7 @@ class DatabaseService {
     const fields: string[] = [];
     const values: unknown[] = [];
 
-    const updateableFields = ['navn', 'beskrivelse', 'planlagt_dato', 'status', 'total_distanse', 'total_tid'];
+    const updateableFields = ['navn', 'beskrivelse', 'planlagt_dato', 'status', 'total_distanse', 'total_tid', 'execution_started_at', 'execution_ended_at', 'current_stop_index'];
 
     for (const field of updateableFields) {
       if (field in data) {
@@ -2101,6 +2214,7 @@ class DatabaseService {
 
     const updateStmt = this.sqlite.prepare(`
       UPDATE kunder SET
+        last_visit_date = ?,
         siste_el_kontroll = CASE WHEN ? IN ('el', 'both') THEN ? ELSE siste_el_kontroll END,
         neste_el_kontroll = CASE WHEN ? IN ('el', 'both') THEN date(?, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') ELSE neste_el_kontroll END,
         siste_brann_kontroll = CASE WHEN ? IN ('brann', 'both') THEN ? ELSE siste_brann_kontroll END,
@@ -2112,6 +2226,7 @@ class DatabaseService {
 
     for (const kunde of kunder) {
       updateStmt.run(
+        dato,
         kontrollType, dato,
         kontrollType, dato,
         kontrollType, dato,
@@ -2127,34 +2242,572 @@ class DatabaseService {
     return { success: true, oppdaterte_kunder: kunder.length };
   }
 
+  // ============ FIELD WORK VISIT METHODS ============
+
+  async createVisitRecords(ruteId: number, kundeIds: number[], organizationId: number): Promise<void> {
+    this.validateTenantContext(organizationId, 'createVisitRecords');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const records = kundeIds.map(kundeId => ({
+        rute_id: ruteId,
+        kunde_id: kundeId,
+        organization_id: organizationId,
+        completed: false,
+      }));
+      await client.from('rute_kunde_visits').upsert(records, { onConflict: 'rute_id,kunde_id' });
+      return;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const stmt = this.sqlite.prepare(
+      'INSERT OR IGNORE INTO rute_kunde_visits (rute_id, kunde_id, organization_id, completed) VALUES (?, ?, ?, 0)'
+    );
+    for (const kundeId of kundeIds) {
+      stmt.run(ruteId, kundeId, organizationId);
+    }
+  }
+
+  async upsertVisitRecord(
+    ruteId: number,
+    kundeId: number,
+    organizationId: number,
+    data: { visited_at: string; completed: boolean; comment?: string; materials_used?: string[]; equipment_registered?: string[]; todos?: string[] }
+  ): Promise<{ id: number }> {
+    this.validateTenantContext(organizationId, 'upsertVisitRecord');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data: result, error } = await client
+        .from('rute_kunde_visits')
+        .upsert({
+          rute_id: ruteId,
+          kunde_id: kundeId,
+          organization_id: organizationId,
+          ...data,
+        }, { onConflict: 'rute_id,kunde_id' })
+        .select('id')
+        .single();
+      if (error) throw error;
+      return { id: result.id };
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Try to update existing record
+    const existing = this.sqlite.prepare(
+      'SELECT id FROM rute_kunde_visits WHERE rute_id = ? AND kunde_id = ?'
+    ).get(ruteId, kundeId) as { id: number } | undefined;
+
+    if (existing) {
+      this.sqlite.prepare(`
+        UPDATE rute_kunde_visits SET
+          visited_at = ?, completed = ?, comment = ?,
+          materials_used = ?, equipment_registered = ?, todos = ?
+        WHERE id = ?
+      `).run(
+        data.visited_at, data.completed ? 1 : 0, data.comment || null,
+        data.materials_used ? JSON.stringify(data.materials_used) : null,
+        data.equipment_registered ? JSON.stringify(data.equipment_registered) : null,
+        data.todos ? JSON.stringify(data.todos) : null,
+        existing.id
+      );
+      return { id: existing.id };
+    }
+
+    const result = this.sqlite.prepare(`
+      INSERT INTO rute_kunde_visits (rute_id, kunde_id, organization_id, visited_at, completed, comment, materials_used, equipment_registered, todos)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      ruteId, kundeId, organizationId,
+      data.visited_at, data.completed ? 1 : 0, data.comment || null,
+      data.materials_used ? JSON.stringify(data.materials_used) : null,
+      data.equipment_registered ? JSON.stringify(data.equipment_registered) : null,
+      data.todos ? JSON.stringify(data.todos) : null,
+    );
+
+    return { id: Number(result.lastInsertRowid) };
+  }
+
+  async getVisitRecords(ruteId: number, organizationId: number): Promise<Array<{
+    id: number; kunde_id: number; visited_at?: string; completed: boolean;
+    comment?: string; materials_used?: string[]; equipment_registered?: string[]; todos?: string[];
+  }>> {
+    this.validateTenantContext(organizationId, 'getVisitRecords');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data, error } = await client
+        .from('rute_kunde_visits')
+        .select('*')
+        .eq('rute_id', ruteId)
+        .eq('organization_id', organizationId);
+      if (error) throw error;
+      return data || [];
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const rows = this.sqlite.prepare(
+      'SELECT * FROM rute_kunde_visits WHERE rute_id = ? AND organization_id = ?'
+    ).all(ruteId, organizationId) as Array<Record<string, unknown>>;
+
+    return rows.map(row => ({
+      id: row.id as number,
+      kunde_id: row.kunde_id as number,
+      visited_at: row.visited_at as string | undefined,
+      completed: Boolean(row.completed),
+      comment: row.comment as string | undefined,
+      materials_used: row.materials_used ? JSON.parse(row.materials_used as string) : undefined,
+      equipment_registered: row.equipment_registered ? JSON.parse(row.equipment_registered as string) : undefined,
+      todos: row.todos ? JSON.parse(row.todos as string) : undefined,
+    }));
+  }
+
+  // ============ CUSTOMER EMAIL TEMPLATES ============
+
+  async getEmailTemplates(organizationId: number): Promise<Array<{
+    id: number; organization_id: number | null; name: string; subject_template: string;
+    body_template: string; category: string; is_system: boolean; aktiv: boolean; sort_order: number;
+  }>> {
+    this.validateTenantContext(organizationId, 'getEmailTemplates');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data, error } = await client
+        .from('customer_email_templates')
+        .select('*')
+        .or(`organization_id.is.null,organization_id.eq.${organizationId}`)
+        .eq('aktiv', true)
+        .order('sort_order');
+      if (error) throw error;
+      return data || [];
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    return this.sqlite.prepare(
+      'SELECT * FROM customer_email_templates WHERE (organization_id IS NULL OR organization_id = ?) AND aktiv = 1 ORDER BY sort_order'
+    ).all(organizationId) as Array<{
+      id: number; organization_id: number | null; name: string; subject_template: string;
+      body_template: string; category: string; is_system: boolean; aktiv: boolean; sort_order: number;
+    }>;
+  }
+
+  async getEmailTemplateById(id: number, organizationId: number): Promise<{
+    id: number; organization_id: number | null; name: string; subject_template: string;
+    body_template: string; category: string; is_system: boolean; aktiv: boolean; sort_order: number;
+  } | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data, error } = await client
+        .from('customer_email_templates')
+        .select('*')
+        .eq('id', id)
+        .or(`organization_id.is.null,organization_id.eq.${organizationId}`)
+        .single();
+      if (error) return null;
+      return data;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    return (this.sqlite.prepare(
+      'SELECT * FROM customer_email_templates WHERE id = ? AND (organization_id IS NULL OR organization_id = ?)'
+    ).get(id, organizationId) as { id: number; organization_id: number | null; name: string; subject_template: string; body_template: string; category: string; is_system: boolean; aktiv: boolean; sort_order: number } | undefined) || null;
+  }
+
+  async createEmailTemplate(data: {
+    organization_id: number; name: string; subject_template: string;
+    body_template: string; category: string; is_system: boolean; aktiv: boolean; sort_order: number;
+  }): Promise<{
+    id: number; organization_id: number | null; name: string; subject_template: string;
+    body_template: string; category: string; is_system: boolean; aktiv: boolean; sort_order: number;
+  }> {
+    this.validateTenantContext(data.organization_id, 'createEmailTemplate');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data: result, error } = await client
+        .from('customer_email_templates')
+        .insert(data)
+        .select()
+        .single();
+      if (error) throw error;
+      return result;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare(`
+      INSERT INTO customer_email_templates (organization_id, name, subject_template, body_template, category, is_system, aktiv, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.organization_id, data.name, data.subject_template, data.body_template,
+      data.category, data.is_system ? 1 : 0, data.aktiv ? 1 : 0, data.sort_order
+    );
+
+    return { id: Number(result.lastInsertRowid), ...data, organization_id: data.organization_id };
+  }
+
+  async updateEmailTemplate(id: number, data: Partial<{
+    name: string; subject_template: string; body_template: string; category: string; aktiv: boolean;
+  }>, organizationId: number): Promise<{
+    id: number; organization_id: number | null; name: string; subject_template: string;
+    body_template: string; category: string; is_system: boolean; aktiv: boolean; sort_order: number;
+  } | null> {
+    this.validateTenantContext(organizationId, 'updateEmailTemplate');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data: result, error } = await client
+        .from('customer_email_templates')
+        .update(data)
+        .eq('id', id)
+        .eq('organization_id', organizationId)
+        .select()
+        .single();
+      if (error) return null;
+      return result;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    for (const [key, val] of Object.entries(data)) {
+      if (val !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(key === 'aktiv' ? (val ? 1 : 0) : val);
+      }
+    }
+    if (fields.length === 0) return this.getEmailTemplateById(id, organizationId);
+
+    values.push(id, organizationId);
+    this.sqlite.prepare(
+      `UPDATE customer_email_templates SET ${fields.join(', ')} WHERE id = ? AND organization_id = ?`
+    ).run(...values);
+
+    return this.getEmailTemplateById(id, organizationId);
+  }
+
+  async deleteEmailTemplate(id: number, organizationId: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'deleteEmailTemplate');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { error } = await client
+        .from('customer_email_templates')
+        .delete()
+        .eq('id', id)
+        .eq('organization_id', organizationId)
+        .eq('is_system', false);
+      return !error;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare(
+      'DELETE FROM customer_email_templates WHERE id = ? AND organization_id = ? AND is_system = 0'
+    ).run(id, organizationId);
+    return result.changes > 0;
+  }
+
+  async logSentEmail(data: {
+    organization_id: number; kunde_id: number; template_id: number | null;
+    to_email: string; subject: string; body_html: string; status: string;
+    error_message: string | null; sent_by: number | null; sent_at: string;
+  }): Promise<{
+    id: number; organization_id: number; kunde_id: number; template_id: number | null;
+    to_email: string; subject: string; body_html: string; status: string;
+    error_message: string | null; sent_by: number | null; sent_at: string;
+  }> {
+    this.validateTenantContext(data.organization_id, 'logSentEmail');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data: result, error } = await client
+        .from('customer_emails_sent')
+        .insert(data)
+        .select()
+        .single();
+      if (error) throw error;
+      return result;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare(`
+      INSERT INTO customer_emails_sent (organization_id, kunde_id, template_id, to_email, subject, body_html, status, error_message, sent_by, sent_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.organization_id, data.kunde_id, data.template_id, data.to_email,
+      data.subject, data.body_html, data.status, data.error_message, data.sent_by, data.sent_at
+    );
+
+    return { id: Number(result.lastInsertRowid), ...data };
+  }
+
+  async getSentEmails(organizationId: number, kundeId?: number, limit = 50): Promise<Array<{
+    id: number; organization_id: number; kunde_id: number; template_id: number | null;
+    to_email: string; subject: string; body_html: string; status: string;
+    error_message: string | null; sent_by: number | null; sent_at: string;
+  }>> {
+    this.validateTenantContext(organizationId, 'getSentEmails');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      let query = client
+        .from('customer_emails_sent')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .order('sent_at', { ascending: false })
+        .limit(limit);
+      if (kundeId) {
+        query = query.eq('kunde_id', kundeId);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const params: unknown[] = [organizationId];
+    let sql = 'SELECT * FROM customer_emails_sent WHERE organization_id = ?';
+    if (kundeId) {
+      sql += ' AND kunde_id = ?';
+      params.push(kundeId);
+    }
+    sql += ' ORDER BY sent_at DESC LIMIT ?';
+    params.push(limit);
+
+    return this.sqlite.prepare(sql).all(...params) as Array<{
+      id: number; organization_id: number; kunde_id: number; template_id: number | null;
+      to_email: string; subject: string; body_html: string; status: string;
+      error_message: string | null; sent_by: number | null; sent_at: string;
+    }>;
+  }
+
+  async getEnabledFeaturesWithConfig(organizationId: number): Promise<{ key: string; config: Record<string, unknown> }[]> {
+    this.validateTenantContext(organizationId, 'getEnabledFeaturesWithConfig');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      // Get explicitly enabled features
+      const { data: orgFeatures } = await client
+        .from('organization_features')
+        .select('feature_key, config')
+        .eq('organization_id', organizationId)
+        .eq('enabled', true);
+      // Get default-enabled features
+      const { data: defaults } = await client
+        .from('feature_definitions')
+        .select('key')
+        .eq('default_enabled', true)
+        .eq('aktiv', true);
+
+      const result: { key: string; config: Record<string, unknown> }[] = [];
+      const seen = new Set<string>();
+
+      for (const f of orgFeatures || []) {
+        result.push({ key: f.feature_key, config: f.config || {} });
+        seen.add(f.feature_key);
+      }
+      for (const d of defaults || []) {
+        if (!seen.has(d.key)) {
+          result.push({ key: d.key, config: {} });
+        }
+      }
+      return result;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Combine org-specific features + default-enabled features
+    const rows = this.sqlite.prepare(`
+      SELECT DISTINCT COALESCE(of2.feature_key, fd.key) as key, COALESCE(of2.config, '{}') as config
+      FROM feature_definitions fd
+      LEFT JOIN organization_features of2 ON fd.key = of2.feature_key AND of2.organization_id = ? AND of2.enabled = 1
+      WHERE fd.aktiv = 1 AND (of2.enabled = 1 OR fd.default_enabled = 1)
+    `).all(organizationId) as Array<{ key: string; config: string }>;
+
+    return rows.map(r => ({ key: r.key, config: JSON.parse(r.config || '{}') }));
+  }
+
+  // ============ EKK REPORTS ============
+
+  async getEkkReports(organizationId: number, kundeId?: number): Promise<Array<Record<string, unknown>>> {
+    this.validateTenantContext(organizationId, 'getEkkReports');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      let query = client.from('ekk_reports').select('*').eq('organization_id', organizationId).order('created_at', { ascending: false });
+      if (kundeId) query = query.eq('kunde_id', kundeId);
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const params: unknown[] = [organizationId];
+    let sql = 'SELECT * FROM ekk_reports WHERE organization_id = ?';
+    if (kundeId) { sql += ' AND kunde_id = ?'; params.push(kundeId); }
+    sql += ' ORDER BY created_at DESC';
+    return this.sqlite.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+  }
+
+  async getEkkReportById(id: number, organizationId: number): Promise<Record<string, unknown> | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data, error } = await client.from('ekk_reports').select('*').eq('id', id).eq('organization_id', organizationId).single();
+      if (error) return null;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return (this.sqlite.prepare('SELECT * FROM ekk_reports WHERE id = ? AND organization_id = ?').get(id, organizationId) as Record<string, unknown> | undefined) || null;
+  }
+
+  async createEkkReport(data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    this.validateTenantContext(data.organization_id as number, 'createEkkReport');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data: result, error } = await client.from('ekk_reports').insert(data).select().single();
+      if (error) throw error;
+      return result;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare(`
+      INSERT INTO ekk_reports (organization_id, kunde_id, report_type, status, notes, checklist_data, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.organization_id, data.kunde_id, data.report_type || 'elkontroll',
+      data.status || 'utkast', data.notes || null,
+      JSON.stringify(data.checklist_data || {}), data.created_by || null
+    );
+    return { id: Number(result.lastInsertRowid), ...data };
+  }
+
+  async updateEkkReport(id: number, data: Record<string, unknown>, organizationId: number): Promise<Record<string, unknown> | null> {
+    this.validateTenantContext(organizationId, 'updateEkkReport');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data: result, error } = await client.from('ekk_reports').update(data).eq('id', id).eq('organization_id', organizationId).select().single();
+      if (error) return null;
+      return result;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    for (const [key, val] of Object.entries(data)) {
+      if (val !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(key === 'checklist_data' ? JSON.stringify(val) : val);
+      }
+    }
+    if (fields.length === 0) return this.getEkkReportById(id, organizationId);
+    values.push(id, organizationId);
+    this.sqlite.prepare(`UPDATE ekk_reports SET ${fields.join(', ')} WHERE id = ? AND organization_id = ?`).run(...values);
+    return this.getEkkReportById(id, organizationId);
+  }
+
+  async deleteEkkReport(id: number, organizationId: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'deleteEkkReport');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { error } = await client.from('ekk_reports').delete().eq('id', id).eq('organization_id', organizationId);
+      return !error;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('DELETE FROM ekk_reports WHERE id = ? AND organization_id = ?').run(id, organizationId);
+    return result.changes > 0;
+  }
+
+  // ============ OUTLOOK SYNC ============
+
+  async getOutlookSyncEntries(organizationId: number): Promise<Array<Record<string, unknown>>> {
+    this.validateTenantContext(organizationId, 'getOutlookSyncEntries');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data, error } = await client.from('outlook_sync_log').select('*').eq('organization_id', organizationId);
+      if (error) throw error;
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return this.sqlite.prepare('SELECT * FROM outlook_sync_log WHERE organization_id = ?').all(organizationId) as Array<Record<string, unknown>>;
+  }
+
+  async getOutlookSyncEntry(organizationId: number, kundeId: number): Promise<Record<string, unknown> | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data, error } = await client.from('outlook_sync_log').select('*').eq('organization_id', organizationId).eq('kunde_id', kundeId).single();
+      if (error) return null;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return (this.sqlite.prepare('SELECT * FROM outlook_sync_log WHERE organization_id = ? AND kunde_id = ?').get(organizationId, kundeId) as Record<string, unknown> | undefined) || null;
+  }
+
+  async upsertOutlookSyncEntry(data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    this.validateTenantContext(data.organization_id as number, 'upsertOutlookSyncEntry');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const client = await this.getSupabaseClient();
+      const { data: result, error } = await client.from('outlook_sync_log')
+        .upsert(data, { onConflict: 'organization_id,kunde_id' }).select().single();
+      if (error) throw error;
+      return result;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const existing = this.sqlite.prepare(
+      'SELECT id FROM outlook_sync_log WHERE organization_id = ? AND kunde_id = ?'
+    ).get(data.organization_id, data.kunde_id) as { id: number } | undefined;
+
+    if (existing) {
+      this.sqlite.prepare(`
+        UPDATE outlook_sync_log SET outlook_contact_id = ?, last_synced_at = ?, sync_status = ?, error_message = ?
+        WHERE id = ?
+      `).run(data.outlook_contact_id, data.last_synced_at, data.sync_status, data.error_message, existing.id);
+      return { id: existing.id, ...data };
+    }
+
+    const result = this.sqlite.prepare(`
+      INSERT INTO outlook_sync_log (organization_id, kunde_id, outlook_contact_id, last_synced_at, sync_status, error_message)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(data.organization_id, data.kunde_id, data.outlook_contact_id, data.last_synced_at, data.sync_status, data.error_message);
+    return { id: Number(result.lastInsertRowid), ...data };
+  }
+
   // ============ AVTALER METHODS ============
 
-  async getAllAvtaler(organizationId?: number, start?: string, end?: string): Promise<(Avtale & { kunde_navn?: string })[]> {
+  async getAllAvtaler(organizationId: number, start?: string, end?: string): Promise<(Avtale & { kunde_navn?: string })[]> {
+    this.validateTenantContext(organizationId, 'getAllAvtaler');
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     let sql = `
       SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
       FROM avtaler a
       LEFT JOIN kunder k ON a.kunde_id = k.id
+      WHERE a.organization_id = ?
     `;
-    const params: unknown[] = [];
-    const conditions: string[] = [];
+    const params: unknown[] = [organizationId];
 
-    if (organizationId) {
-      conditions.push('a.organization_id = ?');
-      params.push(organizationId);
-    }
     if (start) {
-      conditions.push('a.dato >= ?');
+      sql += ' AND a.dato >= ?';
       params.push(start);
     }
     if (end) {
-      conditions.push('a.dato <= ?');
+      sql += ' AND a.dato <= ?';
       params.push(end);
-    }
-
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
     }
 
     sql += ' ORDER BY a.dato, a.klokkeslett';
@@ -2162,25 +2815,23 @@ class DatabaseService {
     return this.sqlite.prepare(sql).all(...params) as (Avtale & { kunde_navn?: string })[];
   }
 
-  async getAvtaleById(id: number, organizationId?: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
+  async getAvtaleById(id: number, organizationId: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
+    this.validateTenantContext(organizationId, 'getAvtaleById');
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
-    const sql = organizationId
-      ? `SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
-         FROM avtaler a LEFT JOIN kunder k ON a.kunde_id = k.id
-         WHERE a.id = ? AND a.organization_id = ?`
-      : `SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
-         FROM avtaler a LEFT JOIN kunder k ON a.kunde_id = k.id
-         WHERE a.id = ?`;
+    const sql = `SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
+       FROM avtaler a LEFT JOIN kunder k ON a.kunde_id = k.id
+       WHERE a.id = ? AND a.organization_id = ?`;
 
-    const result = organizationId
-      ? this.sqlite.prepare(sql).get(id, organizationId)
-      : this.sqlite.prepare(sql).get(id);
+    const result = this.sqlite.prepare(sql).get(id, organizationId);
 
     return (result as (Avtale & { kunde_navn?: string })) || null;
   }
 
-  async createAvtale(data: Partial<Avtale>): Promise<Avtale & { kunde_navn?: string }> {
+  async createAvtale(data: Partial<Avtale> & { organization_id: number }): Promise<Avtale & { kunde_navn?: string }> {
+    this.validateTenantContext(data.organization_id, 'createAvtale');
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const stmt = this.sqlite.prepare(`
@@ -2204,11 +2855,13 @@ class DatabaseService {
       data.original_avtale_id || null
     );
 
-    const avtale = await this.getAvtaleById(Number(result.lastInsertRowid));
+    const avtale = await this.getAvtaleById(Number(result.lastInsertRowid), data.organization_id);
     return avtale!;
   }
 
-  async updateAvtale(id: number, data: Partial<Avtale>, organizationId?: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
+  async updateAvtale(id: number, data: Partial<Avtale>, organizationId: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
+    this.validateTenantContext(organizationId, 'updateAvtale');
+
     const existing = await this.getAvtaleById(id, organizationId);
     if (!existing) return null;
 
@@ -2226,60 +2879,48 @@ class DatabaseService {
       }
     }
 
-    values.push(id);
-    const sql = `UPDATE avtaler SET ${fields.join(', ')} WHERE id = ?`;
+    values.push(id, organizationId);
+    const sql = `UPDATE avtaler SET ${fields.join(', ')} WHERE id = ? AND organization_id = ?`;
     this.sqlite.prepare(sql).run(...values);
 
     return this.getAvtaleById(id, organizationId);
   }
 
-  async deleteAvtale(id: number, organizationId?: number): Promise<boolean> {
+  async deleteAvtale(id: number, organizationId: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'deleteAvtale');
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
-    const sql = organizationId
-      ? 'DELETE FROM avtaler WHERE id = ? AND organization_id = ?'
-      : 'DELETE FROM avtaler WHERE id = ?';
-
-    const result = organizationId
-      ? this.sqlite.prepare(sql).run(id, organizationId)
-      : this.sqlite.prepare(sql).run(id);
+    const sql = 'DELETE FROM avtaler WHERE id = ? AND organization_id = ?';
+    const result = this.sqlite.prepare(sql).run(id, organizationId);
 
     return result.changes > 0;
   }
 
-  async completeAvtale(id: number, organizationId?: number): Promise<boolean> {
+  async completeAvtale(id: number, organizationId: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'completeAvtale');
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
-    const sql = organizationId
-      ? `UPDATE avtaler SET status = 'fullført', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND organization_id = ?`
-      : `UPDATE avtaler SET status = 'fullført', updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
-
-    const result = organizationId
-      ? this.sqlite.prepare(sql).run(id, organizationId)
-      : this.sqlite.prepare(sql).run(id);
+    const sql = `UPDATE avtaler SET status = 'fullført', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND organization_id = ?`;
+    const result = this.sqlite.prepare(sql).run(id, organizationId);
 
     return result.changes > 0;
   }
 
-  async deleteAvtaleSeries(parentId: number, organizationId?: number): Promise<number> {
+  async deleteAvtaleSeries(parentId: number, organizationId: number): Promise<number> {
+    this.validateTenantContext(organizationId, 'deleteAvtaleSeries');
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     // Delete all instances linked to this parent, plus the parent itself
-    const sqlInstances = organizationId
-      ? 'DELETE FROM avtaler WHERE original_avtale_id = ? AND organization_id = ?'
-      : 'DELETE FROM avtaler WHERE original_avtale_id = ?';
+    const resultInstances = this.sqlite.prepare(
+      'DELETE FROM avtaler WHERE original_avtale_id = ? AND organization_id = ?'
+    ).run(parentId, organizationId);
 
-    const resultInstances = organizationId
-      ? this.sqlite.prepare(sqlInstances).run(parentId, organizationId)
-      : this.sqlite.prepare(sqlInstances).run(parentId);
-
-    const sqlParent = organizationId
-      ? 'DELETE FROM avtaler WHERE id = ? AND organization_id = ?'
-      : 'DELETE FROM avtaler WHERE id = ?';
-
-    const resultParent = organizationId
-      ? this.sqlite.prepare(sqlParent).run(parentId, organizationId)
-      : this.sqlite.prepare(sqlParent).run(parentId);
+    const resultParent = this.sqlite.prepare(
+      'DELETE FROM avtaler WHERE id = ? AND organization_id = ?'
+    ).run(parentId, organizationId);
 
     return resultInstances.changes + resultParent.changes;
   }
@@ -2297,7 +2938,7 @@ class DatabaseService {
     `).all(kundeId, organizationId) as Kontaktlogg[];
   }
 
-  async createKontaktlogg(data: Partial<Kontaktlogg> & { kunde_id: number; organization_id?: number }): Promise<Kontaktlogg> {
+  async createKontaktlogg(data: Partial<Kontaktlogg> & { kunde_id: number; organization_id: number }): Promise<Kontaktlogg> {
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const stmt = this.sqlite.prepare(`
@@ -2317,16 +2958,13 @@ class DatabaseService {
     return kontakt as Kontaktlogg;
   }
 
-  async deleteKontaktlogg(id: number, organizationId?: number): Promise<boolean> {
+  async deleteKontaktlogg(id: number, organizationId: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'deleteKontaktlogg');
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
-    const sql = organizationId
-      ? 'DELETE FROM kontaktlogg WHERE id = ? AND organization_id = ?'
-      : 'DELETE FROM kontaktlogg WHERE id = ?';
-
-    const result = organizationId
-      ? this.sqlite.prepare(sql).run(id, organizationId)
-      : this.sqlite.prepare(sql).run(id);
+    const sql = 'DELETE FROM kontaktlogg WHERE id = ? AND organization_id = ?';
+    const result = this.sqlite.prepare(sql).run(id, organizationId);
 
     return result.changes > 0;
   }
@@ -5660,6 +6298,411 @@ class DatabaseService {
       "DELETE FROM active_sessions WHERE expires_at < datetime('now')"
     ).run();
     return result.changes;
+  }
+
+  // ============ FEATURE MODULE METHODS ============
+
+  private async getSupabaseClient() {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabaseUrl = process.env.SUPABASE_URL || '';
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+    return createClient(supabaseUrl, supabaseKey);
+  }
+
+  async getAllFeatureDefinitions(): Promise<import('../types').FeatureDefinition[]> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('feature_definitions')
+        .select('*')
+        .eq('aktiv', true)
+        .order('sort_order');
+      if (error) throw new Error(`Failed to fetch features: ${error.message}`);
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return this.sqlite.prepare('SELECT * FROM feature_definitions WHERE aktiv = 1 ORDER BY sort_order').all() as import('../types').FeatureDefinition[];
+  }
+
+  async getFeatureDefinition(key: string): Promise<import('../types').FeatureDefinition | null> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('feature_definitions')
+        .select('*')
+        .eq('key', key)
+        .single();
+      if (error || !data) return null;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('SELECT * FROM feature_definitions WHERE key = ?').get(key);
+    return (result as import('../types').FeatureDefinition) || null;
+  }
+
+  async getOrganizationFeatures(organizationId: number): Promise<import('../types').OrganizationFeature[]> {
+    this.validateTenantContext(organizationId, 'getOrganizationFeatures');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('organization_features')
+        .select('*')
+        .eq('organization_id', organizationId);
+      if (error) throw new Error(`Failed to fetch org features: ${error.message}`);
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return this.sqlite.prepare('SELECT * FROM organization_features WHERE organization_id = ?').all(organizationId) as import('../types').OrganizationFeature[];
+  }
+
+  async getOrganizationFeature(organizationId: number, featureKey: string): Promise<import('../types').OrganizationFeature | null> {
+    this.validateTenantContext(organizationId, 'getOrganizationFeature');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('organization_features')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .eq('feature_key', featureKey)
+        .single();
+      if (error || !data) return null;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare(
+      'SELECT * FROM organization_features WHERE organization_id = ? AND feature_key = ?'
+    ).get(organizationId, featureKey);
+    return (result as import('../types').OrganizationFeature) || null;
+  }
+
+  async getEnabledFeatureKeys(organizationId: number): Promise<string[]> {
+    this.validateTenantContext(organizationId, 'getEnabledFeatureKeys');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('organization_features')
+        .select('feature_key')
+        .eq('organization_id', organizationId)
+        .eq('enabled', true);
+      if (error) throw new Error(`Failed to fetch enabled features: ${error.message}`);
+      return (data || []).map((f: { feature_key: string }) => f.feature_key);
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const results = this.sqlite.prepare(
+      'SELECT feature_key FROM organization_features WHERE organization_id = ? AND enabled = 1'
+    ).all(organizationId) as { feature_key: string }[];
+    return results.map(r => r.feature_key);
+  }
+
+  async enableFeature(organizationId: number, featureKey: string, config?: Record<string, unknown>): Promise<import('../types').OrganizationFeature> {
+    this.validateTenantContext(organizationId, 'enableFeature');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('organization_features')
+        .upsert({
+          organization_id: organizationId,
+          feature_key: featureKey,
+          enabled: true,
+          config: config || {},
+          activated_at: new Date().toISOString(),
+        }, { onConflict: 'organization_id,feature_key' })
+        .select()
+        .single();
+      if (error) throw new Error(`Failed to enable feature: ${error.message}`);
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    this.sqlite.prepare(`
+      INSERT INTO organization_features (organization_id, feature_key, enabled, config, activated_at)
+      VALUES (?, ?, 1, ?, datetime('now'))
+      ON CONFLICT(organization_id, feature_key) DO UPDATE SET enabled = 1, config = ?, activated_at = datetime('now')
+    `).run(organizationId, featureKey, JSON.stringify(config || {}), JSON.stringify(config || {}));
+    return (await this.getOrganizationFeature(organizationId, featureKey))!;
+  }
+
+  async disableFeature(organizationId: number, featureKey: string): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'disableFeature');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { error } = await supabase
+        .from('organization_features')
+        .update({ enabled: false })
+        .eq('organization_id', organizationId)
+        .eq('feature_key', featureKey);
+      if (error) throw new Error(`Failed to disable feature: ${error.message}`);
+      return true;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    this.sqlite.prepare(
+      'UPDATE organization_features SET enabled = 0 WHERE organization_id = ? AND feature_key = ?'
+    ).run(organizationId, featureKey);
+    return true;
+  }
+
+  async updateFeatureConfig(organizationId: number, featureKey: string, config: Record<string, unknown>): Promise<import('../types').OrganizationFeature | null> {
+    this.validateTenantContext(organizationId, 'updateFeatureConfig');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('organization_features')
+        .update({ config })
+        .eq('organization_id', organizationId)
+        .eq('feature_key', featureKey)
+        .select()
+        .single();
+      if (error) throw new Error(`Failed to update feature config: ${error.message}`);
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    this.sqlite.prepare(
+      'UPDATE organization_features SET config = ? WHERE organization_id = ? AND feature_key = ?'
+    ).run(JSON.stringify(config), organizationId, featureKey);
+    return this.getOrganizationFeature(organizationId, featureKey);
+  }
+
+  // ============ Organization Service Types ============
+
+  private slugify(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/æ/g, 'ae').replace(/ø/g, 'o').replace(/å/g, 'a')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  async getOrganizationServiceTypes(organizationId: number): Promise<OrganizationServiceType[]> {
+    this.validateTenantContext(organizationId, 'getOrganizationServiceTypes');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('organization_service_types')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .eq('aktiv', true)
+        .order('sort_order', { ascending: true });
+      if (error) throw new Error(`Failed to fetch service types: ${error.message}`);
+      return (data || []) as OrganizationServiceType[];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return this.sqlite.prepare(
+      'SELECT * FROM organization_service_types WHERE organization_id = ? AND aktiv = 1 ORDER BY sort_order ASC'
+    ).all(organizationId) as OrganizationServiceType[];
+  }
+
+  async createOrganizationServiceType(
+    organizationId: number,
+    data: { name: string; slug?: string; icon?: string; color?: string; default_interval_months?: number; description?: string; sort_order?: number; source?: string; source_ref?: string }
+  ): Promise<OrganizationServiceType> {
+    this.validateTenantContext(organizationId, 'createOrganizationServiceType');
+    const slug = data.slug || this.slugify(data.name);
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data: result, error } = await supabase
+        .from('organization_service_types')
+        .insert({
+          organization_id: organizationId,
+          name: data.name,
+          slug,
+          icon: data.icon || 'fa-wrench',
+          color: data.color || '#F97316',
+          default_interval_months: data.default_interval_months || 12,
+          description: data.description || null,
+          sort_order: data.sort_order || 0,
+          source: data.source || 'manual',
+          source_ref: data.source_ref || null,
+        })
+        .select()
+        .single();
+      if (error) throw new Error(`Failed to create service type: ${error.message}`);
+      return result as OrganizationServiceType;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const info = this.sqlite.prepare(`
+      INSERT INTO organization_service_types (organization_id, name, slug, icon, color, default_interval_months, description, sort_order, source, source_ref)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      organizationId, data.name, slug,
+      data.icon || 'fa-wrench', data.color || '#F97316',
+      data.default_interval_months || 12, data.description || null,
+      data.sort_order || 0, data.source || 'manual', data.source_ref || null
+    );
+    return this.sqlite.prepare('SELECT * FROM organization_service_types WHERE id = ?').get(Number(info.lastInsertRowid)) as OrganizationServiceType;
+  }
+
+  async updateOrganizationServiceType(
+    organizationId: number,
+    id: number,
+    data: Partial<{ name: string; slug: string; icon: string; color: string; default_interval_months: number; description: string; sort_order: number }>
+  ): Promise<OrganizationServiceType | null> {
+    this.validateTenantContext(organizationId, 'updateOrganizationServiceType');
+
+    // Auto-update slug if name changes and slug not explicitly provided
+    if (data.name && !data.slug) {
+      data.slug = this.slugify(data.name);
+    }
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data: result, error } = await supabase
+        .from('organization_service_types')
+        .update(data)
+        .eq('id', id)
+        .eq('organization_id', organizationId)
+        .select()
+        .single();
+      if (error) throw new Error(`Failed to update service type: ${error.message}`);
+      return result as OrganizationServiceType;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
+    const values = Object.values(data);
+    this.sqlite.prepare(`UPDATE organization_service_types SET ${fields} WHERE id = ? AND organization_id = ?`).run(...values, id, organizationId);
+    return this.sqlite.prepare('SELECT * FROM organization_service_types WHERE id = ? AND organization_id = ?').get(id, organizationId) as OrganizationServiceType | null;
+  }
+
+  async renameCustomerCategory(organizationId: number, oldName: string, newName: string): Promise<number> {
+    this.validateTenantContext(organizationId, 'renameCustomerCategory');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('kunder')
+        .update({ kategori: newName })
+        .eq('organization_id', organizationId)
+        .eq('kategori', oldName)
+        .select('id');
+      if (error) throw new Error(`Failed to rename customer category: ${error.message}`);
+      return data?.length || 0;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('UPDATE kunder SET kategori = ? WHERE organization_id = ? AND kategori = ?').run(newName, organizationId, oldName);
+    return result.changes;
+  }
+
+  async deleteOrganizationServiceType(organizationId: number, id: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'deleteOrganizationServiceType');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { error } = await supabase
+        .from('organization_service_types')
+        .update({ aktiv: false })
+        .eq('id', id)
+        .eq('organization_id', organizationId);
+      if (error) throw new Error(`Failed to delete service type: ${error.message}`);
+      return true;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    this.sqlite.prepare('UPDATE organization_service_types SET aktiv = 0 WHERE id = ? AND organization_id = ?').run(id, organizationId);
+    return true;
+  }
+
+  async copyTemplateServiceTypes(organizationId: number, templateId: number): Promise<OrganizationServiceType[]> {
+    this.validateTenantContext(organizationId, 'copyTemplateServiceTypes');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      // Fetch template service types
+      const { data: templates, error: fetchError } = await supabase
+        .from('template_service_types')
+        .select('*')
+        .eq('template_id', templateId)
+        .eq('aktiv', true)
+        .order('sort_order', { ascending: true });
+      if (fetchError) throw new Error(`Failed to fetch template service types: ${fetchError.message}`);
+      if (!templates || templates.length === 0) return [];
+
+      // Insert as org service types (ignore conflicts)
+      const rows = templates.map((t: any) => ({
+        organization_id: organizationId,
+        name: t.name,
+        slug: t.slug,
+        icon: t.icon || 'fa-wrench',
+        color: t.color || '#F97316',
+        default_interval_months: t.default_interval_months || 12,
+        description: t.description || null,
+        sort_order: t.sort_order || 0,
+        source: 'template',
+        source_ref: String(t.id),
+      }));
+
+      const { data: result, error: insertError } = await supabase
+        .from('organization_service_types')
+        .upsert(rows, { onConflict: 'organization_id,slug', ignoreDuplicates: true })
+        .select();
+      if (insertError) throw new Error(`Failed to copy template service types: ${insertError.message}`);
+      return (result || []) as OrganizationServiceType[];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const templates = this.sqlite.prepare(
+      'SELECT * FROM template_service_types WHERE template_id = ? AND aktiv = 1 ORDER BY sort_order ASC'
+    ).all(templateId) as any[];
+    const results: OrganizationServiceType[] = [];
+    for (const t of templates) {
+      try {
+        this.sqlite.prepare(`
+          INSERT OR IGNORE INTO organization_service_types (organization_id, name, slug, icon, color, default_interval_months, description, sort_order, source, source_ref)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'template', ?)
+        `).run(organizationId, t.name, t.slug, t.icon || 'fa-wrench', t.color || '#F97316', t.default_interval_months || 12, t.description, t.sort_order || 0, String(t.id));
+        const row = this.sqlite.prepare('SELECT * FROM organization_service_types WHERE organization_id = ? AND slug = ?').get(organizationId, t.slug) as OrganizationServiceType;
+        if (row) results.push(row);
+      } catch { /* ignore duplicate */ }
+    }
+    return results;
+  }
+
+  async findOrCreateServiceTypeByName(organizationId: number, name: string, source: string = 'manual'): Promise<OrganizationServiceType> {
+    this.validateTenantContext(organizationId, 'findOrCreateServiceTypeByName');
+    const slug = this.slugify(name);
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      // Try to find existing
+      const { data: existing } = await supabase
+        .from('organization_service_types')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .eq('slug', slug)
+        .single();
+      if (existing) return existing as OrganizationServiceType;
+
+      // Create new
+      const { data: created, error } = await supabase
+        .from('organization_service_types')
+        .insert({
+          organization_id: organizationId,
+          name,
+          slug,
+          source,
+          source_ref: name,
+        })
+        .select()
+        .single();
+      if (error) {
+        // Race condition: another request created it
+        const { data: retry } = await supabase
+          .from('organization_service_types')
+          .select('*')
+          .eq('organization_id', organizationId)
+          .eq('slug', slug)
+          .single();
+        if (retry) return retry as OrganizationServiceType;
+        throw new Error(`Failed to create service type: ${error.message}`);
+      }
+      return created as OrganizationServiceType;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const existing = this.sqlite.prepare(
+      'SELECT * FROM organization_service_types WHERE organization_id = ? AND slug = ?'
+    ).get(organizationId, slug) as OrganizationServiceType | undefined;
+    if (existing) return existing;
+
+    this.sqlite.prepare(`
+      INSERT INTO organization_service_types (organization_id, name, slug, source, source_ref)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(organizationId, name, slug, source, name);
+    return this.sqlite.prepare(
+      'SELECT * FROM organization_service_types WHERE organization_id = ? AND slug = ?'
+    ).get(organizationId, slug) as OrganizationServiceType;
   }
 }
 

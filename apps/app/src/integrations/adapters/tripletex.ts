@@ -38,17 +38,31 @@ interface TripletexAddress {
   country?: string;
 }
 
+interface TripletexCustomerCategory {
+  id: number;
+  name: string;
+  number?: string;
+  description?: string;
+}
+
 interface TripletexCustomer {
   id: number;
   name: string;
   organizationNumber?: string;
+  customerNumber?: number;
   email?: string;
+  invoiceEmail?: string;
   phoneNumber?: string;
   phoneNumberMobile?: string;
+  description?: string;
   physicalAddress?: TripletexAddress;
   postalAddress?: TripletexAddress;
   isCustomer?: boolean;
   isSupplier?: boolean;
+  isInactive?: boolean;
+  category1?: TripletexCustomerCategory;
+  category2?: TripletexCustomerCategory;
+  category3?: TripletexCustomerCategory;
 }
 
 interface TripletexListResponse<T> {
@@ -243,7 +257,7 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
         from: String(from),
         count: String(count),
         isCustomer: 'true', // Only fetch customers, not suppliers
-        fields: 'id,name,organizationNumber,email,phoneNumber,phoneNumberMobile,physicalAddress(*),postalAddress(*)',
+        fields: 'id,name,organizationNumber,customerNumber,email,invoiceEmail,phoneNumber,phoneNumberMobile,description,physicalAddress(*),postalAddress(*),isInactive,category1(*),category2(*),category3(*)',
       });
 
       // Add filter for changes since date if provided
@@ -391,9 +405,19 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
   async fetchCustomersWithProjects(
     credentials: IntegrationCredentials
   ): Promise<Array<ExternalCustomer & { projectNumbers: string[] }>> {
-    const [customers, projectsByCustomer] = await Promise.all([
+    let projectsByCustomer = new Map<number, string[]>();
+
+    // Fetch customers and projects in parallel; projects may fail (e.g. no access)
+    const [customers] = await Promise.all([
       this.fetchCustomers(credentials),
-      this.fetchProjects(credentials),
+      this.fetchProjects(credentials)
+        .then(projects => { projectsByCustomer = projects; })
+        .catch(err => {
+          this.adapterLogger.warn(
+            { error: err instanceof Error ? err.message : err },
+            'Could not fetch projects from Tripletex (may not have access)'
+          );
+        }),
     ]);
 
     return customers.map(customer => ({
@@ -425,12 +449,20 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
     );
 
     try {
-      const [allCustomers, projectsByCustomer] = await Promise.all([
+      let projectsByCustomer = new Map<number, string[]>();
+      const [allCustomers] = await Promise.all([
         this.fetchCustomers(credentials, {
           since: options?.fullSync ? undefined : options?.since,
           limit: options?.limit,
         }),
-        this.fetchProjects(credentials),
+        this.fetchProjects(credentials)
+          .then(projects => { projectsByCustomer = projects; })
+          .catch(err => {
+            this.adapterLogger.warn(
+              { error: err instanceof Error ? err.message : err },
+              'Could not fetch projects during sync (continuing without project numbers)'
+            );
+          }),
       ]);
 
       // Filter to selected IDs if provided
@@ -446,15 +478,83 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
       const { getDatabase } = await import('../../services/database');
       const db = await getDatabase();
 
+      const importOpts = options?.importOptions;
+
       for (const external of customers) {
         try {
           const kundeData = this.mapToKunde(external);
+          const raw = external.data as unknown as TripletexCustomer;
 
           // Inject project numbers
           const projectNums = projectsByCustomer.get(Number(external.externalId)) || [];
           if (projectNums.length > 0) {
             kundeData.prosjektnummer = projectNums.join(', ');
           }
+
+          // Apply import options
+          if (importOpts) {
+            // Description → notater
+            if (importOpts.importDescription && raw.description) {
+              kundeData.notater = raw.description;
+            }
+
+            // Customer number
+            if (importOpts.importCustomerNumber && raw.customerNumber) {
+              kundeData.kundenummer = String(raw.customerNumber);
+            }
+
+            // Invoice email
+            if (importOpts.importInvoiceEmail && raw.invoiceEmail) {
+              kundeData.faktura_epost = raw.invoiceEmail;
+            }
+
+            // Category mapping
+            if (importOpts.kategori) {
+              kundeData.kategori = importOpts.kategori;
+            } else if (importOpts.autoMapCategories || importOpts.categoryMapping) {
+              const ttxCategories = [
+                raw.category1?.name,
+                raw.category2?.name,
+                raw.category3?.name,
+              ].filter(Boolean) as string[];
+
+              if (importOpts.categoryMapping) {
+                // Use explicit mapping
+                for (const catName of ttxCategories) {
+                  const mapped = importOpts.categoryMapping[catName];
+                  if (mapped) {
+                    kundeData.kategori = mapped;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          // Auto-create organization service types from Tripletex categories
+          const ttxCats = [
+            raw.category1?.name,
+            raw.category2?.name,
+            raw.category3?.name,
+          ].filter(Boolean) as string[];
+
+          if (ttxCats.length > 0) {
+            for (const catName of ttxCats) {
+              try {
+                await db.findOrCreateServiceTypeByName(organizationId, catName, 'tripletex');
+              } catch {
+                // Ignore errors (e.g. table doesn't exist yet)
+              }
+            }
+            // Set kategori to first category for legacy compatibility (if not already set)
+            if (!kundeData.kategori) {
+              kundeData.kategori = ttxCats[0];
+            }
+          }
+
+          // Geocode address to get map coordinates
+          const { geocodeCustomerData } = await import('../../services/geocoding');
+          const geocodedData = await geocodeCustomerData(kundeData);
 
           const existing = await db.getKundeByExternalId(
             organizationId,
@@ -465,11 +565,11 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
           if (existing) {
             const hasChanges = this.hasDataChanged(
               existing as unknown as Record<string, unknown>,
-              kundeData
+              geocodedData
             );
             if (hasChanges) {
               await db.updateKunde(existing.id, {
-                ...kundeData,
+                ...geocodedData,
                 last_sync_at: new Date().toISOString(),
               }, organizationId);
               result.updated++;
@@ -478,7 +578,7 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
             }
           } else {
             await db.createKunde({
-              ...kundeData,
+              ...geocodedData,
               organization_id: organizationId,
               external_source: this.config.slug,
               external_id: external.externalId,
@@ -529,6 +629,189 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
     }
 
     return result;
+  }
+
+  /**
+   * Map a Sky Planner kunde to Tripletex customer format.
+   * Used for creating and updating customers in Tripletex.
+   */
+  private mapKundeToTripletex(kunde: {
+    navn: string;
+    adresse?: string;
+    postnummer?: string;
+    poststed?: string;
+    telefon?: string;
+    epost?: string;
+    org_nummer?: string;
+    faktura_epost?: string;
+  }): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      name: kunde.navn,
+      isCustomer: true,
+    };
+
+    if (kunde.epost) body.email = kunde.epost;
+    if (kunde.telefon) body.phoneNumber = kunde.telefon;
+    if (kunde.org_nummer) body.organizationNumber = kunde.org_nummer;
+    if (kunde.faktura_epost) body.invoiceEmail = kunde.faktura_epost;
+
+    if (kunde.adresse || kunde.postnummer || kunde.poststed) {
+      body.physicalAddress = {
+        addressLine1: kunde.adresse || '',
+        postalCode: kunde.postnummer || '',
+        city: kunde.poststed || '',
+      };
+    }
+
+    return body;
+  }
+
+  /**
+   * Create a customer in Tripletex.
+   * Tripletex API: POST /v2/customer
+   */
+  async createCustomer(
+    credentials: IntegrationCredentials,
+    kunde: {
+      navn: string;
+      adresse?: string;
+      postnummer?: string;
+      poststed?: string;
+      telefon?: string;
+      epost?: string;
+      org_nummer?: string;
+      faktura_epost?: string;
+    }
+  ): Promise<{ id: number; name: string; customerNumber?: number }> {
+    const body = this.mapKundeToTripletex(kunde);
+
+    const response = await this.rateLimitedFetch<{
+      value: { id: number; name: string; customerNumber?: number };
+    }>(
+      `${this.config.baseUrl}/customer`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+      credentials
+    );
+
+    this.adapterLogger.info(
+      { tripletexId: response.value.id, name: response.value.name },
+      'Created customer in Tripletex'
+    );
+
+    return response.value;
+  }
+
+  /**
+   * Update an existing customer in Tripletex.
+   * Tripletex API: PUT /v2/customer/{id}
+   */
+  async updateCustomer(
+    credentials: IntegrationCredentials,
+    tripletexCustomerId: number,
+    kunde: {
+      navn: string;
+      adresse?: string;
+      postnummer?: string;
+      poststed?: string;
+      telefon?: string;
+      epost?: string;
+      org_nummer?: string;
+      faktura_epost?: string;
+    }
+  ): Promise<{ id: number; name: string; customerNumber?: number }> {
+    const body = this.mapKundeToTripletex(kunde);
+
+    const response = await this.rateLimitedFetch<{
+      value: { id: number; name: string; customerNumber?: number };
+    }>(
+      `${this.config.baseUrl}/customer/${tripletexCustomerId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      },
+      credentials
+    );
+
+    this.adapterLogger.info(
+      { tripletexId: response.value.id, name: response.value.name },
+      'Updated customer in Tripletex'
+    );
+
+    return response.value;
+  }
+
+  /**
+   * Create a project in Tripletex linked to a customer.
+   * Tripletex API: POST /v2/project
+   */
+  async createProject(
+    credentials: IntegrationCredentials,
+    params: {
+      name: string;
+      customerId: number;
+      projectCategoryId?: number;
+      description?: string;
+    }
+  ): Promise<{ id: number; number: string; name: string }> {
+    const body: Record<string, unknown> = {
+      name: params.name,
+      customer: { id: params.customerId },
+      isInternal: false,
+    };
+
+    if (params.projectCategoryId) {
+      body.projectCategory = { id: params.projectCategoryId };
+    }
+    if (params.description) {
+      body.description = params.description;
+    }
+
+    const response = await this.rateLimitedFetch<{
+      value: { id: number; number: string; name: string };
+    }>(
+      `${this.config.baseUrl}/project`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+      credentials
+    );
+
+    this.adapterLogger.info(
+      { projectId: response.value.id, projectNumber: response.value.number, customerId: params.customerId },
+      'Created project in Tripletex'
+    );
+
+    return response.value;
+  }
+
+  /**
+   * Fetch project categories from Tripletex.
+   * Tripletex API: GET /v2/project/category
+   */
+  async fetchProjectCategories(
+    credentials: IntegrationCredentials
+  ): Promise<Array<{ id: number; name: string; number?: string; description?: string }>> {
+    const response = await this.rateLimitedFetch<TripletexListResponse<{
+      id: number;
+      name: string;
+      number?: string;
+      description?: string;
+    }>>(
+      `${this.config.baseUrl}/project/category?from=0&count=1000&fields=id,name,number,description`,
+      { method: 'GET' },
+      credentials
+    );
+
+    this.adapterLogger.debug(
+      { count: response.values.length },
+      'Fetched project categories from Tripletex'
+    );
+
+    return response.values;
   }
 
   /**

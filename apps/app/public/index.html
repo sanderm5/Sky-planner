@@ -1012,16 +1012,21 @@
           </div>
 
           <div class="avhuking-info">
-            <p><i class="fas fa-info-circle"></i> Velg kunder fra kartet med "Marker ferdig"-knappen, så vises de her.</p>
+            <p><i class="fas fa-info-circle"></i> Klikk "Legg til avhuking" på kartet for å legge til kunder her.</p>
           </div>
 
-          <div class="avhuking-actions">
-            <button id="clearAvhukingBtn" class="btn btn-secondary btn-small" disabled>
-              <i class="fas fa-times"></i> Tøm liste
-            </button>
-            <button id="completeAvhukingBtn" class="btn btn-success btn-small" disabled>
-              <i class="fas fa-check"></i> Marker alle som ferdig
-            </button>
+          <div class="avhuking-options" id="avhukingOptions" style="display: none;">
+            <div class="avhuking-option-group">
+              <label class="avhuking-option-label" for="avhukingDate">Dato for besøk</label>
+              <input type="date" id="avhukingDate" class="avhuking-date-input">
+            </div>
+            <div class="avhuking-option-group">
+              <label class="avhuking-option-label">Oppdater kontrolldatoer</label>
+              <div class="avhuking-kontroll-types" id="avhukingKontrollTypes">
+                <!-- Genereres dynamisk fra serviceTypeRegistry -->
+              </div>
+              <p class="avhuking-kontroll-hint">Neste kontroll beregnes automatisk ut fra kundens intervall</p>
+            </div>
           </div>
 
           <div class="avhuking-list" id="avhukingList">
@@ -1029,8 +1034,17 @@
             <div class="avhuking-empty">
               <i class="fas fa-clipboard-list"></i>
               <p>Ingen kunder valgt</p>
-              <span>Klikk på en kunde i kartet og velg "Marker ferdig"</span>
+              <span>Klikk "Legg til avhuking" på en kunde i kartet</span>
             </div>
+          </div>
+
+          <div class="avhuking-actions" id="avhukingActions" style="display: none;">
+            <button id="clearAvhukingBtn" class="btn btn-secondary btn-small" disabled>
+              <i class="fas fa-times"></i> Tøm liste
+            </button>
+            <button id="completeAvhukingBtn" class="btn btn-success" disabled>
+              <i class="fas fa-check"></i> Marker alle som besøkt
+            </button>
           </div>
         </div>
 
@@ -1581,7 +1595,12 @@
 
             <!-- Category Filter (Dynamic) -->
             <div class="category-filter">
-              <div class="category-filter-title">Kategori</div>
+              <div class="category-filter-title">
+                Kategori
+                <button class="category-manage-btn" id="manageCategoriesBtn" title="Administrer kategorier" onclick="openCategoryListModal()">
+                  <i class="fas fa-cog"></i>
+                </button>
+              </div>
               <div class="category-filter-buttons" id="categoryFilterButtons">
                 <!-- Populated dynamically by renderFilterPanelCategories() -->
               </div>
@@ -2174,50 +2193,76 @@
     </div>
   </div>
 
+  <!-- Category List Modal -->
+  <div id="categoryListModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2><i class="fas fa-tags"></i> Kategorier</h2>
+        <button class="modal-close" onclick="document.getElementById('categoryListModal').classList.add('hidden')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="categoryListItems">
+          <!-- Populated dynamically -->
+        </div>
+        <button class="btn btn-primary" style="width: 100%; margin-top: 12px;" onclick="document.getElementById('categoryListModal').classList.add('hidden'); openCategoryModal();">
+          <i class="fas fa-plus"></i> Ny kategori
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Category Modal -->
   <div id="categoryModal" class="modal hidden">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="categoryModalTitle">Ny kategori</h2>
-        <button class="modal-close" id="closeCategoryModal">&times;</button>
+        <button class="modal-close" id="closeCategoryModal" onclick="document.getElementById('categoryModal').classList.add('hidden')">&times;</button>
       </div>
-      <form id="categoryForm">
+      <form id="categoryForm" onsubmit="saveCategory(event)">
         <input type="hidden" id="categoryId">
+        <input type="hidden" id="categorySlug">
+        <input type="hidden" id="categoryIcon" value="fa-wrench">
         <div class="form-group">
           <label for="categoryName">Navn *</label>
-          <input type="text" id="categoryName" required placeholder="F.eks. El-Kontroll">
-        </div>
-        <div class="form-group">
-          <label for="categorySlug">URL-vennlig navn *</label>
-          <input type="text" id="categorySlug" required placeholder="el-kontroll" pattern="[a-z0-9-]+">
-          <small class="form-hint">Genereres automatisk fra navnet.</small>
+          <input type="text" id="categoryName" required placeholder="F.eks. El-Kontroll, VVS, Ventilasjon..." maxlength="100">
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label for="categoryIcon">Ikon</label>
-            <select id="categoryIcon">
-              <option value="fa-bolt">Bolt (El)</option>
-              <option value="fa-fire">Brann</option>
-              <option value="fa-wrench">Verktoy</option>
-              <option value="fa-cog">Tannhjul</option>
-              <option value="fa-tag" selected>Tag</option>
-              <option value="fa-tools">Verktoy</option>
-              <option value="fa-shield-alt">Skjold</option>
-              <option value="fa-check-circle">Sjekk</option>
-            </select>
+            <label for="categoryColor">Farge</label>
+            <div class="color-picker-row">
+              <div class="color-preview" id="categoryColorPreview" style="background: #F97316;"></div>
+              <input type="color" id="categoryColor" value="#F97316" oninput="updateCategoryColorPreview(this.value)">
+            </div>
           </div>
           <div class="form-group">
-            <label for="categoryColor">Farge</label>
-            <input type="color" id="categoryColor" value="#6B7280">
+            <label for="categoryInterval">Intervall</label>
+            <select id="categoryInterval">
+              <option value="6">6 maneder</option>
+              <option value="12" selected>1 ar (12 mnd)</option>
+              <option value="24">2 ar</option>
+              <option value="36">3 ar</option>
+              <option value="48">4 ar</option>
+              <option value="60">5 ar</option>
+            </select>
           </div>
         </div>
         <div class="form-group">
-          <label for="categoryInterval">Standard kontrollintervall (mndr)</label>
-          <input type="number" id="categoryInterval" value="12" min="1" max="60">
+          <label>Ikon</label>
+          <div class="icon-picker-grid" id="categoryIconPicker">
+            <!-- Populated dynamically by renderCategoryIconPicker() -->
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="categoryDescription">Beskrivelse (valgfritt)</label>
+          <input type="text" id="categoryDescription" placeholder="Kort beskrivelse av tjenesten...">
+        </div>
+        <div class="form-group" id="categorySourceGroup" style="display: none;">
+          <label>Kilde</label>
+          <span class="source-badge" id="categorySourceBadge"></span>
         </div>
         <div class="form-actions">
-          <button type="button" id="deleteCategoryBtn" class="btn btn-danger" style="display: none;">Slett</button>
-          <button type="button" id="cancelCategory" class="btn btn-secondary">Avbryt</button>
+          <button type="button" id="deleteCategoryBtn" class="btn btn-danger" style="display: none;" onclick="const id = document.getElementById('categoryId').value; if(id) confirmDeleteCategory(parseInt(id));">Slett</button>
+          <button type="button" id="cancelCategory" class="btn btn-secondary" onclick="document.getElementById('categoryModal').classList.add('hidden')">Avbryt</button>
           <button type="submit" class="btn btn-primary">Lagre</button>
         </div>
       </form>

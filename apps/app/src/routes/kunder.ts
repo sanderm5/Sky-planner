@@ -59,6 +59,12 @@ interface KundeDbService {
     dato: string,
     organizationId?: number
   ): Promise<number>;
+  markVisited(
+    kundeIds: number[],
+    visitedDate: string,
+    serviceTypeSlugs: string[],
+    organizationId: number
+  ): Promise<number>;
   getOrganizationLimits(organizationId: number): Promise<{ max_kunder: number; current_count: number } | null>;
   getOrganizationById(id: number): Promise<Organization | null>;
 }
@@ -440,6 +446,53 @@ router.post(
       data: {
         updated,
         message: `${updated} kunder oppdatert`,
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * Mark customers as visited (with optional kontroll date update).
+ * Accepts dynamic service_type_slugs from organization_service_types.
+ */
+router.post(
+  '/mark-visited',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { kunde_ids, visited_date, service_type_slugs } = req.body;
+
+    if (!Array.isArray(kunde_ids) || kunde_ids.length === 0) {
+      throw Errors.badRequest('kunde_ids må være en ikke-tom liste');
+    }
+
+    if (!visited_date || !/^\d{4}-\d{2}-\d{2}$/.test(visited_date)) {
+      throw Errors.badRequest('visited_date må være i format YYYY-MM-DD');
+    }
+
+    // service_type_slugs is optional - if provided, kontroll dates will be updated
+    const slugs: string[] = Array.isArray(service_type_slugs) ? service_type_slugs : [];
+
+    const updated = await dbService.markVisited(
+      kunde_ids,
+      visited_date,
+      slugs,
+      req.organizationId!
+    );
+
+    logAudit(apiLogger, 'MARK_VISITED', req.user!.userId, 'kunde', undefined, {
+      count: updated,
+      service_type_slugs: slugs,
+      visited_date,
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        updated,
+        message: `${updated} kunder markert som besøkt`,
       },
       requestId: req.requestId,
     };

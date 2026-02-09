@@ -6,6 +6,7 @@
 import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
+import { requireFeature } from '../middleware/features';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import type { AuthenticatedRequest, Rute, Kunde, ApiResponse, CreateRuteRequest } from '../types';
 
@@ -16,11 +17,16 @@ interface RuteDbService {
   getAllRuter(organizationId?: number): Promise<(Rute & { antall_kunder: number })[]>;
   getRuteById(id: number, organizationId?: number): Promise<(Rute & { kunder?: Kunde[] }) | null>;
   createRute(data: CreateRuteRequest & { organization_id?: number }): Promise<Rute>;
-  updateRute(id: number, data: Partial<Rute> & { kunde_ids?: number[] }, organizationId?: number): Promise<Rute | null>;
+  updateRute(id: number, data: Partial<Rute> & { kunde_ids?: number[]; execution_started_at?: string; execution_ended_at?: string; current_stop_index?: number }, organizationId?: number): Promise<Rute | null>;
   deleteRute(id: number, organizationId?: number): Promise<boolean>;
   completeRute(id: number, dato: string, kontrollType: 'el' | 'brann' | 'both', organizationId?: number): Promise<{ success: boolean; oppdaterte_kunder: number }>;
   getRuteKunder(ruteId: number): Promise<(Kunde & { rekkefolge: number })[]>;
   setRuteKunder(ruteId: number, kundeIds: number[], organizationId?: number): Promise<void>;
+  // Field work visit methods (optional - may not be available until migration runs)
+  createVisitRecords?(ruteId: number, kundeIds: number[], organizationId: number): Promise<void>;
+  upsertVisitRecord?(ruteId: number, kundeId: number, organizationId: number, data: { visited_at: string; completed: boolean; comment?: string; materials_used?: string[]; equipment_registered?: string[]; todos?: string[] }): Promise<{ id: number }>;
+  getVisitRecords?(ruteId: number, organizationId: number): Promise<Array<{ id: number; kunde_id: number; visited_at?: string; completed: boolean; comment?: string; materials_used?: string[]; equipment_registered?: string[]; todos?: string[] }>>;
+  updateKunde(id: number, data: Partial<Kunde>, organizationId?: number): Promise<Kunde | null>;
 }
 
 let dbService: RuteDbService;
@@ -261,6 +267,203 @@ router.post(
       data: {
         message: `Rute fullført, ${result.oppdaterte_kunder} kunder oppdatert`,
         oppdaterte_kunder: result.oppdaterte_kunder,
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+// ========================================
+// FIELD WORK MODE (Feature: field_work)
+// ========================================
+
+/**
+ * POST /api/ruter/:id/start-execution
+ * Start field work mode for a route
+ */
+router.post(
+  '/:id/start-execution',
+  requireTenantAuth,
+  requireFeature('field_work'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const id = Number.parseInt(req.params.id);
+    if (Number.isNaN(id)) {
+      throw Errors.badRequest('Ugyldig rute-ID');
+    }
+
+    const rute = await dbService.getRuteById(id, req.organizationId);
+    if (!rute) {
+      throw Errors.notFound('Rute');
+    }
+
+    // Update route with execution start time
+    await dbService.updateRute(id, {
+      execution_started_at: new Date().toISOString(),
+      current_stop_index: 0,
+    } as Partial<Rute>, req.organizationId);
+
+    // Create visit records for each customer in the route
+    const kunder = await dbService.getRuteKunder(id);
+    if (dbService.createVisitRecords) {
+      await dbService.createVisitRecords(id, kunder.map(k => k.id), req.organizationId!);
+    }
+
+    logAudit(apiLogger, 'START_FIELD_WORK', req.user!.userId, 'rute', id, {
+      antall_kunder: kunder.length,
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        message: 'Feltarbeid startet',
+        antall_stopp: kunder.length,
+        started_at: new Date().toISOString(),
+      },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * POST /api/ruter/:id/visit-customer
+ * Record a customer visit during field work
+ */
+router.post(
+  '/:id/visit-customer',
+  requireTenantAuth,
+  requireFeature('field_work'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const ruteId = Number.parseInt(req.params.id);
+    if (Number.isNaN(ruteId)) {
+      throw Errors.badRequest('Ugyldig rute-ID');
+    }
+
+    const { kunde_id, comment, materials_used, equipment_registered, todos, completed } = req.body;
+
+    if (!kunde_id || typeof kunde_id !== 'number') {
+      throw Errors.badRequest('kunde_id er påkrevd');
+    }
+
+    const rute = await dbService.getRuteById(ruteId, req.organizationId);
+    if (!rute) {
+      throw Errors.notFound('Rute');
+    }
+
+    if (!dbService.upsertVisitRecord) {
+      throw Errors.internal('Besøksregistrering er ikke tilgjengelig');
+    }
+
+    const visit = await dbService.upsertVisitRecord(ruteId, kunde_id, req.organizationId!, {
+      visited_at: new Date().toISOString(),
+      completed: completed ?? true,
+      comment,
+      materials_used,
+      equipment_registered,
+      todos,
+    });
+
+    // Also update last_visit_date on the customer when marked as completed
+    if (completed) {
+      await dbService.updateKunde(kunde_id, {
+        last_visit_date: new Date().toISOString().split('T')[0],
+      }, req.organizationId);
+    }
+
+    logAudit(apiLogger, 'VISIT_CUSTOMER', req.user!.userId, 'rute_kunde_visits', visit.id, {
+      ruteId,
+      kundeId: kunde_id,
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: visit,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/ruter/:id/visits
+ * Get all visit records for a route
+ */
+router.get(
+  '/:id/visits',
+  requireTenantAuth,
+  requireFeature('field_work'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const ruteId = Number.parseInt(req.params.id);
+    if (Number.isNaN(ruteId)) {
+      throw Errors.badRequest('Ugyldig rute-ID');
+    }
+
+    const rute = await dbService.getRuteById(ruteId, req.organizationId);
+    if (!rute) {
+      throw Errors.notFound('Rute');
+    }
+
+    if (!dbService.getVisitRecords) {
+      throw Errors.internal('Besøksregistrering er ikke tilgjengelig');
+    }
+
+    const visits = await dbService.getVisitRecords(ruteId, req.organizationId!);
+
+    const response: ApiResponse = {
+      success: true,
+      data: visits,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * POST /api/ruter/:id/end-execution
+ * End field work mode for a route
+ */
+router.post(
+  '/:id/end-execution',
+  requireTenantAuth,
+  requireFeature('field_work'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const id = Number.parseInt(req.params.id);
+    if (Number.isNaN(id)) {
+      throw Errors.badRequest('Ugyldig rute-ID');
+    }
+
+    const rute = await dbService.getRuteById(id, req.organizationId);
+    if (!rute) {
+      throw Errors.notFound('Rute');
+    }
+
+    await dbService.updateRute(id, {
+      execution_ended_at: new Date().toISOString(),
+    } as Partial<Rute>, req.organizationId);
+
+    // Get visit summary
+    let visitSummary = { total: 0, completed: 0 };
+    if (dbService.getVisitRecords) {
+      const visits = await dbService.getVisitRecords(id, req.organizationId!);
+      visitSummary = {
+        total: visits.length,
+        completed: visits.filter((v: { completed: boolean }) => v.completed).length,
+      };
+    }
+
+    logAudit(apiLogger, 'END_FIELD_WORK', req.user!.userId, 'rute', id, visitSummary);
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        message: 'Feltarbeid avsluttet',
+        ...visitSummary,
+        ended_at: new Date().toISOString(),
       },
       requestId: req.requestId,
     };

@@ -107,6 +107,21 @@ export interface SyncResult {
 
 // ============ Sync Options ============
 
+export interface ImportOptions {
+  /** Sky Planner kategori to set on imported customers */
+  kategori?: string;
+  /** Import Tripletex description as notater */
+  importDescription?: boolean;
+  /** Import Tripletex customer number as kundenummer */
+  importCustomerNumber?: boolean;
+  /** Import Tripletex invoice email as faktura_epost */
+  importInvoiceEmail?: boolean;
+  /** Try to auto-map Tripletex categories to Sky Planner kategori */
+  autoMapCategories?: boolean;
+  /** Map of Tripletex category name → Sky Planner kategori */
+  categoryMapping?: Record<string, string>;
+}
+
 export interface SyncOptions {
   /** Full sync (ignore last sync time) */
   fullSync?: boolean;
@@ -116,6 +131,8 @@ export interface SyncOptions {
   limit?: number;
   /** Only sync customers with these external IDs (user selection) */
   selectedExternalIds?: string[];
+  /** Import configuration options */
+  importOptions?: ImportOptions;
 }
 
 // ============ Stored Integration Types ============

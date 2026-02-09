@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { apiLogger } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
+import { requireFeature } from '../middleware/features';
 import { getDatabase } from '../services/database';
 import { getIntegrationRegistry } from '../integrations/registry';
 import { encryptCredentials, decryptCredentials, isCredentialsExpired } from '../integrations/encryption';
@@ -222,7 +223,7 @@ router.post(
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
-    const { fullSync = false, selectedExternalIds } = req.body;
+    const { fullSync = false, selectedExternalIds, importOptions } = req.body;
 
     const adapter = registry.get(id);
     if (!adapter) {
@@ -276,6 +277,7 @@ router.post(
       const result = await adapter.syncCustomers(req.organizationId!, credentials, {
         fullSync,
         selectedExternalIds,
+        importOptions,
       });
 
       // Update sync time
@@ -367,14 +369,22 @@ router.post(
     }
 
     // Fetch customers (with projects for Tripletex)
-    let previewCustomers: Array<{ externalId: string; projectNumbers: string[] } & Record<string, unknown>>;
+    let previewCustomers: Array<{ externalId: string; projectNumbers: string[]; data: Record<string, unknown>; rawResponse?: unknown }>;
 
-    if (adapter instanceof TripletexAdapter) {
-      const customersWithProjects = await (adapter as TripletexAdapter).fetchCustomersWithProjects(credentials);
-      previewCustomers = customersWithProjects;
-    } else {
-      const customers = await adapter.fetchCustomers(credentials);
-      previewCustomers = customers.map(c => ({ ...c, projectNumbers: [] as string[] }));
+    try {
+      if (adapter instanceof TripletexAdapter) {
+        const customersWithProjects = await (adapter as TripletexAdapter).fetchCustomersWithProjects(credentials);
+        previewCustomers = customersWithProjects;
+      } else {
+        const customers = await adapter.fetchCustomers(credentials);
+        previewCustomers = customers.map(c => ({ ...c, projectNumbers: [] as string[] }));
+      }
+    } catch (fetchError) {
+      apiLogger.error(
+        { error: fetchError instanceof Error ? fetchError.message : fetchError, stack: fetchError instanceof Error ? fetchError.stack : undefined, integration: id },
+        'Failed to fetch customers for preview'
+      );
+      throw fetchError;
     }
 
     // Check which are already imported
@@ -384,9 +394,17 @@ router.post(
     );
     const existingExternalIds = new Set(existingKunder.map(k => k.external_id));
 
-    // Map to preview format
+    // Map to preview format with all available fields
     const previewData = previewCustomers.map(customer => {
       const mapped = adapter.mapToKunde(customer as any);
+      const raw = customer.data as Record<string, any>;
+
+      // Extract Tripletex categories
+      const categories: string[] = [];
+      if (raw.category1?.name) categories.push(raw.category1.name);
+      if (raw.category2?.name) categories.push(raw.category2.name);
+      if (raw.category3?.name) categories.push(raw.category3.name);
+
       return {
         externalId: customer.externalId,
         navn: mapped.navn || '',
@@ -396,6 +414,13 @@ router.post(
         telefon: mapped.telefon || '',
         epost: mapped.epost || '',
         prosjektnummer: customer.projectNumbers.join(', '),
+        // Extra fields
+        kundenummer: raw.customerNumber ? String(raw.customerNumber) : '',
+        beskrivelse: raw.description || '',
+        orgNummer: raw.organizationNumber || '',
+        fakturaEpost: raw.invoiceEmail || '',
+        kategorier: categories,
+        isInactive: raw.isInactive || false,
         alreadyImported: existingExternalIds.has(customer.externalId),
       };
     });
@@ -575,6 +600,246 @@ router.post(
       success: true,
       message: 'Abonnert på Tripletex-hendelser',
       data: { callbackUrl, subscriptionIds },
+      requestId: req.requestId,
+    });
+  })
+);
+
+/**
+ * GET /api/integrations/tripletex/project-categories
+ * Fetch available project categories from Tripletex
+ */
+router.get(
+  '/tripletex/project-categories',
+  requireTenantAuth,
+  requireFeature('tripletex_projects'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const db = await getDatabase();
+    const stored = await db.getIntegrationCredentials(req.organizationId!, 'tripletex');
+
+    if (!stored || !stored.is_active) {
+      throw Errors.badRequest('Tripletex-integrasjon er ikke tilkoblet');
+    }
+
+    const adapter = registry.get('tripletex');
+    if (!adapter || !(adapter instanceof TripletexAdapter)) {
+      throw Errors.badRequest('Tripletex-adapter ikke tilgjengelig');
+    }
+
+    let credentials = await decryptCredentials(stored.credentials_encrypted);
+
+    if (isCredentialsExpired(credentials)) {
+      credentials = await adapter.refreshAuth(credentials);
+      const encrypted = await encryptCredentials(credentials);
+      await db.saveIntegrationCredentials(req.organizationId!, {
+        integration_id: 'tripletex',
+        credentials_encrypted: encrypted,
+        is_active: true,
+      });
+    }
+
+    const categories = await adapter.fetchProjectCategories(credentials);
+
+    res.json({
+      success: true,
+      data: categories,
+      requestId: req.requestId,
+    });
+  })
+);
+
+/**
+ * POST /api/integrations/tripletex/create-project
+ * Create a project in Tripletex for a specific customer
+ */
+router.post(
+  '/tripletex/create-project',
+  requireTenantAuth,
+  requireFeature('tripletex_projects'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { kunde_id, project_name, category_id, description } = req.body;
+
+    if (!kunde_id || typeof kunde_id !== 'number') {
+      throw Errors.badRequest('kunde_id er påkrevd');
+    }
+
+    const db = await getDatabase();
+
+    // Get the kunde to find their Tripletex external_id
+    const kunde = await db.getKundeById(kunde_id, req.organizationId!);
+    if (!kunde) {
+      throw Errors.notFound('Kunde');
+    }
+
+    if (kunde.external_source !== 'tripletex' || !kunde.external_id) {
+      throw Errors.badRequest('Kunden er ikke koblet til Tripletex. Synkroniser kunden fra Tripletex først.');
+    }
+
+    const tripletexCustomerId = Number(kunde.external_id);
+
+    // Get Tripletex credentials
+    const stored = await db.getIntegrationCredentials(req.organizationId!, 'tripletex');
+    if (!stored || !stored.is_active) {
+      throw Errors.badRequest('Tripletex-integrasjon er ikke tilkoblet');
+    }
+
+    const adapter = registry.get('tripletex');
+    if (!adapter || !(adapter instanceof TripletexAdapter)) {
+      throw Errors.badRequest('Tripletex-adapter ikke tilgjengelig');
+    }
+
+    let credentials = await decryptCredentials(stored.credentials_encrypted);
+
+    if (isCredentialsExpired(credentials)) {
+      credentials = await adapter.refreshAuth(credentials);
+      const encrypted = await encryptCredentials(credentials);
+      await db.saveIntegrationCredentials(req.organizationId!, {
+        integration_id: 'tripletex',
+        credentials_encrypted: encrypted,
+        is_active: true,
+      });
+    }
+
+    // Build project name from kunde name if not provided
+    const name = project_name || kunde.navn;
+
+    // Create the project in Tripletex
+    const project = await adapter.createProject(credentials, {
+      name,
+      customerId: tripletexCustomerId,
+      projectCategoryId: category_id ? Number(category_id) : undefined,
+      description,
+    });
+
+    // Update the kunde's prosjektnummer field
+    const existingProjects = kunde.prosjektnummer ? kunde.prosjektnummer.split(', ') : [];
+    existingProjects.push(project.number);
+    const updatedProsjektnummer = existingProjects.join(', ');
+
+    await db.updateKunde(kunde_id, {
+      prosjektnummer: updatedProsjektnummer,
+    }, req.organizationId!);
+
+    apiLogger.info(
+      {
+        organizationId: req.organizationId,
+        kundeId: kunde_id,
+        tripletexCustomerId,
+        projectId: project.id,
+        projectNumber: project.number,
+      },
+      'Created Tripletex project from map context menu'
+    );
+
+    res.json({
+      success: true,
+      data: {
+        projectId: project.id,
+        projectNumber: project.number,
+        projectName: project.name,
+      },
+      message: `Prosjekt ${project.number} opprettet i Tripletex`,
+      requestId: req.requestId,
+    });
+  })
+);
+
+/**
+ * POST /api/integrations/tripletex/push-customer
+ * Create or update a customer in Tripletex from Sky Planner
+ */
+router.post(
+  '/tripletex/push-customer',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { kunde_id } = req.body;
+
+    if (!kunde_id || typeof kunde_id !== 'number') {
+      throw Errors.badRequest('kunde_id er påkrevd');
+    }
+
+    const db = await getDatabase();
+
+    const kunde = await db.getKundeById(kunde_id, req.organizationId!);
+    if (!kunde) {
+      throw Errors.notFound('Kunde');
+    }
+
+    // Get Tripletex credentials
+    const stored = await db.getIntegrationCredentials(req.organizationId!, 'tripletex');
+    if (!stored || !stored.is_active) {
+      throw Errors.badRequest('Tripletex-integrasjon er ikke tilkoblet');
+    }
+
+    const adapter = registry.get('tripletex');
+    if (!adapter || !(adapter instanceof TripletexAdapter)) {
+      throw Errors.badRequest('Tripletex-adapter ikke tilgjengelig');
+    }
+
+    let credentials = await decryptCredentials(stored.credentials_encrypted);
+
+    if (isCredentialsExpired(credentials)) {
+      credentials = await adapter.refreshAuth(credentials);
+      const encrypted = await encryptCredentials(credentials);
+      await db.saveIntegrationCredentials(req.organizationId!, {
+        integration_id: 'tripletex',
+        credentials_encrypted: encrypted,
+        is_active: true,
+      });
+    }
+
+    const kundeData = {
+      navn: kunde.navn,
+      adresse: kunde.adresse,
+      postnummer: kunde.postnummer,
+      poststed: kunde.poststed,
+      telefon: kunde.telefon,
+      epost: kunde.epost,
+      org_nummer: kunde.org_nummer,
+      faktura_epost: kunde.faktura_epost,
+    };
+
+    let result: { id: number; name: string; customerNumber?: number };
+    let action: 'created' | 'updated';
+
+    if (kunde.external_source === 'tripletex' && kunde.external_id) {
+      // Customer already linked to Tripletex → update
+      result = await adapter.updateCustomer(credentials, Number(kunde.external_id), kundeData);
+      action = 'updated';
+    } else {
+      // New customer → create in Tripletex
+      result = await adapter.createCustomer(credentials, kundeData);
+      action = 'created';
+
+      // Link the kunde to Tripletex
+      await db.updateKunde(kunde_id, {
+        external_source: 'tripletex',
+        external_id: String(result.id),
+        kundenummer: result.customerNumber ? String(result.customerNumber) : undefined,
+        last_sync_at: new Date().toISOString(),
+      } as Record<string, unknown>, req.organizationId!);
+    }
+
+    apiLogger.info(
+      {
+        organizationId: req.organizationId,
+        kundeId: kunde_id,
+        tripletexId: result.id,
+        action,
+      },
+      `Customer ${action} in Tripletex`
+    );
+
+    res.json({
+      success: true,
+      data: {
+        tripletexId: result.id,
+        customerNumber: result.customerNumber,
+        action,
+      },
+      message: action === 'created'
+        ? `Kunde opprettet i Tripletex (ID: ${result.id})`
+        : `Kunde oppdatert i Tripletex`,
       requestId: req.requestId,
     });
   })
