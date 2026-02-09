@@ -25,11 +25,54 @@ interface AvtaleMedKunde extends Avtale {
 interface AvtaleDbService {
   getAllAvtaler(organizationId?: number, start?: string, end?: string): Promise<AvtaleMedKunde[]>;
   getAvtaleById(id: number, organizationId?: number): Promise<AvtaleMedKunde | null>;
-  createAvtale(data: CreateAvtaleRequest & { organization_id?: number; opprettet_av?: string }): Promise<AvtaleMedKunde>;
+  createAvtale(data: CreateAvtaleRequest & { organization_id?: number; opprettet_av?: string; er_gjentakelse?: boolean; gjentakelse_regel?: string; gjentakelse_slutt?: string; original_avtale_id?: number }): Promise<AvtaleMedKunde>;
   updateAvtale(id: number, data: Partial<Avtale>, organizationId?: number): Promise<AvtaleMedKunde | null>;
   deleteAvtale(id: number, organizationId?: number): Promise<boolean>;
+  deleteAvtaleSeries(parentId: number, organizationId?: number): Promise<number>;
   completeAvtale(id: number, organizationId?: number): Promise<boolean>;
   getOrganizationById(id: number): Promise<Organization | null>;
+}
+
+// Valid recurrence rules
+const VALID_GJENTAKELSE = ['daglig', 'ukentlig', 'annenhver_uke', 'manedlig', '3_maneder', '6_maneder', 'arlig'] as const;
+
+/**
+ * Expand a recurrence rule into dates from a start date
+ */
+function expandRecurringDates(startDate: string, regel: string, endDate?: string): string[] {
+  const dates: string[] = [];
+  const start = new Date(startDate);
+  const maxEnd = endDate ? new Date(endDate) : new Date(start);
+  if (!endDate) {
+    maxEnd.setFullYear(maxEnd.getFullYear() + 1); // Default: 1 year ahead
+  }
+
+  let current = new Date(start);
+  // Skip the first date (parent already has it)
+  advanceDate(current, regel);
+
+  while (current <= maxEnd) {
+    dates.push(formatDate(current));
+    advanceDate(current, regel);
+  }
+
+  return dates;
+}
+
+function advanceDate(date: Date, regel: string): void {
+  switch (regel) {
+    case 'daglig': date.setDate(date.getDate() + 1); break;
+    case 'ukentlig': date.setDate(date.getDate() + 7); break;
+    case 'annenhver_uke': date.setDate(date.getDate() + 14); break;
+    case 'manedlig': date.setMonth(date.getMonth() + 1); break;
+    case '3_maneder': date.setMonth(date.getMonth() + 3); break;
+    case '6_maneder': date.setMonth(date.getMonth() + 6); break;
+    case 'arlig': date.setFullYear(date.getFullYear() + 1); break;
+  }
+}
+
+function formatDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 // WebSocket broadcast function (optional)
@@ -119,7 +162,7 @@ router.post(
   '/',
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const { kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av } = req.body;
+    const { kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av, gjentakelse_regel, gjentakelse_slutt } = req.body;
 
     if (!dato || !/^\d{4}-\d{2}-\d{2}$/.test(dato)) {
       throw Errors.badRequest('Dato er påkrevd (format YYYY-MM-DD)');
@@ -127,6 +170,15 @@ router.post(
 
     if (klokkeslett && !/^\d{2}:\d{2}(:\d{2})?$/.test(klokkeslett)) {
       throw Errors.badRequest('Ugyldig klokkeslett format (bruk HH:MM eller HH:MM:SS)');
+    }
+
+    // Validate recurrence rule
+    if (gjentakelse_regel && !VALID_GJENTAKELSE.includes(gjentakelse_regel)) {
+      throw Errors.badRequest(`Ugyldig gjentakelsesregel. Gyldige verdier: ${VALID_GJENTAKELSE.join(', ')}`);
+    }
+
+    if (gjentakelse_slutt && !/^\d{4}-\d{2}-\d{2}$/.test(gjentakelse_slutt)) {
+      throw Errors.badRequest('Ugyldig sluttdato for gjentakelse (bruk YYYY-MM-DD)');
     }
 
     // Validate type based on app_mode
@@ -143,7 +195,10 @@ router.post(
       throw Errors.badRequest('Status må være "planlagt" eller "fullført"');
     }
 
-    const avtaleData: CreateAvtaleRequest & { organization_id?: number; opprettet_av?: string } = {
+    const isRecurring = !!gjentakelse_regel;
+
+    // Create the parent avtale
+    const avtaleData: CreateAvtaleRequest & { organization_id?: number; opprettet_av?: string; er_gjentakelse?: boolean; gjentakelse_regel?: string; gjentakelse_slutt?: string } = {
       kunde_id: kunde_id ? Number.parseInt(kunde_id) : undefined,
       dato,
       klokkeslett,
@@ -151,14 +206,39 @@ router.post(
       beskrivelse,
       organization_id: req.organizationId,
       opprettet_av: opprettet_av || req.user?.epost,
+      gjentakelse_regel: gjentakelse_regel || undefined,
+      gjentakelse_slutt: gjentakelse_slutt || undefined,
     };
 
+    if (isRecurring) {
+      avtaleData.er_gjentakelse = true;
+    }
+
     const avtale = await dbService.createAvtale(avtaleData);
+
+    // If recurring, create instance rows for future dates
+    let instanceCount = 0;
+    if (isRecurring) {
+      const futureDates = expandRecurringDates(dato, gjentakelse_regel, gjentakelse_slutt);
+      for (const instanceDate of futureDates) {
+        await dbService.createAvtale({
+          ...avtaleData,
+          dato: instanceDate,
+          er_gjentakelse: false,
+          gjentakelse_regel: undefined,
+          gjentakelse_slutt: undefined,
+          original_avtale_id: avtale.id,
+        } as CreateAvtaleRequest & { organization_id?: number; opprettet_av?: string; original_avtale_id?: number });
+        instanceCount++;
+      }
+    }
 
     logAudit(apiLogger, 'CREATE', req.user!.userId, 'avtale', avtale.id, {
       dato: avtale.dato,
       type: avtale.type,
       kunde_id: avtale.kunde_id,
+      recurring: isRecurring,
+      instanceCount,
     });
 
     // Broadcast to WebSocket clients
@@ -270,6 +350,44 @@ router.delete(
     const response: ApiResponse = {
       success: true,
       data: { message: 'Avtale slettet' },
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * DELETE /api/avtaler/:id/series
+ * Delete entire recurring series (parent + all instances)
+ */
+router.delete(
+  '/:id/series',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const id = Number.parseInt(req.params.id);
+    if (Number.isNaN(id)) {
+      throw Errors.badRequest('Ugyldig avtale-ID');
+    }
+
+    const avtale = await dbService.getAvtaleById(id, req.organizationId);
+    if (!avtale) {
+      throw Errors.notFound('Avtale');
+    }
+
+    // Find the parent ID (could be this avtale or its parent)
+    const parentId = avtale.original_avtale_id || avtale.id;
+    const deletedCount = await dbService.deleteAvtaleSeries(parentId, req.organizationId);
+
+    logAudit(apiLogger, 'DELETE_SERIES', req.user!.userId, 'avtale', parentId, { deletedCount });
+
+    if (wsBroadcast) {
+      wsBroadcast('avtale_series_deleted', { parentId, deletedCount });
+    }
+
+    const response: ApiResponse = {
+      success: true,
+      data: { message: `${deletedCount} avtaler slettet`, deletedCount },
       requestId: req.requestId,
     };
 

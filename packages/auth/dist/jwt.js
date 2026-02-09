@@ -3,12 +3,15 @@
  * Used by both marketing site and main app for SSO
  */
 import jwt from 'jsonwebtoken';
+import crypto from 'node:crypto';
 /**
- * Signs a JWT token with the provided payload
+ * Signs a JWT token with the provided payload.
+ * Auto-generates a JTI (unique token ID) if not provided.
  */
 export function signToken(payload, secret, options = {}) {
     const { expiresIn = '24h' } = options;
-    return jwt.sign(payload, secret, {
+    const tokenPayload = { ...payload, jti: payload.jti || crypto.randomUUID() };
+    return jwt.sign(tokenPayload, secret, {
         expiresIn: expiresIn,
     });
 }

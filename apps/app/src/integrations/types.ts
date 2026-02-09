@@ -114,6 +114,8 @@ export interface SyncOptions {
   since?: Date;
   /** Limit number of customers to sync */
   limit?: number;
+  /** Only sync customers with these external IDs (user selection) */
+  selectedExternalIds?: string[];
 }
 
 // ============ Stored Integration Types ============

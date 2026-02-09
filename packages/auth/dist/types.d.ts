@@ -11,6 +11,7 @@ export interface JWTPayload {
     subscriptionPlan?: 'free' | 'standard' | 'premium' | 'enterprise';
     trialEndsAt?: string;
     currentPeriodEnd?: string;
+    jti?: string;
     iat?: number;
     exp?: number;
 }

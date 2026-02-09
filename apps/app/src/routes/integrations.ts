@@ -222,7 +222,7 @@ router.post(
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
-    const { fullSync = false } = req.body;
+    const { fullSync = false, selectedExternalIds } = req.body;
 
     const adapter = registry.get(id);
     if (!adapter) {
@@ -275,6 +275,7 @@ router.post(
       // Run the sync
       const result = await adapter.syncCustomers(req.organizationId!, credentials, {
         fullSync,
+        selectedExternalIds,
       });
 
       // Update sync time
@@ -328,6 +329,91 @@ router.post(
         `Synkronisering feilet: ${error instanceof Error ? error.message : 'Ukjent feil'}`
       );
     }
+  })
+);
+
+/**
+ * POST /api/integrations/:id/preview
+ * Fetch customers from integration for preview/selection (without importing)
+ */
+router.post(
+  '/:id/preview',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+
+    const adapter = registry.get(id);
+    if (!adapter) {
+      throw Errors.notFound('Integrasjon');
+    }
+
+    const db = await getDatabase();
+    const stored = await db.getIntegrationCredentials(req.organizationId!, id);
+
+    if (!stored || !stored.is_active) {
+      throw Errors.badRequest('Integrasjon er ikke tilkoblet');
+    }
+
+    // Decrypt & refresh credentials
+    let credentials = await decryptCredentials(stored.credentials_encrypted);
+    if (isCredentialsExpired(credentials)) {
+      credentials = await adapter.refreshAuth(credentials);
+      const encrypted = await encryptCredentials(credentials);
+      await db.saveIntegrationCredentials(req.organizationId!, {
+        integration_id: id,
+        credentials_encrypted: encrypted,
+        is_active: true,
+      });
+    }
+
+    // Fetch customers (with projects for Tripletex)
+    let previewCustomers: Array<{ externalId: string; projectNumbers: string[] } & Record<string, unknown>>;
+
+    if (adapter instanceof TripletexAdapter) {
+      const customersWithProjects = await (adapter as TripletexAdapter).fetchCustomersWithProjects(credentials);
+      previewCustomers = customersWithProjects;
+    } else {
+      const customers = await adapter.fetchCustomers(credentials);
+      previewCustomers = customers.map(c => ({ ...c, projectNumbers: [] as string[] }));
+    }
+
+    // Check which are already imported
+    const existingKunder = await db.getKunderByExternalSource(
+      req.organizationId!,
+      adapter.config.slug
+    );
+    const existingExternalIds = new Set(existingKunder.map(k => k.external_id));
+
+    // Map to preview format
+    const previewData = previewCustomers.map(customer => {
+      const mapped = adapter.mapToKunde(customer as any);
+      return {
+        externalId: customer.externalId,
+        navn: mapped.navn || '',
+        adresse: mapped.adresse || '',
+        postnummer: mapped.postnummer || '',
+        poststed: mapped.poststed || '',
+        telefon: mapped.telefon || '',
+        epost: mapped.epost || '',
+        prosjektnummer: customer.projectNumbers.join(', '),
+        alreadyImported: existingExternalIds.has(customer.externalId),
+      };
+    });
+
+    apiLogger.info(
+      { integration: id, totalCustomers: previewData.length, alreadyImported: previewData.filter(c => c.alreadyImported).length },
+      'Integration preview fetched'
+    );
+
+    res.json({
+      success: true,
+      data: {
+        customers: previewData,
+        totalCount: previewData.length,
+        alreadyImportedCount: previewData.filter(c => c.alreadyImported).length,
+      },
+      requestId: req.requestId,
+    });
   })
 );
 

@@ -33,6 +33,9 @@ import kunderRoutes, { initKunderRoutes } from './routes/kunder';
 import ruterRoutes, { initRuterRoutes } from './routes/ruter';
 import avtalerRoutes, { initAvtalerRoutes } from './routes/avtaler';
 import kontaktloggRoutes, { initKontaktloggRoutes } from './routes/kontaktlogg';
+import kontaktpersonerRoutes, { initKontaktpersonerRoutes } from './routes/kontaktpersoner';
+import tagRoutes, { initTagRoutes } from './routes/tags';
+import reportRoutes, { initReportRoutes } from './routes/reports';
 import emailRoutes, { initEmailRoutes } from './routes/email';
 import configRoutes, { initConfigRoutes } from './routes/config';
 import industriesRoutes, { initIndustryRoutes } from './routes/industries';
@@ -65,6 +68,9 @@ async function initializeApp() {
   initRuterRoutes(db as Parameters<typeof initRuterRoutes>[0]);
   initAvtalerRoutes(db as Parameters<typeof initAvtalerRoutes>[0]);
   initKontaktloggRoutes(db as Parameters<typeof initKontaktloggRoutes>[0]);
+  initKontaktpersonerRoutes(db as Parameters<typeof initKontaktpersonerRoutes>[0]);
+  initTagRoutes(db as Parameters<typeof initTagRoutes>[0]);
+  initReportRoutes(db as Parameters<typeof initReportRoutes>[0]);
   initEmailRoutes(db as Parameters<typeof initEmailRoutes>[0]);
   initConfigRoutes(db as Parameters<typeof initConfigRoutes>[0]);
   initIndustryRoutes(db as any);
@@ -124,8 +130,7 @@ app.use(
           'https://*.tiles.mapbox.com',
           'https://events.mapbox.com',
           'https://unpkg.com',
-          'wss://localhost:*',
-          'ws://localhost:*',
+          ...(process.env.NODE_ENV !== 'production' ? ['wss://localhost:*', 'ws://localhost:*'] : []),
         ],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'https://cdnjs.cloudflare.com'],
         workerSrc: ["'self'", 'blob:'],
@@ -281,6 +286,9 @@ app.use('/api/onboarding', requireTenantAuth, onboardingRoutes);
 
 // ===== OTHER API ROUTES =====
 app.use('/api', kontaktloggRoutes);  // Routes include /kunder/:id/kontaktlogg and /kontaktlogg/:id
+app.use('/api', kontaktpersonerRoutes);  // Routes include /kunder/:id/kontaktpersoner and /kontaktpersoner/:id
+app.use('/api/tags', tagRoutes);  // Tag CRUD + /kunder/:id/tags
+app.use('/api/reports', reportRoutes);  // Reporting endpoints
 app.use('/api/email', emailRoutes);
 app.use('/api', configRoutes);  // Routes include /config and /routes/*
 app.use('/api/industries', industriesRoutes);

@@ -166,6 +166,24 @@ function formatLockoutMessage(retryAfter: number): string {
   }
 }
 
+function parseDeviceInfo(ua: string): string {
+  if (!ua) return 'Ukjent enhet';
+  let browser = 'Ukjent nettleser';
+  if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
+
+  let os = 'Ukjent OS';
+  if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Mac OS X') || ua.includes('Macintosh')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+  return `${browser} på ${os}`;
+}
+
 export const POST: APIRoute = async ({ request, clientAddress }) => {
   // Get client IP for rate limiting
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || clientAddress || 'unknown';
@@ -317,6 +335,21 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     const token = auth.signToken(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
     const cookieConfig = auth.getCookieConfig(isProduction);
     const cookieHeader = auth.buildSetCookieHeader(token, cookieConfig.options);
+
+    // Track active session
+    const decoded = auth.decodeToken(token);
+    if (decoded?.jti) {
+      const userAgent = request.headers.get('user-agent') || '';
+      supabase.from('active_sessions').insert({
+        user_id: user.id,
+        user_type: userType,
+        jti: decoded.jti,
+        ip_address: ip,
+        user_agent: userAgent,
+        device_info: parseDeviceInfo(userAgent),
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+    }
 
     // Valider redirect-parameter mot whitelist for å forhindre open redirect
     const requestedRedirect = body.redirect || '/dashboard';

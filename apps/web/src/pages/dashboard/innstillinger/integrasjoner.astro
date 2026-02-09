@@ -15,10 +15,6 @@ if (isAuthError(authResult)) return authResult;
 
 const { user, organization } = authResult;
 
-// Integrasjoner er kun tilgjengelig for full mode (TRE Allservice)
-if ((organization as any).app_mode !== 'full') {
-  return Astro.redirect('/dashboard/innstillinger');
-}
 
 // API base URL - use proxy in dev to avoid CORS issues
 const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https://app.skyplanner.no') : '';
@@ -230,12 +226,102 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
       </div>
     </div>
   </div>
+
+  <!-- Preview/Selection Modal -->
+  <div id="modal-preview" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="overlay-preview"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="glass-card w-full max-w-4xl max-h-[85vh] p-6 relative flex flex-col">
+        <button id="close-preview" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors z-10">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+
+        <!-- Loading state -->
+        <div id="preview-loading" class="text-center py-12">
+          <svg class="w-12 h-12 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <h2 class="text-xl font-bold text-white mb-2">Henter kunder...</h2>
+          <p class="text-dark-400 text-sm">Kontakter regnskapssystemet</p>
+        </div>
+
+        <!-- Content state -->
+        <div id="preview-content" class="hidden flex flex-col flex-1 min-h-0">
+          <div class="mb-4">
+            <h2 class="text-xl font-bold text-white">Velg kunder for import</h2>
+            <p id="preview-summary" class="text-dark-400 text-sm mt-1"></p>
+          </div>
+
+          <div class="flex items-center gap-4 mb-4">
+            <input type="text" id="preview-search" class="input flex-1" placeholder="Sok etter kunde..." />
+            <label class="flex items-center gap-2 text-sm text-dark-300 cursor-pointer whitespace-nowrap">
+              <input type="checkbox" id="preview-select-all" class="rounded border-dark-600" />
+              Velg alle
+            </label>
+          </div>
+
+          <div class="flex-1 overflow-auto border border-dark-700 rounded-lg min-h-0">
+            <table class="w-full text-sm">
+              <thead class="bg-dark-800/50 sticky top-0 z-10">
+                <tr>
+                  <th class="p-3 text-left w-10"></th>
+                  <th class="p-3 text-left text-dark-300 font-medium">Navn</th>
+                  <th class="p-3 text-left text-dark-300 font-medium">Adresse</th>
+                  <th class="p-3 text-left text-dark-300 font-medium">Prosjektnr</th>
+                  <th class="p-3 text-left text-dark-300 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody id="preview-table-body" class="divide-y divide-dark-700/50"></tbody>
+            </table>
+          </div>
+
+          <div class="flex items-center justify-between mt-4 pt-4 border-t border-dark-700">
+            <p id="preview-selected-count" class="text-sm text-dark-400"></p>
+            <div class="flex gap-3">
+              <button type="button" id="preview-cancel" class="btn-secondary">Avbryt</button>
+              <button type="button" id="preview-import" class="btn-primary">Importer valgte</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error state -->
+        <div id="preview-error" class="hidden text-center py-12">
+          <div class="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </div>
+          <h2 class="text-xl font-bold text-white mb-2">Kunne ikke hente kunder</h2>
+          <p id="preview-error-message" class="text-dark-400 text-sm mb-6"></p>
+          <button id="preview-error-close" class="btn-secondary">Lukk</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </DashboardLayout>
 
 <script define:vars={{ apiBaseUrl }}>
+  // CSRF token helper - reads backend's csrf_token cookie
+  function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return match ? match[1] : '';
+  }
+
+  // Escape HTML for safe rendering
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+  }
+
   // State
   let integrations = [];
   let currentIntegration = null;
+  let previewCustomers = [];
+  let selectedExternalIds = new Set();
 
   // DOM elements
   const container = document.getElementById('integrations-container');
@@ -254,7 +340,7 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
   }
 
   // Setup modal close handlers
-  ['tripletex', 'fiken', 'sync'].forEach(id => {
+  ['tripletex', 'fiken', 'sync', 'preview'].forEach(id => {
     document.getElementById(`close-${id}`)?.addEventListener('click', () => hideModal(id));
     document.getElementById(`cancel-${id}`)?.addEventListener('click', () => hideModal(id));
     document.getElementById(`overlay-${id}`)?.addEventListener('click', () => hideModal(id));
@@ -262,6 +348,7 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
 
   document.getElementById('sync-close')?.addEventListener('click', () => hideModal('sync'));
   document.getElementById('sync-error-close')?.addEventListener('click', () => hideModal('sync'));
+  document.getElementById('preview-error-close')?.addEventListener('click', () => hideModal('preview'));
 
   // Render integration cards
   function renderIntegrations() {
@@ -324,7 +411,7 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
               ${integration.isConnected ? `
                 <button
                   class="btn-secondary text-sm"
-                  data-action="sync"
+                  data-action="preview"
                   data-id="${integration.id}"
                 >
                   Synkroniser
@@ -391,6 +478,10 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
         }
         break;
 
+      case 'preview':
+        await runPreview(id);
+        break;
+
       case 'sync':
         await runSync(id);
         break;
@@ -408,7 +499,7 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
     try {
       const res = await fetch(`${apiBaseUrl}/api/app/integrations/${id}/connect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         credentials: 'include',
         body: JSON.stringify(credentials),
       });
@@ -422,9 +513,9 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
       hideModal(id);
       await loadIntegrations();
 
-      // Offer to sync immediately
-      if (confirm('Tilkobling vellykket! Vil du synkronisere kunder nå?')) {
-        await runSync(id);
+      // Offer to preview and import
+      if (confirm('Tilkobling vellykket! Vil du hente og importere kunder nå?')) {
+        await runPreview(id);
       }
     } catch (err) {
       const errorEl = document.getElementById(`${id}-error`);
@@ -450,7 +541,7 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
     try {
       const res = await fetch(`${apiBaseUrl}/api/app/integrations/${id}/sync`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         credentials: 'include',
         body: JSON.stringify({ fullSync: false }),
       });
@@ -484,6 +575,7 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
     try {
       const res = await fetch(`${apiBaseUrl}/api/app/integrations/${id}/disconnect`, {
         method: 'DELETE',
+        headers: { 'X-CSRF-Token': getCsrfToken() },
         credentials: 'include',
       });
 
@@ -494,6 +586,167 @@ const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https
       await loadIntegrations();
     } catch (err) {
       alert(err.message);
+    }
+  }
+
+  // Preview - fetch customers for selection
+  async function runPreview(id) {
+    showModal('preview');
+    currentIntegration = id;
+
+    const loadingEl = document.getElementById('preview-loading');
+    const contentEl = document.getElementById('preview-content');
+    const errorEl = document.getElementById('preview-error');
+
+    loadingEl?.classList.remove('hidden');
+    contentEl?.classList.add('hidden');
+    errorEl?.classList.add('hidden');
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/app/integrations/${id}/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || data.message || 'Henting feilet');
+
+      previewCustomers = data.data.customers;
+      // Default: select all NOT already imported
+      selectedExternalIds = new Set(
+        previewCustomers.filter(c => !c.alreadyImported).map(c => c.externalId)
+      );
+
+      loadingEl?.classList.add('hidden');
+      contentEl?.classList.remove('hidden');
+
+      const alreadyCount = data.data.alreadyImportedCount;
+      document.getElementById('preview-summary').textContent =
+        `${data.data.totalCount} kunder funnet` + (alreadyCount > 0 ? `, ${alreadyCount} allerede importert` : '');
+
+      document.getElementById('preview-select-all').checked = selectedExternalIds.size === previewCustomers.length;
+      renderPreviewTable();
+      updateSelectedCount();
+    } catch (err) {
+      loadingEl?.classList.add('hidden');
+      errorEl?.classList.remove('hidden');
+      document.getElementById('preview-error-message').textContent = err.message;
+    }
+  }
+
+  function renderPreviewTable(filter) {
+    const tbody = document.getElementById('preview-table-body');
+    const filtered = filter
+      ? previewCustomers.filter(c =>
+          (c.navn || '').toLowerCase().includes(filter) ||
+          (c.adresse || '').toLowerCase().includes(filter) ||
+          (c.poststed || '').toLowerCase().includes(filter) ||
+          (c.prosjektnummer || '').toLowerCase().includes(filter)
+        )
+      : previewCustomers;
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-dark-400">${filter ? 'Ingen treff' : 'Ingen kunder funnet'}</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(c => `
+      <tr class="hover:bg-dark-800/30 transition-colors">
+        <td class="p-3">
+          <input type="checkbox" class="preview-checkbox rounded border-dark-600"
+            data-id="${escapeHtml(c.externalId)}"
+            ${selectedExternalIds.has(c.externalId) ? 'checked' : ''} />
+        </td>
+        <td class="p-3 text-white font-medium">${escapeHtml(c.navn)}</td>
+        <td class="p-3 text-dark-300">${escapeHtml(c.adresse)}${c.poststed ? ', ' + escapeHtml(c.poststed) : ''}</td>
+        <td class="p-3 text-dark-300 font-mono text-xs">${escapeHtml(c.prosjektnummer || '-')}</td>
+        <td class="p-3">
+          ${c.alreadyImported
+            ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-blue-500/10 text-blue-400">Importert</span>'
+            : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-green-500/10 text-green-400">Ny</span>'
+          }
+        </td>
+      </tr>
+    `).join('');
+
+    // Checkbox listeners
+    tbody.querySelectorAll('.preview-checkbox').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const extId = e.target.dataset.id;
+        if (e.target.checked) {
+          selectedExternalIds.add(extId);
+        } else {
+          selectedExternalIds.delete(extId);
+        }
+        updateSelectedCount();
+      });
+    });
+  }
+
+  function updateSelectedCount() {
+    document.getElementById('preview-selected-count').textContent =
+      `${selectedExternalIds.size} av ${previewCustomers.length} kunder valgt`;
+    document.getElementById('preview-import').disabled = selectedExternalIds.size === 0;
+  }
+
+  // Preview modal event listeners
+  document.getElementById('preview-search')?.addEventListener('input', (e) => {
+    renderPreviewTable(e.target.value.toLowerCase().trim());
+  });
+
+  document.getElementById('preview-select-all')?.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      previewCustomers.forEach(c => selectedExternalIds.add(c.externalId));
+    } else {
+      selectedExternalIds.clear();
+    }
+    const filter = document.getElementById('preview-search')?.value?.toLowerCase().trim() || '';
+    renderPreviewTable(filter);
+    updateSelectedCount();
+  });
+
+  document.getElementById('preview-import')?.addEventListener('click', async () => {
+    if (selectedExternalIds.size === 0) return;
+    hideModal('preview');
+    await runSyncWithSelection(currentIntegration, Array.from(selectedExternalIds));
+  });
+
+  // Run sync with selected customer IDs
+  async function runSyncWithSelection(id, selectedIds) {
+    showModal('sync');
+
+    const loadingEl = document.getElementById('sync-loading');
+    const resultEl = document.getElementById('sync-result');
+    const errorEl = document.getElementById('sync-error');
+
+    loadingEl?.classList.remove('hidden');
+    resultEl?.classList.add('hidden');
+    errorEl?.classList.add('hidden');
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/app/integrations/${id}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        credentials: 'include',
+        body: JSON.stringify({ fullSync: true, selectedExternalIds: selectedIds }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || data.message || 'Synkronisering feilet');
+
+      loadingEl?.classList.add('hidden');
+      resultEl?.classList.remove('hidden');
+
+      document.getElementById('sync-created').textContent = data.data.created;
+      document.getElementById('sync-updated').textContent = data.data.updated;
+      document.getElementById('sync-unchanged').textContent = data.data.unchanged;
+      document.getElementById('sync-failed').textContent = data.data.failed;
+
+      await loadIntegrations();
+    } catch (err) {
+      loadingEl?.classList.add('hidden');
+      errorEl?.classList.remove('hidden');
+      document.getElementById('sync-error-message').textContent = err.message;
     }
   }
 

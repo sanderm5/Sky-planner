@@ -6,7 +6,7 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { authLogger, logAudit } from '../services/logger';
+import { authLogger, logAudit, logSecurityEvent } from '../services/logger';
 import { generateToken, extractToken, getTokenId, requireAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { validateLoginRequest } from '../utils/validation';
@@ -34,6 +34,16 @@ interface DatabaseService {
   getOrganizationById(id: number): Promise<OrganizationRecord | null>;
   logLoginAttempt(data: LoginAttemptData): Promise<void>;
   getAllKunder(organizationId: number): Promise<KundeRecord[]>;
+  createSession(data: {
+    userId: number;
+    userType: 'klient' | 'bruker';
+    jti: string;
+    ipAddress?: string;
+    userAgent?: string;
+    deviceInfo?: string;
+    expiresAt: Date;
+  }): Promise<void>;
+  deleteSessionByJti(jti: string): Promise<boolean>;
 }
 
 interface KundeRecord {
@@ -106,6 +116,27 @@ interface EmailService {
   sendEmail(to: string, subject: string, html: string): Promise<void>;
 }
 
+/**
+ * Parse user-agent string into a human-readable device description
+ */
+function parseDeviceInfo(ua: string): string {
+  if (!ua) return 'Ukjent enhet';
+  let browser = 'Ukjent nettleser';
+  if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
+
+  let os = 'Ukjent OS';
+  if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Mac OS X') || ua.includes('Macintosh')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+  return `${browser} på ${os}`;
+}
+
 // Dependencies (injected when routes are mounted)
 let dbService: DatabaseService;
 let emailService: EmailService | null = null;
@@ -169,6 +200,7 @@ router.post(
         user_agent: userAgent,
         feil_melding: 'Bruker ikke funnet',
       });
+      logSecurityEvent({ action: 'login_failed', details: { epost, reason: 'user_not_found' }, ipAddress: ip, userAgent });
       throw Errors.unauthorized('Feil e-post eller passord');
     }
 
@@ -182,6 +214,7 @@ router.post(
         user_agent: userAgent,
         feil_melding: 'Feil passord',
       });
+      logSecurityEvent({ action: 'login_failed', userId: user.id, userType, organizationId: user.organization_id, details: { reason: 'wrong_password' }, ipAddress: ip, userAgent });
       throw Errors.unauthorized('Feil e-post eller passord');
     }
 
@@ -240,11 +273,27 @@ router.post(
       user_agent: userAgent,
     });
 
+    // Track active session
+    const decoded = jwt.decode(token) as JWTPayload;
+    if (decoded?.jti) {
+      const deviceInfo = parseDeviceInfo(userAgent);
+      dbService.createSession({
+        userId: user.id,
+        userType,
+        jti: decoded.jti,
+        ipAddress: ip,
+        userAgent,
+        deviceInfo,
+        expiresAt: new Date(expiresAt),
+      }).catch(err => authLogger.error({ err }, 'Failed to create session record'));
+    }
+
     // Audit log
     logAudit(authLogger, 'LOGIN', user.id, 'user', user.id, {
       userType,
       organizationId: user.organization_id,
     });
+    logSecurityEvent({ action: 'login_success', userId: user.id, userType, organizationId: user.organization_id, ipAddress: ip, userAgent });
 
     // Send login notification email (async, don't wait)
     sendLoginNotification(user, userType, ip, userAgent)
@@ -427,7 +476,10 @@ router.post(
     const expiresAt = req.user!.exp || Math.floor(Date.now() / 1000) + 86400; // Default 24h
 
     await blacklistToken(tokenId, expiresAt, req.user!.userId, req.user!.type, 'logout');
+    dbService.deleteSessionByJti(tokenId)
+      .catch(err => authLogger.error({ err }, 'Failed to delete session record'));
     logAudit(authLogger, 'LOGOUT', req.user!.userId, 'user', req.user!.userId);
+    logSecurityEvent({ action: 'logout', userId: req.user!.userId, userType: req.user!.type, organizationId: req.user!.organizationId });
 
     // Clear httpOnly auth cookie
     const isProduction = getConfig().NODE_ENV === 'production';

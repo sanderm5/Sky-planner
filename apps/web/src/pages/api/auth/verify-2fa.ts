@@ -8,6 +8,24 @@ import type { JWTPayload } from '@skyplanner/auth';
  * POST /api/auth/verify-2fa
  * Verify TOTP code during login flow
  */
+function parseDeviceInfo(ua: string): string {
+  if (!ua) return 'Ukjent enhet';
+  let browser = 'Ukjent nettleser';
+  if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
+
+  let os = 'Ukjent OS';
+  if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Mac OS X') || ua.includes('Macintosh')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+  return `${browser} på ${os}`;
+}
+
 export const POST: APIRoute = async ({ request, clientAddress }) => {
   const JWT_SECRET = import.meta.env.JWT_SECRET;
   const ENCRYPTION_KEY = import.meta.env.ENCRYPTION_KEY;
@@ -58,13 +76,29 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     // Check expiration
     if (new Date(session.expires_at) < new Date()) {
-      // Clean up expired session
       await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
       return new Response(
         JSON.stringify({ error: 'Sesjonen har utløpt. Logg inn på nytt.' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
+
+    // Rate limiting: max 5 attempts per session
+    const MAX_ATTEMPTS = 5;
+    const currentAttempts = session.attempts ?? 0;
+    if (currentAttempts >= MAX_ATTEMPTS) {
+      await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
+      return new Response(
+        JSON.stringify({ error: 'For mange forsøk. Logg inn på nytt.' }),
+        { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '300' } }
+      );
+    }
+
+    // Increment attempt counter
+    await supabase
+      .from('totp_pending_sessions')
+      .update({ attempts: currentAttempts + 1 })
+      .eq('id', session.id);
 
     // Get user with TOTP data
     const tableName = session.user_type === 'klient' ? 'klient' : 'brukere';
@@ -159,6 +193,22 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     const token = auth.signToken(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
     const cookieConfig = auth.getCookieConfig(isProduction);
     const cookieHeader = auth.buildSetCookieHeader(token, cookieConfig.options);
+
+    // Track active session
+    const decoded = auth.decodeToken(token);
+    if (decoded?.jti) {
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || clientAddress || 'unknown';
+      const userAgent = request.headers.get('user-agent') || '';
+      supabase.from('active_sessions').insert({
+        user_id: user.id,
+        user_type: session.user_type,
+        jti: decoded.jti,
+        ip_address: ip,
+        user_agent: userAgent,
+        device_info: parseDeviceInfo(userAgent),
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+    }
 
     return new Response(
       JSON.stringify({

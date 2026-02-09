@@ -292,7 +292,7 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
   ): boolean {
     const fieldsToCompare = [
       'navn', 'adresse', 'postnummer', 'poststed',
-      'telefon', 'epost', 'kontaktperson',
+      'telefon', 'epost', 'kontaktperson', 'prosjektnummer',
     ];
 
     for (const field of fieldsToCompare) {

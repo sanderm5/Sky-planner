@@ -15,8 +15,19 @@ import type {
   IntegrationCredentials,
   ExternalCustomer,
   FieldMapping,
+  SyncOptions,
+  SyncResult,
 } from '../types';
 import { AuthenticationError } from '../types';
+import { getConfig } from '../../config/env';
+
+/** Returns the Tripletex API base URL based on TRIPLETEX_ENV */
+export function getTripletexBaseUrl(): string {
+  const env = getConfig().TRIPLETEX_ENV;
+  return env === 'test'
+    ? 'https://api-test.tripletex.tech/v2'
+    : 'https://tripletex.no/v2';
+}
 
 // Tripletex API response types
 interface TripletexAddress {
@@ -48,6 +59,14 @@ interface TripletexListResponse<T> {
   values: T[];
 }
 
+interface TripletexProject {
+  id: number;
+  number: string;
+  name: string;
+  customer: { id: number } | null;
+  isFinished: boolean;
+}
+
 interface TripletexSessionResponse {
   value: {
     id: number;
@@ -66,7 +85,7 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
     description: 'Norsk regnskapssystem for SMB',
     icon: 'fa-calculator',
     authType: 'basic_auth',
-    baseUrl: 'https://tripletex.no/v2',
+    baseUrl: getTripletexBaseUrl(),
     rateLimit: {
       requests: 100,
       windowMs: 60000, // 100 requests per minute
@@ -315,6 +334,198 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
     }
     if (!result.poststed && customer.postalAddress?.city) {
       result.poststed = customer.postalAddress.city;
+    }
+
+    return result;
+  }
+
+  /**
+   * Fetch all projects from Tripletex.
+   * Returns a Map from customer ID to array of project numbers.
+   */
+  async fetchProjects(
+    credentials: IntegrationCredentials
+  ): Promise<Map<number, string[]>> {
+    const projectsByCustomer = new Map<number, string[]>();
+    let from = 0;
+    const batchSize = 1000;
+
+    while (true) {
+      const params = new URLSearchParams({
+        from: String(from),
+        count: String(batchSize),
+        fields: 'id,number,name,customer(id),isFinished',
+      });
+
+      const response = await this.rateLimitedFetch<TripletexListResponse<TripletexProject>>(
+        `${this.config.baseUrl}/project?${params}`,
+        { method: 'GET' },
+        credentials
+      );
+
+      for (const project of response.values) {
+        if (project.customer?.id && project.number) {
+          const existing = projectsByCustomer.get(project.customer.id) || [];
+          existing.push(project.number);
+          projectsByCustomer.set(project.customer.id, existing);
+        }
+      }
+
+      this.adapterLogger.debug(
+        { fetched: response.values.length, total: projectsByCustomer.size },
+        'Fetched batch of projects from Tripletex'
+      );
+
+      if (response.values.length < batchSize || (from + batchSize) >= response.fullResultSize) {
+        break;
+      }
+      from += batchSize;
+    }
+
+    return projectsByCustomer;
+  }
+
+  /**
+   * Fetch customers with their project numbers for preview (no import).
+   */
+  async fetchCustomersWithProjects(
+    credentials: IntegrationCredentials
+  ): Promise<Array<ExternalCustomer & { projectNumbers: string[] }>> {
+    const [customers, projectsByCustomer] = await Promise.all([
+      this.fetchCustomers(credentials),
+      this.fetchProjects(credentials),
+    ]);
+
+    return customers.map(customer => ({
+      ...customer,
+      projectNumbers: projectsByCustomer.get(Number(customer.externalId)) || [],
+    }));
+  }
+
+  /**
+   * Override syncCustomers to include project numbers and support selection
+   */
+  override async syncCustomers(
+    organizationId: number,
+    credentials: IntegrationCredentials,
+    options?: SyncOptions
+  ): Promise<SyncResult> {
+    const result: SyncResult = {
+      created: 0,
+      updated: 0,
+      unchanged: 0,
+      failed: 0,
+      errors: [],
+      syncedAt: new Date(),
+    };
+
+    this.adapterLogger.info(
+      { integration: this.config.id, organizationId, options },
+      'Starting Tripletex customer sync with project numbers'
+    );
+
+    try {
+      const [allCustomers, projectsByCustomer] = await Promise.all([
+        this.fetchCustomers(credentials, {
+          since: options?.fullSync ? undefined : options?.since,
+          limit: options?.limit,
+        }),
+        this.fetchProjects(credentials),
+      ]);
+
+      // Filter to selected IDs if provided
+      const customers = options?.selectedExternalIds
+        ? allCustomers.filter(c => options.selectedExternalIds!.includes(c.externalId))
+        : allCustomers;
+
+      this.adapterLogger.info(
+        { total: allCustomers.length, selected: customers.length, projects: projectsByCustomer.size },
+        'Fetched customers and projects from Tripletex'
+      );
+
+      const { getDatabase } = await import('../../services/database');
+      const db = await getDatabase();
+
+      for (const external of customers) {
+        try {
+          const kundeData = this.mapToKunde(external);
+
+          // Inject project numbers
+          const projectNums = projectsByCustomer.get(Number(external.externalId)) || [];
+          if (projectNums.length > 0) {
+            kundeData.prosjektnummer = projectNums.join(', ');
+          }
+
+          const existing = await db.getKundeByExternalId(
+            organizationId,
+            this.config.slug,
+            external.externalId
+          );
+
+          if (existing) {
+            const hasChanges = this.hasDataChanged(
+              existing as unknown as Record<string, unknown>,
+              kundeData
+            );
+            if (hasChanges) {
+              await db.updateKunde(existing.id, {
+                ...kundeData,
+                last_sync_at: new Date().toISOString(),
+              }, organizationId);
+              result.updated++;
+            } else {
+              result.unchanged++;
+            }
+          } else {
+            await db.createKunde({
+              ...kundeData,
+              organization_id: organizationId,
+              external_source: this.config.slug,
+              external_id: external.externalId,
+              last_sync_at: new Date().toISOString(),
+            });
+            result.created++;
+          }
+
+          try {
+            await db.resolveFailedSyncItem(organizationId, this.config.id, external.externalId);
+          } catch { /* non-critical */ }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          result.failed++;
+          result.errors.push({ externalId: external.externalId, error: errorMessage });
+
+          try {
+            await db.recordFailedSyncItem(organizationId, {
+              integration_id: this.config.id,
+              external_id: external.externalId,
+              external_source: this.config.slug,
+              error_message: errorMessage,
+            });
+          } catch (recordError) {
+            this.adapterLogger.error(
+              { error: recordError, externalId: external.externalId },
+              'Failed to record sync failure for retry'
+            );
+          }
+
+          this.adapterLogger.error(
+            { error, externalId: external.externalId },
+            'Failed to sync customer'
+          );
+        }
+      }
+
+      this.adapterLogger.info(
+        { integration: this.config.id, result },
+        'Tripletex customer sync completed'
+      );
+    } catch (error) {
+      this.adapterLogger.error(
+        { error, integration: this.config.id },
+        'Tripletex customer sync failed'
+      );
+      throw error;
     }
 
     return result;

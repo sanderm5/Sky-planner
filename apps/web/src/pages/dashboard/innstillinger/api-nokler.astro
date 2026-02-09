@@ -15,10 +15,6 @@ if (isAuthError(authResult)) return authResult;
 
 const { user, organization, payload } = authResult;
 
-// API-nøkler er kun tilgjengelig for full mode (TRE Allservice)
-if ((organization as any).app_mode !== 'full') {
-  return Astro.redirect('/dashboard/innstillinger');
-}
 
 // Check if user is admin (bruker type = admin, klient type = regular user)
 const isAdmin = payload.type === 'bruker';

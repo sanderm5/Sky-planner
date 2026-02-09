@@ -4,7 +4,8 @@
  */
 import type { JWTPayload, TokenOptions, VerifyResult } from './types';
 /**
- * Signs a JWT token with the provided payload
+ * Signs a JWT token with the provided payload.
+ * Auto-generates a JTI (unique token ID) if not provided.
  */
 export declare function signToken(payload: Omit<JWTPayload, 'iat' | 'exp'>, secret: string, options?: TokenOptions): string;
 /**

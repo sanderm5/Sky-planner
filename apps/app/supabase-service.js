@@ -72,14 +72,12 @@ async function createKunde(kunde) {
     driftskategori: kunde.driftskategori,
     // Organization (multi-tenant support)
     organization_id: kunde.organization_id,
-    // Kontaktperson
-    kontaktperson: kunde.kontaktperson
+    // Integration sync fields
+    external_source: kunde.external_source,
+    external_id: kunde.external_id,
+    last_sync_at: kunde.last_sync_at,
+    prosjektnummer: kunde.prosjektnummer,
   };
-
-  // Note: custom_data requires adding column to Supabase:
-  // ALTER TABLE kunder ADD COLUMN custom_data JSONB DEFAULT '{}';
-  // Uncomment below when column is added:
-  // if (kunde.custom_data) insertData.custom_data = kunde.custom_data;
 
   const { data, error } = await getClient()
     .from('kunder')
@@ -117,7 +115,12 @@ async function updateKunde(id, kunde) {
       neste_brann_kontroll: kunde.neste_brann_kontroll,
       brann_kontroll_intervall: kunde.brann_kontroll_intervall || 12,
       // Driftskategori
-      driftskategori: kunde.driftskategori
+      driftskategori: kunde.driftskategori,
+      // Integration sync fields
+      external_source: kunde.external_source,
+      external_id: kunde.external_id,
+      last_sync_at: kunde.last_sync_at,
+      prosjektnummer: kunde.prosjektnummer,
     })
     .eq('id', id)
     .select()

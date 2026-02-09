@@ -14,7 +14,6 @@ import type {
   ApiKeyInsertData,
   ApiKeyUsageInsertData,
   RateLimitResult,
-  RateLimitRecord,
 } from '../types/api-key';
 
 const log = createLogger('api-keys');
@@ -25,8 +24,10 @@ const API_KEY_LENGTH = 32; // bytes for random portion
 const DEFAULT_RATE_LIMIT_REQUESTS = 1000;
 const DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 3600; // 1 hour
 
-// In-memory rate limit store (use Redis in production for multi-instance)
-const rateLimitStore = new Map<number, RateLimitRecord>();
+// Rate limit cache with short TTL to reduce DB queries
+// Falls back to DB count if cache misses or on restart
+const rateLimitCache = new Map<number, { count: number; windowStart: number; expiresAt: number }>();
+const CACHE_TTL_MS = 60_000; // 60 seconds cache
 
 /**
  * API Key Service class
@@ -132,38 +133,69 @@ export class ApiKeyService {
 
   /**
    * Check rate limit for an API key
-   * Increments counter and returns current state
+   * Uses DB-backed counting with short TTL cache for performance
    */
   checkRateLimit(apiKeyId: number, limit: number, windowMs: number): RateLimitResult {
     const now = Date.now();
+    const windowStart = now - windowMs;
+    const cached = rateLimitCache.get(apiKeyId);
 
-    let record = rateLimitStore.get(apiKeyId);
-
-    // Reset if window has passed
-    if (!record || now > record.resetAt) {
-      record = { count: 0, resetAt: now + windowMs };
-      rateLimitStore.set(apiKeyId, record);
+    // Use cache if valid and within same window
+    if (cached && now < cached.expiresAt && cached.windowStart >= windowStart - CACHE_TTL_MS) {
+      cached.count++;
+      return {
+        allowed: cached.count <= limit,
+        limit,
+        remaining: Math.max(0, limit - cached.count),
+        resetAt: Math.ceil((cached.windowStart + windowMs) / 1000),
+      };
     }
 
-    // Increment counter
-    record.count++;
+    // Cache miss: start fresh count (DB sync happens via logUsage)
+    // The actual DB count is loaded asynchronously below
+    const newRecord = { count: 1, windowStart: now, expiresAt: now + CACHE_TTL_MS };
+    rateLimitCache.set(apiKeyId, newRecord);
+
+    // Async: load actual count from DB to sync cache
+    this.syncRateLimitFromDb(apiKeyId, windowMs).catch(() => {});
 
     return {
-      allowed: record.count <= limit,
+      allowed: true,
       limit,
-      remaining: Math.max(0, limit - record.count),
-      resetAt: Math.ceil(record.resetAt / 1000), // Unix timestamp in seconds
+      remaining: limit - 1,
+      resetAt: Math.ceil((now + windowMs) / 1000),
     };
+  }
+
+  /**
+   * Sync rate limit cache from api_key_usage_log table
+   */
+  private async syncRateLimitFromDb(apiKeyId: number, windowMs: number): Promise<void> {
+    try {
+      const db = await this.getDatabase();
+      const stats = await db.getApiKeyUsageStats(apiKeyId, 0, 1); // last 1 day
+      const count = stats.total_requests;
+      const now = Date.now();
+      const cached = rateLimitCache.get(apiKeyId);
+      if (cached) {
+        // Update cache with actual DB count (add any requests since cache was created)
+        const additionalSinceSync = Math.max(0, cached.count - 1);
+        cached.count = count + additionalSinceSync;
+        cached.expiresAt = now + CACHE_TTL_MS;
+      }
+    } catch {
+      // Non-critical: cache will self-correct on next sync
+    }
   }
 
   /**
    * Get rate limit status without incrementing
    */
   getRateLimitStatus(apiKeyId: number, limit: number): RateLimitResult {
-    const record = rateLimitStore.get(apiKeyId);
+    const cached = rateLimitCache.get(apiKeyId);
     const now = Date.now();
 
-    if (!record || now > record.resetAt) {
+    if (!cached || now >= cached.expiresAt) {
       return {
         allowed: true,
         limit,
@@ -173,10 +205,10 @@ export class ApiKeyService {
     }
 
     return {
-      allowed: record.count < limit,
+      allowed: cached.count < limit,
       limit,
-      remaining: Math.max(0, limit - record.count),
-      resetAt: Math.ceil(record.resetAt / 1000),
+      remaining: Math.max(0, limit - cached.count),
+      resetAt: Math.ceil((cached.windowStart + DEFAULT_RATE_LIMIT_WINDOW_SECONDS * 1000) / 1000),
     };
   }
 
@@ -209,8 +241,8 @@ export class ApiKeyService {
     const result = await db.revokeApiKey(apiKeyId, organizationId, revokedBy, reason);
 
     if (result) {
-      // Clear rate limit record
-      rateLimitStore.delete(apiKeyId);
+      // Clear rate limit cache
+      rateLimitCache.delete(apiKeyId);
 
       log.info(
         { apiKeyId, organizationId, revokedBy, reason },

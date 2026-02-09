@@ -4,10 +4,12 @@
  */
 
 import jwt from 'jsonwebtoken';
+import crypto from 'node:crypto';
 import type { JWTPayload, TokenOptions, VerifyResult } from './types';
 
 /**
- * Signs a JWT token with the provided payload
+ * Signs a JWT token with the provided payload.
+ * Auto-generates a JTI (unique token ID) if not provided.
  */
 export function signToken(
   payload: Omit<JWTPayload, 'iat' | 'exp'>,
@@ -15,7 +17,8 @@ export function signToken(
   options: TokenOptions = {}
 ): string {
   const { expiresIn = '24h' } = options;
-  return jwt.sign(payload, secret, {
+  const tokenPayload = { ...payload, jti: payload.jti || crypto.randomUUID() };
+  return jwt.sign(tokenPayload, secret, {
     expiresIn: expiresIn as jwt.SignOptions['expiresIn'],
   });
 }

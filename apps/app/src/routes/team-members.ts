@@ -7,7 +7,7 @@ import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { validatePassword } from '@skyplanner/auth';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import type { AuthenticatedRequest, ApiResponse } from '../types';
 
@@ -86,7 +86,7 @@ router.get(
  */
 router.post(
   '/',
-  requireTenantAuth,
+  requireRole('admin'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { navn, epost, passord, telefon, rolle } = req.body;
 
@@ -165,7 +165,7 @@ router.post(
  */
 router.put(
   '/:id',
-  requireTenantAuth,
+  requireRole('admin'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -205,7 +205,7 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireTenantAuth,
+  requireRole('admin'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {

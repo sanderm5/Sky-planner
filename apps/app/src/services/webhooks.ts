@@ -4,6 +4,7 @@
  */
 
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
 import { createLogger } from './logger';
 import type {
   WebhookEndpoint,
@@ -24,11 +25,76 @@ const MAX_FAILURES_BEFORE_DISABLE = 10;
 const RETRY_DELAYS_SECONDS = [60, 300, 900, 3600, 7200]; // 1min, 5min, 15min, 1hr, 2hr
 const DELIVERY_TIMEOUT_MS = 30000; // 30 seconds
 
+// Private/internal IP ranges (RFC 1918, loopback, link-local, metadata)
+const PRIVATE_IP_RANGES = [
+  /^127\./,                    // Loopback
+  /^10\./,                     // Class A private
+  /^172\.(1[6-9]|2\d|3[01])\./, // Class B private
+  /^192\.168\./,               // Class C private
+  /^169\.254\./,               // Link-local
+  /^0\./,                      // Current network
+  /^::1$/,                     // IPv6 loopback
+  /^fc00:/i,                   // IPv6 unique local
+  /^fe80:/i,                   // IPv6 link-local
+];
+
+/**
+ * Check if an IP address is private/internal
+ */
+function isPrivateIp(ip: string): boolean {
+  return PRIVATE_IP_RANGES.some((range) => range.test(ip));
+}
+
+/**
+ * Validate that a webhook URL does not point to internal/private services (SSRF protection)
+ */
+async function validateWebhookUrl(url: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('Ugyldig webhook-URL');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Webhook-URL må bruke HTTPS');
+  }
+
+  // Resolve hostname and check all IPs
+  const hostname = parsed.hostname;
+
+  // Block IP-address hostnames directly
+  if (/^[\d.]+$/.test(hostname) || hostname.startsWith('[')) {
+    if (isPrivateIp(hostname.replaceAll(/[[\]]/g, ''))) {
+      throw new Error('Webhook-URL kan ikke peke til interne adresser');
+    }
+  }
+
+  // DNS lookup to check resolved IPs
+  try {
+    const addresses = await dns.resolve4(hostname).catch(() => [] as string[]);
+    const addresses6 = await dns.resolve6(hostname).catch(() => [] as string[]);
+    const allAddresses = [...addresses, ...addresses6];
+
+    for (const addr of allAddresses) {
+      if (isPrivateIp(addr)) {
+        throw new Error('Webhook-URL kan ikke peke til interne adresser');
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('interne adresser')) {
+      throw error;
+    }
+    // DNS resolution failure - allow (might be temporary)
+    log.warn({ hostname }, 'DNS resolution failed for webhook URL, allowing');
+  }
+}
+
 /**
  * Webhook Service class
  */
 export class WebhookService {
-  private getDatabase: () => Promise<WebhookDatabaseInterface>;
+  private readonly getDatabase: () => Promise<WebhookDatabaseInterface>;
 
   constructor(getDatabaseFn: () => Promise<WebhookDatabaseInterface>) {
     this.getDatabase = getDatabaseFn;
@@ -45,6 +111,9 @@ export class WebhookService {
     data: { url: string; name: string; description?: string; events: WebhookEventType[] },
     createdBy: number
   ): Promise<{ webhook: WebhookEndpoint; secret: string }> {
+    // SSRF protection: validate URL does not point to internal services
+    await validateWebhookUrl(data.url);
+
     // Generate secret for HMAC signing
     const secret = `whsec_${crypto.randomBytes(32).toString('base64url')}`;
     const secretHash = this.hashSecret(secret);
@@ -254,6 +323,16 @@ export class WebhookService {
       await db.updateWebhookDeliveryStatus(delivery.id, 'failed', {
         error_message: 'Webhook endpoint inactive or not found',
       });
+      return;
+    }
+
+    // SSRF protection: validate URL before delivery
+    try {
+      await validateWebhookUrl(endpoint.url);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'SSRF validation failed';
+      await db.updateWebhookDeliveryStatus(delivery.id, 'failed', { error_message: errorMsg });
+      log.warn({ webhookId: endpoint.id, url: endpoint.url }, 'Webhook delivery blocked by SSRF check');
       return;
     }
 

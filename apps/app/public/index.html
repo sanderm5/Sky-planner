@@ -1895,6 +1895,25 @@
           </div>
         </div>
 
+        <!-- Kunde-tags -->
+        <div class="tags-section" id="kundeTagsSection" style="display: none;">
+          <div class="control-section-header">
+            <i class="fas fa-tags"></i> Tags
+          </div>
+          <div class="kunde-tags-list" id="kundeTagsList"></div>
+          <div class="tags-add-row">
+            <select id="kundeTagSelect">
+              <option value="">Velg tag...</option>
+            </select>
+            <button type="button" class="btn btn-small btn-primary" id="addKundeTagBtn">
+              <i class="fas fa-plus"></i>
+            </button>
+            <button type="button" class="btn btn-small btn-secondary" id="manageTagsBtn" title="Administrer tags">
+              <i class="fas fa-cog"></i>
+            </button>
+          </div>
+        </div>
+
         <!-- Kontaktlogg -->
         <div class="kontaktlogg-section" id="kontaktloggSection" style="display: none;">
           <div class="control-section-header">
@@ -2013,8 +2032,27 @@
           <label for="avtaleBeskrivelse">Beskrivelse / notater</label>
           <textarea id="avtaleBeskrivelse" rows="2" placeholder="Valgfri beskrivelse..."></textarea>
         </div>
+        <div class="form-group" id="avtaleGjentakelseGroup">
+          <label for="avtaleGjentakelse">Gjentakelse</label>
+          <select id="avtaleGjentakelse">
+            <option value="">Ingen gjentakelse</option>
+            <option value="daglig">Daglig</option>
+            <option value="ukentlig">Ukentlig</option>
+            <option value="annenhver_uke">Annenhver uke</option>
+            <option value="manedlig">Månedlig</option>
+            <option value="3_maneder">Hver 3. måned</option>
+            <option value="6_maneder">Hver 6. måned</option>
+            <option value="arlig">Årlig</option>
+          </select>
+        </div>
+        <div class="form-group hidden" id="avtaleGjentakelseSluttGroup">
+          <label for="avtaleGjentakelseSlutt">Gjentakelse slutter</label>
+          <input type="date" id="avtaleGjentakelseSlutt">
+          <small class="form-hint">Standard: 1 år fra startdato</small>
+        </div>
         <div class="form-actions">
           <button type="button" id="deleteAvtaleBtn" class="btn btn-danger" style="display: none;">Slett</button>
+          <button type="button" id="deleteAvtaleSeriesBtn" class="btn btn-danger" style="display: none;">Slett serie</button>
           <button type="button" id="cancelAvtale" class="btn btn-secondary">Avbryt</button>
           <button type="submit" class="btn btn-primary">Lagre avtale</button>
         </div>

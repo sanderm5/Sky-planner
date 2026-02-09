@@ -7,7 +7,7 @@ import { Router, Response } from 'express';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { validateKunde } from '../utils/validation';
 import { geocodeCustomerData } from '../services/geocoding';
@@ -45,7 +45,7 @@ interface KundeDbService {
   getAllKunder(organizationId?: number): Promise<Kunde[]>;
   getAllKunderPaginated(
     organizationId: number,
-    options: { limit?: number; offset?: number; search?: string; kategori?: string }
+    options: { limit?: number; offset?: number; search?: string; kategori?: string; status?: string }
   ): Promise<PaginatedResult<Kunde>>;
   getKundeById(id: number, organizationId?: number): Promise<Kunde | null>;
   getKunderByOmrade(omrade: string, organizationId?: number): Promise<Kunde[]>;
@@ -90,14 +90,16 @@ router.get(
     const rawSearch = req.query.search as string | undefined;
     const search = rawSearch ? rawSearch.substring(0, 100) : undefined;
     const kategori = req.query.kategori as string | undefined;
+    const status = req.query.status as string | undefined;
 
     // Check if pagination/filtering is requested
-    if (req.query.limit || req.query.offset || req.query.search || req.query.kategori) {
+    if (req.query.limit || req.query.offset || req.query.search || req.query.kategori || req.query.status) {
       const result = await dbService.getAllKunderPaginated(req.organizationId!, {
         limit,
         offset,
         search,
         kategori,
+        status,
       });
 
       const response: ApiResponse<PaginatedResult<Kunde>> = {
@@ -349,7 +351,7 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {

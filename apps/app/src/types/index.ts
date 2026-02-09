@@ -136,6 +136,7 @@ export interface Kunde {
   last_sync_at?: string;    // Last sync timestamp
   import_hash?: string;     // Hash for detecting changes
   last_import_at?: string;  // Last import timestamp
+  prosjektnummer?: string;  // Project number(s) from accounting system
 }
 
 export interface Rute {
@@ -179,6 +180,10 @@ export interface Avtale {
   opprettet_av?: string;
   created_at?: string;
   organization_id?: number;
+  er_gjentakelse?: boolean;
+  gjentakelse_regel?: string;
+  gjentakelse_slutt?: string;
+  original_avtale_id?: number;
 }
 
 export interface EmailVarsel {
@@ -373,6 +378,8 @@ export interface CreateAvtaleRequest {
   klokkeslett?: string;
   type?: 'Sky Planner' | 'Brannvarsling';
   beskrivelse?: string;
+  gjentakelse_regel?: string;
+  gjentakelse_slutt?: string;
 }
 
 export interface CreateKontaktloggRequest {
@@ -456,6 +463,9 @@ export interface EnvConfig {
 
   // Encryption
   ENCRYPTION_SALT: string;
+
+  // Tripletex
+  TRIPLETEX_ENV: 'test' | 'production';
 }
 
 // ============ Express Extensions ============

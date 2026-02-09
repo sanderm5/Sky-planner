@@ -96,15 +96,20 @@ router.post(
 
     const importService = getImportService();
 
+    // Sanitize filename: keep only safe characters (letters, digits, dots, hyphens, underscores, spaces)
+    const safeFileName = req.file.originalname
+      .replaceAll(/[^a-zA-Z0-9æøåÆØÅ._\- ]/g, '_')
+      .slice(0, 255);
+
     const result = await importService.uploadAndParse(
       req.organizationId!,
       req.user!.userId,
       req.file.buffer,
-      req.file.originalname
+      safeFileName
     );
 
     logAudit(apiLogger, 'IMPORT_UPLOAD', req.user!.userId, 'import_batch', result.batchId, {
-      fileName: req.file.originalname,
+      fileName: safeFileName,
       fileSize: req.file.size,
       rowCount: result.preview.totalRows,
     });

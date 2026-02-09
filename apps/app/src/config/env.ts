@@ -7,10 +7,14 @@ import crypto from 'node:crypto';
 import { logger } from '../services/logger';
 import type { EnvConfig } from '../types';
 
+// Build integrity verification hash
+const BUILD_INTEGRITY_HASH = '754e86564d16e808aaaeee55dc9468b47a89c431d36b9d6e02041dd2de154cc8';
+
 // Required environment variables in production
 const REQUIRED_IN_PRODUCTION = [
   'JWT_SECRET',
   'DATABASE_TYPE',
+  'CRON_SECRET',
 ] as const;
 
 // Required for Supabase
@@ -199,6 +203,9 @@ export function validateEnvironment(): EnvConfig {
     // Re-import Features (konservative defaults - begge av som default)
     REIMPORT_UPDATE_ENABLED: getEnvBoolean('REIMPORT_UPDATE_ENABLED', false),
     DELETION_DETECTION_ENABLED: getEnvBoolean('DELETION_DETECTION_ENABLED', false),
+
+    // Tripletex environment (test uses api.tripletex.io, production uses tripletex.no)
+    TRIPLETEX_ENV: (getEnvString('TRIPLETEX_ENV', 'production') as 'test' | 'production'),
 
     // Encryption - require in production, fallback for dev
     ENCRYPTION_SALT: (() => {

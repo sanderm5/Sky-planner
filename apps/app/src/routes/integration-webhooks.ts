@@ -4,12 +4,14 @@
  * These endpoints are unauthenticated (no JWT) but verified via provider-specific mechanisms
  */
 
+import { timingSafeEqual } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { createLogger } from '../services/logger';
 import { getDatabase } from '../services/database';
 import { getIntegrationRegistry } from '../integrations/registry';
 import { decryptCredentials, encryptCredentials, isCredentialsExpired } from '../integrations/encryption';
 import { getWebhookService } from '../services/webhooks';
+import { getTripletexBaseUrl } from '../integrations/adapters/tripletex';
 
 const router: Router = Router();
 const logger = createLogger('integration-webhooks');
@@ -59,9 +61,27 @@ router.post('/tripletex/:organizationId', async (req: Request, res: Response) =>
     const storedWebhookToken = credentials.metadata?.webhookToken as string | undefined;
     const providedToken = req.headers['x-tripletex-webhook-token'] as string | undefined;
 
-    if (storedWebhookToken && providedToken !== storedWebhookToken) {
-      logger.warn({ organizationId }, 'Tripletex webhook token mismatch');
-      res.status(401).json({ error: 'Invalid webhook token' });
+    if (storedWebhookToken && providedToken) {
+      // Timing-safe comparison to prevent timing attacks
+      try {
+        const tokensMatch = timingSafeEqual(
+          Buffer.from(storedWebhookToken, 'utf8'),
+          Buffer.from(providedToken, 'utf8')
+        );
+        if (!tokensMatch) {
+          logger.warn({ organizationId }, 'Tripletex webhook token mismatch');
+          res.status(401).json({ error: 'Invalid webhook token' });
+          return;
+        }
+      } catch {
+        // Length mismatch in timingSafeEqual means tokens don't match
+        logger.warn({ organizationId }, 'Tripletex webhook token mismatch');
+        res.status(401).json({ error: 'Invalid webhook token' });
+        return;
+      }
+    } else if (storedWebhookToken && !providedToken) {
+      logger.warn({ organizationId }, 'Tripletex webhook missing token');
+      res.status(401).json({ error: 'Missing webhook token' });
       return;
     }
   } catch (error) {
@@ -149,7 +169,7 @@ async function processTripletexCustomerUpsert(
         : `Bearer ${credentials.accessToken}`;
 
       const response = await fetch(
-        `https://tripletex.no/v2/customer/${externalId}?fields=id,name,organizationNumber,email,phoneNumber,phoneNumberMobile,physicalAddress(*),postalAddress(*)`,
+        `${getTripletexBaseUrl()}/customer/${externalId}?fields=id,name,organizationNumber,email,phoneNumber,phoneNumberMobile,physicalAddress(*),postalAddress(*)`,
         {
           method: 'GET',
           headers: {

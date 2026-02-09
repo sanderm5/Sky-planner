@@ -156,4 +156,51 @@ export function logReimportAudit(
   );
 }
 
+// ============ Database-backed Security Audit Log ============
+
+export interface SecurityAuditEvent {
+  organizationId?: number;
+  userId?: number;
+  userType?: 'klient' | 'bruker';
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  details?: Record<string, unknown>;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+/**
+ * Write a security event to the security_audit_log table.
+ * Non-blocking — failures are logged but don't propagate.
+ */
+export async function logSecurityEvent(event: SecurityAuditEvent): Promise<void> {
+  try {
+    // Lazy import to avoid circular dependency
+    const { getDatabase } = await import('./database');
+    const db = await getDatabase();
+    const supabase = (db as any).supabase ?? (db as any).client;
+
+    if (!supabase?.from) {
+      logger.debug('No supabase client for security audit logging');
+      return;
+    }
+
+    await supabase.from('security_audit_log').insert({
+      organization_id: event.organizationId ?? null,
+      user_id: event.userId ?? null,
+      user_type: event.userType ?? null,
+      action: event.action,
+      resource_type: event.resourceType ?? null,
+      resource_id: event.resourceId ?? null,
+      details: event.details ?? null,
+      ip_address: event.ipAddress ?? null,
+      user_agent: event.userAgent ?? null,
+    });
+  } catch (err) {
+    // Never fail the request due to audit logging
+    logger.error({ err, action: event.action }, 'Failed to write security audit log');
+  }
+}
+
 export default logger;

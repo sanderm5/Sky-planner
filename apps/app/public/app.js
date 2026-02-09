@@ -12345,6 +12345,9 @@ function editCustomer(id) {
   document.getElementById('kontaktloggSection').style.display = 'block';
   loadKontaktlogg(customer.id);
 
+  // Load tags for this customer
+  loadKundeTags(customer.id);
+
   document.getElementById('deleteCustomerBtn').classList.remove('hidden');
   customerModal.classList.remove('hidden');
 
@@ -14094,6 +14097,7 @@ async function renderCalendar() {
           ${dayAvtaler.map(a => `
             <div class="calendar-avtale ${a.status === 'fullført' ? 'completed' : ''}"
                  data-avtale-id="${a.id}" data-action="editAvtale">
+              ${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.6em;margin-right:2px" title="Gjentakende"></i>' : ''}
               ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
               <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</span>
             </div>
@@ -14132,7 +14136,7 @@ async function renderCalendar() {
                 <span class="upcoming-month">${monthNames[new Date(a.dato).getMonth()].substring(0, 3)}</span>
               </div>
               <div class="upcoming-info">
-                <strong>${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
+                <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
                 <span>${a.klokkeslett ? a.klokkeslett.substring(0, 5) : ''} ${a.type || ''}</span>
               </div>
             </div>
@@ -14192,10 +14196,14 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
   const form = document.getElementById('avtaleForm');
   const title = document.getElementById('avtaleModalTitle');
   const deleteBtn = document.getElementById('deleteAvtaleBtn');
+  const deleteSeriesBtn = document.getElementById('deleteAvtaleSeriesBtn');
   const kundeSearch = document.getElementById('avtaleKundeSearch');
   const kundeInput = document.getElementById('avtaleKunde');
   const kundeResults = document.getElementById('avtaleKundeResults');
   const avtaleTypeSelect = document.getElementById('avtaleType');
+  const gjentakelseSelect = document.getElementById('avtaleGjentakelse');
+  const gjentakelseSluttGroup = document.getElementById('avtaleGjentakelseSluttGroup');
+  const gjentakelseGroup = document.getElementById('avtaleGjentakelseGroup');
 
   // Populate type dropdown dynamically from ServiceTypeRegistry
   if (avtaleTypeSelect) {
@@ -14207,6 +14215,11 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
   kundeInput.value = '';
   kundeResults.innerHTML = '';
   kundeResults.classList.remove('active');
+
+  // Toggle gjentakelse slutt visibility
+  gjentakelseSelect.addEventListener('change', function() {
+    gjentakelseSluttGroup.classList.toggle('hidden', !this.value);
+  });
 
   if (avtale) {
     // Edit mode
@@ -14222,7 +14235,18 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     document.getElementById('avtaleKlokkeslett').value = avtale.klokkeslett || '';
     document.getElementById('avtaleType').value = avtale.type || 'El-Kontroll';
     document.getElementById('avtaleBeskrivelse').value = avtale.beskrivelse || '';
+    gjentakelseSelect.value = avtale.gjentakelse_regel || '';
+    document.getElementById('avtaleGjentakelseSlutt').value = avtale.gjentakelse_slutt || '';
+    gjentakelseSluttGroup.classList.toggle('hidden', !avtale.gjentakelse_regel);
+
+    // Hide recurrence fields when editing (only on create)
+    gjentakelseGroup.style.display = 'none';
+    gjentakelseSluttGroup.style.display = 'none';
+
     deleteBtn.style.display = 'inline-block';
+    // Show "delete series" button if this is part of a recurring series
+    const isPartOfSeries = avtale.er_gjentakelse || avtale.original_avtale_id;
+    deleteSeriesBtn.style.display = isPartOfSeries ? 'inline-block' : 'none';
   } else {
     // New avtale
     title.textContent = 'Ny avtale';
@@ -14230,10 +14254,15 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     document.getElementById('avtaleId').value = '';
     kundeSearch.value = '';
     kundeInput.value = '';
+    gjentakelseSelect.value = '';
+    document.getElementById('avtaleGjentakelseSlutt').value = '';
+    gjentakelseSluttGroup.classList.add('hidden');
+    gjentakelseGroup.style.display = '';
     if (preselectedDate) {
       document.getElementById('avtaleDato').value = preselectedDate;
     }
     deleteBtn.style.display = 'none';
+    deleteSeriesBtn.style.display = 'none';
   }
 
   modal.classList.remove('hidden');
@@ -14340,13 +14369,18 @@ async function saveAvtale(e) {
   e.preventDefault();
 
   const avtaleId = document.getElementById('avtaleId').value;
+  const gjentakelse = document.getElementById('avtaleGjentakelse').value;
   const data = {
     kunde_id: Number.parseInt(document.getElementById('avtaleKunde').value),
     dato: document.getElementById('avtaleDato').value,
     klokkeslett: document.getElementById('avtaleKlokkeslett').value || null,
     type: document.getElementById('avtaleType').value,
     beskrivelse: document.getElementById('avtaleBeskrivelse').value || null,
-    opprettet_av: localStorage.getItem('klientEpost') || 'admin'
+    opprettet_av: localStorage.getItem('klientEpost') || 'admin',
+    ...(gjentakelse && !avtaleId ? {
+      gjentakelse_regel: gjentakelse,
+      gjentakelse_slutt: document.getElementById('avtaleGjentakelseSlutt').value || undefined,
+    } : {}),
   };
 
   try {
@@ -14381,9 +14415,8 @@ async function deleteAvtale() {
   const avtaleId = document.getElementById('avtaleId').value;
   if (!avtaleId) return;
 
-  const avtaleTittel = document.getElementById('avtaleTittel')?.value || 'denne avtalen';
   const confirmed = await showConfirm(
-    `Er du sikker på at du vil slette "${avtaleTittel}"?`,
+    'Er du sikker på at du vil slette denne avtalen?',
     'Slette avtale'
   );
   if (!confirmed) return;
@@ -14398,6 +14431,31 @@ async function deleteAvtale() {
   } catch (error) {
     console.error('Error deleting avtale:', error);
     showMessage('Kunne ikke slette avtalen. Prøv igjen.', 'error');
+  }
+}
+
+async function deleteAvtaleSeries() {
+  const avtaleId = document.getElementById('avtaleId').value;
+  if (!avtaleId) return;
+
+  const confirmed = await showConfirm(
+    'Er du sikker på at du vil slette hele serien? Alle gjentakende avtaler i denne serien vil bli slettet.',
+    'Slette avtaleserie'
+  );
+  if (!confirmed) return;
+
+  try {
+    const response = await apiFetch(`/api/avtaler/${avtaleId}/series`, { method: 'DELETE' });
+    if (response.ok) {
+      const result = await response.json();
+      showMessage(`${result.data.deletedCount} avtaler slettet`, 'success');
+      await loadAvtaler();
+      renderCalendar();
+      closeAvtaleModal();
+    }
+  } catch (error) {
+    console.error('Error deleting avtale series:', error);
+    showMessage('Kunne ikke slette avtaleserien. Prøv igjen.', 'error');
   }
 }
 
@@ -14936,6 +14994,7 @@ function setupEventListeners() {
   document.getElementById('cancelAvtale')?.addEventListener('click', closeAvtaleModal);
   document.getElementById('avtaleForm')?.addEventListener('submit', saveAvtale);
   document.getElementById('deleteAvtaleBtn')?.addEventListener('click', deleteAvtale);
+  document.getElementById('deleteAvtaleSeriesBtn')?.addEventListener('click', deleteAvtaleSeries);
   document.getElementById('avtaleModal')?.addEventListener('click', (e) => {
     if (e.target.id === 'avtaleModal') closeAvtaleModal();
   });
@@ -14955,6 +15014,22 @@ function setupEventListeners() {
     const btn = e.target.closest('[data-action="deleteKontakt"]');
     if (btn) {
       deleteKontaktlogg(btn.dataset.id);
+    }
+  });
+
+  // Tag event listeners
+  document.getElementById('addKundeTagBtn')?.addEventListener('click', () => {
+    const select = document.getElementById('kundeTagSelect');
+    const kundeId = document.getElementById('customerId')?.value;
+    if (select.value && kundeId) {
+      addTagToKunde(Number.parseInt(kundeId), Number.parseInt(select.value));
+    }
+  });
+  document.getElementById('manageTagsBtn')?.addEventListener('click', openTagManager);
+  document.getElementById('kundeTagsList')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="removeKundeTag"]');
+    if (btn) {
+      removeTagFromKunde(Number.parseInt(btn.dataset.kundeId), Number.parseInt(btn.dataset.tagId));
     }
   });
 
@@ -15859,6 +15934,178 @@ async function saveCustomerEmailSettings(kundeId) {
 // ==================== KONTAKTLOGG ====================
 
 let currentKontaktloggKundeId = null;
+
+// ========================================
+// KUNDE TAGS
+// ========================================
+
+let allTags = [];
+
+async function loadAllTags() {
+  try {
+    const response = await apiFetch('/api/tags');
+    if (response.ok) {
+      const result = await response.json();
+      allTags = result.data || [];
+    }
+  } catch (error) {
+    console.error('Error loading tags:', error);
+  }
+}
+
+async function loadKundeTags(kundeId) {
+  const listEl = document.getElementById('kundeTagsList');
+  const selectEl = document.getElementById('kundeTagSelect');
+  document.getElementById('kundeTagsSection').style.display = 'block';
+
+  // Load all tags if not loaded
+  if (allTags.length === 0) await loadAllTags();
+
+  try {
+    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags`);
+    if (!response.ok) return;
+    const result = await response.json();
+    const kundeTags = result.data || [];
+
+    // Render assigned tags
+    listEl.innerHTML = kundeTags.length === 0
+      ? '<span class="tags-empty">Ingen tags</span>'
+      : kundeTags.map(tag => `
+          <span class="tag-badge" style="background:${escapeHtml(tag.farge)}20;color:${escapeHtml(tag.farge)};border:1px solid ${escapeHtml(tag.farge)}40">
+            ${escapeHtml(tag.navn)}
+            <button class="tag-remove" data-action="removeKundeTag" data-kunde-id="${kundeId}" data-tag-id="${tag.id}" title="Fjern">&times;</button>
+          </span>
+        `).join('');
+
+    // Populate select with unassigned tags
+    const assignedIds = new Set(kundeTags.map(t => t.id));
+    const available = allTags.filter(t => !assignedIds.has(t.id));
+    selectEl.innerHTML = '<option value="">Velg tag...</option>' +
+      available.map(t => `<option value="${t.id}">${escapeHtml(t.navn)}</option>`).join('');
+  } catch (error) {
+    console.error('Error loading kunde tags:', error);
+  }
+}
+
+async function addTagToKunde(kundeId, tagId) {
+  try {
+    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags/${tagId}`, { method: 'POST' });
+    if (response.ok) {
+      await loadKundeTags(kundeId);
+    }
+  } catch (error) {
+    console.error('Error adding tag:', error);
+  }
+}
+
+async function removeTagFromKunde(kundeId, tagId) {
+  try {
+    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags/${tagId}`, { method: 'DELETE' });
+    if (response.ok) {
+      await loadKundeTags(kundeId);
+    }
+  } catch (error) {
+    console.error('Error removing tag:', error);
+  }
+}
+
+function openTagManager() {
+  const existingModal = document.getElementById('tagManagerModal');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'tagManagerModal';
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:400px">
+      <div class="modal-header">
+        <h2>Administrer tags</h2>
+        <button class="modal-close" id="closeTagManager">&times;</button>
+      </div>
+      <div class="tag-manager-list" id="tagManagerList"></div>
+      <div class="tag-manager-add">
+        <input type="text" id="newTagName" placeholder="Ny tag..." maxlength="50">
+        <select id="newTagColor">
+          <option value="#3b82f6" style="color:#3b82f6">Blå</option>
+          <option value="#ef4444" style="color:#ef4444">Rød</option>
+          <option value="#22c55e" style="color:#22c55e">Grønn</option>
+          <option value="#f59e0b" style="color:#f59e0b">Gul</option>
+          <option value="#8b5cf6" style="color:#8b5cf6">Lilla</option>
+          <option value="#ec4899" style="color:#ec4899">Rosa</option>
+          <option value="#06b6d4" style="color:#06b6d4">Turkis</option>
+          <option value="#64748b" style="color:#64748b">Grå</option>
+        </select>
+        <button class="btn btn-primary btn-small" id="createTagBtn">Opprett</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  renderTagManagerList();
+
+  document.getElementById('closeTagManager').addEventListener('click', () => modal.remove());
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  document.getElementById('createTagBtn').addEventListener('click', createNewTag);
+  document.getElementById('newTagName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); createNewTag(); }
+  });
+}
+
+function renderTagManagerList() {
+  const listEl = document.getElementById('tagManagerList');
+  if (!listEl) return;
+  listEl.innerHTML = allTags.length === 0
+    ? '<p style="padding:8px;color:var(--color-text-muted)">Ingen tags opprettet</p>'
+    : allTags.map(tag => `
+        <div class="tag-manager-item">
+          <span class="tag-badge" style="background:${escapeHtml(tag.farge)}20;color:${escapeHtml(tag.farge)};border:1px solid ${escapeHtml(tag.farge)}40">
+            ${escapeHtml(tag.navn)}
+          </span>
+          <button class="btn btn-small btn-danger tag-delete-btn" data-tag-id="${tag.id}">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      `).join('');
+
+  // Attach delete handlers
+  listEl.querySelectorAll('.tag-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const tagId = btn.dataset.tagId;
+      const response = await apiFetch(`/api/tags/${tagId}`, { method: 'DELETE' });
+      if (response.ok) {
+        await loadAllTags();
+        renderTagManagerList();
+        // Reload current customer tags if open
+        const kundeId = document.getElementById('customerId')?.value;
+        if (kundeId) loadKundeTags(Number.parseInt(kundeId));
+      }
+    });
+  });
+}
+
+async function createNewTag() {
+  const nameInput = document.getElementById('newTagName');
+  const colorSelect = document.getElementById('newTagColor');
+  const navn = nameInput.value.trim();
+  if (!navn) return;
+
+  try {
+    const response = await apiFetch('/api/tags', {
+      method: 'POST',
+      body: JSON.stringify({ navn, farge: colorSelect.value }),
+    });
+    if (response.ok) {
+      nameInput.value = '';
+      await loadAllTags();
+      renderTagManagerList();
+    } else {
+      const err = await response.json();
+      showMessage(err.error || 'Kunne ikke opprette tag', 'error');
+    }
+  } catch (error) {
+    console.error('Error creating tag:', error);
+  }
+}
 
 async function loadKontaktlogg(kundeId) {
   currentKontaktloggKundeId = kundeId;

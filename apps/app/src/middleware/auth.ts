@@ -163,6 +163,66 @@ export function requireAdmin(
 }
 
 /**
+ * Role hierarchy: admin > tekniker > kontor > leser
+ * Higher roles include all permissions of lower roles
+ */
+const ROLE_HIERARCHY: Record<string, number> = {
+  admin: 40,
+  tekniker: 30,
+  kontor: 20,
+  leser: 10,
+};
+
+/**
+ * Requires a specific role (or higher) for bruker users.
+ * Klient users (org owners) always have admin-level access.
+ * Usage: requireRole('kontor') — allows admin, tekniker, and kontor
+ */
+export function requireRole(minimumRole: string) {
+  const minimumLevel = ROLE_HIERARCHY[minimumRole] || 0;
+
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    requireTenantAuth(req, res, async (error) => {
+      if (error) return next(error);
+
+      // Klient users (org owners) always have full access
+      if (req.user?.type === 'klient') {
+        return next();
+      }
+
+      // For bruker users, check their rolle
+      try {
+        const { getDatabase } = await import('../services/database');
+        const db = await getDatabase();
+        const bruker = await db.getBrukerById(req.user!.userId);
+
+        if (!bruker) {
+          return next(Errors.forbidden('Bruker ikke funnet'));
+        }
+
+        const userRole = bruker.rolle || 'leser';
+        const userLevel = ROLE_HIERARCHY[userRole] || 0;
+
+        if (userLevel < minimumLevel) {
+          authLogger.warn({
+            userId: req.user?.userId,
+            rolle: userRole,
+            required: minimumRole,
+            path: req.path,
+          }, 'Insufficient role for action');
+          return next(Errors.forbidden(`Krever ${minimumRole}-tilgang eller høyere`));
+        }
+
+        next();
+      } catch (err) {
+        authLogger.error({ error: err }, 'Failed to verify role');
+        return next(Errors.internal('Kunne ikke verifisere rolle'));
+      }
+    });
+  };
+}
+
+/**
  * Requires super admin role (bruker with is_super_admin = true)
  * Super admins can access all organizations' data
  */

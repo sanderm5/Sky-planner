@@ -34,19 +34,15 @@ const isFullMode = (organization as any).app_mode === 'full';
     <a href="/dashboard/innstillinger" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
       Generelt
     </a>
-    {isFullMode && (
-      <>
-        <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
-          Integrasjoner
-        </a>
-        <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
-          API-nøkler
-        </a>
-        <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
-          Webhooks
-        </a>
-      </>
-    )}
+    <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Integrasjoner
+    </a>
+    <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      API-nøkler
+    </a>
+    <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Webhooks
+    </a>
     <a href="/dashboard/innstillinger/sikkerhet" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
       Sikkerhet
     </a>
@@ -114,6 +110,38 @@ const isFullMode = (organization as any).app_mode === 'full';
       <button id="btn-disable" class="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors font-medium text-sm">
         Deaktiver 2FA
       </button>
+    </div>
+  </div>
+
+  <!-- Active Sessions Section -->
+  <div class="glass-card p-6 mb-6">
+    <div class="flex items-start justify-between mb-6">
+      <div>
+        <h2 class="text-lg font-semibold text-white mb-1">Aktive sesjoner</h2>
+        <p class="text-dark-400 text-sm">Se og administrer påloggede enheter. Du kan avslutte sesjoner du ikke kjenner igjen.</p>
+      </div>
+    </div>
+
+    <!-- Sessions loading -->
+    <div id="sessions-loading" class="flex items-center gap-3 text-dark-400">
+      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      Henter sesjoner...
+    </div>
+
+    <!-- Sessions list -->
+    <div id="sessions-list" class="hidden space-y-3"></div>
+
+    <!-- No sessions -->
+    <div id="sessions-empty" class="hidden text-dark-400 text-sm">
+      Ingen aktive sesjoner funnet.
+    </div>
+
+    <!-- Sessions error -->
+    <div id="sessions-error" class="hidden text-red-400 text-sm">
+      Kunne ikke hente sesjoner. Prøv å laste siden på nytt.
     </div>
   </div>
 
@@ -227,6 +255,17 @@ const isFullMode = (organization as any).app_mode === 'full';
   </div>
 
   <script is:inline>
+    // CSRF helper — reads __csrf cookie for POST requests
+    function getCsrfToken() {
+      var match = document.cookie.match(/(?:^|;\s*)__csrf=([^;]*)/);
+      return match ? match[1] : '';
+    }
+    function csrfHeaders(extra) {
+      var h = { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() };
+      if (extra) for (var k in extra) h[k] = extra[k];
+      return h;
+    }
+
     (function() {
       // State
       let setupData = null;
@@ -299,7 +338,7 @@ const isFullMode = (organization as any).app_mode === 'full';
         showStep('step-qr');
 
         try {
-          const res = await fetch('/api/dashboard/2fa/setup', { method: 'POST' });
+          const res = await fetch('/api/dashboard/2fa/setup', { method: 'POST', headers: { 'X-CSRF-Token': getCsrfToken() } });
           const data = await res.json();
 
           if (!data.success) {
@@ -370,7 +409,7 @@ const isFullMode = (organization as any).app_mode === 'full';
         try {
           var res = await fetch('/api/dashboard/2fa/verify', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: csrfHeaders(),
             body: JSON.stringify({ code: code }),
           });
           var data = await res.json();
@@ -442,7 +481,7 @@ const isFullMode = (organization as any).app_mode === 'full';
         try {
           var res = await fetch('/api/dashboard/2fa/disable', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: csrfHeaders(),
             body: JSON.stringify({ password: password }),
           });
           var data = await res.json();
@@ -470,6 +509,142 @@ const isFullMode = (organization as any).app_mode === 'full';
 
       // Init
       fetchStatus();
+    })();
+
+    // ============ Session Management ============
+    (function() {
+      var sessionsLoading = document.getElementById('sessions-loading');
+      var sessionsList = document.getElementById('sessions-list');
+      var sessionsEmpty = document.getElementById('sessions-empty');
+      var sessionsError = document.getElementById('sessions-error');
+
+      function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        var d = new Date(dateStr);
+        return d.toLocaleDateString('nb-NO', { day: 'numeric', month: 'short', year: 'numeric' })
+          + ' ' + d.toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' });
+      }
+
+      function timeAgo(dateStr) {
+        if (!dateStr) return '';
+        var diff = Date.now() - new Date(dateStr).getTime();
+        var mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'Akkurat nå';
+        if (mins < 60) return mins + ' min siden';
+        var hours = Math.floor(mins / 60);
+        if (hours < 24) return hours + ' t siden';
+        var days = Math.floor(hours / 24);
+        return days + ' d siden';
+      }
+
+      async function fetchSessions() {
+        try {
+          var res = await fetch('/api/dashboard/sessions/list');
+          var data = await res.json();
+          sessionsLoading.classList.add('hidden');
+
+          if (!data.success || !data.data.sessions.length) {
+            sessionsEmpty.classList.remove('hidden');
+            return;
+          }
+
+          renderSessions(data.data.sessions);
+        } catch (err) {
+          sessionsLoading.classList.add('hidden');
+          sessionsError.classList.remove('hidden');
+        }
+      }
+
+      function renderSessions(sessions) {
+        sessionsList.innerHTML = '';
+        sessionsList.classList.remove('hidden');
+
+        sessions.forEach(function(s) {
+          var isCurrent = s.is_current;
+          var div = document.createElement('div');
+          div.className = 'flex items-center justify-between p-4 rounded-xl border ' +
+            (isCurrent
+              ? 'bg-primary-500/5 border-primary-500/20'
+              : 'bg-dark-800/30 border-dark-700/50');
+
+          var deviceIcon = getDeviceIcon(s.device_info || s.user_agent || '');
+
+          div.innerHTML =
+            '<div class="flex items-center gap-3 min-w-0">' +
+              '<div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ' +
+                (isCurrent ? 'bg-primary-500/10 text-primary-400' : 'bg-dark-700/50 text-dark-400') + '">' +
+                deviceIcon +
+              '</div>' +
+              '<div class="min-w-0">' +
+                '<div class="flex items-center gap-2">' +
+                  '<p class="text-white text-sm font-medium truncate">' +
+                    escapeHtml(s.device_info || 'Ukjent enhet') +
+                  '</p>' +
+                  (isCurrent ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20 flex-shrink-0">Nåværende</span>' : '') +
+                '</div>' +
+                '<p class="text-dark-400 text-xs mt-0.5">' +
+                  (s.ip_address ? escapeHtml(s.ip_address) + ' &bull; ' : '') +
+                  'Sist aktiv: ' + timeAgo(s.last_activity_at) +
+                  ' &bull; Opprettet: ' + formatDate(s.created_at) +
+                '</p>' +
+              '</div>' +
+            '</div>' +
+            (isCurrent
+              ? ''
+              : '<button class="btn-terminate flex-shrink-0 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors text-xs font-medium" data-session-id="' + s.id + '">Avslutt</button>');
+
+          sessionsList.appendChild(div);
+        });
+
+        // Bind terminate buttons
+        sessionsList.querySelectorAll('.btn-terminate').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var sid = Number(btn.getAttribute('data-session-id'));
+            terminateSession(sid, btn);
+          });
+        });
+      }
+
+      function getDeviceIcon(info) {
+        var lower = info.toLowerCase();
+        if (lower.includes('iphone') || lower.includes('ipad') || lower.includes('ios') || lower.includes('android')) {
+          return '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2" stroke-width="2"/><circle cx="12" cy="18" r="1" fill="currentColor"/></svg>';
+        }
+        return '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M8 21h8M12 17v4"/></svg>';
+      }
+
+      function escapeHtml(str) {
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      async function terminateSession(sessionId, btn) {
+        if (!confirm('Er du sikker på at du vil avslutte denne sesjonen? Enheten vil bli logget ut.')) return;
+        btn.disabled = true;
+        btn.textContent = 'Avslutter...';
+        try {
+          var res = await fetch('/api/dashboard/sessions/terminate', {
+            method: 'POST',
+            headers: csrfHeaders(),
+            body: JSON.stringify({ sessionId: sessionId }),
+          });
+          var data = await res.json();
+          if (data.success) {
+            fetchSessions();
+          } else {
+            alert(data.error || 'Kunne ikke avslutte sesjonen');
+            btn.disabled = false;
+            btn.textContent = 'Avslutt';
+          }
+        } catch (err) {
+          alert('Noe gikk galt. Prøv igjen.');
+          btn.disabled = false;
+          btn.textContent = 'Avslutt';
+        }
+      }
+
+      fetchSessions();
     })();
   </script>
 </DashboardLayout>

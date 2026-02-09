@@ -4862,6 +4862,114 @@ a:hover {
   box-shadow: 0 0 0 2px var(--color-accent-muted);
 }
 
+.form-hint {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #999);
+  margin-top: 4px;
+}
+
+/* Tags */
+.tags-section {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--color-bg-card, #1e1e1e);
+  border-radius: 8px;
+}
+
+.kunde-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  min-height: 24px;
+}
+
+.tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.tag-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0.6;
+  padding: 0 2px;
+  color: inherit;
+}
+
+.tag-remove:hover {
+  opacity: 1;
+}
+
+.tags-empty {
+  color: var(--color-text-muted, #999);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.tags-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.tags-add-row select {
+  flex: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border, #333);
+  background: var(--color-bg-elevated, #2a2a2a);
+  color: var(--color-text, #e0e0e0);
+  font-size: 0.8rem;
+}
+
+/* Tag manager modal */
+.tag-manager-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.tag-manager-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border, #333);
+}
+
+.tag-manager-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.tag-manager-add input {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border, #333);
+  background: var(--color-bg-elevated, #2a2a2a);
+  color: var(--color-text, #e0e0e0);
+}
+
+.tag-manager-add select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border, #333);
+  background: var(--color-bg-elevated, #2a2a2a);
+  color: var(--color-text, #e0e0e0);
+}
+
 /* Missing field highlight - orange/warning style */
 .form-group input.missing-field,
 .form-group select.missing-field {
