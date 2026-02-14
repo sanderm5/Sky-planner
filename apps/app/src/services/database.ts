@@ -1135,19 +1135,21 @@ class DatabaseService {
         updateData.neste_kontroll = nextGenericDate.toISOString().split('T')[0];
 
         // Map known slugs to legacy columns for backward compatibility
+        // Service type interval is the source of truth (admin-configured)
         for (const st of serviceTypes) {
+          const interval = st.default_interval_months;
           if (st.slug === 'el-kontroll') {
-            const interval = kunde.el_kontroll_intervall || st.default_interval_months;
             const nextDate = new Date(visitedDate);
             nextDate.setMonth(nextDate.getMonth() + interval);
             updateData.siste_el_kontroll = visitedDate;
             updateData.neste_el_kontroll = nextDate.toISOString().split('T')[0];
+            updateData.el_kontroll_intervall = interval;
           } else if (st.slug === 'brannvarsling') {
-            const interval = kunde.brann_kontroll_intervall || st.default_interval_months;
             const nextDate = new Date(visitedDate);
             nextDate.setMonth(nextDate.getMonth() + interval);
             updateData.siste_brann_kontroll = visitedDate;
             updateData.neste_brann_kontroll = nextDate.toISOString().split('T')[0];
+            updateData.brann_kontroll_intervall = interval;
           }
         }
       }
@@ -2065,6 +2067,23 @@ class DatabaseService {
   }
 
   /**
+   * Get a route assigned to a specific user for a given date.
+   * Used by the "Today's Work" view for technicians.
+   */
+  async getRouteForUserByDate(userId: number, date: string, organizationId: number): Promise<Rute | null> {
+    this.validateTenantContext(organizationId, 'getRouteForUserByDate');
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const sql = `SELECT * FROM ruter
+      WHERE assigned_to = ? AND planned_date = ? AND organization_id = ?
+      LIMIT 1`;
+
+    const result = this.sqlite.prepare(sql).get(userId, date, organizationId);
+    return (result as Rute) || null;
+  }
+
+  /**
    * Get a route by ID.
    * SECURITY: organizationId is required to prevent cross-tenant data access.
    */
@@ -2249,20 +2268,30 @@ class DatabaseService {
 
     if (this.type === 'supabase' && this.supabase) {
       const client = await this.getSupabaseClient();
+      // Delete old visit records first to reset state
+      await client.from('rute_kunde_visits')
+        .delete()
+        .eq('rute_id', ruteId)
+        .eq('organization_id', organizationId);
       const records = kundeIds.map(kundeId => ({
         rute_id: ruteId,
         kunde_id: kundeId,
         organization_id: organizationId,
         completed: false,
       }));
-      await client.from('rute_kunde_visits').upsert(records, { onConflict: 'rute_id,kunde_id' });
+      await client.from('rute_kunde_visits').insert(records);
       return;
     }
 
     if (!this.sqlite) throw new Error('Database not initialized');
 
+    // Delete old visit records first to reset state
+    this.sqlite.prepare(
+      'DELETE FROM rute_kunde_visits WHERE rute_id = ? AND organization_id = ?'
+    ).run(ruteId, organizationId);
+
     const stmt = this.sqlite.prepare(
-      'INSERT OR IGNORE INTO rute_kunde_visits (rute_id, kunde_id, organization_id, completed) VALUES (?, ?, ?, 0)'
+      'INSERT INTO rute_kunde_visits (rute_id, kunde_id, organization_id, completed) VALUES (?, ?, ?, 0)'
     );
     for (const kundeId of kundeIds) {
       stmt.run(ruteId, kundeId, organizationId);
@@ -4395,6 +4424,36 @@ class DatabaseService {
 
     this.sqlite.prepare(`
       UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?
+    `).run(id);
+  }
+
+  async incrementApiKeyQuotaUsed(id: number): Promise<void> {
+    if (this.type === 'supabase') {
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabaseUrl = process.env.SUPABASE_URL || '';
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      // Read current value and increment (atomic enough for quota tracking)
+      const { data } = await supabase
+        .from('api_keys')
+        .select('quota_used_this_month')
+        .eq('id', id)
+        .single();
+
+      const currentUsage = data?.quota_used_this_month ?? 0;
+
+      await supabase
+        .from('api_keys')
+        .update({ quota_used_this_month: currentUsage + 1 })
+        .eq('id', id);
+      return;
+    }
+
+    if (!this.sqlite) return;
+
+    this.sqlite.prepare(`
+      UPDATE api_keys SET quota_used_this_month = quota_used_this_month + 1 WHERE id = ?
     `).run(id);
   }
 

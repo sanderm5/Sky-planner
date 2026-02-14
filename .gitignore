@@ -25,6 +25,7 @@ package-lock.json
 !public/logo.png
 !public/dnv-elkontroll.jpg
 !public/nek-405.png
+!apps/app/public/icons/*.png
 
 # Exception: Allow web app public assets
 !apps/web/public/**/*.png
@@ -77,6 +78,9 @@ codeql-agent-results/
 # Excel files
 *.xlsx
 *.xls
+
+# Business documents / proposals
+TRE Allservice TILBUD OG AVTALE/
 
 # Turborepo cache
 .turbo/

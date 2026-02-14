@@ -16,6 +16,11 @@ let editingUserId = null;
 let growthChart = null;
 let activityChart = null;
 let planChart = null;
+let sentryChart = null;
+
+// Sentry monitoring state
+let sentryConfigured = false;
+let sentryAutoRefreshInterval = null;
 
 // DOM Elements
 const loadingOverlay = document.getElementById('loadingOverlay');
@@ -71,7 +76,8 @@ async function initAdminPanel() {
       loadOrganizations(),
       loadGrowthChart(),
       loadActivityChart(),
-      loadBillingOverview()
+      loadBillingOverview(),
+      loadSentryStatus()
     ]);
 
   } catch (error) {
@@ -155,6 +161,13 @@ function setupEventListeners() {
   });
   document.getElementById('activityPeriodSelect').addEventListener('change', (e) => {
     loadActivityChart(parseInt(e.target.value));
+  });
+
+  // Sentry monitoring
+  document.getElementById('sentryRefreshBtn').addEventListener('click', loadSentryOverview);
+  document.getElementById('sentryAutoRefresh').addEventListener('change', toggleSentryAutoRefresh);
+  document.getElementById('sentrySortSelect').addEventListener('change', (e) => {
+    loadSentryIssues(e.target.value);
   });
 
   // Click outside panel to close (but not when modals are open)
@@ -1356,6 +1369,220 @@ function debounce(fn, delay) {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => fn(...args), delay);
   };
+}
+
+// ========================================
+// SENTRY MONITORING
+// ========================================
+
+async function loadSentryStatus() {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/sentry/status`);
+    const data = await res.json();
+
+    if (data.success && data.data.configured) {
+      sentryConfigured = true;
+      document.getElementById('sentrySection').style.display = 'block';
+      await loadSentryOverview();
+      startSentryAutoRefresh();
+    }
+  } catch (error) {
+    console.error('Failed to check Sentry status:', error);
+  }
+}
+
+async function loadSentryOverview() {
+  if (!sentryConfigured) return;
+
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/sentry/overview`);
+    const data = await res.json();
+
+    if (data.success) {
+      const { unresolvedCount, criticalCount, eventsToday, issues, eventsTrend } = data.data;
+
+      document.getElementById('sentryUnresolvedCount').textContent = unresolvedCount;
+      document.getElementById('sentryCriticalCount').textContent = criticalCount;
+      document.getElementById('sentryEventsToday').textContent = eventsToday;
+
+      updateSentryHealthStatus(criticalCount, unresolvedCount);
+      renderSentryIssues(issues);
+
+      if (eventsTrend && eventsTrend.length > 0) {
+        renderSentryChart(eventsTrend);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load Sentry overview:', error);
+    document.getElementById('sentryIssuesList').innerHTML =
+      '<div class="sentry-error-text">Kunne ikke laste feildata fra Sentry</div>';
+  }
+}
+
+function updateSentryHealthStatus(criticalCount, unresolvedCount) {
+  const statusEl = document.getElementById('sentryHealthStatus');
+  const iconEl = document.getElementById('sentryHealthIcon');
+
+  if (criticalCount > 0) {
+    statusEl.textContent = 'Kritisk';
+    statusEl.className = 'sentry-stat-value sentry-health-critical';
+    iconEl.className = 'sentry-stat-icon sentry-health-critical-icon';
+  } else if (unresolvedCount > 5) {
+    statusEl.textContent = 'Advarsel';
+    statusEl.className = 'sentry-stat-value sentry-health-warning';
+    iconEl.className = 'sentry-stat-icon sentry-health-warning-icon';
+  } else {
+    statusEl.textContent = 'OK';
+    statusEl.className = 'sentry-stat-value sentry-health-ok';
+    iconEl.className = 'sentry-stat-icon sentry-health-ok-icon';
+  }
+}
+
+function renderSentryIssues(issues) {
+  const list = document.getElementById('sentryIssuesList');
+
+  if (!issues || issues.length === 0) {
+    list.innerHTML = '<div class="sentry-empty-state"><i class="fas fa-check-circle"></i><span>Ingen uloste feil!</span></div>';
+    return;
+  }
+
+  list.innerHTML = issues.slice(0, 15).map(issue => `
+    <div class="sentry-issue-item sentry-level-${escapeHtml(issue.level)}">
+      <div class="sentry-issue-level">
+        <i class="fas fa-${getSentryLevelIcon(issue.level)}"></i>
+      </div>
+      <div class="sentry-issue-info">
+        <div class="sentry-issue-title" title="${escapeHtml(issue.title)}">${escapeHtml(issue.title)}</div>
+        <div class="sentry-issue-meta">
+          <span class="sentry-issue-culprit">${escapeHtml(issue.culprit || '')}</span>
+          <span class="sentry-issue-id">${escapeHtml(issue.shortId)}</span>
+        </div>
+      </div>
+      <div class="sentry-issue-stats">
+        <span class="sentry-issue-count" title="Antall hendelser">${escapeHtml(String(issue.count))}</span>
+        <span class="sentry-issue-users" title="Berarte brukere"><i class="fas fa-users"></i> ${issue.userCount || 0}</span>
+        <span class="sentry-issue-time">${formatSentryTimeAgo(issue.lastSeen)}</span>
+      </div>
+      <div class="sentry-issue-actions">
+        <a href="${escapeHtml(issue.permalink)}" target="_blank" rel="noopener noreferrer"
+           class="btn-icon" title="Apne i Sentry">
+          <i class="fas fa-external-link-alt"></i>
+        </a>
+      </div>
+    </div>
+  `).join('');
+}
+
+function getSentryLevelIcon(level) {
+  const icons = {
+    'fatal': 'skull-crossbones',
+    'error': 'exclamation-circle',
+    'warning': 'exclamation-triangle',
+    'info': 'info-circle',
+    'debug': 'bug'
+  };
+  return icons[level] || 'exclamation-circle';
+}
+
+function renderSentryChart(eventsTrend) {
+  const ctx = document.getElementById('sentryErrorChart').getContext('2d');
+
+  if (sentryChart) {
+    sentryChart.destroy();
+  }
+
+  const labels = eventsTrend.map(p => {
+    const d = new Date(p.timestamp * 1000);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+
+  sentryChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Feilhendelser',
+        data: eventsTrend.map(p => p.count),
+        borderColor: '#ef4444',
+        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+        tension: 0.3,
+        fill: true,
+        pointRadius: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        x: {
+          grid: { color: '#333333' },
+          ticks: { color: '#a0a0a0', maxTicksLimit: 12 }
+        },
+        y: {
+          grid: { color: '#333333' },
+          ticks: { color: '#a0a0a0' },
+          beginAtZero: true
+        }
+      }
+    }
+  });
+}
+
+function formatSentryTimeAgo(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHrs = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMin < 1) return 'Akkurat na';
+  if (diffMin < 60) return `${diffMin}m siden`;
+  if (diffHrs < 24) return `${diffHrs}t siden`;
+  return `${diffDays}d siden`;
+}
+
+function startSentryAutoRefresh() {
+  if (sentryAutoRefreshInterval) clearInterval(sentryAutoRefreshInterval);
+  sentryAutoRefreshInterval = setInterval(loadSentryOverview, 60000);
+}
+
+function stopSentryAutoRefresh() {
+  if (sentryAutoRefreshInterval) {
+    clearInterval(sentryAutoRefreshInterval);
+    sentryAutoRefreshInterval = null;
+  }
+}
+
+function toggleSentryAutoRefresh(e) {
+  if (e.target.checked) {
+    startSentryAutoRefresh();
+  } else {
+    stopSentryAutoRefresh();
+  }
+}
+
+async function loadSentryIssues(sort) {
+  if (!sentryConfigured) return;
+
+  const list = document.getElementById('sentryIssuesList');
+  list.innerHTML = '<div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster feil...</div>';
+
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/sentry/issues?sort=${encodeURIComponent(sort)}&limit=15`);
+    const data = await res.json();
+
+    if (data.success) {
+      renderSentryIssues(data.data.issues);
+    }
+  } catch (error) {
+    console.error('Failed to load Sentry issues:', error);
+    list.innerHTML = '<div class="sentry-error-text">Kunne ikke laste feil</div>';
+  }
 }
 
 // ========================================

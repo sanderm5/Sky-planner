@@ -128,6 +128,8 @@ export class ApiKeyService {
       scopes: apiKey.scopes,
       rateLimitRemaining: rateLimitResult.remaining,
       rateLimitReset: rateLimitResult.resetAt,
+      monthlyQuota: apiKey.monthly_quota,
+      quotaUsedThisMonth: apiKey.quota_used_this_month ?? 0,
     };
   }
 
@@ -301,6 +303,8 @@ export class ApiKeyService {
     try {
       const db = await this.getDatabase();
       await db.logApiKeyUsage(data);
+      // Increment monthly quota counter
+      await db.incrementApiKeyQuotaUsed(data.api_key_id);
     } catch (err) {
       // Don't fail requests due to logging errors
       log.error({ err, apiKeyId: data.api_key_id }, 'Failed to log API key usage');
@@ -339,6 +343,7 @@ export interface DatabaseInterface {
   getApiKeyById(id: number, organizationId: number): Promise<ApiKey | null>;
   getOrganizationApiKeys(organizationId: number): Promise<ApiKey[]>;
   updateApiKeyLastUsed(id: number): Promise<void>;
+  incrementApiKeyQuotaUsed(id: number): Promise<void>;
   revokeApiKey(id: number, organizationId: number, revokedBy: number, reason?: string): Promise<boolean>;
   logApiKeyUsage(data: ApiKeyUsageInsertData): Promise<void>;
   getApiKeyUsageStats(apiKeyId: number, organizationId: number, days: number): Promise<ApiKeyUsageStats>;

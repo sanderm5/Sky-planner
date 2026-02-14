@@ -7,6 +7,8 @@ export { welcomeEmail, type WelcomeEmailData, } from './templates/welcome';
 export { subscriptionActivatedEmail, trialEndingEmail, paymentFailedEmail, subscriptionCanceledEmail, type SubscriptionActivatedData, type TrialEndingData, type PaymentFailedData, type SubscriptionCanceledData, } from './templates/subscription';
 export { emailVerificationEmail, type EmailVerificationData, } from './templates/verification';
 export { accountDeletionScheduledTemplate, accountDeletionCompletedTemplate, accountDeletionCancelledTemplate, type AccountDeletionScheduledData, type AccountDeletionCompletedData, type AccountDeletionCancelledData, } from './templates/account-deletion';
+export { passwordResetEmail, type PasswordResetData, } from './templates/password-reset';
+export { teamInvitationEmail, type TeamInvitationData, } from './templates/team-invitation';
 export interface SendEmailOptions {
     to: string;
     subject: string;
@@ -77,6 +79,16 @@ export declare function createEmailSender(config: EmailConfig): {
         error?: string;
     }>;
     sendAccountDeletionCancelled: (to: string, data: import("./templates/account-deletion").AccountDeletionCancelledData) => Promise<{
+        success: boolean;
+        messageId?: string;
+        error?: string;
+    }>;
+    sendPasswordReset: (to: string, data: import("./templates/password-reset").PasswordResetData) => Promise<{
+        success: boolean;
+        messageId?: string;
+        error?: string;
+    }>;
+    sendTeamInvitation: (to: string, data: import("./templates/team-invitation").TeamInvitationData) => Promise<{
         success: boolean;
         messageId?: string;
         error?: string;

@@ -134,9 +134,20 @@ router.get(
   '/batches',
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const service = getImportService();
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const offset = Number(req.query.offset) || 0;
+    const status = req.query.status as ImportBatch['status'] | undefined;
+
+    const batches = await service.getBatches(req.organizationId!, {
+      limit,
+      offset,
+      ...(status && { status }),
+    });
+
     const response: ApiResponse<ImportBatch[]> = {
       success: true,
-      data: [],
+      data: batches,
       requestId: req.requestId,
     };
 
@@ -157,10 +168,16 @@ router.get(
       throw Errors.badRequest('Ugyldig batch-ID');
     }
 
-    // Note: We need to expose this through the service
-    const response: ApiResponse<ImportBatch | null> = {
+    const service = getImportService();
+    const batch = await service.getBatch(req.organizationId!, batchId);
+
+    if (!batch) {
+      throw Errors.notFound('Import-batch');
+    }
+
+    const response: ApiResponse<ImportBatch> = {
       success: true,
-      data: null,
+      data: batch,
       requestId: req.requestId,
     };
 
@@ -447,10 +464,12 @@ router.get(
   '/templates',
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    // Note: Need to expose this through the service
+    const service = getImportService();
+    const templates = await service.getTemplates(req.organizationId!);
+
     const response: ApiResponse<ImportMappingTemplate[]> = {
       success: true,
-      data: [],
+      data: templates,
       requestId: req.requestId,
     };
 
@@ -471,10 +490,17 @@ router.get(
       throw Errors.badRequest('Ugyldig mal-ID');
     }
 
-    // Note: Need to expose this through the service
-    const response: ApiResponse<ImportMappingTemplate | null> = {
+    const service = getImportService();
+    const templates = await service.getTemplates(req.organizationId!);
+    const template = templates.find(t => t.id === templateId) || null;
+
+    if (!template) {
+      throw Errors.notFound('Import-mal');
+    }
+
+    const response: ApiResponse<ImportMappingTemplate> = {
       success: true,
-      data: null,
+      data: template,
       requestId: req.requestId,
     };
 
@@ -494,6 +520,9 @@ router.delete(
     if (isNaN(templateId)) {
       throw Errors.badRequest('Ugyldig mal-ID');
     }
+
+    const service = getImportService();
+    await service.deleteTemplate(req.organizationId!, templateId);
 
     logAudit(apiLogger, 'IMPORT_TEMPLATE_DELETE', req.user!.userId, 'import_mapping_template', templateId);
 

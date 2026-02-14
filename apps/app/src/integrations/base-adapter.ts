@@ -20,6 +20,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const INTEGRATION_TIMEOUT_MS = 30000; // 30 seconds
+
 /**
  * Abstract base class for data source adapters
  * Provides common functionality that all adapters need
@@ -47,10 +49,14 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
     headers.set('Authorization', this.getAuthHeader(credentials));
     headers.set('Content-Type', 'application/json');
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), INTEGRATION_TIMEOUT_MS);
+
     const response = await fetch(url, {
       ...options,
       headers,
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
 
     // Handle rate limit response
     if (response.status === 429) {

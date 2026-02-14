@@ -1388,8 +1388,57 @@ class ServiceTypeRegistry {
       return d.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' });
     };
 
-    // MVP-modus: vis enkel kontrollinfo med service-ikon
+    // MVP-modus: vis kontrollinfo per servicetype
     if (isMvpMode()) {
+      // If organization has multiple service types, show each one for all customers
+      if (serviceTypes.length >= 2) {
+        let html = '<div class="popup-control-info">';
+        serviceTypes.forEach(st => {
+          let nesteKontroll = null;
+          let sisteKontroll = null;
+          let intervall = null;
+
+          // Check customer service data first
+          const serviceData = (customer.services || []).find(s =>
+            s.service_type_slug === st.slug || s.service_type_id === st.id
+          );
+          if (serviceData) {
+            nesteKontroll = serviceData.neste_kontroll;
+            sisteKontroll = serviceData.siste_kontroll;
+          }
+
+          // Fallback to legacy columns based on slug
+          if (st.slug === 'el-kontroll') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_el_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_el_kontroll;
+            if (!intervall) intervall = customer.el_kontroll_intervall;
+          } else if (st.slug === 'brannvarsling') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_brann_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_brann_kontroll;
+            if (!intervall) intervall = customer.brann_kontroll_intervall;
+          }
+
+          // Final fallback to generic columns
+          if (!nesteKontroll) nesteKontroll = customer.neste_kontroll;
+          if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
+          if (!intervall) intervall = customer.kontroll_intervall_mnd || st.defaultInterval;
+
+          const intervallText = intervall ? ` (hver ${intervall}. mnd)` : '';
+
+          html += `
+            <div style="margin-bottom:8px;">
+              <p style="margin:0;">
+                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
+              </p>
+              <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#F97316;">Ikke satt</span>'}${intervallText}</p>
+              ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:#888;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+            </div>`;
+        });
+        html += '</div>';
+        return html;
+      }
+
+      // Single service type - simple view
       const sisteKontroll = customer.siste_kontroll || customer.siste_el_kontroll;
       return `
         <div class="popup-control-info">
@@ -10214,6 +10263,33 @@ function initMap() {
     position: 'bottomleft'
   }).addTo(map);
 
+  // Add "My location" button
+  const LocateControl = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd: function() {
+      const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+      btn.innerHTML = '<a href="#" title="Min posisjon" role="button" aria-label="Min posisjon" style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:16px;"><i class="fas fa-location-crosshairs"></i></a>';
+      let locationMarker = null;
+      L.DomEvent.on(btn, 'click', function(e) {
+        L.DomEvent.preventDefault(e);
+        L.DomEvent.stopPropagation(e);
+        map.locate({ setView: true, maxZoom: 15 });
+      });
+      map.on('locationfound', function(e) {
+        if (locationMarker) map.removeLayer(locationMarker);
+        locationMarker = L.circleMarker(e.latlng, {
+          radius: 8, fillColor: '#4285F4', fillOpacity: 1,
+          color: '#fff', weight: 2
+        }).addTo(map).bindPopup('Du er her');
+      });
+      map.on('locationerror', function() {
+        showNotification('Kunne ikke finne posisjonen din', 'error');
+      });
+      return btn;
+    }
+  });
+  new LocateControl().addTo(map);
+
   // Initialize marker cluster group - reduced radius for better overview
   const clusterRadius = appConfig.mapClusterRadius || 60;
   markerClusterGroup = L.markerClusterGroup({
@@ -11011,7 +11087,7 @@ function generatePopupContent(customer) {
         ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
       </button>
       <button class="btn btn-small btn-success" data-action="quickMarkVisited" data-customer-id="${customer.id}">
-        <i class="fas fa-check"></i> Besøkt
+        <i class="fas fa-check"></i> Marker besøkt
       </button>
       <button class="btn btn-small ${bulkSelectedCustomers.has(customer.id) ? 'btn-warning' : 'btn-complete'}"
               data-action="toggleBulkSelect"
@@ -11429,7 +11505,11 @@ function renderMarkers(customerData) {
       // Determine category icon dynamically from ServiceTypeRegistry
       let categoryIcon, categoryClass;
       const serviceTypes = serviceTypeRegistry.getAll();
-      if (customer.kategori && serviceTypes.length > 0) {
+      if (serviceTypes.length >= 2) {
+        // Global: show all service type icons on all markers
+        categoryIcon = serviceTypes.map(st => `<i class="fas ${st.icon}"></i>`).join('');
+        categoryClass = 'combined';
+      } else if (customer.kategori && serviceTypes.length > 0) {
         categoryIcon = serviceTypeRegistry.getIconForCategory(customer.kategori);
         categoryClass = serviceTypeRegistry.getCategoryClass(customer.kategori);
       } else if (serviceTypes.length > 0) {
@@ -11936,27 +12016,86 @@ async function executeAvhuking() {
 
 // Quick mark a single customer as visited from map popup
 async function quickMarkVisited(customerId) {
-  try {
-    const response = await apiFetch('/api/kunder/mark-visited', {
-      method: 'POST',
-      body: JSON.stringify({
-        kunde_ids: [customerId],
-        visited_date: new Date().toISOString().split('T')[0]
-      })
-    });
+  const customer = customers.find(c => c.id === customerId);
+  const serviceTypes = serviceTypeRegistry.getAll();
+  const today = new Date().toISOString().split('T')[0];
 
-    const result = await response.json();
-    if (response.ok && result.success) {
-      const customer = customers.find(c => c.id === customerId);
-      showNotification(`${customer?.navn || 'Kunde'} markert som besøkt`);
-      await loadCustomers();
-    } else {
-      showNotification(typeof result.error === 'string' ? result.error : 'Kunne ikke markere som besøkt', 'error');
+  // Build service type checkboxes
+  const checkboxesHtml = serviceTypes.map(st => `
+    <label style="display:flex;align-items:center;gap:8px;padding:8px 0;font-size:15px;color:var(--color-text-primary,#fff);cursor:pointer;">
+      <input type="checkbox" class="qmv-kontroll-cb" data-slug="${escapeHtml(st.slug)}" checked
+        style="width:20px;height:20px;accent-color:${escapeHtml(st.color || '#F97316')};">
+      <i class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#F97316')};"></i>
+      ${escapeHtml(st.name)}
+    </label>
+  `).join('');
+
+  // Create dialog overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'qmv-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100001;display:flex;justify-content:center;align-items:center;padding:20px;';
+  overlay.innerHTML = `
+    <div style="background:var(--color-bg-secondary,#1a1a1a);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border,#333);">
+      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary,#fff);">
+        Marker besøkt: ${escapeHtml(customer?.navn || 'Kunde')}
+      </h3>
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Dato for besøk</label>
+        <input type="date" id="qmvDate" value="${today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);font-size:15px;">
+      </div>
+      ${serviceTypes.length > 0 ? `
+        <div style="margin-bottom:20px;">
+          <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Oppdater kontrolldatoer</label>
+          ${checkboxesHtml}
+        </div>
+      ` : ''}
+      <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button id="qmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);cursor:pointer;">Avbryt</button>
+        <button id="qmvConfirm" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:none;background:var(--color-accent,#F97316);color:#fff;cursor:pointer;">Marker besøkt</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Close on escape or overlay click
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  const escHandler = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); } };
+  document.addEventListener('keydown', escHandler);
+
+  overlay.querySelector('#qmvCancel').addEventListener('click', close);
+  overlay.querySelector('#qmvConfirm').addEventListener('click', async () => {
+    const dateValue = document.getElementById('qmvDate').value;
+    const selectedSlugs = Array.from(overlay.querySelectorAll('.qmv-kontroll-cb:checked')).map(cb => cb.dataset.slug);
+
+    close();
+
+    try {
+      const response = await apiFetch('/api/kunder/mark-visited', {
+        method: 'POST',
+        body: JSON.stringify({
+          kunde_ids: [customerId],
+          visited_date: dateValue,
+          service_type_slugs: selectedSlugs
+        })
+      });
+
+      const result = await response.json();
+      if (response.ok && result.success) {
+        const msg = selectedSlugs.length > 0
+          ? `${escapeHtml(customer?.navn || 'Kunde')} markert som besøkt (kontrolldatoer oppdatert)`
+          : `${escapeHtml(customer?.navn || 'Kunde')} markert som besøkt`;
+        showNotification(msg);
+        await loadCustomers();
+      } else {
+        showNotification(typeof result.error === 'string' ? result.error : 'Kunne ikke markere som besøkt', 'error');
+      }
+    } catch (error) {
+      console.error('Feil ved rask avhuking:', error);
+      showNotification('Feil ved oppdatering', 'error');
     }
-  } catch (error) {
-    console.error('Feil ved rask avhuking:', error);
-    showNotification('Feil ved oppdatering', 'error');
-  }
+  });
 }
 
 // Make functions globally available
@@ -12817,11 +12956,31 @@ function exportToMaps(type) {
 }
 
 // Show save route modal
-function showSaveRouteModal() {
+async function showSaveRouteModal() {
   const modal = document.getElementById('saveRouteModal');
   document.getElementById('ruteNavn').value = '';
   document.getElementById('ruteBeskrivelse').value = '';
   document.getElementById('ruteDato').value = '';
+
+  // Load team members for assignment dropdown
+  const assignGroup = document.getElementById('ruteAssignGroup');
+  const assignSelect = document.getElementById('ruteAssignTo');
+  if (hasFeature('todays_work') && assignGroup && assignSelect) {
+    try {
+      const resp = await fetch('/api/team-members', { headers: { 'X-CSRF-Token': csrfToken } });
+      const json = await resp.json();
+      if (json.success && json.data) {
+        assignSelect.innerHTML = '<option value="">Ikke tildelt</option>';
+        json.data.filter(m => m.aktiv).forEach(m => {
+          assignSelect.innerHTML += `<option value="${m.id}">${escapeHtml(m.navn)}</option>`;
+        });
+        assignGroup.style.display = '';
+      }
+    } catch (err) {
+      // Silently fail - assignment is optional
+    }
+  }
+
   modal.classList.remove('hidden');
 }
 
@@ -12838,6 +12997,9 @@ async function saveRoute() {
     return;
   }
 
+  const assignToValue = document.getElementById('ruteAssignTo')?.value;
+  const assigned_to = assignToValue ? parseInt(assignToValue) : null;
+
   try {
     const response = await apiFetch('/api/ruter', {
       method: 'POST',
@@ -12853,6 +13015,15 @@ async function saveRoute() {
     });
 
     if (response.ok) {
+      const result = await response.json();
+      // Assign route to technician if selected
+      if (assigned_to && result.data?.id) {
+        await apiFetch(`/api/ruter/${result.data.id}/assign`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assigned_to, planned_date: planlagt_dato || null })
+        });
+      }
       document.getElementById('saveRouteModal').classList.add('hidden');
       await loadRoutes();
       showMessage('Ruten er lagret!', 'success');
@@ -13575,6 +13746,9 @@ function editCustomer(id) {
 
   // Load tags for this customer
   loadKundeTags(customer.id);
+
+  // Load kontaktpersoner for this customer
+  loadKontaktpersoner(customer.id);
 
   document.getElementById('deleteCustomerBtn').classList.remove('hidden');
   customerModal.classList.remove('hidden');
@@ -14508,6 +14682,10 @@ function addCustomer() {
   // Hide kontaktlogg for new customers
   document.getElementById('kontaktloggSection').style.display = 'none';
   document.getElementById('kontaktloggList').innerHTML = '';
+
+  // Hide kontaktpersoner for new customers
+  document.getElementById('kontaktpersonerSection').style.display = 'none';
+  document.getElementById('kontaktpersonerList').innerHTML = '';
 
   document.getElementById('deleteCustomerBtn').classList.add('hidden');
   customerModal.classList.remove('hidden');
@@ -16167,6 +16345,9 @@ function initializeApp() {
   // Apply MVP mode UI changes based on organization settings
   applyMvpModeUI();
 
+  // Initialize Today's Work feature
+  initTodaysWork();
+
   Logger.log('initializeApp() complete');
 }
 
@@ -16231,6 +16412,42 @@ function setupEventListeners() {
   // Customer admin tab
   document.getElementById('addCustomerBtnTab')?.addEventListener('click', addCustomer);
   document.getElementById('importCustomersBtn')?.addEventListener('click', showImportModal);
+
+  // Export dropdown
+  const exportBtn = document.getElementById('exportCustomersBtn');
+  const exportDropdown = document.getElementById('exportDropdown');
+  if (exportBtn && exportDropdown) {
+    exportBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportDropdown.classList.toggle('hidden');
+    });
+    exportDropdown.querySelectorAll('.export-option').forEach(opt => {
+      opt.addEventListener('click', async () => {
+        const format = opt.dataset.format;
+        exportDropdown.classList.add('hidden');
+        try {
+          const response = await fetch(`/api/export/kunder?format=${format}`, {
+            headers: { 'X-CSRF-Token': csrfToken }
+          });
+          if (!response.ok) throw new Error('Eksport feilet');
+          const blob = await response.blob();
+          const disposition = response.headers.get('Content-Disposition') || '';
+          const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+          const filename = filenameMatch ? filenameMatch[1] : `kunder.${format}`;
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = filename;
+          link.click();
+          URL.revokeObjectURL(link.href);
+          showNotification(`Eksportert ${format.toUpperCase()} med suksess`, 'success');
+        } catch (err) {
+          showNotification('Eksport feilet: ' + err.message, 'error');
+        }
+      });
+    });
+    // Close dropdown when clicking outside
+    document.addEventListener('click', () => exportDropdown.classList.add('hidden'));
+  }
   document.getElementById('closeImportModal')?.addEventListener('click', closeImportModal);
   document.getElementById('customerSearchInput')?.addEventListener('input', (e) => {
     customerAdminSearch = e.target.value;
@@ -16391,6 +16608,21 @@ function setupEventListeners() {
     }
   });
 
+  // Kontaktpersoner event listeners
+  document.getElementById('addKontaktpersonBtn')?.addEventListener('click', addKontaktperson);
+  document.getElementById('kontaktpersonNavn')?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addKontaktperson();
+    }
+  });
+  document.getElementById('kontaktpersonerList')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action="deleteKontaktperson"]');
+    if (btn) {
+      deleteKontaktperson(btn.dataset.id);
+    }
+  });
+
   // Tag event listeners
   document.getElementById('addKundeTagBtn')?.addEventListener('click', () => {
     const select = document.getElementById('kundeTagSelect');
@@ -16456,12 +16688,31 @@ function setupEventListeners() {
 
   // Close button click
   if (contentPanelClose) {
-    contentPanelClose.addEventListener('click', closeContentPanel);
+    contentPanelClose.addEventListener('click', () => {
+      closeContentPanel();
+      // Reset bottom tab bar to Kart when closing content panel
+      if (isMobile && document.getElementById('bottomTabBar')) {
+        document.querySelectorAll('.bottom-tab-item').forEach(b =>
+          b.classList.toggle('active', b.dataset.bottomTab === 'map')
+        );
+        activeBottomTab = 'map';
+        showMobileFilterSheet();
+      }
+    });
   }
 
   // Overlay click to close (mobile)
   if (contentPanelOverlay) {
-    contentPanelOverlay.addEventListener('click', closeContentPanel);
+    contentPanelOverlay.addEventListener('click', () => {
+      closeContentPanel();
+      if (isMobile && document.getElementById('bottomTabBar')) {
+        document.querySelectorAll('.bottom-tab-item').forEach(b =>
+          b.classList.toggle('active', b.dataset.bottomTab === 'map')
+        );
+        activeBottomTab = 'map';
+        showMobileFilterSheet();
+      }
+    });
   }
 
   tabItems.forEach(tab => {
@@ -16526,6 +16777,8 @@ function setupEventListeners() {
           renderCustomerAdmin();
         } else if (tabName === 'admin') {
           loadAdminData();
+        } else if (tabName === 'todays-work') {
+          loadTodaysWork();
         }
       }
     });
@@ -16540,18 +16793,22 @@ function setupEventListeners() {
     openContentPanel();
   }
 
-  if (savedTab) {
-    const savedTabBtn = document.querySelector(`.tab-item[data-tab="${savedTab}"]`);
-    if (savedTabBtn) {
-      setTimeout(() => {
-        savedTabBtn.click();
-      }, 100);
-    }
-  } else {
-    // Click dashboard tab by default
-    const dashboardTab = document.querySelector('.tab-item[data-tab="dashboard"]');
-    if (dashboardTab) {
-      setTimeout(() => dashboardTab.click(), 100);
+  // On mobile with bottom tab bar, start on map view (don't restore saved tab)
+  const hasMobileTabBar = window.innerWidth <= 768;
+  if (!hasMobileTabBar) {
+    if (savedTab) {
+      const savedTabBtn = document.querySelector(`.tab-item[data-tab="${savedTab}"]`);
+      if (savedTabBtn) {
+        setTimeout(() => {
+          savedTabBtn.click();
+        }, 100);
+      }
+    } else {
+      // Click dashboard tab by default
+      const dashboardTab = document.querySelector('.tab-item[data-tab="dashboard"]');
+      if (dashboardTab) {
+        setTimeout(() => dashboardTab.click(), 100);
+      }
     }
   }
 
@@ -17579,6 +17836,113 @@ async function deleteKontaktlogg(id) {
     await loadKontaktlogg(currentKontaktloggKundeId);
   } catch (error) {
     console.error('Feil ved sletting av kontakt:', error);
+  }
+}
+
+// === KONTAKTPERSONER FUNCTIONS ===
+
+let currentKontaktpersonerKundeId = null;
+
+async function loadKontaktpersoner(kundeId) {
+  currentKontaktpersonerKundeId = kundeId;
+  const listEl = document.getElementById('kontaktpersonerList');
+  document.getElementById('kontaktpersonerSection').style.display = 'block';
+
+  try {
+    const response = await apiFetch(`/api/kunder/${kundeId}/kontaktpersoner`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    const personer = result.data || [];
+
+    if (personer.length === 0) {
+      listEl.innerHTML = '<div class="kontaktpersoner-empty">Ingen registrerte kontaktpersoner</div>';
+      return;
+    }
+
+    const rolleLabels = { teknisk: 'Teknisk', faktura: 'Faktura', daglig: 'Daglig leder', annet: 'Annet' };
+
+    listEl.innerHTML = personer.map(p => {
+      const rolleBadge = p.rolle
+        ? `<span class="kontaktperson-rolle">${escapeHtml(rolleLabels[p.rolle] || p.rolle)}</span>`
+        : '';
+      const primaerBadge = p.er_primaer
+        ? '<span class="kontaktperson-primaer-badge"><i class="fas fa-star"></i> Primær</span>'
+        : '';
+
+      return `
+        <div class="kontaktperson-item" data-id="${p.id}">
+          <div class="kontaktperson-info">
+            <div class="kontaktperson-header">
+              <span class="kontaktperson-navn">${escapeHtml(p.navn)}</span>
+              ${rolleBadge}
+              ${primaerBadge}
+            </div>
+            <div class="kontaktperson-details">
+              ${p.telefon ? `<span class="kontaktperson-detail"><i class="fas fa-phone"></i> ${escapeHtml(p.telefon)}</span>` : ''}
+              ${p.epost ? `<span class="kontaktperson-detail"><i class="fas fa-envelope"></i> ${escapeHtml(p.epost)}</span>` : ''}
+            </div>
+          </div>
+          <button type="button" class="kontaktperson-delete" data-action="deleteKontaktperson" data-id="${p.id}" title="Slett">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      `;
+    }).join('');
+  } catch (error) {
+    console.error('Feil ved lasting av kontaktpersoner:', error);
+    listEl.innerHTML = '<div class="kontaktpersoner-empty">Feil ved lasting</div>';
+  }
+}
+
+async function addKontaktperson() {
+  if (!currentKontaktpersonerKundeId) return;
+
+  const navnEl = document.getElementById('kontaktpersonNavn');
+  const rolleEl = document.getElementById('kontaktpersonRolle');
+  const telefonEl = document.getElementById('kontaktpersonTelefon');
+  const epostEl = document.getElementById('kontaktpersonEpost');
+  const primaerEl = document.getElementById('kontaktpersonPrimaer');
+
+  const navn = navnEl.value.trim();
+  if (!navn) {
+    showMessage('Vennligst fyll inn navn', 'warning');
+    navnEl.focus();
+    return;
+  }
+
+  try {
+    await apiFetch(`/api/kunder/${currentKontaktpersonerKundeId}/kontaktpersoner`, {
+      method: 'POST',
+      body: JSON.stringify({
+        navn,
+        rolle: rolleEl.value || undefined,
+        telefon: telefonEl.value.trim() || undefined,
+        epost: epostEl.value.trim() || undefined,
+        er_primaer: primaerEl.checked
+      })
+    });
+
+    navnEl.value = '';
+    rolleEl.value = '';
+    telefonEl.value = '';
+    epostEl.value = '';
+    primaerEl.checked = false;
+    await loadKontaktpersoner(currentKontaktpersonerKundeId);
+  } catch (error) {
+    console.error('Feil ved lagring av kontaktperson:', error);
+    showMessage('Feil ved lagring av kontaktperson', 'error');
+  }
+}
+
+async function deleteKontaktperson(id) {
+  const confirmed = await showConfirm('Slette denne kontaktpersonen?', 'Slette kontaktperson');
+  if (!confirmed) return;
+
+  try {
+    await apiFetch(`/api/kontaktpersoner/${id}`, { method: 'DELETE' });
+    await loadKontaktpersoner(currentKontaktpersonerKundeId);
+  } catch (error) {
+    console.error('Feil ved sletting av kontaktperson:', error);
   }
 }
 
@@ -18907,19 +19271,356 @@ window.closeSuperAdminCustomerModal = closeSuperAdminCustomerModal;
 window.saveSuperAdminCustomer = saveSuperAdminCustomer;
 
 // ============================================
+// TODAY'S WORK (Dagens arbeid)
+// ============================================
+
+let twCurrentDate = new Date().toISOString().split('T')[0];
+let twRouteData = null;
+
+function initTodaysWork() {
+  // Show tab if feature is enabled
+  if (hasFeature('todays_work')) {
+    const tab = document.getElementById('todaysWorkTab');
+    if (tab) tab.style.display = '';
+  }
+
+  // Date navigation
+  document.getElementById('twPrevDay')?.addEventListener('click', () => {
+    const d = new Date(twCurrentDate);
+    d.setDate(d.getDate() - 1);
+    twCurrentDate = d.toISOString().split('T')[0];
+    loadTodaysWork();
+  });
+
+  document.getElementById('twNextDay')?.addEventListener('click', () => {
+    const d = new Date(twCurrentDate);
+    d.setDate(d.getDate() + 1);
+    twCurrentDate = d.toISOString().split('T')[0];
+    loadTodaysWork();
+  });
+
+  // Start route button
+  document.getElementById('twStartRouteBtn')?.addEventListener('click', startTodaysRoute);
+}
+
+async function loadTodaysWork() {
+  const dateLabel = document.getElementById('twDateLabel');
+  const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+  if (twCurrentDate === today) {
+    dateLabel.textContent = 'I dag';
+  } else if (twCurrentDate === tomorrow) {
+    dateLabel.textContent = 'I morgen';
+  } else {
+    const d = new Date(twCurrentDate);
+    dateLabel.textContent = d.toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  try {
+    const response = await fetch(`/api/todays-work/my-route?date=${twCurrentDate}`, {
+      headers: { 'X-CSRF-Token': csrfToken }
+    });
+    const json = await response.json();
+
+    if (json.success && json.data) {
+      twRouteData = json.data;
+      renderTodaysWork();
+      // Cache for offline use
+      if (window.OfflineStorage) {
+        const userId = localStorage.getItem('userId') || '0';
+        OfflineStorage.saveTodaysRoute(twCurrentDate, userId, json.data).catch(() => {});
+        OfflineStorage.setLastSyncTime().catch(() => {});
+      }
+    } else {
+      twRouteData = null;
+      document.getElementById('twRouteCard').style.display = 'none';
+      document.getElementById('twStopsList').innerHTML = '';
+      document.getElementById('twEmpty').style.display = 'flex';
+      updateTodaysWorkBadge(0, 0);
+    }
+  } catch (err) {
+    console.error('Error loading todays work:', err);
+    // Try offline fallback
+    if (window.OfflineStorage && !navigator.onLine) {
+      const userId = localStorage.getItem('userId') || '0';
+      const cached = await OfflineStorage.getTodaysRoute(twCurrentDate, userId);
+      if (cached) {
+        twRouteData = cached;
+        renderTodaysWork();
+        showNotification('Viser lagret rute (frakoblet)', 'warning');
+        return;
+      }
+    }
+    showNotification('Kunne ikke laste dagens rute', 'error');
+  }
+}
+
+function renderTodaysWork() {
+  const route = twRouteData;
+  if (!route) return;
+
+  document.getElementById('twEmpty').style.display = 'none';
+  document.getElementById('twRouteCard').style.display = 'block';
+
+  document.getElementById('twRouteName').textContent = escapeHtml(route.navn || 'Rute');
+
+  const isStarted = !!route.execution_started_at;
+  const isCompleted = !!route.execution_ended_at;
+  const statusEl = document.getElementById('twRouteStatus');
+
+  if (isCompleted) {
+    statusEl.textContent = 'Fullført';
+    statusEl.className = 'tw-route-status tw-status-completed';
+    document.getElementById('twStartRouteBtn').style.display = 'none';
+  } else if (isStarted) {
+    statusEl.textContent = 'Pågår';
+    statusEl.className = 'tw-route-status tw-status-active';
+    document.getElementById('twStartRouteBtn').style.display = 'none';
+  } else {
+    statusEl.textContent = 'Planlagt';
+    statusEl.className = 'tw-route-status tw-status-planned';
+    document.getElementById('twStartRouteBtn').style.display = '';
+  }
+
+  const completed = isStarted ? (route.completed_count || 0) : 0;
+  const total = route.total_count || 0;
+  document.getElementById('twCompleted').textContent = completed;
+  document.getElementById('twTotal').textContent = total;
+
+  const pct = total > 0 ? (completed / total) * 100 : 0;
+  document.getElementById('twProgressFill').style.width = pct + '%';
+
+  if (route.total_distanse) {
+    document.getElementById('twDistanceStat').style.display = '';
+    document.getElementById('twDistance').textContent = (route.total_distanse / 1000).toFixed(1) + ' km';
+  }
+
+  updateTodaysWorkBadge(completed, total);
+
+  // Render customer stops
+  const stopsList = document.getElementById('twStopsList');
+  const kunder = route.kunder || [];
+  const visits = route.visits || [];
+
+  if (kunder.length === 0) {
+    stopsList.innerHTML = '<p class="tw-no-stops">Ingen kunder på denne ruten.</p>';
+    return;
+  }
+
+  // Find next unvisited stop
+  let nextStopIndex = -1;
+  if (isStarted && !isCompleted) {
+    nextStopIndex = kunder.findIndex(k => {
+      const v = visits.find(v => v.kunde_id === k.id);
+      return !v || !v.completed;
+    });
+  }
+
+  let html = '';
+
+  // Show prominent "Next Stop" card on mobile when route is active
+  if (isStarted && !isCompleted && nextStopIndex >= 0) {
+    const nextKunde = kunder[nextStopIndex];
+    const address = [nextKunde.adresse, nextKunde.postnummer, nextKunde.poststed].filter(Boolean).join(', ');
+    html += `
+      <div class="tw-next-stop-card">
+        <div class="tw-next-stop-label">
+          <i class="fas fa-arrow-right"></i> Neste stopp (${nextStopIndex + 1}/${kunder.length})
+        </div>
+        <h3 class="tw-next-stop-name">${escapeHtml(nextKunde.navn)}</h3>
+        <p class="tw-next-stop-address">${escapeHtml(address)}</p>
+        ${nextKunde.telefon ? `<p class="tw-next-stop-phone"><i class="fas fa-phone"></i> ${escapeHtml(nextKunde.telefon)}</p>` : ''}
+        <div class="tw-next-stop-actions">
+          <button class="btn btn-primary tw-next-nav-btn" onclick="twNavigateToCustomer(${nextKunde.id})">
+            <i class="fas fa-directions"></i> Naviger hit
+          </button>
+          ${nextKunde.telefon ? `<a href="tel:${escapeHtml(nextKunde.telefon)}" class="btn btn-secondary tw-next-call-btn"><i class="fas fa-phone"></i> Ring</a>` : ''}
+          <button class="btn btn-success tw-next-done-btn" onclick="twMarkVisited(${nextKunde.id})">
+            <i class="fas fa-check"></i> Fullført
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Render stops list - visited stops collapsed, next highlighted
+  const visitedStops = [];
+  const remainingStops = [];
+
+  kunder.forEach((kunde, index) => {
+    const visit = isStarted ? visits.find(v => v.kunde_id === kunde.id) : null;
+    const isVisited = visit && visit.completed === true;
+    const isNextStop = index === nextStopIndex;
+
+    const card = `
+      <div class="tw-stop-card ${isVisited ? 'tw-stop-completed' : ''} ${isNextStop ? 'tw-stop-next' : ''}" data-kunde-id="${kunde.id}">
+        <div class="tw-stop-number">${index + 1}</div>
+        <div class="tw-stop-info">
+          <h4>${escapeHtml(kunde.navn)}</h4>
+          ${!isVisited ? `<p>${escapeHtml(kunde.adresse || '')}${kunde.poststed ? ', ' + escapeHtml(kunde.poststed) : ''}</p>` : ''}
+          ${!isVisited && kunde.telefon ? `<p class="tw-stop-phone">${escapeHtml(kunde.telefon)}</p>` : ''}
+        </div>
+        <div class="tw-stop-actions">
+          ${!isVisited && kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="btn btn-icon btn-small tw-action-call" title="Ring"><i class="fas fa-phone"></i></a>` : ''}
+          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" onclick="twNavigateToCustomer(${kunde.id})" title="Naviger"><i class="fas fa-directions"></i></button>` : ''}
+          ${isVisited
+            ? '<span class="tw-visited-check"><i class="fas fa-check-circle"></i></span>'
+            : `<button class="btn btn-icon btn-small tw-action-visit" onclick="twMarkVisited(${kunde.id})" title="Marker besøkt"><i class="fas fa-check"></i></button>`
+          }
+        </div>
+      </div>
+    `;
+
+    if (isVisited) {
+      visitedStops.push(card);
+    } else {
+      remainingStops.push(card);
+    }
+  });
+
+  // Show remaining stops first, then collapsed visited section
+  html += remainingStops.join('');
+
+  if (visitedStops.length > 0) {
+    html += `
+      <div class="tw-visited-section">
+        <button class="tw-visited-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+          <i class="fas fa-check-circle"></i>
+          <span>Besøkt (${visitedStops.length})</span>
+          <i class="fas fa-chevron-down tw-visited-chevron"></i>
+        </button>
+        <div class="tw-visited-list">
+          ${visitedStops.join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  stopsList.innerHTML = html;
+}
+
+function updateTodaysWorkBadge(completed, total) {
+  const badge = document.getElementById('todaysWorkBadge');
+  if (badge) {
+    if (total > 0) {
+      badge.textContent = `${completed}/${total}`;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+}
+
+async function startTodaysRoute() {
+  if (!twRouteData) return;
+
+  try {
+    const response = await fetch(`/api/todays-work/start-route/${twRouteData.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }
+    });
+    const json = await response.json();
+    if (json.success) {
+      showNotification('Rute startet!', 'success');
+      loadTodaysWork();
+    }
+  } catch (err) {
+    showNotification('Kunne ikke starte ruten', 'error');
+  }
+}
+
+async function twMarkVisited(kundeId) {
+  if (!twRouteData) return;
+
+  try {
+    const response = await fetch(`/api/todays-work/visit/${kundeId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ rute_id: twRouteData.id, completed: true })
+    });
+    const json = await response.json();
+    if (json.success) {
+      showNotification('Kunde markert som besøkt', 'success');
+      loadTodaysWork();
+    }
+  } catch (err) {
+    // Offline: optimistic update + queue for sync
+    if (!navigator.onLine && window.SyncManager) {
+      // Update local state optimistically
+      if (twRouteData.visits) {
+        const existing = twRouteData.visits.find(v => v.kunde_id === kundeId);
+        if (existing) {
+          existing.completed = true;
+          existing.visited_at = new Date().toISOString();
+        } else {
+          twRouteData.visits.push({ kunde_id: kundeId, completed: true, visited_at: new Date().toISOString() });
+        }
+      }
+      twRouteData.completed_count = (twRouteData.completed_count || 0) + 1;
+      renderTodaysWork();
+
+      // Queue for sync
+      await SyncManager.queueOfflineAction({
+        type: 'VISIT_CUSTOMER',
+        url: `/api/todays-work/visit/${kundeId}`,
+        method: 'POST',
+        body: { rute_id: twRouteData.id, completed: true }
+      });
+
+      // Update offline cache
+      if (window.OfflineStorage) {
+        const userId = localStorage.getItem('userId') || '0';
+        OfflineStorage.saveTodaysRoute(twCurrentDate, userId, twRouteData).catch(() => {});
+      }
+
+      showNotification('Besøk registrert (synkroniseres når du er online)', 'warning');
+    } else {
+      showNotification('Kunne ikke registrere besøk', 'error');
+    }
+  }
+}
+
+function twNavigateToCustomer(kundeId) {
+  const kunde = twRouteData?.kunder?.find(k => k.id === kundeId);
+  if (!kunde) return;
+
+  const address = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', ');
+
+  if (kunde.latitude && kunde.longitude) {
+    // Use coordinates for precision
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    if (isIOS) {
+      window.open(`maps://maps.apple.com/?daddr=${kunde.latitude},${kunde.longitude}&dirflg=d`);
+    } else {
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${kunde.latitude},${kunde.longitude}`);
+    }
+  } else if (address) {
+    // Fallback to address
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`);
+  }
+}
+
+window.twMarkVisited = twMarkVisited;
+window.twNavigateToCustomer = twNavigateToCustomer;
+
+// ============================================
 // MOBILE RESPONSIVENESS
 // ============================================
 
 let isMobile = window.innerWidth <= 768;
 let touchStartY = 0;
 let sidebarOpen = false;
+let mobileFilterSheetExpanded = false;
+let moreMenuOpen = false;
+let activeBottomTab = 'map';
 
 function initMobileUI() {
   // Check if mobile
   isMobile = window.innerWidth <= 768;
 
   if (isMobile) {
-    setupMobileInteractions();
+    initBottomTabBar();
   }
 
   // Listen for resize
@@ -18928,12 +19629,401 @@ function initMobileUI() {
     isMobile = window.innerWidth <= 768;
 
     if (isMobile && !wasMobile) {
-      setupMobileInteractions();
+      initBottomTabBar();
     } else if (!isMobile && wasMobile) {
-      removeMobileInteractions();
+      removeBottomTabBar();
     }
   }, 250));
 }
+
+// ============================================
+// BOTTOM TAB BAR
+// ============================================
+
+function initBottomTabBar() {
+  if (document.getElementById('bottomTabBar')) return;
+
+  document.body.classList.add('has-bottom-tab-bar');
+
+  const hasTodaysWork = hasFeature('todays_work');
+
+  const tabs = [
+    { id: 'map', icon: 'fa-map-marker-alt', label: 'Kart', action: 'showMap' },
+    { id: 'work', icon: 'fa-briefcase', label: 'Arbeid',
+      action: hasTodaysWork ? 'todays-work' : 'avhuking' },
+    { id: 'routes', icon: 'fa-route', label: 'Ruter', action: 'routes' },
+    { id: 'calendar', icon: 'fa-calendar-alt', label: 'Kalender', action: 'calendar' },
+    { id: 'more', icon: 'fa-ellipsis-h', label: 'Mer', action: 'showMore' }
+  ];
+
+  const bar = document.createElement('nav');
+  bar.id = 'bottomTabBar';
+  bar.className = 'bottom-tab-bar';
+  bar.setAttribute('role', 'tablist');
+
+  tabs.forEach(tab => {
+    const btn = document.createElement('button');
+    btn.className = 'bottom-tab-item' + (tab.id === 'map' ? ' active' : '');
+    btn.dataset.bottomTab = tab.id;
+    btn.dataset.action = tab.action;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-label', tab.label);
+    btn.innerHTML = `<i class="fas ${tab.icon}"></i><span>${tab.label}</span>`;
+
+    btn.addEventListener('click', () => handleBottomTabClick(tab));
+    bar.appendChild(btn);
+  });
+
+  document.body.appendChild(bar);
+
+  // Create More menu and filter sheet
+  createMoreMenuOverlay();
+  createMobileFilterSheet();
+
+  // Move filter panel into filter sheet
+  moveFilterPanelToSheet();
+
+  // Prevent body scroll
+  document.body.style.overflow = 'hidden';
+
+  // Initial badge sync
+  setTimeout(syncBottomBarBadges, 500);
+}
+
+function removeBottomTabBar() {
+  document.body.classList.remove('has-bottom-tab-bar');
+
+  const bar = document.getElementById('bottomTabBar');
+  if (bar) bar.remove();
+
+  const moreMenu = document.getElementById('moreMenuOverlay');
+  if (moreMenu) moreMenu.remove();
+
+  // Move filter panel back
+  restoreFilterPanel();
+
+  const filterSheet = document.getElementById('mobileFilterSheet');
+  if (filterSheet) filterSheet.remove();
+
+  document.body.style.overflow = '';
+  moreMenuOpen = false;
+  mobileFilterSheetExpanded = false;
+
+  // Restore sidebar for desktop
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar) {
+    sidebar.style.display = '';
+    sidebar.classList.remove('mobile-open');
+  }
+}
+
+function handleBottomTabClick(tab) {
+  // Update active state
+  document.querySelectorAll('.bottom-tab-item').forEach(b =>
+    b.classList.toggle('active', b.dataset.bottomTab === tab.id)
+  );
+  activeBottomTab = tab.id;
+
+  if (tab.action === 'showMap') {
+    // Close content panel, close more menu, show filter sheet
+    closeContentPanelMobile();
+    closeMoreMenu();
+    showMobileFilterSheet();
+  } else if (tab.action === 'showMore') {
+    closeContentPanelMobile();
+    hideMobileFilterSheet();
+    toggleMoreMenu();
+  } else {
+    // Open the corresponding tab in the content panel
+    closeMoreMenu();
+    hideMobileFilterSheet();
+    switchToTab(tab.action);
+  }
+}
+
+function closeContentPanelMobile() {
+  const cp = document.getElementById('contentPanel');
+  if (cp) {
+    cp.classList.add('closed');
+    cp.classList.remove('open');
+  }
+  const overlay = document.getElementById('contentPanelOverlay');
+  if (overlay) overlay.classList.remove('visible');
+}
+
+// ============================================
+// MORE MENU
+// ============================================
+
+function createMoreMenuOverlay() {
+  if (document.getElementById('moreMenuOverlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'moreMenuOverlay';
+  overlay.className = 'more-menu-overlay';
+
+  const userRole = localStorage.getItem('userRole') || '';
+  const userType = localStorage.getItem('userType') || '';
+  const isAdmin = userType === 'bruker' || userRole === 'admin';
+
+  const items = [
+    { tab: 'dashboard', icon: 'fa-th-large', label: 'Dashboard' },
+    { tab: 'customers', icon: 'fa-users', label: 'Kunder' },
+    { tab: 'overdue', icon: 'fa-exclamation-triangle', label: 'Forfalte', badgeId: 'overdueBadge' },
+    { tab: 'warnings', icon: 'fa-bell', label: 'Kommende', badgeId: 'upcomingBadge' },
+    { tab: 'planner', icon: 'fa-route', label: 'Planlegger' },
+    { tab: 'statistikk', icon: 'fa-chart-line', label: 'Statistikk' },
+    { tab: 'missingdata', icon: 'fa-exclamation-circle', label: 'Mangler data', badgeId: 'missingDataBadge' },
+  ];
+
+  if (isAdmin) {
+    items.push({ tab: 'admin', icon: 'fa-shield-alt', label: 'Admin' });
+  }
+
+  // Check if Today's Work and Avhuking should both appear
+  const hasTodaysWork = hasFeature('todays_work');
+  if (hasTodaysWork) {
+    // Avhuking is in More since Today's Work is in the bottom bar
+    items.splice(2, 0, { tab: 'avhuking', icon: 'fa-clipboard-check', label: 'Avhuking', badgeId: 'avhukingBadge' });
+  } else {
+    // Today's Work tab goes in More if available but not the primary work tab
+    const todaysWorkTab = document.getElementById('todaysWorkTab');
+    if (todaysWorkTab && todaysWorkTab.style.display !== 'none') {
+      items.splice(2, 0, { tab: 'todays-work', icon: 'fa-briefcase', label: 'Dagens arbeid', badgeId: 'todaysWorkBadge' });
+    }
+  }
+
+  overlay.innerHTML = `
+    <div class="more-menu-header">
+      <h3>Alle funksjoner</h3>
+      <button class="more-menu-close" id="moreMenuCloseBtn" aria-label="Lukk">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="more-menu-grid">
+      ${items.map(item => `
+        <button class="more-menu-item" data-more-tab="${escapeHtml(item.tab)}">
+          <i class="fas ${escapeHtml(item.icon)}"></i>
+          <span>${escapeHtml(item.label)}</span>
+          ${item.badgeId ? `<span class="more-menu-badge" data-mirror-badge="${escapeHtml(item.badgeId)}" style="display:none;"></span>` : ''}
+        </button>
+      `).join('')}
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Close button
+  document.getElementById('moreMenuCloseBtn').addEventListener('click', closeMoreMenu);
+
+  // Item click handlers
+  overlay.querySelectorAll('.more-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.dataset.moreTab;
+      closeMoreMenu();
+      // Keep "Mer" highlighted
+      document.querySelectorAll('.bottom-tab-item').forEach(b =>
+        b.classList.toggle('active', b.dataset.bottomTab === 'more')
+      );
+      activeBottomTab = 'more';
+      hideMobileFilterSheet();
+      switchToTab(tabName);
+    });
+  });
+}
+
+function toggleMoreMenu() {
+  const overlay = document.getElementById('moreMenuOverlay');
+  if (!overlay) return;
+
+  moreMenuOpen = !moreMenuOpen;
+  overlay.classList.toggle('open', moreMenuOpen);
+
+  // Sync badges when opening
+  if (moreMenuOpen) {
+    syncMoreMenuBadges();
+  }
+}
+
+function closeMoreMenu() {
+  const overlay = document.getElementById('moreMenuOverlay');
+  if (!overlay) return;
+
+  moreMenuOpen = false;
+  overlay.classList.remove('open');
+}
+
+// ============================================
+// MOBILE FILTER SHEET
+// ============================================
+
+function createMobileFilterSheet() {
+  if (document.getElementById('mobileFilterSheet')) return;
+
+  const sheet = document.createElement('div');
+  sheet.id = 'mobileFilterSheet';
+  sheet.className = 'mobile-filter-sheet';
+
+  sheet.innerHTML = `
+    <div class="filter-sheet-handle" id="filterSheetHandle">
+      <div class="filter-sheet-search-peek">
+        <i class="fas fa-search"></i>
+        <span>Søk kunder...</span>
+        <span class="filter-sheet-count" id="filterSheetCount">0</span>
+      </div>
+    </div>
+    <div class="filter-sheet-content" id="filterSheetContent"></div>
+  `;
+
+  document.body.appendChild(sheet);
+
+  // Handle click/tap to expand/collapse
+  const handle = document.getElementById('filterSheetHandle');
+  if (handle) {
+    handle.addEventListener('click', () => {
+      mobileFilterSheetExpanded = !mobileFilterSheetExpanded;
+      sheet.classList.toggle('expanded', mobileFilterSheetExpanded);
+    });
+
+    // Swipe gestures on filter sheet
+    let sheetTouchStartY = 0;
+    handle.addEventListener('touchstart', (e) => {
+      sheetTouchStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    handle.addEventListener('touchmove', (e) => {
+      if (!sheetTouchStartY) return;
+      const diff = sheetTouchStartY - e.touches[0].clientY;
+      if (diff > 40 && !mobileFilterSheetExpanded) {
+        e.preventDefault();
+        mobileFilterSheetExpanded = true;
+        sheet.classList.add('expanded');
+        sheetTouchStartY = 0;
+      } else if (diff < -40 && mobileFilterSheetExpanded) {
+        e.preventDefault();
+        mobileFilterSheetExpanded = false;
+        sheet.classList.remove('expanded');
+        sheetTouchStartY = 0;
+      }
+    }, { passive: false });
+
+    handle.addEventListener('touchend', () => {
+      sheetTouchStartY = 0;
+    }, { passive: true });
+  }
+}
+
+function moveFilterPanelToSheet() {
+  const filterPanel = document.querySelector('.filter-panel');
+  const sheetContent = document.getElementById('filterSheetContent');
+  if (filterPanel && sheetContent && !sheetContent.contains(filterPanel)) {
+    filterPanel.dataset.originalParent = filterPanel.parentElement?.id || 'map-container';
+    sheetContent.appendChild(filterPanel);
+    filterPanel.classList.remove('collapsed');
+  }
+  updateFilterSheetCount();
+}
+
+function restoreFilterPanel() {
+  const filterPanel = document.querySelector('.filter-panel');
+  if (!filterPanel || !filterPanel.dataset.originalParent) return;
+
+  const originalParent = document.getElementById(filterPanel.dataset.originalParent) ||
+                         document.querySelector('.map-container');
+  if (originalParent) {
+    originalParent.appendChild(filterPanel);
+    delete filterPanel.dataset.originalParent;
+  }
+}
+
+function showMobileFilterSheet() {
+  const sheet = document.getElementById('mobileFilterSheet');
+  if (sheet) {
+    sheet.classList.remove('hidden');
+    updateFilterSheetCount();
+  }
+}
+
+function hideMobileFilterSheet() {
+  const sheet = document.getElementById('mobileFilterSheet');
+  if (sheet) {
+    sheet.classList.add('hidden');
+    mobileFilterSheetExpanded = false;
+    sheet.classList.remove('expanded');
+  }
+}
+
+function updateFilterSheetCount() {
+  const countEl = document.getElementById('filterSheetCount');
+  if (countEl && typeof customers !== 'undefined') {
+    countEl.textContent = customers.length;
+  }
+}
+
+// ============================================
+// BADGE SYNCHRONIZATION
+// ============================================
+
+function syncBottomBarBadges() {
+  if (!document.getElementById('bottomTabBar')) return;
+
+  // Work tab badge - mirror from todaysWorkBadge or avhukingBadge
+  const workBtn = document.querySelector('.bottom-tab-item[data-bottom-tab="work"]');
+  if (workBtn) {
+    const hasTW = hasFeature('todays_work');
+    const sourceId = hasTW ? 'todaysWorkBadge' : 'avhukingBadge';
+    const source = document.getElementById(sourceId);
+    let badge = workBtn.querySelector('.bottom-tab-badge');
+
+    if (source && source.style.display !== 'none' && source.textContent.trim()) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'bottom-tab-badge';
+        workBtn.appendChild(badge);
+      }
+      badge.textContent = source.textContent;
+      badge.style.display = '';
+    } else if (badge) {
+      badge.style.display = 'none';
+    }
+  }
+
+  // Sync More menu badges
+  syncMoreMenuBadges();
+
+  // Update filter sheet count
+  updateFilterSheetCount();
+}
+
+function syncMoreMenuBadges() {
+  document.querySelectorAll('[data-mirror-badge]').forEach(el => {
+    const source = document.getElementById(el.dataset.mirrorBadge);
+    if (source && source.style.display !== 'none' && source.textContent.trim()) {
+      el.textContent = source.textContent;
+      el.style.display = '';
+    } else {
+      el.style.display = 'none';
+    }
+  });
+}
+
+// Hook badge sync into existing update cycles
+const badgeIds = ['overdueBadge', 'upcomingBadge', 'todaysWorkBadge', 'avhukingBadge', 'missingDataBadge'];
+
+// Use MutationObserver to detect badge changes
+function setupBadgeObserver() {
+  badgeIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const observer = new MutationObserver(() => {
+      syncBottomBarBadges();
+    });
+    observer.observe(el, { childList: true, attributes: true, attributeFilter: ['style'] });
+  });
+}
+
+// Delay observer setup until badges exist
+setTimeout(setupBadgeObserver, 2000);
 
 function setupMobileInteractions() {
   const sidebar = document.querySelector('.sidebar');
@@ -19117,3 +20207,6 @@ window.addEventListener('resize', setViewportHeight);
 window.toggleMobileSidebar = toggleMobileSidebar;
 window.closeMobileSidebar = closeMobileSidebar;
 window.openMobileSidebar = openMobileSidebar;
+window.closeMoreMenu = closeMoreMenu;
+window.syncBottomBarBadges = syncBottomBarBadges;
+window.closeContentPanelMobile = closeContentPanelMobile;

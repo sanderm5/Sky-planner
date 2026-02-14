@@ -36,6 +36,16 @@ export {
   type AccountDeletionCancelledData,
 } from './templates/account-deletion';
 
+export {
+  passwordResetEmail,
+  type PasswordResetData,
+} from './templates/password-reset';
+
+export {
+  teamInvitationEmail,
+  type TeamInvitationData,
+} from './templates/team-invitation';
+
 // ============ Email Sending Utilities ============
 
 export interface SendEmailOptions {
@@ -154,6 +164,16 @@ export function createEmailSender(config: EmailConfig) {
     sendAccountDeletionCancelled: async (to: string, data: import('./templates/account-deletion').AccountDeletionCancelledData) => {
       const html = (await import('./templates/account-deletion')).accountDeletionCancelledTemplate(data);
       return sendEmail({ to, subject: 'Kontosletting kansellert - Sky Planner', html }, config);
+    },
+
+    sendPasswordReset: async (to: string, data: import('./templates/password-reset').PasswordResetData) => {
+      const { subject, html } = (await import('./templates/password-reset')).passwordResetEmail(data);
+      return sendEmail({ to, subject, html }, config);
+    },
+
+    sendTeamInvitation: async (to: string, data: import('./templates/team-invitation').TeamInvitationData) => {
+      const { subject, html } = (await import('./templates/team-invitation')).teamInvitationEmail(data);
+      return sendEmail({ to, subject, html }, config);
     },
   };
 }

@@ -10,8 +10,10 @@ import { asyncHandler } from '../middleware/errorHandler';
 import {
   exportCustomersToCSV,
   exportCustomersToJSON,
+  exportCustomersToXLSX,
   exportRoutesToCSV,
   exportRoutesToJSON,
+  exportRoutesToXLSX,
   exportGDPRData,
   type CustomerExportRow,
   type RouteExportRow,
@@ -65,6 +67,8 @@ router.get(
     let result;
     if (format === 'json') {
       result = exportCustomersToJSON(customers);
+    } else if (format === 'xlsx') {
+      result = exportCustomersToXLSX(customers);
     } else {
       result = exportCustomersToCSV(customers);
     }
@@ -78,7 +82,7 @@ router.get(
 /**
  * GET /api/export/ruter
  * Export all routes for the organization
- * Query params: format (csv|json), default: csv
+ * Query params: format (csv|json|xlsx), default: csv
  */
 router.get(
   '/ruter',
@@ -96,6 +100,8 @@ router.get(
     let result;
     if (format === 'json') {
       result = exportRoutesToJSON(routes);
+    } else if (format === 'xlsx') {
+      result = exportRoutesToXLSX(routes);
     } else {
       result = exportRoutesToCSV(routes);
     }

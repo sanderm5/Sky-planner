@@ -275,6 +275,54 @@ router.post(
   })
 );
 
+/**
+ * PUT /api/ruter/:id/assign
+ * Assign a route to a technician (admin only)
+ */
+router.put(
+  '/:id/assign',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const id = Number.parseInt(req.params.id);
+    if (Number.isNaN(id)) {
+      throw Errors.badRequest('Ugyldig rute-ID');
+    }
+
+    const { assigned_to, planned_date } = req.body;
+
+    if (assigned_to !== null && assigned_to !== undefined && typeof assigned_to !== 'number') {
+      throw Errors.badRequest('assigned_to må være et gyldig bruker-ID eller null');
+    }
+
+    if (planned_date && !/^\d{4}-\d{2}-\d{2}$/.test(planned_date)) {
+      throw Errors.badRequest('Ugyldig datoformat (bruk YYYY-MM-DD)');
+    }
+
+    const rute = await dbService.updateRute(
+      id,
+      { assigned_to, planned_date } as Partial<Rute>,
+      req.organizationId
+    );
+
+    if (!rute) {
+      throw Errors.notFound('Rute');
+    }
+
+    logAudit(apiLogger, 'ASSIGN_ROUTE', req.user!.userId, 'rute', id, {
+      assigned_to,
+      planned_date,
+    });
+
+    const response: ApiResponse<Rute> = {
+      success: true,
+      data: rute,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
 // ========================================
 // FIELD WORK MODE (Feature: field_work)
 // ========================================

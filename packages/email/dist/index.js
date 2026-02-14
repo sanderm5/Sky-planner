@@ -8,6 +8,8 @@ export { welcomeEmail, } from './templates/welcome';
 export { subscriptionActivatedEmail, trialEndingEmail, paymentFailedEmail, subscriptionCanceledEmail, } from './templates/subscription';
 export { emailVerificationEmail, } from './templates/verification';
 export { accountDeletionScheduledTemplate, accountDeletionCompletedTemplate, accountDeletionCancelledTemplate, } from './templates/account-deletion';
+export { passwordResetEmail, } from './templates/password-reset';
+export { teamInvitationEmail, } from './templates/team-invitation';
 /**
  * Send an email using Resend API
  */
@@ -93,6 +95,14 @@ export function createEmailSender(config) {
         sendAccountDeletionCancelled: async (to, data) => {
             const html = (await import('./templates/account-deletion')).accountDeletionCancelledTemplate(data);
             return sendEmail({ to, subject: 'Kontosletting kansellert - Sky Planner', html }, config);
+        },
+        sendPasswordReset: async (to, data) => {
+            const { subject, html } = (await import('./templates/password-reset')).passwordResetEmail(data);
+            return sendEmail({ to, subject, html }, config);
+        },
+        sendTeamInvitation: async (to, data) => {
+            const { subject, html } = (await import('./templates/team-invitation')).teamInvitationEmail(data);
+            return sendEmail({ to, subject, html }, config);
         },
     };
 }

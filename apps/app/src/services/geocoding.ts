@@ -43,6 +43,13 @@ interface NominatimResponse extends Array<{
 const KARTVERKET_API = 'https://ws.geonorge.no/adresser/v1/sok';
 const NOMINATIM_API = 'https://nominatim.openstreetmap.org/search';
 const DEFAULT_RATE_LIMIT_MS = 100;
+const GEOCODING_TIMEOUT_MS = 10000; // 10 seconds
+
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = GEOCODING_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
 
 // ============ Main Functions ============
 
@@ -178,7 +185,7 @@ async function tryKartverket(
     if (!searchText.trim()) return null;
 
     const url = `${KARTVERKET_API}?sok=${encodeURIComponent(searchText)}&treffPerSide=1`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
 
     if (!response.ok) {
       logger.debug({ status: response.status }, 'Kartverket API error');
@@ -210,7 +217,7 @@ async function tryKartverket(
 async function tryKartverketPoststed(poststed: string): Promise<GeocodingResult | null> {
   try {
     const url = `${KARTVERKET_API}?sok=${encodeURIComponent(poststed)}&treffPerSide=1`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
 
     if (!response.ok) return null;
 
@@ -249,7 +256,7 @@ async function tryNominatim(
     if (!fullAddress.trim() || fullAddress === 'Norway') return null;
 
     const url = `${NOMINATIM_API}?format=json&q=${encodeURIComponent(fullAddress)}&limit=1`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: { 'User-Agent': 'SkyPlanner/1.0 (contact@skyplanner.no)' },
     });
 
@@ -286,7 +293,7 @@ async function tryNominatim(
 async function tryNominatimPoststed(poststed: string): Promise<GeocodingResult | null> {
   try {
     const url = `${NOMINATIM_API}?format=json&q=${encodeURIComponent(poststed + ', Norway')}&limit=1`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers: { 'User-Agent': 'SkyPlanner/1.0 (contact@skyplanner.no)' },
     });
 

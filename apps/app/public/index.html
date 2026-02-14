@@ -11,6 +11,8 @@
   <title>Sky Planner | Kontrollsystem</title>
   <link rel="icon" type="image/svg+xml" href="/skyplanner-logo.svg">
   <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <!-- CRITICAL: Set dark background and SPA view transition styles -->
   <style>
     html,body{background:#0f0f0f!important;overflow:hidden;height:100%;width:100%;}
@@ -759,6 +761,11 @@
           <span>Kommende kontroller</span>
           <span class="tab-badge" id="upcomingBadge" style="display: none;">0</span>
         </button>
+        <button class="tab-item" data-tab="todays-work" id="todaysWorkTab" style="display: none;">
+          <i class="fas fa-briefcase"></i>
+          <span>Dagens arbeid</span>
+          <span class="tab-badge" id="todaysWorkBadge" style="display: none;">0/0</span>
+        </button>
         <button class="tab-item" data-tab="avhuking">
           <i class="fas fa-clipboard-check"></i>
           <span>Avhuking</span>
@@ -916,6 +923,22 @@
           <div class="tab-header">
             <h2>Kunder</h2>
             <div class="tab-header-actions">
+              <div class="export-dropdown-wrapper">
+                <button id="exportCustomersBtn" class="btn btn-secondary btn-small">
+                  <i class="fas fa-download"></i> Eksporter
+                </button>
+                <div id="exportDropdown" class="export-dropdown hidden">
+                  <button class="export-option" data-format="xlsx">
+                    <i class="fas fa-file-excel"></i> Excel (.xlsx)
+                  </button>
+                  <button class="export-option" data-format="csv">
+                    <i class="fas fa-file-csv"></i> CSV
+                  </button>
+                  <button class="export-option" data-format="json">
+                    <i class="fas fa-file-code"></i> JSON
+                  </button>
+                </div>
+              </div>
               <button id="importCustomersBtn" class="btn btn-secondary btn-small">
                 <i class="fas fa-file-import"></i> Importer
               </button>
@@ -1001,6 +1024,56 @@
 
           <div id="warningsContainer" class="warnings-container">
             <!-- Varsler lastes her -->
+          </div>
+        </div>
+
+        <!-- Tab: Today's Work -->
+        <div class="tab-pane" id="tab-todays-work">
+          <div class="tab-header">
+            <h2>Dagens arbeid</h2>
+            <div class="todays-work-date-nav">
+              <button class="btn btn-icon btn-small" id="twPrevDay" title="Forrige dag">
+                <i class="fas fa-chevron-left"></i>
+              </button>
+              <span id="twDateLabel">I dag</span>
+              <button class="btn btn-icon btn-small" id="twNextDay" title="Neste dag">
+                <i class="fas fa-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Route summary card -->
+          <div class="tw-route-card" id="twRouteCard" style="display: none;">
+            <div class="tw-route-header">
+              <h3 id="twRouteName"></h3>
+              <span class="tw-route-status" id="twRouteStatus"></span>
+            </div>
+            <div class="tw-route-stats">
+              <div class="tw-stat">
+                <i class="fas fa-map-marker-alt"></i>
+                <span><span id="twCompleted">0</span>/<span id="twTotal">0</span> besøkt</span>
+              </div>
+              <div class="tw-stat" id="twDistanceStat" style="display: none;">
+                <i class="fas fa-route"></i>
+                <span id="twDistance"></span>
+              </div>
+            </div>
+            <div class="tw-progress-bar">
+              <div class="tw-progress-fill" id="twProgressFill"></div>
+            </div>
+            <button class="btn btn-primary btn-block" id="twStartRouteBtn">
+              <i class="fas fa-play"></i> Start rute
+            </button>
+          </div>
+
+          <!-- Customer stops list -->
+          <div class="tw-stops-list" id="twStopsList"></div>
+
+          <!-- Empty state -->
+          <div class="tw-empty" id="twEmpty" style="display: none;">
+            <i class="fas fa-calendar-check"></i>
+            <h3>Ingen rute tildelt</h3>
+            <p>Du har ingen rute tildelt for denne datoen.</p>
           </div>
         </div>
 
@@ -1956,6 +2029,37 @@
           </div>
         </div>
 
+        <!-- Kontaktpersoner -->
+        <div class="kontaktpersoner-section" id="kontaktpersonerSection" style="display: none;">
+          <div class="control-section-header">
+            <i class="fas fa-users"></i> Kontaktpersoner
+          </div>
+          <div class="kontaktpersoner-list" id="kontaktpersonerList">
+            <!-- Fylles med JavaScript -->
+          </div>
+          <div class="kontaktpersoner-add">
+            <input type="text" id="kontaktpersonNavn" placeholder="Navn *">
+            <select id="kontaktpersonRolle">
+              <option value="">Rolle...</option>
+              <option value="teknisk">Teknisk</option>
+              <option value="faktura">Faktura</option>
+              <option value="daglig">Daglig leder</option>
+              <option value="annet">Annet</option>
+            </select>
+            <input type="tel" id="kontaktpersonTelefon" placeholder="Telefon">
+            <input type="email" id="kontaktpersonEpost" placeholder="E-post">
+            <div class="kontaktperson-add-actions">
+              <label class="kontaktperson-primaer-label">
+                <input type="checkbox" id="kontaktpersonPrimaer">
+                <span>Primærkontakt</span>
+              </label>
+              <button type="button" id="addKontaktpersonBtn" class="btn btn-small btn-primary">
+                <i class="fas fa-plus"></i> Legg til
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="form-actions">
           <button type="button" id="deleteCustomerBtn" class="btn btn-danger hidden">Slett</button>
           <button type="button" id="cancelBtn" class="btn btn-secondary">Avbryt</button>
@@ -2006,6 +2110,12 @@
       <div class="form-group">
         <label for="ruteDato">Planlagt dato</label>
         <input type="date" id="ruteDato">
+      </div>
+      <div class="form-group" id="ruteAssignGroup" style="display: none;">
+        <label for="ruteAssignTo">Tildel til tekniker</label>
+        <select id="ruteAssignTo">
+          <option value="">Ikke tildelt</option>
+        </select>
       </div>
       <div class="form-actions">
         <button id="cancelSaveRoute" class="btn btn-secondary">Avbryt</button>
@@ -2306,7 +2416,19 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
+  <script src="offline-storage.js?v=1"></script>
+  <script src="sync-manager.js?v=1"></script>
   <script src="app.js?v=20260202-area"></script>
+  <script>
+    // Register service worker for PWA
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('SW registered:', reg.scope))
+          .catch(err => console.warn('SW registration failed:', err));
+      });
+    }
+  </script>
 </body>
 </html>
 <!-- redeploy Sat Dec 27 17:54:50 CET 2025 -->

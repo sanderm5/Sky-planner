@@ -50,9 +50,20 @@ export async function apiKeyAuth(
       return next(Errors.tooManyRequests('API rate limit overskredet'));
     }
 
+    // Check monthly quota
+    if (context.monthlyQuota && context.quotaUsedThisMonth >= context.monthlyQuota) {
+      res.setHeader('X-Monthly-Quota-Limit', String(context.monthlyQuota));
+      res.setHeader('X-Monthly-Quota-Used', String(context.quotaUsedThisMonth));
+      return next(Errors.tooManyRequests('Månedlig API-kvote overskredet'));
+    }
+
     // Set rate limit headers
     res.setHeader('X-RateLimit-Remaining', String(context.rateLimitRemaining));
     res.setHeader('X-RateLimit-Reset', String(context.rateLimitReset));
+    if (context.monthlyQuota) {
+      res.setHeader('X-Monthly-Quota-Limit', String(context.monthlyQuota));
+      res.setHeader('X-Monthly-Quota-Remaining', String(context.monthlyQuota - context.quotaUsedThisMonth));
+    }
 
     // Set request context
     req.organizationId = context.organizationId;

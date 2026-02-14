@@ -147,6 +147,80 @@
         </div>
       </section>
 
+      <!-- Sentry Monitoring section (hidden until configured) -->
+      <section class="sentry-section" id="sentrySection" style="display: none;">
+        <div class="section-header">
+          <h2><i class="fas fa-shield-alt"></i> Overvåking</h2>
+          <div class="section-actions">
+            <div class="sentry-auto-refresh">
+              <label>
+                <input type="checkbox" id="sentryAutoRefresh" checked>
+                <span>Auto-oppdater (60s)</span>
+              </label>
+            </div>
+            <button class="btn-sm btn-secondary" id="sentryRefreshBtn">
+              <i class="fas fa-sync-alt"></i> Oppdater
+            </button>
+          </div>
+        </div>
+
+        <div class="sentry-stats">
+          <div class="sentry-stat-card sentry-stat-total">
+            <div class="sentry-stat-icon"><i class="fas fa-bug"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="sentryUnresolvedCount">-</span>
+              <span class="sentry-stat-label">Uløste feil</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card sentry-stat-critical">
+            <div class="sentry-stat-icon"><i class="fas fa-exclamation-circle"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="sentryCriticalCount">-</span>
+              <span class="sentry-stat-label">Kritiske</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card sentry-stat-events">
+            <div class="sentry-stat-icon"><i class="fas fa-chart-bar"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="sentryEventsToday">-</span>
+              <span class="sentry-stat-label">Hendelser (24t)</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card sentry-stat-health">
+            <div class="sentry-stat-icon" id="sentryHealthIcon"><i class="fas fa-heartbeat"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="sentryHealthStatus">-</span>
+              <span class="sentry-stat-label">Systemstatus</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sentry-content-row">
+          <div class="sentry-chart-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-chart-area"></i> Feil siste 24 timer</h3>
+            </div>
+            <div class="chart-container">
+              <canvas id="sentryErrorChart"></canvas>
+            </div>
+          </div>
+          <div class="sentry-issues-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-list"></i> Siste feil</h3>
+              <select id="sentrySortSelect" class="chart-select">
+                <option value="priority" selected>Prioritet</option>
+                <option value="date">Sist sett</option>
+                <option value="new">Nyeste</option>
+                <option value="freq">Hyppigste</option>
+              </select>
+            </div>
+            <div class="sentry-issues-list" id="sentryIssuesList">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster feil...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Organizations section -->
       <section class="orgs-section">
         <div class="section-header">

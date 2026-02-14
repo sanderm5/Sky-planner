@@ -136,6 +136,8 @@ export interface ApiKeyAuthContext {
   scopes: ApiScope[];
   rateLimitRemaining: number;
   rateLimitReset: number;
+  monthlyQuota?: number;
+  quotaUsedThisMonth: number;
 }
 
 // ============ Rate Limit Types ============

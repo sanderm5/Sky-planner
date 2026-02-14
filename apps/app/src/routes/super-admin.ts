@@ -1052,4 +1052,106 @@ router.get(
   })
 );
 
+// ========================================
+// SENTRY OVERVÅKING
+// ========================================
+
+/**
+ * GET /api/super-admin/sentry/status
+ * Check if Sentry API is configured
+ */
+router.get(
+  '/sentry/status',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { isSentryApiConfigured } = await import('../services/sentry-api');
+
+    const response: ApiResponse = {
+      success: true,
+      data: { configured: isSentryApiConfigured() },
+      requestId: req.requestId,
+    };
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/super-admin/sentry/overview
+ * Get aggregated monitoring overview
+ */
+router.get(
+  '/sentry/overview',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { isSentryApiConfigured, getSentryOverview } = await import('../services/sentry-api');
+
+    if (!isSentryApiConfigured()) {
+      throw Errors.badRequest('Sentry API ikke konfigurert');
+    }
+
+    const overview = await getSentryOverview();
+
+    const response: ApiResponse = {
+      success: true,
+      data: overview,
+      requestId: req.requestId,
+    };
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/super-admin/sentry/issues
+ * Get paginated list of Sentry issues
+ */
+router.get(
+  '/sentry/issues',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { isSentryApiConfigured, getUnresolvedIssues } = await import('../services/sentry-api');
+
+    if (!isSentryApiConfigured()) {
+      throw Errors.badRequest('Sentry API ikke konfigurert');
+    }
+
+    const sort = (req.query.sort as string) || 'priority';
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit as string, 10) || 25, 1), 100);
+
+    const issues = await getUnresolvedIssues({ sort, limit });
+
+    const response: ApiResponse = {
+      success: true,
+      data: { issues },
+      requestId: req.requestId,
+    };
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/super-admin/sentry/issues/:issueId
+ * Get details for a single Sentry issue
+ */
+router.get(
+  '/sentry/issues/:issueId',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { isSentryApiConfigured, getIssueDetails } = await import('../services/sentry-api');
+
+    if (!isSentryApiConfigured()) {
+      throw Errors.badRequest('Sentry API ikke konfigurert');
+    }
+
+    const { issueId } = req.params;
+    if (!/^\d+$/.test(issueId)) {
+      throw Errors.badRequest('Ugyldig issue-ID');
+    }
+
+    const issue = await getIssueDetails(issueId);
+
+    const response: ApiResponse = {
+      success: true,
+      data: issue,
+      requestId: req.requestId,
+    };
+    res.json(response);
+  })
+);
+
 export default router;

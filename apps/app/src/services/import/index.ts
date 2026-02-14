@@ -192,6 +192,24 @@ class ImportService {
     this.db = dbService;
   }
 
+  // ============ BATCH & TEMPLATE QUERIES ============
+
+  async getBatches(organizationId: number, options: ImportBatchQueryOptions): Promise<ImportBatch[]> {
+    return this.db.getImportBatches(organizationId, options);
+  }
+
+  async getBatch(organizationId: number, batchId: number): Promise<ImportBatch | null> {
+    return this.db.getImportBatch(organizationId, batchId);
+  }
+
+  async getTemplates(organizationId: number): Promise<ImportMappingTemplate[]> {
+    return this.db.getImportMappingTemplates(organizationId);
+  }
+
+  async deleteTemplate(organizationId: number, templateId: number): Promise<void> {
+    return this.db.deleteImportMappingTemplate(organizationId, templateId);
+  }
+
   // ============ UPLOAD & PARSE ============
 
   async uploadAndParse(

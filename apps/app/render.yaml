@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: skyplanner-app
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: cd ../.. && pnpm install && pnpm --filter @skyplanner/app build
+    startCommand: cd ../.. && pnpm --filter @skyplanner/app start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000

@@ -180,6 +180,9 @@ export interface Rute {
   execution_started_at?: string;
   execution_ended_at?: string;
   current_stop_index?: number;
+  // Route assignment
+  assigned_to?: number | null;
+  planned_date?: string;
 }
 
 export interface RuteKunde {

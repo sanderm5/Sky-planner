@@ -3,6 +3,7 @@
  * Exports organization data in various formats
  */
 
+import * as XLSX from 'xlsx';
 import { createLogger } from './logger';
 
 const logger = createLogger('export');
@@ -15,7 +16,7 @@ export interface ExportOptions {
 }
 
 export interface ExportResult {
-  data: string;
+  data: string | Buffer;
   filename: string;
   contentType: string;
 }
@@ -123,6 +124,29 @@ export function exportCustomersToJSON(customers: CustomerExportRow[]): ExportRes
   };
 }
 
+export function exportCustomersToXLSX(customers: CustomerExportRow[]): ExportResult {
+  const rows = customers.map((c) => {
+    const row: Record<string, unknown> = {};
+    for (const col of CUSTOMER_COLUMNS) {
+      row[col.label] = c[col.key] ?? '';
+    }
+    return row;
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Kunder');
+
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  const timestamp = new Date().toISOString().split('T')[0];
+
+  return {
+    data: buffer,
+    filename: `kunder_${timestamp}.xlsx`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  };
+}
+
 // ============ Routes Export ============
 
 export interface RouteExportRow {
@@ -159,6 +183,29 @@ export function exportRoutesToJSON(routes: RouteExportRow[]): ExportResult {
     data: JSON.stringify(routes, null, 2),
     filename: `ruter_${timestamp}.json`,
     contentType: 'application/json; charset=utf-8',
+  };
+}
+
+export function exportRoutesToXLSX(routes: RouteExportRow[]): ExportResult {
+  const rows = routes.map((r) => {
+    const row: Record<string, unknown> = {};
+    for (const col of ROUTE_COLUMNS) {
+      row[col.label] = r[col.key] ?? '';
+    }
+    return row;
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Ruter');
+
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  const timestamp = new Date().toISOString().split('T')[0];
+
+  return {
+    data: buffer,
+    filename: `ruter_${timestamp}.xlsx`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   };
 }
 

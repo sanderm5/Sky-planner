@@ -57,6 +57,7 @@ import serviceTypesRoutes, { initServiceTypesRoutes } from './routes/service-typ
 import customerEmailRoutes, { initCustomerEmailRoutes } from './routes/customer-emails';
 import ekkRoutes, { initEkkRoutes } from './routes/ekk';
 import outlookRoutes, { initOutlookRoutes } from './routes/outlook';
+import todaysWorkRoutes, { initTodaysWorkRoutes } from './routes/todays-work';
 import { csrfTokenMiddleware, csrfProtection, getCsrfTokenHandler } from './middleware/csrf';
 import type { AuthenticatedRequest } from './types';
 
@@ -106,6 +107,9 @@ async function initializeApp() {
 
   // Initialize Outlook routes
   initOutlookRoutes(db as any);
+
+  // Initialize todays-work routes
+  initTodaysWorkRoutes(db as Parameters<typeof initTodaysWorkRoutes>[0]);
 
   return db;
 }
@@ -290,6 +294,20 @@ app.use('/api/bruker/2fa', sensitiveActionLimiter);
 
 // ===== STATIC FILES =====
 const publicPath = path.join(__dirname, '..', 'public');
+
+// Service worker must never be HTTP cached
+app.get('/sw.js', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Service-Worker-Allowed', '/');
+  next();
+});
+
+// Manifest should not be cached aggressively
+app.get('/manifest.json', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  next();
+});
+
 app.use(express.static(publicPath));
 
 // ===== API ROUTES =====
@@ -318,6 +336,9 @@ app.use('/api/service-types', requireTenantAuth, serviceTypesRoutes);
 app.use('/api/customer-emails', requireTenantAuth, requireActiveSubscription, customerEmailRoutes);
 app.use('/api/ekk', requireTenantAuth, requireActiveSubscription, ekkRoutes);
 app.use('/api/outlook', requireTenantAuth, requireActiveSubscription, outlookRoutes);
+
+// Today's work routes (field technician daily view)
+app.use('/api/todays-work', requireTenantAuth, requireActiveSubscription, todaysWorkRoutes);
 
 // Import routes (Excel import with staging)
 app.use('/api/import', requireTenantAuth, requireActiveSubscription, importRoutes);
