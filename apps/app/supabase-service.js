@@ -140,13 +140,27 @@ async function updateKunde(id, kunde, organizationId) {
 }
 
 async function deleteKunde(id, organizationId) {
-  // First delete related email settings
+  // Delete related records to prevent orphans
+  await getClient()
+    .from('kontaktlogg')
+    .delete()
+    .eq('kunde_id', id);
+
+  await getClient()
+    .from('kontaktpersoner')
+    .delete()
+    .eq('kunde_id', id);
+
+  await getClient()
+    .from('kunde_tags')
+    .delete()
+    .eq('kunde_id', id);
+
   await getClient()
     .from('email_innstillinger')
     .delete()
     .eq('kunde_id', id);
 
-  // Then delete email history
   await getClient()
     .from('email_historikk')
     .delete()

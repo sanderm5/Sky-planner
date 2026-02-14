@@ -22,7 +22,7 @@ const logger = createLogger('cron');
  */
 function verifyCronSecret(req: Request, res: Response, next: NextFunction): void {
   const cronSecret = process.env.CRON_SECRET;
-  const providedSecret = req.headers['x-cron-secret'] as string || req.query.secret as string;
+  const providedSecret = req.headers['x-cron-secret'] as string;
 
   if (!cronSecret) {
     logger.warn('CRON_SECRET not configured');

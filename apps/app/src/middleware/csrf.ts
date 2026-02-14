@@ -152,8 +152,9 @@ export function csrfProtection(options?: { exemptPaths?: string[] }) {
       return next();
     }
 
-    // Skip if request has API key header (API key auth)
-    if (req.headers['x-api-key']) {
+    // Skip if request has been authenticated via API key
+    // Note: Only skip if the key has been validated by api-key-auth middleware
+    if (req.headers['x-api-key'] && (req as any).apiKeyAuthenticated) {
       return next();
     }
 

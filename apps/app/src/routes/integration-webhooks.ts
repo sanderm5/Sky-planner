@@ -69,19 +69,24 @@ router.post('/tripletex/:organizationId', async (req: Request, res: Response) =>
           Buffer.from(providedToken, 'utf8')
         );
         if (!tokensMatch) {
-          logger.warn({ organizationId }, 'Tripletex webhook token mismatch');
-          res.status(401).json({ error: 'Invalid webhook token' });
+          logger.warn({ organizationId }, 'Tripletex webhook token validation failed');
+          res.status(401).json({ error: 'Webhook validation failed' });
           return;
         }
       } catch {
         // Length mismatch in timingSafeEqual means tokens don't match
-        logger.warn({ organizationId }, 'Tripletex webhook token mismatch');
-        res.status(401).json({ error: 'Invalid webhook token' });
+        logger.warn({ organizationId }, 'Tripletex webhook token validation failed');
+        res.status(401).json({ error: 'Webhook validation failed' });
         return;
       }
     } else if (storedWebhookToken && !providedToken) {
-      logger.warn({ organizationId }, 'Tripletex webhook missing token');
-      res.status(401).json({ error: 'Missing webhook token' });
+      logger.warn({ organizationId }, 'Tripletex webhook token validation failed');
+      res.status(401).json({ error: 'Webhook validation failed' });
+      return;
+    } else if (!storedWebhookToken) {
+      // No token configured — reject unauthenticated webhooks
+      logger.warn({ organizationId }, 'No webhook token configured, rejecting webhook');
+      res.status(401).json({ error: 'Webhook validation failed' });
       return;
     }
   } catch (error) {

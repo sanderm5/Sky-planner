@@ -6244,8 +6244,8 @@ async function wizardHandleFileSelect(file) {
     const formData = new FormData();
     formData.append('file', file);
 
-    // Switch to parsing phase after a brief moment
-    setTimeout(() => {
+    // Switch to parsing phase after a brief moment (track timers for cleanup)
+    const phaseTimer1 = setTimeout(() => {
       if (wizardImportState.isLoading) {
         wizardImportState.loadingPhase = 'parsing';
         updateWizardImportContent();
@@ -6253,7 +6253,7 @@ async function wizardHandleFileSelect(file) {
     }, 500);
 
     // Switch to AI mapping phase after parsing starts
-    setTimeout(() => {
+    const phaseTimer2 = setTimeout(() => {
       if (wizardImportState.isLoading) {
         wizardImportState.loadingPhase = 'ai-mapping';
         updateWizardImportContent();
@@ -6324,6 +6324,8 @@ async function wizardHandleFileSelect(file) {
 
     wizardImportState.validCategories = result.data.validCategories || [];
     wizardImportState.isLoading = false;
+    clearTimeout(phaseTimer1);
+    clearTimeout(phaseTimer2);
 
     // Pre-fill category mapping with suggestions
     if (result.data.categoryMatches) {
@@ -6341,6 +6343,8 @@ async function wizardHandleFileSelect(file) {
   } catch (error) {
     console.error('Wizard import error:', error);
     wizardImportState.isLoading = false;
+    clearTimeout(phaseTimer1);
+    clearTimeout(phaseTimer2);
     wizardImportState.error = error.message || 'En feil oppstod under behandling av filen';
     updateWizardImportContent();
   }
@@ -10751,6 +10755,17 @@ async function applyFilters() {
   renderCustomerList(filtered);
   renderMarkers(filtered);
   updateCategoryFilterCounts();
+
+  // Update search result counter
+  const counterEl = document.getElementById('filterResultCount');
+  if (counterEl) {
+    if (filtered.length !== customers.length) {
+      counterEl.textContent = `Viser ${filtered.length} av ${customers.length} kunder`;
+      counterEl.style.display = 'block';
+    } else {
+      counterEl.style.display = 'none';
+    }
+  }
 }
 
 // Update category filter button counts (exact match - matches filter behavior)
@@ -11003,6 +11018,21 @@ function renderCustomerList(customerData) {
     });
     return { urgent, warning };
   };
+
+  // Empty state
+  if (customerData.length === 0) {
+    if (customerList) {
+      const isFiltered = customers.length > 0;
+      customerList.innerHTML = `
+        <div style="text-align:center;padding:40px 20px;color:var(--color-text-secondary,#a0a0a0);">
+          <i class="fas ${isFiltered ? 'fa-filter' : 'fa-users'}" style="font-size:32px;margin-bottom:12px;display:block;opacity:0.5;"></i>
+          <p style="font-size:15px;margin:0 0 8px;">${isFiltered ? 'Ingen kunder matcher filteret' : 'Ingen kunder lagt til enn\u00e5'}</p>
+          <p style="font-size:13px;margin:0;opacity:0.7;">${isFiltered ? 'Pr\u00f8v \u00e5 endre s\u00f8k eller filter' : 'Klikk + for \u00e5 legge til din f\u00f8rste kunde'}</p>
+        </div>
+      `;
+    }
+    return;
+  }
 
   // Render list with area sections
   let html = '';
@@ -11713,11 +11743,13 @@ function focusOnCustomer(customerId) {
   // On mobile: close content panel and switch to map view
   if (isMobile && document.getElementById('bottomTabBar')) {
     closeContentPanelMobile();
+    hideMobileFilterSheet();
     document.querySelectorAll('.bottom-tab-item').forEach(b =>
       b.classList.toggle('active', b.dataset.bottomTab === 'map')
     );
     activeBottomTab = 'map';
-    showMobileFilterSheet();
+    const searchFab = document.getElementById('mobileSearchFab');
+    if (searchFab) searchFab.classList.remove('hidden');
   }
 
   if (customer.lat && customer.lng) {
@@ -11761,6 +11793,9 @@ function updateSelectionUI() {
       mobileRouteFab.classList.add('hidden');
     }
   }
+
+  // Update mobile selection indicator
+  updateMobileSelectionFab();
 
   // Update list items
   document.querySelectorAll('.customer-item').forEach(item => {
@@ -12104,6 +12139,11 @@ async function quickMarkVisited(customerId) {
 
   overlay.querySelector('#qmvCancel').addEventListener('click', close);
   overlay.querySelector('#qmvConfirm').addEventListener('click', async () => {
+    const confirmBtn = overlay.querySelector('#qmvConfirm');
+    if (confirmBtn.disabled) return;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Oppdaterer...';
+
     const dateValue = document.getElementById('qmvDate').value;
     const selectedSlugs = Array.from(overlay.querySelectorAll('.qmv-kontroll-cb:checked')).map(cb => cb.dataset.slug);
 
@@ -12156,29 +12196,31 @@ async function geocodeAddress(address, postnummer, poststed) {
     const response = await fetch(
       `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(fullAddress)}&fuzzy=true&treffPerSide=1`
     );
-    const data = await response.json();
-
-    if (data.adresser && data.adresser.length > 0) {
-      const result = data.adresser[0];
-      return {
-        lat: result.representasjonspunkt.lat,
-        lng: result.representasjonspunkt.lon,
-        formatted: `${result.adressetekst}, ${result.postnummer} ${result.poststed}`
-      };
+    if (response.ok) {
+      const data = await response.json();
+      if (data.adresser && data.adresser.length > 0) {
+        const result = data.adresser[0];
+        return {
+          lat: result.representasjonspunkt.lat,
+          lng: result.representasjonspunkt.lon,
+          formatted: `${result.adressetekst}, ${result.postnummer} ${result.poststed}`
+        };
+      }
     }
 
     // Fallback to Nominatim
     const nomResponse = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&countrycodes=no&limit=1`
     );
-    const nomData = await nomResponse.json();
-
-    if (nomData.length > 0) {
-      return {
-        lat: Number.parseFloat(nomData[0].lat),
-        lng: Number.parseFloat(nomData[0].lon),
-        formatted: nomData[0].display_name
-      };
+    if (nomResponse.ok) {
+      const nomData = await nomResponse.json();
+      if (nomData.length > 0) {
+        return {
+          lat: Number.parseFloat(nomData[0].lat),
+          lng: Number.parseFloat(nomData[0].lon),
+          formatted: nomData[0].display_name
+        };
+      }
     }
 
     return null;
@@ -12498,6 +12540,7 @@ async function planRoute() {
 
     if (!response.ok) {
       // Fallback to simple directions if optimization fails
+      showMessage('Ruteoptimering ikke tilgjengelig, bruker enkel rute', 'info');
       await planSimpleRoute(selectedCustomerData);
       return;
     }
@@ -13062,9 +13105,9 @@ async function saveRoute() {
           body: JSON.stringify({ assigned_to, planned_date: planlagt_dato || null })
         });
       }
+      showMessage('Ruten er lagret!', 'success');
       document.getElementById('saveRouteModal').classList.add('hidden');
       await loadRoutes();
-      showMessage('Ruten er lagret!', 'success');
     }
   } catch (error) {
     console.error('Feil ved lagring av rute:', error);
@@ -13078,7 +13121,12 @@ function renderSavedRoutes() {
   if (!container) return;
 
   if (savedRoutes.length === 0) {
-    container.innerHTML = '<p class="no-routes">Ingen lagrede ruter</p>';
+    container.innerHTML = `
+      <div style="text-align:center;padding:30px 20px;color:var(--color-text-secondary,#a0a0a0);">
+        <i class="fas fa-route" style="font-size:28px;margin-bottom:10px;display:block;opacity:0.5;"></i>
+        <p style="font-size:14px;margin:0 0 6px;">Ingen lagrede ruter</p>
+        <p style="font-size:12px;margin:0;opacity:0.7;">Velg kunder og klikk "Planlegg rute" for \u00e5 komme i gang</p>
+      </div>`;
     return;
   }
 
@@ -13860,6 +13908,10 @@ async function loadOrganizationCategories() {
         }));
         serviceTypeRegistry.loadFromConfig(appConfig);
       }
+
+      // Re-render category UI to reflect loaded categories
+      renderFilterPanelCategories();
+      updateMapLegend();
 
       Logger.log('Loaded organization categories:', organizationCategories.length);
     }
@@ -16314,11 +16366,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize DOM and app
     initDOMElements();
     initMap(); // Add map features (clustering, borders, etc.)
+    // Load categories and fields first so markers render with correct icons
+    await loadOrganizationCategories();
+    await loadOrganizationFields();
+    // Then load customers (renders markers using serviceTypeRegistry)
     loadCustomers();
     loadOmrader();
     loadRoutes();
-    loadOrganizationFields(); // Load dynamic organization fields
-    loadOrganizationCategories(); // Load dynamic organization categories
     initWebSocket();
 
     // Show user bar with name
@@ -16345,7 +16399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // Initialize the app after successful login
-function initializeApp() {
+async function initializeApp() {
   Logger.log('initializeApp() starting...');
 
   // Initialize DOM references
@@ -16356,13 +16410,21 @@ function initializeApp() {
   initMap();
   Logger.log('initializeApp() after initMap, markerClusterGroup:', !!markerClusterGroup);
 
-  // Load data in parallel for faster startup (performance optimization)
+  // Load categories and fields first so markers render with correct icons
+  try {
+    await Promise.all([
+      loadOrganizationCategories(),
+      loadOrganizationFields()
+    ]);
+  } catch (err) {
+    console.error('Error loading org config:', err);
+  }
+
+  // Then load remaining data in parallel
   Promise.all([
     loadCustomers(),
     loadOmrader(),
-    loadRoutes(),
-    loadOrganizationFields(),
-    loadOrganizationCategories()
+    loadRoutes()
   ]).then(() => {
     Logger.log('initializeApp() all data loaded');
   }).catch(err => {
@@ -16415,7 +16477,7 @@ function setupEventListeners() {
   });
 
   // Add event listeners with null checks
-  searchInput?.addEventListener('input', () => filterCustomers());
+  searchInput?.addEventListener('input', debounce(() => filterCustomers(), 200));
   addCustomerBtn?.addEventListener('click', addCustomer);
   planRouteBtn?.addEventListener('click', planRoute);
   clearSelectionBtn?.addEventListener('click', clearSelection);
@@ -16742,7 +16804,8 @@ function setupEventListeners() {
           b.classList.toggle('active', b.dataset.bottomTab === 'map')
         );
         activeBottomTab = 'map';
-        showMobileFilterSheet();
+        const fab = document.getElementById('mobileSearchFab');
+        if (fab) fab.classList.remove('hidden');
       }
     });
   }
@@ -16756,7 +16819,8 @@ function setupEventListeners() {
           b.classList.toggle('active', b.dataset.bottomTab === 'map')
         );
         activeBottomTab = 'map';
-        showMobileFilterSheet();
+        const fab = document.getElementById('mobileSearchFab');
+        if (fab) fab.classList.remove('hidden');
       }
     });
   }
@@ -16798,7 +16862,8 @@ function setupEventListeners() {
               b.classList.toggle('active', b.dataset.bottomTab === 'map')
             );
             activeBottomTab = 'map';
-            showMobileFilterSheet();
+            const fab = document.getElementById('mobileSearchFab');
+            if (fab) fab.classList.remove('hidden');
           }
         }
       }, { passive: true });
@@ -19770,15 +19835,12 @@ function initBottomTabBar() {
 
   document.body.appendChild(bar);
 
-  // Create More menu and filter sheet
+  // Create More menu (filter sheet is lazy-created on FAB click)
   createMoreMenuOverlay();
-  createMobileFilterSheet();
 
-  // Move filter panel into filter sheet
-  moveFilterPanelToSheet();
-
-  // Start on map tab - show filter sheet
-  showMobileFilterSheet();
+  // Create search FAB and selection indicator
+  createMobileSearchFab();
+  createMobileSelectionFab();
 
   // Prevent body scroll
   document.body.style.overflow = 'hidden';
@@ -19802,6 +19864,12 @@ function removeBottomTabBar() {
   const filterSheet = document.getElementById('mobileFilterSheet');
   if (filterSheet) filterSheet.remove();
 
+  const searchFab = document.getElementById('mobileSearchFab');
+  if (searchFab) searchFab.remove();
+
+  const selectionFab = document.getElementById('mobileSelectionFab');
+  if (selectionFab) selectionFab.remove();
+
   document.body.style.overflow = '';
   moreMenuOpen = false;
   mobileFilterSheetExpanded = false;
@@ -19821,19 +19889,25 @@ function handleBottomTabClick(tab) {
   );
   activeBottomTab = tab.id;
 
+  // Hide search FAB when leaving map tab
+  const searchFab = document.getElementById('mobileSearchFab');
+
   if (tab.action === 'showMap') {
-    // Close content panel, close more menu, show filter sheet
+    // Close content panel, close more menu, show search FAB
     closeContentPanelMobile();
     closeMoreMenu();
-    showMobileFilterSheet();
+    hideMobileFilterSheet();
+    if (searchFab) searchFab.classList.remove('hidden');
   } else if (tab.action === 'showMore') {
     closeContentPanelMobile();
     hideMobileFilterSheet();
+    if (searchFab) searchFab.classList.add('hidden');
     toggleMoreMenu();
   } else {
     // Open the corresponding tab in the content panel
     closeMoreMenu();
     hideMobileFilterSheet();
+    if (searchFab) searchFab.classList.add('hidden');
     switchToTab(tab.action);
   }
 }
@@ -19966,8 +20040,11 @@ function createMobileFilterSheet() {
     <div class="filter-sheet-handle" id="filterSheetHandle">
       <div class="filter-sheet-search-peek">
         <i class="fas fa-search"></i>
-        <span>Søk kunder...</span>
+        <span>Søk og filtrer kunder</span>
         <span class="filter-sheet-count" id="filterSheetCount">0</span>
+        <button class="filter-sheet-close" id="filterSheetClose" aria-label="Lukk">
+          <i class="fas fa-times"></i>
+        </button>
       </div>
     </div>
     <div class="filter-sheet-content" id="filterSheetContent"></div>
@@ -19975,14 +20052,18 @@ function createMobileFilterSheet() {
 
   document.body.appendChild(sheet);
 
-  // Handle click/tap to expand/collapse
+  // Close button
+  const closeBtn = document.getElementById('filterSheetClose');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideMobileFilterSheet();
+    });
+  }
+
+  // Handle click/tap - no longer toggles, sheet opens fully via FAB
   const handle = document.getElementById('filterSheetHandle');
   if (handle) {
-    handle.addEventListener('click', () => {
-      mobileFilterSheetExpanded = !mobileFilterSheetExpanded;
-      sheet.classList.toggle('expanded', mobileFilterSheetExpanded);
-    });
-
     // Swipe gestures on filter sheet
     let sheetTouchStartY = 0;
     handle.addEventListener('touchstart', (e) => {
@@ -19992,15 +20073,10 @@ function createMobileFilterSheet() {
     handle.addEventListener('touchmove', (e) => {
       if (!sheetTouchStartY) return;
       const diff = sheetTouchStartY - e.touches[0].clientY;
-      if (diff > 40 && !mobileFilterSheetExpanded) {
+      // Swipe down: close filter sheet
+      if (diff < -40) {
         e.preventDefault();
-        mobileFilterSheetExpanded = true;
-        sheet.classList.add('expanded');
-        sheetTouchStartY = 0;
-      } else if (diff < -40 && mobileFilterSheetExpanded) {
-        e.preventDefault();
-        mobileFilterSheetExpanded = false;
-        sheet.classList.remove('expanded');
+        hideMobileFilterSheet();
         sheetTouchStartY = 0;
       }
     }, { passive: false });
@@ -20035,21 +20111,33 @@ function restoreFilterPanel() {
 }
 
 function showMobileFilterSheet() {
-  const sheet = document.getElementById('mobileFilterSheet');
+  let sheet = document.getElementById('mobileFilterSheet');
+  // Lazy-create: only build the filter sheet when first needed
+  if (!sheet) {
+    createMobileFilterSheet();
+    moveFilterPanelToSheet();
+    sheet = document.getElementById('mobileFilterSheet');
+  }
   if (sheet) {
-    sheet.classList.add('visible');
-    sheet.classList.remove('hidden');
+    sheet.style.setProperty('display', 'block', 'important');
+    mobileFilterSheetExpanded = true;
     updateFilterSheetCount();
   }
+  // Hide search FAB when filter sheet is open
+  const searchFab = document.getElementById('mobileSearchFab');
+  if (searchFab) searchFab.classList.add('hidden');
 }
 
 function hideMobileFilterSheet() {
   const sheet = document.getElementById('mobileFilterSheet');
   if (sheet) {
-    sheet.classList.remove('visible');
-    sheet.classList.add('hidden');
+    sheet.style.setProperty('display', 'none', 'important');
     mobileFilterSheetExpanded = false;
-    sheet.classList.remove('expanded');
+  }
+  // Show search FAB when filter sheet is closed (only on map tab)
+  if (activeBottomTab === 'map') {
+    const searchFab = document.getElementById('mobileSearchFab');
+    if (searchFab) searchFab.classList.remove('hidden');
   }
 }
 
@@ -20057,6 +20145,53 @@ function updateFilterSheetCount() {
   const countEl = document.getElementById('filterSheetCount');
   if (countEl && typeof customers !== 'undefined') {
     countEl.textContent = customers.length;
+  }
+}
+
+// Search FAB - opens filter sheet on tap
+function createMobileSearchFab() {
+  if (document.getElementById('mobileSearchFab')) return;
+  const fab = document.createElement('button');
+  fab.id = 'mobileSearchFab';
+  fab.className = 'mobile-search-fab';
+  fab.setAttribute('aria-label', 'Søk og filtrer kunder');
+  fab.innerHTML = '<i class="fas fa-search"></i>';
+  fab.addEventListener('click', () => {
+    showMobileFilterSheet();
+  });
+  document.body.appendChild(fab);
+}
+
+// Selection FAB - shows count of selected customers
+function createMobileSelectionFab() {
+  if (document.getElementById('mobileSelectionFab')) return;
+  const fab = document.createElement('button');
+  fab.id = 'mobileSelectionFab';
+  fab.className = 'mobile-selection-fab';
+  fab.innerHTML = '<i class="fas fa-check-circle"></i> <span id="mobileSelectionCount">0</span> valgt';
+  fab.addEventListener('click', () => {
+    // Open routes tab to show selected customers
+    switchToTab('routes');
+    if (document.getElementById('bottomTabBar')) {
+      document.querySelectorAll('.bottom-tab-item').forEach(b =>
+        b.classList.toggle('active', b.dataset.bottomTab === 'routes')
+      );
+      activeBottomTab = 'routes';
+    }
+  });
+  document.body.appendChild(fab);
+}
+
+// Update mobile selection indicator visibility
+function updateMobileSelectionFab() {
+  const fab = document.getElementById('mobileSelectionFab');
+  const countEl = document.getElementById('mobileSelectionCount');
+  if (!fab || !countEl) return;
+  if (selectedCustomers.size > 0) {
+    countEl.textContent = selectedCustomers.size;
+    fab.classList.add('visible');
+  } else {
+    fab.classList.remove('visible');
   }
 }
 

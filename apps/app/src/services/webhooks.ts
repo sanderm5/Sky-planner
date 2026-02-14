@@ -72,9 +72,15 @@ async function validateWebhookUrl(url: string): Promise<void> {
 
   // DNS lookup to check resolved IPs
   try {
-    const addresses = await dns.resolve4(hostname).catch(() => [] as string[]);
-    const addresses6 = await dns.resolve6(hostname).catch(() => [] as string[]);
+    const [addresses, addresses6] = await Promise.all([
+      dns.resolve4(hostname).catch(() => [] as string[]),
+      dns.resolve6(hostname).catch(() => [] as string[]),
+    ]);
     const allAddresses = [...addresses, ...addresses6];
+
+    if (allAddresses.length === 0) {
+      throw new Error('Kunne ikke verifisere webhook-URL (DNS-oppslag feilet)');
+    }
 
     for (const addr of allAddresses) {
       if (isPrivateIp(addr)) {
@@ -82,11 +88,11 @@ async function validateWebhookUrl(url: string): Promise<void> {
       }
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes('interne adresser')) {
+    if (error instanceof Error && (error.message.includes('interne adresser') || error.message.includes('DNS-oppslag'))) {
       throw error;
     }
-    // DNS resolution failure - allow (might be temporary)
-    log.warn({ hostname }, 'DNS resolution failed for webhook URL, allowing');
+    log.warn({ hostname }, 'DNS resolution failed for webhook URL');
+    throw new Error('Kunne ikke verifisere webhook-URL (DNS-oppslag feilet)');
   }
 }
 

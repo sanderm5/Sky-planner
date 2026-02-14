@@ -68,6 +68,7 @@ export async function apiKeyAuth(
     // Set request context
     req.organizationId = context.organizationId;
     req.apiKeyContext = context;
+    (req as any).apiKeyAuthenticated = true;
 
     authLogger.debug({
       apiKeyId: context.apiKeyId,

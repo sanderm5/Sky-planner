@@ -134,7 +134,7 @@ app.use(
           'https://cdnjs.cloudflare.com',
           'https://api.mapbox.com',
         ],
-        scriptSrcAttr: ["'unsafe-inline'"],
+        scriptSrcAttr: ["'none'"],
         styleSrc: [
           "'self'",
           "'unsafe-inline'",
@@ -331,8 +331,8 @@ app.use('/api/email', emailRoutes);
 app.use('/api', configRoutes);  // Routes include /config and /routes/*
 app.use('/api/industries', industriesRoutes);
 app.use('/api/integrations', requireTenantAuth, requireActiveSubscription, integrationsRoutes);
-app.use('/api/features', requireTenantAuth, featuresRoutes);
-app.use('/api/service-types', requireTenantAuth, serviceTypesRoutes);
+app.use('/api/features', requireTenantAuth, requireActiveSubscription, featuresRoutes);
+app.use('/api/service-types', requireTenantAuth, requireActiveSubscription, serviceTypesRoutes);
 app.use('/api/customer-emails', requireTenantAuth, requireActiveSubscription, customerEmailRoutes);
 app.use('/api/ekk', requireTenantAuth, requireActiveSubscription, ekkRoutes);
 app.use('/api/outlook', requireTenantAuth, requireActiveSubscription, outlookRoutes);

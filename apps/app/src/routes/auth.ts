@@ -273,19 +273,23 @@ router.post(
       user_agent: userAgent,
     });
 
-    // Track active session
+    // Track active session (await to ensure session exists before token is used)
     const decoded = jwt.decode(token) as JWTPayload;
     if (decoded?.jti) {
       const deviceInfo = parseDeviceInfo(userAgent);
-      dbService.createSession({
-        userId: user.id,
-        userType,
-        jti: decoded.jti,
-        ipAddress: ip,
-        userAgent,
-        deviceInfo,
-        expiresAt: new Date(expiresAt),
-      }).catch(err => authLogger.error({ err }, 'Failed to create session record'));
+      try {
+        await dbService.createSession({
+          userId: user.id,
+          userType,
+          jti: decoded.jti,
+          ipAddress: ip,
+          userAgent,
+          deviceInfo,
+          expiresAt: new Date(expiresAt),
+        });
+      } catch (err) {
+        authLogger.error({ err }, 'Failed to create session record');
+      }
     }
 
     // Audit log
