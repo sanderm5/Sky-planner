@@ -7849,7 +7849,7 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
 
 @media (max-width: 768px) {
   .bulk-action-bar.visible {
-    bottom: 80px; /* Above mobile navigation */
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px)); /* Above bottom tab bar */
   }
 }
 
@@ -16695,8 +16695,31 @@ body.is-impersonating #loginOverlay {
     display: none !important;
   }
 
-  /* Reposition route FAB above tab bar */
+  /* Hide original filter panel and filter sheet on mobile - clean bottom area */
+  body.has-bottom-tab-bar .map-container .filter-panel,
+  body.has-bottom-tab-bar .mobile-filter-sheet {
+    display: none !important;
+  }
+
+  /* Hide Leaflet attribution on mobile - clutters bottom area */
+  body.has-bottom-tab-bar .leaflet-control-attribution {
+    display: none !important;
+  }
+
+  /* Reposition all floating elements above tab bar */
   body.has-bottom-tab-bar .mobile-route-fab {
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  body.has-bottom-tab-bar .bulk-action-bar.visible {
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  body.has-bottom-tab-bar .map-legend {
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  body.has-bottom-tab-bar .toast-notification {
     bottom: calc(70px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
@@ -16725,6 +16748,45 @@ body.is-impersonating #loginOverlay {
 
   body.has-bottom-tab-bar .content-panel.open {
     transform: translateY(0) !important;
+  }
+
+  /* Half-height mode: content panel takes bottom 55%, map visible above */
+  body.has-bottom-tab-bar .content-panel.open.half-height {
+    top: 45% !important;
+    transform: translateY(0) !important;
+    border-radius: 16px 16px 0 0 !important;
+  }
+
+  /* Full-height mode: expanded from half */
+  body.has-bottom-tab-bar .content-panel.open.full-height {
+    top: 0 !important;
+    border-radius: 0 !important;
+    transform: translateY(0) !important;
+  }
+
+  /* Drag handle for half-height panel */
+  body.has-bottom-tab-bar .content-panel.half-height .content-panel-header::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: var(--color-border-light, #555);
+    border-radius: 2px;
+  }
+
+  body.has-bottom-tab-bar .content-panel.half-height .content-panel-header,
+  body.has-bottom-tab-bar .content-panel.full-height .content-panel-header {
+    cursor: grab;
+    position: relative;
+    padding-top: 16px;
+  }
+
+  /* No overlay in half-height mode - map stays interactive */
+  body.has-bottom-tab-bar .content-panel.half-height ~ .content-panel-overlay {
+    display: none !important;
   }
 
   body.has-bottom-tab-bar .content-panel.closed {
@@ -16871,7 +16933,7 @@ body.is-impersonating #loginOverlay {
 
 @media (max-width: 768px) {
   body.has-bottom-tab-bar .mobile-filter-sheet {
-    display: block;
+    display: none;
     position: fixed;
     bottom: calc(56px + env(safe-area-inset-bottom, 0px));
     left: 0;
@@ -16886,6 +16948,10 @@ body.is-impersonating #loginOverlay {
     box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
     pointer-events: auto;
     overflow: hidden;
+  }
+
+  body.has-bottom-tab-bar .mobile-filter-sheet.visible {
+    display: block;
   }
 
   body.has-bottom-tab-bar .mobile-filter-sheet.expanded {

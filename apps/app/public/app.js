@@ -3574,6 +3574,43 @@ function switchToTab(tabName) {
   }
 }
 
+// Sync map view to match the active tab context (mobile only)
+function syncMapToTab(tabName) {
+  if (!isMobile || !map) return;
+
+  switch (tabName) {
+    case 'customers': {
+      const positions = customers
+        .filter(c => c.lat && c.lng)
+        .map(c => [c.lat, c.lng]);
+      if (positions.length > 0) {
+        map.fitBounds(L.latLngBounds(positions), { padding: [30, 30] });
+      }
+      break;
+    }
+    case 'routes': {
+      if (routeLayer && routeLayer.getBounds) {
+        try {
+          map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+        } catch (e) {
+          // routeLayer may be empty
+        }
+      }
+      break;
+    }
+    case 'overdue': {
+      const now = new Date();
+      const overduePositions = customers
+        .filter(c => c.neste_kontroll && c.lat && c.lng && new Date(c.neste_kontroll) < now)
+        .map(c => [c.lat, c.lng]);
+      if (overduePositions.length > 0) {
+        map.fitBounds(L.latLngBounds(overduePositions), { padding: [30, 30] });
+      }
+      break;
+    }
+  }
+}
+
 // ========================================
 // SPA VIEW MANAGEMENT
 // ========================================
@@ -11505,11 +11542,8 @@ function renderMarkers(customerData) {
       // Determine category icon dynamically from ServiceTypeRegistry
       let categoryIcon, categoryClass;
       const serviceTypes = serviceTypeRegistry.getAll();
-      if (serviceTypes.length >= 2) {
-        // Global: show all service type icons on all markers
-        categoryIcon = serviceTypes.map(st => `<i class="fas ${st.icon}"></i>`).join('');
-        categoryClass = 'combined';
-      } else if (customer.kategori && serviceTypes.length > 0) {
+      if (customer.kategori && serviceTypes.length > 0) {
+        // Use the customer's own category to determine icon
         categoryIcon = serviceTypeRegistry.getIconForCategory(customer.kategori);
         categoryClass = serviceTypeRegistry.getCategoryClass(customer.kategori);
       } else if (serviceTypes.length > 0) {
@@ -11676,21 +11710,25 @@ function focusOnCustomer(customerId) {
   const customer = customers.find(c => c.id === customerId);
   if (!customer) return;
 
-  // Switch to map tab
-  const mapTab = document.querySelector('[data-tab="kart"]');
-  if (mapTab) {
-    document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    mapTab.classList.add('active');
-    document.getElementById('kart')?.classList.add('active');
-    map.invalidateSize();
+  // On mobile: close content panel and switch to map view
+  if (isMobile && document.getElementById('bottomTabBar')) {
+    closeContentPanelMobile();
+    document.querySelectorAll('.bottom-tab-item').forEach(b =>
+      b.classList.toggle('active', b.dataset.bottomTab === 'map')
+    );
+    activeBottomTab = 'map';
+    showMobileFilterSheet();
   }
 
   if (customer.lat && customer.lng) {
-    map.setView([customer.lat, customer.lng], 14);
-    if (markers[customerId]) {
-      markers[customerId].openPopup();
-    }
+    const delay = isMobile ? 150 : 0;
+    setTimeout(() => {
+      map.invalidateSize();
+      map.setView([customer.lat, customer.lng], 14);
+      if (markers[customerId]) {
+        markers[customerId].openPopup();
+      }
+    }, delay);
   } else {
     showNotification(`${customer.navn} mangler koordinater - bruk geokoding`);
   }
@@ -16668,8 +16706,15 @@ function setupEventListeners() {
       contentPanel.classList.remove('closed');
       contentPanel.classList.add('open');
       localStorage.setItem('contentPanelOpen', 'true');
+
+      // On mobile, default to half-height mode
+      if (isMobile && document.getElementById('bottomTabBar')) {
+        contentPanel.classList.add('half-height');
+        contentPanel.classList.remove('full-height');
+        contentPanelMode = 'half';
+      }
     }
-    if (contentPanelOverlay && window.innerWidth <= 768) {
+    if (contentPanelOverlay && window.innerWidth <= 768 && contentPanelMode === 'full') {
       contentPanelOverlay.classList.add('visible');
     }
   }
@@ -16678,8 +16723,9 @@ function setupEventListeners() {
   function closeContentPanel() {
     if (contentPanel) {
       contentPanel.classList.add('closed');
-      contentPanel.classList.remove('open');
+      contentPanel.classList.remove('open', 'half-height', 'full-height');
       localStorage.setItem('contentPanelOpen', 'false');
+      contentPanelMode = 'closed';
     }
     if (contentPanelOverlay) {
       contentPanelOverlay.classList.remove('visible');
@@ -16715,6 +16761,50 @@ function setupEventListeners() {
     });
   }
 
+  // Swipe gesture on content panel header for half/full toggle (mobile)
+  if (contentPanel) {
+    const panelHeader = contentPanel.querySelector('.content-panel-header');
+    if (panelHeader) {
+      let panelSwipeStartY = 0;
+
+      panelHeader.addEventListener('touchstart', (e) => {
+        panelSwipeStartY = e.touches[0].clientY;
+      }, { passive: true });
+
+      panelHeader.addEventListener('touchend', (e) => {
+        if (!isMobile || !panelSwipeStartY) return;
+        const diff = panelSwipeStartY - e.changedTouches[0].clientY;
+        panelSwipeStartY = 0;
+
+        // Swipe up: half → full
+        if (diff > 50 && contentPanelMode === 'half') {
+          contentPanel.classList.remove('half-height');
+          contentPanel.classList.add('full-height');
+          contentPanelMode = 'full';
+          if (contentPanelOverlay) contentPanelOverlay.classList.add('visible');
+        }
+        // Swipe down: full → half
+        else if (diff < -50 && contentPanelMode === 'full') {
+          contentPanel.classList.remove('full-height');
+          contentPanel.classList.add('half-height');
+          contentPanelMode = 'half';
+          if (contentPanelOverlay) contentPanelOverlay.classList.remove('visible');
+        }
+        // Swipe down: half → close
+        else if (diff < -50 && contentPanelMode === 'half') {
+          closeContentPanel();
+          if (document.getElementById('bottomTabBar')) {
+            document.querySelectorAll('.bottom-tab-item').forEach(b =>
+              b.classList.toggle('active', b.dataset.bottomTab === 'map')
+            );
+            activeBottomTab = 'map';
+            showMobileFilterSheet();
+          }
+        }
+      }, { passive: true });
+    }
+  }
+
   tabItems.forEach(tab => {
     tab.addEventListener('click', (e) => {
       e.preventDefault();
@@ -16746,6 +16836,9 @@ function setupEventListeners() {
 
         // Open content panel
         openContentPanel();
+
+        // Sync map to tab context on mobile
+        syncMapToTab(tabName);
 
         // Save active tab to localStorage
         localStorage.setItem('activeTab', tabName);
@@ -19609,6 +19702,7 @@ window.twNavigateToCustomer = twNavigateToCustomer;
 // ============================================
 
 let isMobile = window.innerWidth <= 768;
+let contentPanelMode = 'closed'; // 'half' | 'full' | 'closed'
 let touchStartY = 0;
 let sidebarOpen = false;
 let mobileFilterSheetExpanded = false;
@@ -19683,6 +19777,9 @@ function initBottomTabBar() {
   // Move filter panel into filter sheet
   moveFilterPanelToSheet();
 
+  // Start on map tab - show filter sheet
+  showMobileFilterSheet();
+
   // Prevent body scroll
   document.body.style.overflow = 'hidden';
 
@@ -19745,7 +19842,8 @@ function closeContentPanelMobile() {
   const cp = document.getElementById('contentPanel');
   if (cp) {
     cp.classList.add('closed');
-    cp.classList.remove('open');
+    cp.classList.remove('open', 'half-height', 'full-height');
+    contentPanelMode = 'closed';
   }
   const overlay = document.getElementById('contentPanelOverlay');
   if (overlay) overlay.classList.remove('visible');
@@ -19939,6 +20037,7 @@ function restoreFilterPanel() {
 function showMobileFilterSheet() {
   const sheet = document.getElementById('mobileFilterSheet');
   if (sheet) {
+    sheet.classList.add('visible');
     sheet.classList.remove('hidden');
     updateFilterSheetCount();
   }
@@ -19947,6 +20046,7 @@ function showMobileFilterSheet() {
 function hideMobileFilterSheet() {
   const sheet = document.getElementById('mobileFilterSheet');
   if (sheet) {
+    sheet.classList.remove('visible');
     sheet.classList.add('hidden');
     mobileFilterSheetExpanded = false;
     sheet.classList.remove('expanded');
