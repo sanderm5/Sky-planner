@@ -60,6 +60,8 @@ async function createKunde(kunde) {
     kontroll_intervall_mnd: kunde.kontroll_intervall_mnd || 12,
     notater: kunde.notater,
     kategori: kunde.kategori || 'El-Kontroll',
+    el_type: kunde.el_type,
+    brann_system: kunde.brann_system,
     // Separate kontroll-felt for El-Kontroll
     siste_el_kontroll: kunde.siste_el_kontroll,
     neste_el_kontroll: kunde.neste_el_kontroll,
@@ -69,7 +71,9 @@ async function createKunde(kunde) {
     neste_brann_kontroll: kunde.neste_brann_kontroll,
     brann_kontroll_intervall: kunde.brann_kontroll_intervall || 12,
     // Driftskategori
-    driftskategori: kunde.driftskategori,
+    brann_driftstype: kunde.brann_driftstype,
+    // Custom organization fields
+    custom_data: kunde.custom_data || '{}',
     // Organization (multi-tenant support)
     organization_id: kunde.organization_id,
     // Integration sync fields
@@ -108,6 +112,8 @@ async function updateKunde(id, kunde, organizationId) {
       kontroll_intervall_mnd: kunde.kontroll_intervall_mnd || 12,
       notater: kunde.notater,
       kategori: kunde.kategori,
+      el_type: kunde.el_type,
+      brann_system: kunde.brann_system,
       // Separate kontroll-felt for El-Kontroll
       siste_el_kontroll: kunde.siste_el_kontroll,
       neste_el_kontroll: kunde.neste_el_kontroll,
@@ -117,7 +123,9 @@ async function updateKunde(id, kunde, organizationId) {
       neste_brann_kontroll: kunde.neste_brann_kontroll,
       brann_kontroll_intervall: kunde.brann_kontroll_intervall || 12,
       // Driftskategori
-      driftskategori: kunde.driftskategori,
+      brann_driftstype: kunde.brann_driftstype,
+      // Custom organization fields
+      custom_data: kunde.custom_data,
       // Integration sync fields
       external_source: kunde.external_source,
       external_id: kunde.external_id,
@@ -282,7 +290,23 @@ async function bulkImportKunder(kunder) {
       neste_kontroll: k.neste_kontroll || null,
       kontroll_intervall_mnd: k.kontroll_intervall_mnd || 12,
       notater: k.notater || null,
-      kategori: k.kategori || 'El-Kontroll'
+      kategori: k.kategori || 'El-Kontroll',
+      el_type: k.el_type || null,
+      brann_system: k.brann_system || null,
+      brann_driftstype: k.brann_driftstype || null,
+      siste_el_kontroll: k.siste_el_kontroll || null,
+      neste_el_kontroll: k.neste_el_kontroll || null,
+      el_kontroll_intervall: k.el_kontroll_intervall || 36,
+      siste_brann_kontroll: k.siste_brann_kontroll || null,
+      neste_brann_kontroll: k.neste_brann_kontroll || null,
+      brann_kontroll_intervall: k.brann_kontroll_intervall || 12,
+      custom_data: k.custom_data || '{}',
+      organization_id: k.organization_id,
+      external_source: k.external_source || null,
+      external_id: k.external_id || null,
+      prosjektnummer: k.prosjektnummer || null,
+      kundenummer: k.kundenummer || null,
+      faktura_epost: k.faktura_epost || null
     })))
     .select();
 
