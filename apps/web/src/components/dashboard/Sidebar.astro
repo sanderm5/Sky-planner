@@ -12,11 +12,15 @@ interface Props {
 
 const { organization, currentPath } = Astro.props;
 
+const isEnterprise = (organization as any).app_mode === 'full';
+
 const navItems = [
   { href: '/dashboard', label: 'Oversikt', icon: 'home' },
   { href: '/dashboard/brukere', label: 'Brukere', icon: 'users' },
-  { href: '/dashboard/abonnement', label: 'Abonnement', icon: 'credit-card' },
-  { href: '/dashboard/fakturaer', label: 'Fakturaer', icon: 'document' },
+  ...(!isEnterprise ? [
+    { href: '/dashboard/abonnement', label: 'Abonnement', icon: 'credit-card' },
+    { href: '/dashboard/fakturaer', label: 'Fakturaer', icon: 'document' },
+  ] : []),
   { href: '/dashboard/innstillinger', label: 'Innstillinger', icon: 'cog' },
 ];
 

@@ -166,6 +166,40 @@ if ((organization as any).industry_template_id) {
       </div>
     </div>
 
+    <!-- Date Format Settings -->
+    <div class="glass-card p-6">
+      <h2 class="text-lg font-semibold text-white mb-6">Datoformat</h2>
+      <p class="text-dark-400 text-sm mb-4">Velg hvordan kontrolldatoer vises i appen.</p>
+      <div class="space-y-3">
+        <label class="flex items-center gap-3 cursor-pointer">
+          <input
+            type="radio"
+            name="dato_modus"
+            value="full_date"
+            checked={(organization as any).dato_modus !== 'month_year'}
+            class="text-primary-500"
+          />
+          <div>
+            <span class="text-white font-medium">Full dato</span>
+            <span class="text-dark-400 text-sm block">Viser "1. mars 2025"</span>
+          </div>
+        </label>
+        <label class="flex items-center gap-3 cursor-pointer">
+          <input
+            type="radio"
+            name="dato_modus"
+            value="month_year"
+            checked={(organization as any).dato_modus === 'month_year'}
+            class="text-primary-500"
+          />
+          <div>
+            <span class="text-white font-medium">Kun m&aring;ned og &aring;r</span>
+            <span class="text-dark-400 text-sm block">Viser "mars 2025" (uten dagsnummer)</span>
+          </div>
+        </label>
+      </div>
+    </div>
+
     <!-- Branding Settings -->
     <div class="glass-card p-6">
       <h2 class="text-lg font-semibold text-white mb-6">Branding</h2>
@@ -262,31 +296,33 @@ if ((organization as any).industry_template_id) {
       </div>
     </div>
 
-    <!-- Plan Info (Read-only) -->
-    <div class="glass-card p-6">
-      <h2 class="text-lg font-semibold text-white mb-6">Abonnement</h2>
+    <!-- Plan Info (Read-only) - hidden for enterprise lifetime -->
+    {!isFullMode && (
+      <div class="glass-card p-6">
+        <h2 class="text-lg font-semibold text-white mb-6">Abonnement</h2>
 
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
-        <div>
-          <p class="text-sm text-dark-400 mb-1">Plan</p>
-          <p class="text-white font-medium capitalize">{organization.plan_type}</p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+          <div>
+            <p class="text-sm text-dark-400 mb-1">Plan</p>
+            <p class="text-white font-medium capitalize">{organization.plan_type}</p>
+          </div>
+          <div>
+            <p class="text-sm text-dark-400 mb-1">Maks brukere</p>
+            <p class="text-white font-medium">{organization.max_brukere}</p>
+          </div>
+          <div>
+            <p class="text-sm text-dark-400 mb-1">Maks kunder</p>
+            <p class="text-white font-medium">{organization.max_kunder}</p>
+          </div>
         </div>
-        <div>
-          <p class="text-sm text-dark-400 mb-1">Maks brukere</p>
-          <p class="text-white font-medium">{organization.max_brukere}</p>
-        </div>
-        <div>
-          <p class="text-sm text-dark-400 mb-1">Maks kunder</p>
-          <p class="text-white font-medium">{organization.max_kunder}</p>
+
+        <div class="mt-4 pt-4 border-t border-dark-700/50">
+          <a href="/dashboard/abonnement" class="text-primary-400 hover:text-primary-300 text-sm font-medium">
+            Administrer abonnement →
+          </a>
         </div>
       </div>
-
-      <div class="mt-4 pt-4 border-t border-dark-700/50">
-        <a href="/dashboard/abonnement" class="text-primary-400 hover:text-primary-300 text-sm font-medium">
-          Administrer abonnement →
-        </a>
-      </div>
-    </div>
+    )}
 
     <!-- Form Actions -->
     <div class="flex items-center gap-4">
@@ -325,6 +361,15 @@ if ((organization as any).industry_template_id) {
 </DashboardLayout>
 
 <script>
+  function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)__csrf=([^;]*)/);
+    return match ? match[1] : '';
+  }
+
+  function csrfHeaders(): Record<string, string> {
+    return { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() };
+  }
+
   const form = document.getElementById('settings-form') as HTMLFormElement;
   const saveBtn = document.getElementById('save-btn');
   const saveStatus = document.getElementById('save-status');
@@ -443,7 +488,7 @@ if ((organization as any).industry_template_id) {
     try {
       const res = await fetch('/api/dashboard/organization', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: csrfHeaders(),
         body: JSON.stringify({ industry_template_id: parseInt(newIndustryId) }),
       });
 
@@ -592,12 +637,13 @@ if ((organization as any).industry_template_id) {
     const data: Record<string, string | null> = {
       navn: formData.get('navn') as string,
       primary_color: (formData.get('primary_color') as string) || null,
+      dato_modus: (formData.get('dato_modus') as string) || 'full_date',
     };
 
     try {
       const res = await fetch('/api/dashboard/organization', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: csrfHeaders(),
         body: JSON.stringify(data),
       });
 

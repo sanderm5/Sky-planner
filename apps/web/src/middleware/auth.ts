@@ -36,6 +36,7 @@ export interface AuthResult {
     trial_ends_at?: string;
     logo_url?: string;
     primary_color?: string;
+    app_mode?: string;
   };
   payload: JWTPayload;
 }
@@ -113,6 +114,7 @@ export async function requireAuth(
       trial_ends_at: organization.trial_ends_at,
       logo_url: organization.logo_url,
       primary_color: organization.primary_color,
+      app_mode: organization.app_mode,
     },
     payload,
   };
@@ -209,6 +211,7 @@ export async function requireApiAuth(
       trial_ends_at: organization.trial_ends_at,
       logo_url: organization.logo_url,
       primary_color: organization.primary_color,
+      app_mode: organization.app_mode,
     },
     payload,
   };

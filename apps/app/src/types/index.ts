@@ -341,6 +341,7 @@ export interface Organization {
   stripe_customer_id?: string;
   stripe_subscription_id?: string;
   app_mode?: AppMode; // 'mvp' = enkel versjon, 'full' = komplett (TRE Allservice)
+  dato_modus?: 'full_date' | 'month_year'; // 'full_date' = standard, 'month_year' = kun måned+år
   opprettet?: string;
 }
 
@@ -491,6 +492,7 @@ export interface AppConfig {
   };
   onboardingCompleted?: boolean;
   appMode?: 'mvp' | 'full';
+  datoModus?: 'full_date' | 'month_year';
   serviceTypes?: Array<{
     id: number;
     name: string;

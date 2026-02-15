@@ -53,6 +53,9 @@ const monthlyPrice = planPrices[organization.plan_type] || 0;
 
 // App URL for launch button
 const appUrl = import.meta.env.PUBLIC_APP_URL || 'http://localhost:3000';
+
+// Enterprise lifetime (TRE Allservice) - hide billing
+const isEnterprise = (organization as any).app_mode === 'full';
 ---
 
 <DashboardLayout
@@ -106,7 +109,7 @@ const appUrl = import.meta.env.PUBLIC_APP_URL || 'http://localhost:3000';
   </div>
 
   <!-- Stats Grid -->
-  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+  <div class:list={['grid grid-cols-1 md:grid-cols-2 gap-6 mb-8', !isEnterprise && 'lg:grid-cols-4']}>
     <StatCard
       title="Brukere"
       value={`${activeUsers} / ${organization.max_brukere}`}
@@ -114,20 +117,24 @@ const appUrl = import.meta.env.PUBLIC_APP_URL || 'http://localhost:3000';
       icon="users"
       href="/dashboard/brukere"
     />
-    <StatCard
-      title="Abonnement"
-      value={organization.plan_type.charAt(0).toUpperCase() + organization.plan_type.slice(1)}
-      description={subscriptionStatus}
-      icon="credit-card"
-      href="/dashboard/abonnement"
-    />
-    <StatCard
-      title="Neste faktura"
-      value={`${monthlyPrice} kr`}
-      description={nextBillingDate}
-      icon="document"
-      href="/dashboard/fakturaer"
-    />
+    {!isEnterprise && (
+      <StatCard
+        title="Abonnement"
+        value={organization.plan_type.charAt(0).toUpperCase() + organization.plan_type.slice(1)}
+        description={subscriptionStatus}
+        icon="credit-card"
+        href="/dashboard/abonnement"
+      />
+    )}
+    {!isEnterprise && (
+      <StatCard
+        title="Neste faktura"
+        value={`${monthlyPrice} kr`}
+        description={nextBillingDate}
+        icon="document"
+        href="/dashboard/fakturaer"
+      />
+    )}
     <StatCard
       title="Kunder"
       value={`${kundeCount} / ${organization.max_kunder}`}
@@ -155,20 +162,22 @@ const appUrl = import.meta.env.PUBLIC_APP_URL || 'http://localhost:3000';
         </div>
       </a>
 
-      <a
-        href="/dashboard/abonnement"
-        class="glass-card glass-card-hover p-4 flex items-center gap-4"
-      >
-        <div class="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center text-green-400">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-          </svg>
-        </div>
-        <div>
-          <p class="text-white font-medium">Oppgrader plan</p>
-          <p class="text-sm text-dark-400">Få flere funksjoner</p>
-        </div>
-      </a>
+      {!isEnterprise && (
+        <a
+          href="/dashboard/abonnement"
+          class="glass-card glass-card-hover p-4 flex items-center gap-4"
+        >
+          <div class="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center text-green-400">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+          </div>
+          <div>
+            <p class="text-white font-medium">Oppgrader plan</p>
+            <p class="text-sm text-dark-400">Få flere funksjoner</p>
+          </div>
+        </a>
+      )}
 
       <a
         href="/dashboard/innstillinger"
@@ -189,7 +198,7 @@ const appUrl = import.meta.env.PUBLIC_APP_URL || 'http://localhost:3000';
   </div>
 
   <!-- Subscription Alert (if trialing or past due) -->
-  {(organization.subscription_status === 'trialing' || organization.subscription_status === 'past_due') && (
+  {!isEnterprise && (organization.subscription_status === 'trialing' || organization.subscription_status === 'past_due') && (
     <div class:list={[
       'glass-card p-4 flex items-start gap-4',
       organization.subscription_status === 'trialing' ? 'border-blue-500/30' : 'border-red-500/30'

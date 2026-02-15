@@ -136,6 +136,7 @@ router.get(
       } : undefined,
       onboardingCompleted: organization?.onboarding_completed ?? false,
       appMode: organization?.app_mode ?? 'mvp',
+      datoModus: (organization?.dato_modus ?? 'full_date') as 'full_date' | 'month_year',
       serviceTypes: serviceTypes.length > 0 ? serviceTypes : undefined,
     };
 

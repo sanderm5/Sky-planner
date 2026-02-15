@@ -44,7 +44,7 @@ export const PUT: APIRoute = async ({ request }) => {
 
   try {
     const body = await request.json();
-    const { navn, logo_url, primary_color, industry_template_id } = body;
+    const { navn, logo_url, primary_color, industry_template_id, dato_modus } = body;
 
     // Build update object
     const updateData: Record<string, unknown> = {};
@@ -132,6 +132,16 @@ export const PUT: APIRoute = async ({ request }) => {
         }
       }
       updateData.logo_url = logo_url || null;
+    }
+
+    if (dato_modus !== undefined) {
+      if (!['full_date', 'month_year'].includes(dato_modus)) {
+        return new Response(
+          JSON.stringify({ error: 'Ugyldig datoformat-modus' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      updateData.dato_modus = dato_modus;
     }
 
     if (primary_color !== undefined) {

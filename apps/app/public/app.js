@@ -1284,13 +1284,13 @@ class ServiceTypeRegistry {
           <div class="form-row">
             <div class="form-group">
               <label for="service_${st.slug}_siste">Siste kontroll</label>
-              <input type="date" id="service_${st.slug}_siste" name="service_${st.slug}_siste"
-                     value="${serviceData.siste_kontroll || ''}">
+              <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="service_${st.slug}_siste" name="service_${st.slug}_siste"
+                     value="${appConfig.datoModus === 'month_year' && serviceData.siste_kontroll ? serviceData.siste_kontroll.substring(0, 7) : (serviceData.siste_kontroll || '')}">
             </div>
             <div class="form-group">
               <label for="service_${st.slug}_neste">Neste kontroll</label>
-              <input type="date" id="service_${st.slug}_neste" name="service_${st.slug}_neste"
-                     value="${serviceData.neste_kontroll || ''}">
+              <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="service_${st.slug}_neste" name="service_${st.slug}_neste"
+                     value="${appConfig.datoModus === 'month_year' && serviceData.neste_kontroll ? serviceData.neste_kontroll.substring(0, 7) : (serviceData.neste_kontroll || '')}">
             </div>
           </div>
 
@@ -1325,8 +1325,8 @@ class ServiceTypeRegistry {
       const subtypeSelect = document.getElementById(`service_${st.slug}_subtype`);
       const equipmentSelect = document.getElementById(`service_${st.slug}_equipment`);
 
-      const siste = sisteInput?.value || null;
-      const neste = nesteInput?.value || null;
+      const siste = normalizeDateValue(sisteInput?.value) || null;
+      const neste = normalizeDateValue(nesteInput?.value) || null;
       const intervall = intervallSelect?.value ? parseInt(intervallSelect.value, 10) : st.defaultInterval;
       const subtype = subtypeSelect?.value || null;
       const equipment = equipmentSelect?.value || null;
@@ -1385,7 +1385,7 @@ class ServiceTypeRegistry {
     const formatDate = (dato) => {
       if (!dato) return null;
       const d = new Date(dato);
-      return d.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' });
+      return formatDateInline(d);
     };
 
     // MVP-modus: vis kontrollinfo per servicetype
@@ -2259,11 +2259,12 @@ function renderNumberRangeFilter(field, currentValue) {
 function renderDateRangeFilter(field, currentValue) {
   const from = currentValue?.from || '';
   const to = currentValue?.to || '';
+  const dateInputType = appConfig.datoModus === 'month_year' ? 'month' : 'date';
   return `
     <div class="filter-range-wrapper">
-      <input type="date" class="dynamic-filter-range" data-field="${escapeHtml(field.field_name)}" data-range="from" value="${from}">
+      <input type="${dateInputType}" class="dynamic-filter-range" data-field="${escapeHtml(field.field_name)}" data-range="from" value="${from}">
       <span class="range-separator">til</span>
-      <input type="date" class="dynamic-filter-range" data-field="${escapeHtml(field.field_name)}" data-range="to" value="${to}">
+      <input type="${dateInputType}" class="dynamic-filter-range" data-field="${escapeHtml(field.field_name)}" data-range="to" value="${to}">
     </div>`;
 }
 
@@ -10251,6 +10252,7 @@ async function reloadConfigWithAuth() {
       renderDriftskategoriFilter();
       applyMvpModeUI();
       applyBranding();
+      applyDateModeToInputs();
       Logger.log('Tenant-specific config loaded:', appConfig.organizationSlug);
     }
   } catch (error) {
@@ -10932,7 +10934,7 @@ function getControlStatus(customer) {
       const visitDate = new Date(customer.last_visit_date);
       const daysSinceVisit = Math.ceil((today - visitDate) / (1000 * 60 * 60 * 24));
       if (daysSinceVisit <= 14) {
-        return { status: 'besøkt', label: `Besøkt ${daysSinceVisit}d siden`, class: 'status-visited', date: visitDate.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' }), daysUntil: null };
+        return { status: 'besøkt', label: `Besøkt ${daysSinceVisit}d siden`, class: 'status-visited', date: formatDateInline(visitDate), daysUntil: null };
       }
     }
 
@@ -10941,7 +10943,7 @@ function getControlStatus(customer) {
       const inquiryDate = new Date(customer.inquiry_sent_date);
       const daysSinceInquiry = Math.ceil((today - inquiryDate) / (1000 * 60 * 60 * 24));
       if (daysSinceInquiry <= 30) {
-        return { status: 'forespørsel', label: `Forespørsel sendt ${daysSinceInquiry}d siden`, class: 'status-inquiry', date: inquiryDate.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' }), daysUntil: null };
+        return { status: 'forespørsel', label: `Forespørsel sendt ${daysSinceInquiry}d siden`, class: 'status-inquiry', date: formatDateInline(inquiryDate), daysUntil: null };
       }
     }
 
@@ -10963,7 +10965,7 @@ function getControlStatus(customer) {
   }
 
   const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
-  const dateFormatted = nextDate.toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dateFormatted = formatDateInline(nextDate);
 
   if (daysUntil < 0) {
     return { status: 'forfalt', label: `${Math.abs(daysUntil)} dager over`, class: 'status-overdue', date: dateFormatted, daysUntil };
@@ -11070,7 +11072,7 @@ function renderCustomerList(customerData) {
           ${areaCustomers.map(customer => {
             const controlStatus = getControlStatus(customer);
             const nextDate = customer.neste_kontroll
-              ? new Date(customer.neste_kontroll).toLocaleDateString('no-NO', { day: '2-digit', month: 'short', year: 'numeric' })
+              ? formatDateInline(new Date(customer.neste_kontroll))
               : 'Ikke satt';
             const daysUntil = customer.neste_kontroll
               ? Math.ceil((new Date(customer.neste_kontroll) - new Date()) / (1000 * 60 * 60 * 24))
@@ -12114,7 +12116,7 @@ async function quickMarkVisited(customerId) {
       </h3>
       <div style="margin-bottom:16px;">
         <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Dato for besøk</label>
-        <input type="date" id="qmvDate" value="${today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);font-size:15px;">
+        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="qmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);font-size:15px;">
       </div>
       ${serviceTypes.length > 0 ? `
         <div style="margin-bottom:20px;">
@@ -12132,9 +12134,9 @@ async function quickMarkVisited(customerId) {
   document.body.appendChild(overlay);
 
   // Close on escape or overlay click
-  const close = () => overlay.remove();
+  const escHandler = (e) => { if (e.key === 'Escape') close(); };
+  const close = () => { document.removeEventListener('keydown', escHandler); overlay.remove(); };
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  const escHandler = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); } };
   document.addEventListener('keydown', escHandler);
 
   overlay.querySelector('#qmvCancel').addEventListener('click', close);
@@ -12144,7 +12146,7 @@ async function quickMarkVisited(customerId) {
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Oppdaterer...';
 
-    const dateValue = document.getElementById('qmvDate').value;
+    const dateValue = normalizeDateValue(document.getElementById('qmvDate').value);
     const selectedSlugs = Array.from(overlay.querySelectorAll('.qmv-kontroll-cb:checked')).map(cb => cb.dataset.slug);
 
     close();
@@ -13799,8 +13801,9 @@ function editCustomer(id) {
   document.getElementById('poststed').value = customer.poststed || '';
   document.getElementById('telefon').value = customer.telefon || '';
   document.getElementById('epost').value = customer.epost || '';
-  document.getElementById('siste_kontroll').value = customer.siste_kontroll || '';
-  document.getElementById('neste_kontroll').value = customer.neste_kontroll || '';
+  const trimDate = (v) => appConfig.datoModus === 'month_year' && v && v.length >= 7 ? v.substring(0, 7) : (v || '');
+  document.getElementById('siste_kontroll').value = trimDate(customer.siste_kontroll);
+  document.getElementById('neste_kontroll').value = trimDate(customer.neste_kontroll);
   document.getElementById('kontroll_intervall').value = customer.kontroll_intervall_mnd || 12;
   document.getElementById('notater').value = customer.notater || '';
   document.getElementById('lat').value = customer.lat || '';
@@ -13810,12 +13813,12 @@ function editCustomer(id) {
   updateGeocodeQualityBadge(customer.geocode_quality || (customer.lat ? 'exact' : null));
 
   // Separate kontroll-felt for El-Kontroll
-  document.getElementById('siste_el_kontroll').value = customer.siste_el_kontroll || '';
-  document.getElementById('neste_el_kontroll').value = customer.neste_el_kontroll || '';
+  document.getElementById('siste_el_kontroll').value = trimDate(customer.siste_el_kontroll);
+  document.getElementById('neste_el_kontroll').value = trimDate(customer.neste_el_kontroll);
 
   // Separate kontroll-felt for Brannvarsling
-  document.getElementById('siste_brann_kontroll').value = customer.siste_brann_kontroll || '';
-  document.getElementById('neste_brann_kontroll').value = customer.neste_brann_kontroll || '';
+  document.getElementById('siste_brann_kontroll').value = trimDate(customer.siste_brann_kontroll);
+  document.getElementById('neste_brann_kontroll').value = trimDate(customer.neste_brann_kontroll);
 
   // Vis/skjul kontroll-seksjoner basert på kategori
   updateControlSectionsVisibility(customer.kategori);
@@ -13952,8 +13955,7 @@ function renderPopupCustomFields(customer) {
 
       if (field.field_type === 'date') {
         try {
-          const date = new Date(value);
-          displayValue = date.toLocaleDateString('no-NO');
+          displayValue = formatDate(value);
         } catch { displayValue = value; }
       } else if (field.field_type === 'select' && field.options) {
         // Find display_name for the value
@@ -14923,22 +14925,22 @@ async function saveCustomer(e) {
     epost: document.getElementById('epost').value,
     lat: lat,
     lng: lng,
-    siste_kontroll: document.getElementById('siste_kontroll').value || null,
-    neste_kontroll: document.getElementById('neste_kontroll').value || null,
+    siste_kontroll: normalizeDateValue(document.getElementById('siste_kontroll').value) || null,
+    neste_kontroll: normalizeDateValue(document.getElementById('neste_kontroll').value) || null,
     kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || 12,
     kategori: kategori,
     notater: document.getElementById('notater').value,
     // El-type specification
     el_type: document.getElementById('el_type') ? document.getElementById('el_type').value : null,
     // Separate El-Kontroll felt
-    siste_el_kontroll: document.getElementById('siste_el_kontroll').value || null,
-    neste_el_kontroll: document.getElementById('neste_el_kontroll').value || null,
+    siste_el_kontroll: normalizeDateValue(document.getElementById('siste_el_kontroll').value) || null,
+    neste_el_kontroll: normalizeDateValue(document.getElementById('neste_el_kontroll').value) || null,
     el_kontroll_intervall: Number.parseInt(document.getElementById('el_kontroll_intervall').value) || 36,
     // Brann-system specification
     brann_system: document.getElementById('brann_system') ? document.getElementById('brann_system').value : null,
     // Separate Brannvarsling felt
-    siste_brann_kontroll: document.getElementById('siste_brann_kontroll').value || null,
-    neste_brann_kontroll: document.getElementById('neste_brann_kontroll').value || null,
+    siste_brann_kontroll: normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || null,
+    neste_brann_kontroll: normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || null,
     brann_kontroll_intervall: Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || 12,
     // Driftskategori
     brann_driftstype: document.getElementById('driftskategori').value || null,
@@ -15167,13 +15169,46 @@ function updateGeocodeQualityBadge(quality) {
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
+  if (appConfig.datoModus === 'month_year') {
+    return date.toLocaleDateString('nb-NO', { month: 'long', year: 'numeric' });
+  }
   return date.toLocaleDateString('nb-NO');
 }
 
 function formatDateShort(dateStr) {
   if (!dateStr) return '';
   const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
+  if (appConfig.datoModus === 'month_year') {
+    return date.toLocaleDateString('nb-NO', { month: 'short', year: 'numeric' });
+  }
   return date.toLocaleDateString('nb-NO', { day: '2-digit', month: 'short' });
+}
+
+function formatDateInline(date) {
+  if (!date) return '';
+  if (isNaN(date.getTime())) return '';
+  if (appConfig.datoModus === 'month_year') {
+    return date.toLocaleDateString('nb-NO', { month: 'long', year: 'numeric' });
+  }
+  return date.toLocaleDateString('nb-NO', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function normalizeDateValue(value) {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}$/.test(value)) return value + '-01';
+  return value;
+}
+
+function applyDateModeToInputs() {
+  if (appConfig.datoModus !== 'month_year') return;
+  document.querySelectorAll('input[type="date"]').forEach(input => {
+    input.type = 'month';
+    if (input.value && input.value.length === 10) {
+      input.value = input.value.substring(0, 7);
+    }
+  });
 }
 
 // Save API key
