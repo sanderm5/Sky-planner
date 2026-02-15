@@ -41,19 +41,27 @@ export function generateTOTP(secret, timestamp) {
  * Allows 1 period before and after current time (90 second window total)
  */
 export function verifyTOTP(secret, code, window = 1) {
+    return verifyTOTPWithCounter(secret, code, window) !== null;
+}
+/**
+ * Verify a TOTP code and return the matched time step for replay prevention.
+ * Returns the time step number if verified, or null if not verified.
+ */
+export function verifyTOTPWithCounter(secret, code, window = 1) {
     if (!code || code.length !== TOTP_DIGITS) {
-        return false;
+        return null;
     }
     const now = Date.now();
+    const currentStep = Math.floor(now / 1000 / TOTP_PERIOD);
     // Check current time and adjacent windows
     for (let i = -window; i <= window; i++) {
         const checkTime = now + i * TOTP_PERIOD * 1000;
         const expectedCode = generateTOTP(secret, checkTime);
         if (timingSafeCompare(code, expectedCode)) {
-            return true;
+            return currentStep + i;
         }
     }
-    return false;
+    return null;
 }
 /**
  * Generate backup codes for account recovery
@@ -104,7 +112,7 @@ export function generateTOTPUri(secret, accountName, issuer = 'Sky Planner') {
 /**
  * Encrypt TOTP secret for storage
  */
-export function encryptTOTPSecret(secret, encryptionKey, salt = 'totp-salt') {
+export function encryptTOTPSecret(secret, encryptionKey, salt) {
     const key = crypto.scryptSync(encryptionKey, salt, 32);
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
@@ -116,12 +124,23 @@ export function encryptTOTPSecret(secret, encryptionKey, salt = 'totp-salt') {
 }
 /**
  * Decrypt TOTP secret from storage
+ * Falls back to legacy salt 'totp-salt' for backward compatibility with existing secrets
  */
-export function decryptTOTPSecret(encryptedData, encryptionKey, salt = 'totp-salt') {
+export function decryptTOTPSecret(encryptedData, encryptionKey, salt) {
     const [ivHex, authTagHex, encrypted] = encryptedData.split(':');
     if (!ivHex || !authTagHex || !encrypted) {
         throw new Error('Invalid encrypted data format');
     }
+    // Try with provided salt first
+    try {
+        return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, salt);
+    }
+    catch {
+        // Fall back to legacy default salt for secrets encrypted before salt was required
+        return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, 'totp-salt');
+    }
+}
+function decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, salt) {
     const key = crypto.scryptSync(encryptionKey, salt, 32);
     const iv = Buffer.from(ivHex, 'hex');
     const authTag = Buffer.from(authTagHex, 'hex');

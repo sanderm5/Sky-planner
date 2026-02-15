@@ -25,8 +25,9 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
 
   const JWT_SECRET = import.meta.env.JWT_SECRET;
   const ENCRYPTION_KEY = import.meta.env.ENCRYPTION_KEY;
+  const ENCRYPTION_SALT = import.meta.env.ENCRYPTION_SALT;
 
-  if (!JWT_SECRET || !ENCRYPTION_KEY) {
+  if (!JWT_SECRET || !ENCRYPTION_KEY || !ENCRYPTION_SALT) {
     return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -73,7 +74,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
     const backupCodes = auth.generateBackupCodes();
 
     // Encrypt the secret before storing
-    const encryptedSecret = auth.encryptTOTPSecret(secret, ENCRYPTION_KEY);
+    const encryptedSecret = auth.encryptTOTPSecret(secret, ENCRYPTION_KEY, ENCRYPTION_SALT);
 
     // Hash backup codes for storage
     const hashedBackupCodes = backupCodes.map((code) => auth.hashBackupCode(code));

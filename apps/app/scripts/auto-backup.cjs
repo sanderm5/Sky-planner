@@ -38,6 +38,8 @@ const PAGE_SIZE = 1000; // Supabase default maks per request
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
+const SALT_LENGTH = 16;
+const BACKUP_FORMAT_VERSION = 2; // v1 = hardcoded salt, v2 = per-backup random salt
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5000;
 
@@ -78,16 +80,17 @@ function getSupabaseClient() {
 
 // --- Kryptering ---
 
-function getEncryptionKey() {
+function deriveEncryptionKey(salt) {
   const key = process.env.BACKUP_ENCRYPTION_KEY;
   if (!key || key.length < 32) {
     throw new Error('BACKUP_ENCRYPTION_KEY må være satt (min 32 tegn)');
   }
-  return crypto.scryptSync(key, 'skyplanner-backup-salt', 32);
+  return crypto.scryptSync(key, salt, 32);
 }
 
 function encrypt(data) {
-  const key = getEncryptionKey();
+  const salt = crypto.randomBytes(SALT_LENGTH);
+  const key = deriveEncryptionKey(salt);
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
@@ -97,13 +100,33 @@ function encrypt(data) {
   encrypted = Buffer.concat([encrypted, cipher.final()]);
   const authTag = cipher.getAuthTag();
 
-  // Format: iv (16 bytes) + authTag (16 bytes) + encrypted data
-  return Buffer.concat([iv, authTag, encrypted]);
+  // v2 format: version (1 byte) + salt (16 bytes) + iv (16 bytes) + authTag (16 bytes) + encrypted data
+  const version = Buffer.alloc(1);
+  version.writeUInt8(BACKUP_FORMAT_VERSION);
+  return Buffer.concat([version, salt, iv, authTag, encrypted]);
 }
 
 function decrypt(encryptedBuffer) {
-  const key = getEncryptionKey();
+  const firstByte = encryptedBuffer.readUInt8(0);
 
+  if (firstByte === BACKUP_FORMAT_VERSION) {
+    // v2 format: version (1) + salt (16) + iv (16) + authTag (16) + data
+    const salt = encryptedBuffer.subarray(1, 1 + SALT_LENGTH);
+    const iv = encryptedBuffer.subarray(1 + SALT_LENGTH, 1 + SALT_LENGTH + IV_LENGTH);
+    const authTag = encryptedBuffer.subarray(1 + SALT_LENGTH + IV_LENGTH, 1 + SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
+    const encrypted = encryptedBuffer.subarray(1 + SALT_LENGTH + IV_LENGTH + AUTH_TAG_LENGTH);
+
+    const key = deriveEncryptionKey(salt);
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+    decipher.setAuthTag(authTag);
+
+    let decrypted = decipher.update(encrypted);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return zlib.gunzipSync(decrypted).toString('utf8');
+  }
+
+  // v1 legacy format: iv (16) + authTag (16) + data (hardcoded salt)
+  const key = deriveEncryptionKey('skyplanner-backup-salt');
   const iv = encryptedBuffer.subarray(0, IV_LENGTH);
   const authTag = encryptedBuffer.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
   const encrypted = encryptedBuffer.subarray(IV_LENGTH + AUTH_TAG_LENGTH);

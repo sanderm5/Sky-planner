@@ -29,8 +29,9 @@ function parseDeviceInfo(ua: string): string {
 export const POST: APIRoute = async ({ request, clientAddress }) => {
   const JWT_SECRET = import.meta.env.JWT_SECRET;
   const ENCRYPTION_KEY = import.meta.env.ENCRYPTION_KEY;
+  const ENCRYPTION_SALT = import.meta.env.ENCRYPTION_SALT;
 
-  if (!JWT_SECRET || !ENCRYPTION_KEY) {
+  if (!JWT_SECRET || !ENCRYPTION_KEY || !ENCRYPTION_SALT) {
     return new Response(
       JSON.stringify({ error: 'Server-konfigurasjonsfeil' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
@@ -104,7 +105,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     const tableName = session.user_type === 'klient' ? 'klient' : 'brukere';
     const { data: user, error: userError } = await supabase
       .from(tableName)
-      .select('id, navn, epost, organization_id, totp_secret_encrypted, backup_codes_hash, totp_recovery_codes_used')
+      .select('id, navn, epost, organization_id, totp_secret_encrypted, backup_codes_hash, totp_recovery_codes_used, totp_last_used_step')
       .eq('id', session.user_id)
       .single();
 
@@ -119,10 +120,23 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     let verified = false;
     let usedBackupCode = false;
 
-    // Try TOTP code first (6 digits)
+    // Try TOTP code first (6 digits) with replay prevention
     if (/^\d{6}$/.test(codeStr)) {
-      const secret = auth.decryptTOTPSecret(user.totp_secret_encrypted, ENCRYPTION_KEY);
-      verified = auth.verifyTOTP(secret, codeStr);
+      const secret = auth.decryptTOTPSecret(user.totp_secret_encrypted, ENCRYPTION_KEY, ENCRYPTION_SALT);
+      const matchedStep = auth.verifyTOTPWithCounter(secret, codeStr);
+      if (matchedStep !== null) {
+        // Reject replay: same code (or earlier) already used
+        if (user.totp_last_used_step && matchedStep <= user.totp_last_used_step) {
+          verified = false;
+        } else {
+          verified = true;
+          // Record the used step to prevent replay
+          await supabase
+            .from(tableName)
+            .update({ totp_last_used_step: matchedStep })
+            .eq('id', user.id);
+        }
+      }
     }
 
     // Try backup code if TOTP failed (format: XXXX-XXXX or 8 chars)

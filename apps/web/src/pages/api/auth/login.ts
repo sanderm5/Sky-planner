@@ -235,6 +235,34 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       );
     }
 
+    // Account-level lockout check (prevents distributed brute-force from multiple IPs)
+    const supabaseForLockout = db.getSupabaseClient();
+    const ACCOUNT_LOCKOUT_MAX_ATTEMPTS = 10;
+    const ACCOUNT_LOCKOUT_WINDOW_MINUTES = 30;
+    const lockoutWindowStart = new Date(Date.now() - ACCOUNT_LOCKOUT_WINDOW_MINUTES * 60 * 1000).toISOString();
+
+    const { count: recentFailures } = await supabaseForLockout
+      .from('login_attempts')
+      .select('*', { count: 'exact', head: true })
+      .eq('epost', epost.toLowerCase())
+      .eq('success', false)
+      .gte('attempted_at', lockoutWindowStart);
+
+    if (recentFailures && recentFailures >= ACCOUNT_LOCKOUT_MAX_ATTEMPTS) {
+      return new Response(
+        JSON.stringify({
+          error: `Kontoen er midlertidig låst på grunn av for mange mislykkede innloggingsforsøk. Prøv igjen om ${ACCOUNT_LOCKOUT_WINDOW_MINUTES} minutter, eller bruk «Glemt passord» for å tilbakestille.`,
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(ACCOUNT_LOCKOUT_WINDOW_MINUTES * 60),
+          },
+        }
+      );
+    }
+
     // Check klient table first, then brukere table
     let user: { id: number; navn: string; epost: string; passord_hash: string; aktiv: boolean; organization_id?: number } | null = null;
     let userType: 'klient' | 'bruker' = 'klient';
@@ -259,6 +287,10 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     if (!user) {
       recordFailedLogin(ip);
+      // Record failed attempt in DB for account-level lockout
+      supabaseForLockout.from('login_attempts').insert({
+        epost: epost.toLowerCase(), ip_address: ip, success: false,
+      }).then(() => {}, () => {});
       return new Response(
         JSON.stringify({ error: 'Feil e-post eller passord' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -274,14 +306,21 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     if (!passwordValid) {
       recordFailedLogin(ip);
+      // Record failed attempt in DB for account-level lockout
+      supabaseForLockout.from('login_attempts').insert({
+        epost: epost.toLowerCase(), ip_address: ip, success: false,
+      }).then(() => {}, () => {});
       return new Response(
         JSON.stringify({ error: 'Feil e-post eller passord' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // Login successful - clear rate limit counter
+    // Login successful - clear rate limit counter and record success
     clearLoginAttempts(ip);
+    supabaseForLockout.from('login_attempts').insert({
+      epost: epost.toLowerCase(), ip_address: ip, success: true,
+    }).then(() => {}, () => {});
 
     // Check if user has 2FA enabled
     const supabase = db.getSupabaseClient();

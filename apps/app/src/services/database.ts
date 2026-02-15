@@ -1440,6 +1440,39 @@ class DatabaseService {
       );
   }
 
+  // ============ ACCOUNT LOCKOUT METHODS ============
+
+  async countRecentFailedLogins(epost: string, windowMinutes: number): Promise<number> {
+    if (this.sqlite) return 0; // SQLite mode doesn't use account lockout
+    try {
+      const supabase = await this.getSupabaseClient();
+      const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+      const { count } = await supabase
+        .from('login_attempts')
+        .select('*', { count: 'exact', head: true })
+        .eq('epost', epost.toLowerCase())
+        .eq('success', false)
+        .gte('attempted_at', windowStart);
+      return count ?? 0;
+    } catch {
+      return 0; // Fail open - don't block login if lockout check fails
+    }
+  }
+
+  async recordLoginAttempt(epost: string, ipAddress: string, success: boolean): Promise<void> {
+    if (this.sqlite) return;
+    try {
+      const supabase = await this.getSupabaseClient();
+      await supabase.from('login_attempts').insert({
+        epost: epost.toLowerCase(),
+        ip_address: ipAddress,
+        success,
+      });
+    } catch {
+      dbLogger.warn({ epost: epost.toLowerCase() }, 'Failed to record login attempt');
+    }
+  }
+
   // ============ REFRESH TOKEN METHODS ============
 
   async storeRefreshToken(data: {

@@ -16,6 +16,11 @@ export declare function generateTOTP(secret: string, timestamp?: number): string
  */
 export declare function verifyTOTP(secret: string, code: string, window?: number): boolean;
 /**
+ * Verify a TOTP code and return the matched time step for replay prevention.
+ * Returns the time step number if verified, or null if not verified.
+ */
+export declare function verifyTOTPWithCounter(secret: string, code: string, window?: number): number | null;
+/**
  * Generate backup codes for account recovery
  */
 export declare function generateBackupCodes(): string[];
@@ -35,11 +40,12 @@ export declare function generateTOTPUri(secret: string, accountName: string, iss
 /**
  * Encrypt TOTP secret for storage
  */
-export declare function encryptTOTPSecret(secret: string, encryptionKey: string, salt?: string): string;
+export declare function encryptTOTPSecret(secret: string, encryptionKey: string, salt: string): string;
 /**
  * Decrypt TOTP secret from storage
+ * Falls back to legacy salt 'totp-salt' for backward compatibility with existing secrets
  */
-export declare function decryptTOTPSecret(encryptedData: string, encryptionKey: string, salt?: string): string;
+export declare function decryptTOTPSecret(encryptedData: string, encryptionKey: string, salt: string): string;
 export interface TOTPSetupData {
     secret: string;
     uri: string;

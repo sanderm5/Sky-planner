@@ -13,5 +13,5 @@ export { AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME, getCookieConfig, getRefreshCooki
 // Password validation
 export { validatePassword, assertValidPassword, getPasswordStrengthLabel, } from './password-validation';
 // TOTP (Two-Factor Authentication)
-export { generateTOTPSecret, generateTOTP, verifyTOTP, generateBackupCodes, hashBackupCode, verifyBackupCode, generateTOTPUri, encryptTOTPSecret, decryptTOTPSecret, } from './totp';
+export { generateTOTPSecret, generateTOTP, verifyTOTP, generateBackupCodes, hashBackupCode, verifyBackupCode, generateTOTPUri, encryptTOTPSecret, decryptTOTPSecret, verifyTOTPWithCounter, } from './totp';
 //# sourceMappingURL=index.js.map

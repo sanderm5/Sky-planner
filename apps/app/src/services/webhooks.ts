@@ -167,6 +167,11 @@ export class WebhookService {
     organizationId: number,
     data: { url?: string; name?: string; description?: string; events?: WebhookEventType[]; is_active?: boolean }
   ): Promise<WebhookEndpoint | null> {
+    // SSRF protection: validate URL if being changed
+    if (data.url) {
+      await validateWebhookUrl(data.url);
+    }
+
     const db = await this.getDatabase();
     return db.updateWebhookEndpoint(webhookId, organizationId, data);
   }

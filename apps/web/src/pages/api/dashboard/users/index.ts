@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import bcrypt from 'bcryptjs';
 import * as db from '@skyplanner/database';
+import { validatePassword } from '@skyplanner/auth';
 import { requireApiAuth, isAuthError } from '../../../../middleware/auth';
 
 // Initialize Supabase client
@@ -66,9 +67,18 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    if (passord.length < 8) {
+    const passwordResult = validatePassword(passord, {
+      minLength: 10,
+      requireUppercase: true,
+      requireLowercase: true,
+      requireNumber: true,
+      requireSpecial: true,
+      checkCommonPasswords: true,
+      userContext: { email: epost, name: navn },
+    });
+    if (!passwordResult.valid) {
       return new Response(
-        JSON.stringify({ error: 'Passord må være minst 8 tegn' }),
+        JSON.stringify({ error: passwordResult.errors[0] }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }

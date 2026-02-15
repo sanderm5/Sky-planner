@@ -44,6 +44,8 @@ interface DatabaseService {
     expiresAt: Date;
   }): Promise<void>;
   deleteSessionByJti(jti: string): Promise<boolean>;
+  countRecentFailedLogins?(epost: string, windowMinutes: number): Promise<number>;
+  recordLoginAttempt?(epost: string, ipAddress: string, success: boolean): Promise<void>;
 }
 
 interface KundeRecord {
@@ -168,8 +170,19 @@ router.post(
       throw Errors.validationError(validationErrors);
     }
 
-    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'Ukjent';
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'Ukjent';
     const userAgent = req.headers['user-agent'] || 'Ukjent';
+
+    // Account-level lockout check (prevents distributed brute-force from multiple IPs)
+    if (dbService.countRecentFailedLogins) {
+      const ACCOUNT_LOCKOUT_MAX = 10;
+      const ACCOUNT_LOCKOUT_WINDOW = 30; // minutes
+      const recentFailures = await dbService.countRecentFailedLogins(epost, ACCOUNT_LOCKOUT_WINDOW);
+      if (recentFailures >= ACCOUNT_LOCKOUT_MAX) {
+        logSecurityEvent({ action: 'account_locked', details: { epost, recentFailures }, ipAddress: ip, userAgent });
+        throw Errors.tooManyRequests(`Kontoen er midlertidig låst. Prøv igjen om ${ACCOUNT_LOCKOUT_WINDOW} minutter.`);
+      }
+    }
 
     // Check klient table first
     let user: KlientRecord | BrukerRecord | null = await dbService.getKlientByEpost(epost);
@@ -201,6 +214,7 @@ router.post(
         feil_melding: 'Bruker ikke funnet',
       });
       logSecurityEvent({ action: 'login_failed', details: { epost, reason: 'user_not_found' }, ipAddress: ip, userAgent });
+      dbService.recordLoginAttempt?.(epost, ip, false).catch(() => {});
       throw Errors.unauthorized('Feil e-post eller passord');
     }
 
@@ -215,6 +229,7 @@ router.post(
         feil_melding: 'Feil passord',
       });
       logSecurityEvent({ action: 'login_failed', userId: user.id, userType, organizationId: user.organization_id, details: { reason: 'wrong_password' }, ipAddress: ip, userAgent });
+      dbService.recordLoginAttempt?.(epost, ip, false).catch(() => {});
       throw Errors.unauthorized('Feil e-post eller passord');
     }
 
@@ -272,6 +287,7 @@ router.post(
       ip_adresse: ip,
       user_agent: userAgent,
     });
+    dbService.recordLoginAttempt?.(epost, ip, true).catch(() => {});
 
     // Track active session (await to ensure session exists before token is used)
     const decoded = jwt.decode(token) as JWTPayload;
@@ -289,6 +305,15 @@ router.post(
         });
       } catch (err) {
         authLogger.error({ err }, 'Failed to create session record');
+        // Alert operations - session management may be degraded
+        import('../services/alerts').then(({ sendAlert }) =>
+          sendAlert({
+            title: 'Session tracking failure',
+            message: `Failed to create session record for user ${user.id}. Active session management may be incomplete.`,
+            severity: 'warning',
+            source: 'auth',
+          }).catch(() => {})
+        ).catch(() => {});
       }
     }
 

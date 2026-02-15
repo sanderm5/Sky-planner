@@ -58,6 +58,7 @@ export {
   generateTOTPUri,
   encryptTOTPSecret,
   decryptTOTPSecret,
+  verifyTOTPWithCounter,
 } from './totp';
 
 export type {

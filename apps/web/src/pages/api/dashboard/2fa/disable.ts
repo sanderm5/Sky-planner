@@ -89,7 +89,8 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     // Verify TOTP code if provided (and password was not)
     if (code && !password) {
       const ENCRYPTION_KEY = import.meta.env.ENCRYPTION_KEY;
-      if (!ENCRYPTION_KEY) {
+      const ENCRYPTION_SALT = import.meta.env.ENCRYPTION_SALT;
+      if (!ENCRYPTION_KEY || !ENCRYPTION_SALT) {
         return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
@@ -103,7 +104,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
         });
       }
 
-      const secret = auth.decryptTOTPSecret(klient.totp_secret_encrypted, ENCRYPTION_KEY);
+      const secret = auth.decryptTOTPSecret(klient.totp_secret_encrypted, ENCRYPTION_KEY, ENCRYPTION_SALT);
       if (!auth.verifyTOTP(secret, code)) {
         return new Response(JSON.stringify({ error: 'Feil 2FA-kode' }), {
           status: 401,

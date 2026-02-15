@@ -24,8 +24,9 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
   const JWT_SECRET = import.meta.env.JWT_SECRET;
   const ENCRYPTION_KEY = import.meta.env.ENCRYPTION_KEY;
+  const ENCRYPTION_SALT = import.meta.env.ENCRYPTION_SALT;
 
-  if (!JWT_SECRET || !ENCRYPTION_KEY) {
+  if (!JWT_SECRET || !ENCRYPTION_KEY || !ENCRYPTION_SALT) {
     return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -83,7 +84,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     }
 
     // Decrypt the secret
-    const secret = auth.decryptTOTPSecret(klient.totp_secret_encrypted, ENCRYPTION_KEY);
+    const secret = auth.decryptTOTPSecret(klient.totp_secret_encrypted, ENCRYPTION_KEY, ENCRYPTION_SALT);
 
     // Verify the TOTP code
     if (!auth.verifyTOTP(secret, code)) {

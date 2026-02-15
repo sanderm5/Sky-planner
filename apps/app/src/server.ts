@@ -269,7 +269,7 @@ const isLocalhost = (req: express.Request) => {
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isDevelopment ? 1000 : 100, // Higher limit in development
+  max: isDevelopment ? 1000 : 500, // 500 per 15 min in prod (SPA makes many API calls per page load)
   message: { error: { code: 'TOO_MANY_REQUESTS', message: 'For mange forespørsler' } },
   standardHeaders: true,
   legacyHeaders: false,
