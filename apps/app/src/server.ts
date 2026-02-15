@@ -134,7 +134,6 @@ app.use(
           'https://cdnjs.cloudflare.com',
           'https://api.mapbox.com',
         ],
-        scriptSrcAttr: ["'none'"],
         styleSrc: [
           "'self'",
           "'unsafe-inline'",

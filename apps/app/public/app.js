@@ -3232,12 +3232,12 @@ function renderSmartRecommendations() {
         </div>
 
         <div class="rec-actions">
-          <button class="btn btn-secondary btn-small" onclick="SmartRouteEngine.showClusterOnMap(${rec.id})">
+          <button class="btn btn-secondary btn-small" data-action="showClusterOnMap" data-cluster-id="${rec.id}">
             ${SmartRouteEngine.selectedClusterId === rec.id
               ? '<i class="fas fa-eye-slash"></i> Skjul'
               : '<i class="fas fa-map"></i> Vis detaljer'}
           </button>
-          <button class="btn btn-primary btn-small" onclick="SmartRouteEngine.createRouteFromCluster(${rec.id})">
+          <button class="btn btn-primary btn-small" data-action="createRouteFromCluster" data-cluster-id="${rec.id}">
             <i class="fas fa-route"></i> Opprett rute
           </button>
         </div>
@@ -3247,11 +3247,11 @@ function renderSmartRecommendations() {
 
   if (recommendations.length > 6) {
     if (SmartRouteEngine.showAllRecommendations) {
-      html += `<button class="btn btn-link rec-toggle-all" onclick="toggleShowAllRecommendations()">
+      html += `<button class="btn btn-link rec-toggle-all" data-action="toggleShowAllRecommendations">
         <i class="fas fa-chevron-up"></i> Vis færre
       </button>`;
     } else {
-      html += `<button class="btn btn-link rec-toggle-all" onclick="toggleShowAllRecommendations()">
+      html += `<button class="btn btn-link rec-toggle-all" data-action="toggleShowAllRecommendations">
         <i class="fas fa-chevron-down"></i> Vis alle ${recommendations.length} anbefalinger
       </button>`;
     }
@@ -11840,6 +11840,11 @@ function updateSelectionUI() {
   renderMarkers(customers);
 }
 
+// Update route selection UI after programmatic selection changes
+function updateRouteSelection() {
+  updateSelectionUI();
+}
+
 // Clear selection
 function clearSelection() {
   selectedCustomers.clear();
@@ -17282,6 +17287,15 @@ function setupEventListeners() {
         e.stopPropagation();
         const mapIds = actionEl.dataset.customerIds.split(',').map(id => Number.parseInt(id));
         showCustomersOnMap(mapIds);
+        break;
+      case 'showClusterOnMap':
+        SmartRouteEngine.showClusterOnMap(Number.parseInt(actionEl.dataset.clusterId));
+        break;
+      case 'createRouteFromCluster':
+        SmartRouteEngine.createRouteFromCluster(Number.parseInt(actionEl.dataset.clusterId));
+        break;
+      case 'toggleShowAllRecommendations':
+        toggleShowAllRecommendations();
         break;
       case 'editAvtale':
         e.stopPropagation();
