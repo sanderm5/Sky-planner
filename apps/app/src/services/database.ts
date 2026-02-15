@@ -6679,7 +6679,10 @@ class DatabaseService {
       if (limit) query = query.limit(limit);
       const { data, error } = await query;
       if (error) throw new Error(`Failed to fetch patch notes: ${error.message}`);
-      return data || [];
+      return (data || []).map(row => ({
+        ...row,
+        items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      }));
     }
     if (!this.sqlite) throw new Error('Database not initialized');
     const sql = limit
@@ -6699,7 +6702,10 @@ class DatabaseService {
         .gt('id', sinceId)
         .order('published_at', { ascending: false });
       if (error) throw new Error(`Failed to fetch patch notes: ${error.message}`);
-      return data || [];
+      return (data || []).map(row => ({
+        ...row,
+        items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      }));
     }
     if (!this.sqlite) throw new Error('Database not initialized');
     const rows = this.sqlite.prepare(

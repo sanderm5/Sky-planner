@@ -225,6 +225,12 @@ const scopes = [
 </DashboardLayout>
 
 <script define:vars={{ apiBaseUrl, isAdmin }}>
+  // CSRF token helper - reads backend's csrf_token cookie
+  function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return match ? match[1] : '';
+  }
+
   // State
   let apiKeys = [];
 
@@ -349,12 +355,29 @@ const scopes = [
         credentials: 'include',
       });
 
-      const data = await res.json();
-
-      if (data.success) {
-        apiKeys = data.data;
-        renderApiKeys();
+      if (!res.ok) {
+        if (res.status === 403) {
+          container.innerHTML = `
+            <div class="glass-card p-8 text-center">
+              <h3 class="text-lg font-semibold text-white mb-2">Kun for administratorer</h3>
+              <p class="text-dark-400">Bare administratorer kan se og administrere API-nøkler.</p>
+            </div>
+          `;
+        } else {
+          container.innerHTML = `
+            <div class="glass-card p-8 text-center border border-red-500/30">
+              <h3 class="text-lg font-semibold text-white mb-2">Kunne ikke laste API-nøkler</h3>
+              <p class="text-dark-400 mb-4">Prøv å laste siden på nytt.</p>
+              <button onclick="window.location.reload()" class="btn-secondary">Last inn på nytt</button>
+            </div>
+          `;
+        }
+        return;
       }
+
+      const data = await res.json();
+      apiKeys = data.data || [];
+      renderApiKeys();
     } catch (err) {
       container.innerHTML = `
         <div class="glass-card p-8 text-center border border-red-500/30">
@@ -386,7 +409,7 @@ const scopes = [
     try {
       const res = await fetch(`${apiBaseUrl}/api/app/api-keys`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         credentials: 'include',
         body: JSON.stringify({
           name: formData.get('name'),
@@ -422,7 +445,7 @@ const scopes = [
     try {
       const res = await fetch(`${apiBaseUrl}/api/app/api-keys/${id}/revoke`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         credentials: 'include',
         body: JSON.stringify({ reason: 'Manuelt deaktivert av bruker' }),
       });

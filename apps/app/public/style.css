@@ -3275,6 +3275,80 @@ a:hover {
 }
 .wp-status i { margin-right: 4px; }
 
+/* Customer search in weekly plan */
+.wp-search-container {
+  position: relative;
+  margin: 0 0 6px;
+  padding: 8px;
+  background: var(--card-bg, var(--bg-secondary));
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  z-index: 50;
+}
+.wp-search-wrapper {
+  position: relative;
+}
+.wp-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+.wp-search-input {
+  width: 100%;
+  padding: 10px 12px 10px 32px;
+  border: 2px solid var(--color-primary);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-sizing: border-box;
+  font-weight: 500;
+}
+.wp-search-input::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+.wp-search-input:focus {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+.wp-search-results {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: -8px;
+  right: -8px;
+  background: var(--card-bg, #1a1a2e);
+  border: 1px solid var(--color-border);
+  border-radius: 0 0 8px 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.wp-search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.1s;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
+}
+.wp-search-item:last-child { border-bottom: none; }
+.wp-search-item:hover { background: var(--bg-hover); }
+.wp-search-item.disabled { opacity: 0.5; cursor: default; }
+.wp-search-item.disabled:hover { background: none; }
+.wp-search-item.wp-search-no-results { cursor: default; color: var(--text-tertiary); }
+.wp-search-name { flex: 1; font-weight: 500; }
+.wp-search-addr { font-size: 10px; color: var(--text-tertiary); max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* Day list */
 .wp-days {
   display: flex;
@@ -3497,6 +3571,75 @@ a:hover {
   white-space: nowrap;
 }
 
+/* Progress bar per day */
+.wp-progress-container {
+  position: relative;
+  height: 6px;
+  background: var(--bg-tertiary, #e5e7eb);
+  border-radius: 3px;
+  margin: 4px 10px 6px;
+  overflow: hidden;
+}
+.wp-progress-bar {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.wp-progress-bar.overloaded {
+  background: var(--color-danger, #dc2626);
+}
+.wp-progress-label {
+  position: absolute;
+  right: 0;
+  top: -14px;
+  font-size: 9px;
+  color: var(--text-tertiary);
+}
+
+/* Stop number + initials badge */
+.wp-stop-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.wp-stop-num {
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  line-height: 1;
+}
+.wp-stop-initials {
+  font-size: 8px;
+  font-weight: 700;
+  color: #fff;
+  border-radius: 3px;
+  padding: 2px 3px;
+  line-height: 1;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+/* Time range display */
+.wp-item-timerange {
+  font-size: 10px;
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+/* Timeline connector */
+.wp-timeline-item {
+  position: relative;
+}
+
 /* Day footer */
 .wp-day-footer {
   display: flex;
@@ -3507,10 +3650,20 @@ a:hover {
   color: var(--text-secondary);
   border-top: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
 }
+.wp-day-stats { font-weight: 500; }
 .wp-day-summary { font-weight: 500; }
+.wp-day-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
 .wp-nav-btn {
   font-size: 11px !important;
   padding: 3px 8px !important;
+}
+.wp-opt-btn {
+  font-size: 11px !important;
+  padding: 3px 6px !important;
 }
 
 /* Action bar */
@@ -16502,12 +16655,12 @@ button, .btn, a, input, select, textarea {
 
 /* Enhanced button hover effects */
 .btn:hover:not(:disabled),
-button:hover:not(:disabled):not(.tab-item):not(.kategori-tab):not(.category-btn) {
+button:hover:not(:disabled):not(.tab-item):not(.kategori-tab):not(.category-btn):not(.area-select-toggle-btn):not(.filter-panel-toggle) {
   transform: translateY(-1px);
 }
 
 .btn:active:not(:disabled),
-button:active:not(:disabled) {
+button:active:not(:disabled):not(.area-select-toggle-btn):not(.filter-panel-toggle) {
   transform: translateY(0);
 }
 

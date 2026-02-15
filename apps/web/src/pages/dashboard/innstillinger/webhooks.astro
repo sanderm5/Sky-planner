@@ -278,6 +278,12 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
 </DashboardLayout>
 
 <script define:vars={{ apiBaseUrl, isAdmin }}>
+  // CSRF token helper - reads backend's csrf_token cookie
+  function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return match ? match[1] : '';
+  }
+
   // State
   let webhooks = [];
 
@@ -492,12 +498,29 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
         credentials: 'include',
       });
 
-      const data = await res.json();
-
-      if (data.success) {
-        webhooks = data.data;
-        renderWebhooks();
+      if (!res.ok) {
+        if (res.status === 403) {
+          container.innerHTML = `
+            <div class="glass-card p-8 text-center">
+              <h3 class="text-lg font-semibold text-white mb-2">Kun for administratorer</h3>
+              <p class="text-dark-400">Bare administratorer kan se og administrere webhooks.</p>
+            </div>
+          `;
+        } else {
+          container.innerHTML = `
+            <div class="glass-card p-8 text-center border border-red-500/30">
+              <h3 class="text-lg font-semibold text-white mb-2">Kunne ikke laste webhooks</h3>
+              <p class="text-dark-400 mb-4">Prøv å laste siden på nytt.</p>
+              <button onclick="window.location.reload()" class="btn-secondary">Last inn på nytt</button>
+            </div>
+          `;
+        }
+        return;
       }
+
+      const data = await res.json();
+      webhooks = data.data || [];
+      renderWebhooks();
     } catch (err) {
       container.innerHTML = `
         <div class="glass-card p-8 text-center border border-red-500/30">
@@ -529,7 +552,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
     try {
       const res = await fetch(`${apiBaseUrl}/api/app/webhooks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         credentials: 'include',
         body: JSON.stringify({
           name: formData.get('name'),
@@ -565,6 +588,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
     try {
       const res = await fetch(`${apiBaseUrl}/api/app/webhooks/${id}`, {
         method: 'DELETE',
+        headers: { 'X-CSRF-Token': getCsrfToken() },
         credentials: 'include',
       });
 

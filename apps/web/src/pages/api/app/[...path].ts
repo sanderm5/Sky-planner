@@ -34,6 +34,11 @@ export const ALL: APIRoute = async ({ request, params }) => {
       headers.set('authorization', authorization);
     }
 
+    const csrfToken = request.headers.get('x-csrf-token');
+    if (csrfToken) {
+      headers.set('x-csrf-token', csrfToken);
+    }
+
     // Build request options
     const options: RequestInit = {
       method: request.method,

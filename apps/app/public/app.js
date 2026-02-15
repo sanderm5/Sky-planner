@@ -774,6 +774,7 @@ class ServiceTypeRegistry {
   async loadFromIndustry(industrySlug) {
     try {
       const response = await fetch(`/api/industries/${industrySlug}`);
+      if (!response.ok) return false;
       const data = await response.json();
 
       if (data.success && data.data) {
@@ -10284,6 +10285,7 @@ async function loadConfig() {
   try {
     // Use regular fetch for config - no auth required
     const response = await fetch('/api/config');
+    if (!response.ok) throw new Error(`Config load failed: ${response.status}`);
     const configResponse = await response.json();
     appConfig = configResponse.data || configResponse;
 
@@ -10858,6 +10860,10 @@ async function loadCustomers() {
     renderMissingData(); // Update missing data badge and lists
     updateDashboard(); // Update dashboard stats
     updateGettingStartedBanner(); // Show/hide getting started banner
+
+    // Load avtaler and show plan badges on map (team member assignment indicators)
+    if (!weekPlanState.weekStart) initWeekPlanState(new Date());
+    await loadAvtaler();
   } catch (error) {
     console.error('Feil ved lasting av kunder:', error);
   }
@@ -16634,6 +16640,13 @@ function formatMinutes(totalMin) {
   return m > 0 ? `${h}t ${m}min` : `${h}t`;
 }
 
+function formatTimeOfDay(minutesOffset, startHour = 8, startMinute = 0) {
+  const totalMinutes = (startHour * 60 + startMinute) + minutesOffset;
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 function getDayEstimatedTotal(dayKey) {
   const dayData = weekPlanState.days[dayKey];
   if (!dayData) return 0;
@@ -16894,6 +16907,16 @@ async function renderWeeklyPlan() {
     </div>`;
   }
 
+  // Customer search bar (always visible)
+  html += `<div class="wp-search-container">
+    <div class="wp-search-wrapper">
+      <i class="fas fa-search wp-search-icon"></i>
+      <input type="text" class="wp-search-input" id="wpCustomerSearch"
+        placeholder="S\u00f8k kunde (navn, adresse, sted)..." autocomplete="off">
+    </div>
+    <div class="wp-search-results" id="wpSearchResults"></div>
+  </div>`;
+
   // Status bar when selecting
   if (weekPlanState.activeDay) {
     const dispatchName = weekPlanState.globalAssignedTo || '';
@@ -16969,17 +16992,36 @@ async function renderWeeklyPlan() {
       const dayAssignedInitials = dayAssignedName ? getCreatorDisplay(dayAssignedName, true) : '';
       const dayAssignedColor = teamColorMap.get(dayAssignedName) || currentUserColor;
 
-      // Planned customers (new - detailed)
+      // Progress bar showing estimated time vs 8-hour workday
+      if (hasContent) {
+        const estProgress = getDayEstimatedTotal(dayKey);
+        const workdayMinutes = 480;
+        const fillPct = Math.min(100, Math.round((estProgress / workdayMinutes) * 100));
+        const overloaded = estProgress > workdayMinutes;
+        html += `<div class="wp-progress-container">
+          <div class="wp-progress-bar ${overloaded ? 'overloaded' : ''}" style="width:${fillPct}%"></div>
+          <span class="wp-progress-label">${formatMinutes(estProgress)} / 8t</span>
+        </div>`;
+      }
+
+      // Cumulative time tracker for timeline
+      let cumulativeMin = 0;
+      let stopIndex = 1;
+
+      // Planned customers (new - with timeline)
       for (const c of dayData.planned) {
         const addrParts = [c.adresse, c.postnummer, c.poststed].filter(Boolean);
         const addrStr = addrParts.join(', ');
+        const startTime = formatTimeOfDay(cumulativeMin);
+        cumulativeMin += (c.estimertTid || 30);
+        const endTime = formatTimeOfDay(cumulativeMin);
         html += `
-          <div class="wp-item new" style="border-left:3px solid ${dayAssignedColor}">
-            ${dayAssignedInitials ? `<span class="wp-item-creator" style="background:${dayAssignedColor}">${escapeHtml(dayAssignedInitials)}</span>` : ''}
+          <div class="wp-item new wp-timeline-item" style="border-left:3px solid ${dayAssignedColor}">
+            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${dayAssignedColor}">${stopIndex}</span>${dayAssignedInitials ? `<span class="wp-stop-initials" style="background:${dayAssignedColor}">${escapeHtml(dayAssignedInitials)}</span>` : ''}</span>
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(c.navn)}</span>
               ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
-              ${c.telefon ? `<span class="wp-item-phone"><i class="fas fa-phone" style="font-size:8px;margin-right:2px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
+              <span class="wp-item-timerange"><i class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
             </div>
             <div class="wp-item-meta">
               <input type="number" class="wp-time-input" value="${c.estimertTid || 30}" min="5" step="5"
@@ -16988,43 +17030,56 @@ async function renderWeeklyPlan() {
               <button class="wp-remove" data-action="removeFromPlan" data-day="${dayKey}" data-customer-id="${c.id}" title="Fjern">&times;</button>
             </div>
           </div>`;
+        stopIndex++;
       }
 
-      // Existing avtaler (with team color-coded creator)
+      // Existing avtaler (with team color-coded creator + timeline)
       for (const a of existingAvtaler) {
         const name = a.kunder?.navn || a.kunde_navn || 'Ukjent';
         const addr = [a.kunder?.adresse, a.kunder?.postnummer, a.kunder?.poststed].filter(Boolean).join(', ');
         const creatorName = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
-        const creatorInitials = creatorName ? getCreatorDisplay(creatorName, true) : '';
         const creatorColor = creatorName ? (teamColorMap.get(creatorName) || '#999') : '';
+        const exStartTime = formatTimeOfDay(cumulativeMin);
+        cumulativeMin += 30;
+        const exEndTime = formatTimeOfDay(cumulativeMin);
         html += `
-          <div class="wp-item existing" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" style="${creatorColor ? 'border-left:3px solid ' + creatorColor : ''}" title="${creatorName ? 'Opprettet av ' + escapeHtml(creatorName) : ''}">
-            ${creatorInitials ? `<span class="wp-item-creator" style="background:${creatorColor}">${escapeHtml(creatorInitials)}</span>` : ''}
+          <div class="wp-item existing wp-timeline-item" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" style="${creatorColor ? 'border-left:3px solid ' + creatorColor : ''}" title="${creatorName ? 'Opprettet av ' + escapeHtml(creatorName) : ''}">
+            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${creatorColor || 'var(--bg-tertiary, #666)'}">${stopIndex}</span>${creatorName ? `<span class="wp-stop-initials" style="background:${creatorColor || 'var(--bg-tertiary, #666)'}">${escapeHtml(getCreatorDisplay(creatorName, true))}</span>` : ''}</span>
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(name)}</span>
               ${addr ? `<span class="wp-item-addr">${escapeHtml(addr)}</span>` : ''}
+              <span class="wp-item-timerange"><i class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${exStartTime} - ${exEndTime}</span>
             </div>
+            <button class="wp-remove" data-action="deleteAvtale" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" title="Slett avtale">&times;</button>
           </div>`;
+        stopIndex++;
       }
 
       // Empty active day hint
       if (!hasContent && isActive) {
-        html += `<div class="wp-empty-hint"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet</div>`;
+        html += `<div class="wp-empty-hint"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet eller søk etter kunde</div>`;
       }
 
       html += `</div>`;
 
-      // Day footer with summary and navigate button
+      // Day footer with summary and action buttons
       if (hasContent) {
         const estTotal = getDayEstimatedTotal(dayKey);
         const totalCount = plannedCount + existingCount;
         const hasCoords = dayData.planned.some(c => c.lat && c.lng) ||
           existingAvtaler.some(a => { const k = customers.find(c => c.id === a.kunde_id); return k?.lat && k?.lng; });
         html += `<div class="wp-day-footer">`;
-        html += `<span class="wp-day-summary">${totalCount} kunder${estTotal > 0 ? ` · ~${formatMinutes(estTotal)}` : ''}</span>`;
+        html += `<div class="wp-day-stats">`;
+        html += `<span class="wp-day-summary">${totalCount} stopp${estTotal > 0 ? ` · ~${formatMinutes(estTotal)}` : ''}</span>`;
+        html += `</div>`;
+        html += `<div class="wp-day-actions">`;
+        if (hasCoords && totalCount >= 3) {
+          html += `<button class="btn btn-small btn-secondary wp-opt-btn" data-action="wpOptimizeOrder" data-day="${dayKey}" title="Optimaliser rekkefølge"><i class="fas fa-sort-amount-down"></i></button>`;
+        }
         if (hasCoords) {
           html += `<button class="btn btn-small btn-secondary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i class="fas fa-directions"></i> Naviger</button>`;
         }
+        html += `</div>`;
         html += `</div>`;
       }
     }
@@ -17045,6 +17100,54 @@ async function renderWeeklyPlan() {
 
   html += `</div>`; // close wp-container
   container.innerHTML = html;
+
+  // Customer search handler for active day
+  const wpSearchInput = document.getElementById('wpCustomerSearch');
+  if (wpSearchInput) {
+    wpSearchInput.addEventListener('input', debounce(function() {
+      const query = this.value.toLowerCase().trim();
+      const resultsDiv = document.getElementById('wpSearchResults');
+      if (!resultsDiv) return;
+
+      if (query.length < 1) {
+        resultsDiv.innerHTML = '';
+        resultsDiv.style.display = 'none';
+        return;
+      }
+
+      const dayKey = weekPlanState.activeDay;
+      const dayData = weekPlanState.days[dayKey];
+      const dateStr = dayData.date;
+      const existingIds = new Set(avtaler.filter(a => a.dato === dateStr).map(a => a.kunde_id));
+      const plannedIds = new Set(dayData.planned.map(c => c.id));
+
+      const filtered = customers.filter(c =>
+        (c.navn && c.navn.toLowerCase().includes(query)) ||
+        (c.poststed && c.poststed.toLowerCase().includes(query)) ||
+        (c.adresse && c.adresse.toLowerCase().includes(query))
+      );
+      const matches = sortByNavn(filtered).slice(0, 8);
+
+      if (matches.length === 0) {
+        resultsDiv.innerHTML = '<div class="wp-search-item wp-search-no-results">Ingen kunder funnet</div>';
+        resultsDiv.style.display = 'block';
+        return;
+      }
+
+      resultsDiv.innerHTML = matches.map(c => {
+        const alreadyAdded = existingIds.has(c.id) || plannedIds.has(c.id);
+        const addrText = [c.adresse, c.poststed].filter(Boolean).join(', ');
+        return `<div class="wp-search-item ${alreadyAdded ? 'disabled' : ''}"
+          data-action="wpAddSearchResult" data-customer-id="${c.id}"
+          ${alreadyAdded ? 'title="Allerede lagt til"' : ''}>
+          <span class="wp-search-name">${escapeHtml(c.navn)}</span>
+          <span class="wp-search-addr">${escapeHtml(addrText)}</span>
+          ${alreadyAdded ? '<i class="fas fa-check" style="color:var(--color-success, #10b981);"></i>' : '<i class="fas fa-plus"></i>'}
+        </div>`;
+      }).join('');
+      resultsDiv.style.display = 'block';
+    }, 200));
+  }
 
   // Right-click context menu on existing avtaler
   container.addEventListener('contextmenu', (e) => {
@@ -17283,6 +17386,79 @@ function clearWeekPlan() {
   showToast('Plan tømt', 'info');
 }
 
+async function wpOptimizeOrder(dayKey) {
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return;
+
+  const stops = dayData.planned.filter(c => c.lat && c.lng);
+  if (stops.length < 3) {
+    showToast('Trenger minst 3 stopp for optimalisering', 'info');
+    return;
+  }
+
+  const startLat = appConfig.routeStartLat || 69.06888;
+  const startLng = appConfig.routeStartLng || 17.65274;
+  const loadingToast = showToast('Optimaliserer rekkefølge...', 'info', 0);
+
+  try {
+    const optimizeBody = {
+      jobs: stops.map((s, idx) => ({
+        id: idx + 1,
+        location: [s.lng, s.lat],
+        service: (s.estimertTid || 30) * 60
+      })),
+      vehicles: [{
+        id: 1,
+        profile: 'driving-car',
+        start: [startLng, startLat],
+        end: [startLng, startLat]
+      }]
+    };
+
+    const headers = { 'Content-Type': 'application/json' };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+    const response = await fetch('/api/routes/optimize', {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify(optimizeBody)
+    });
+
+    if (loadingToast) loadingToast.remove();
+
+    if (!response.ok) {
+      showToast('Kunne ikke optimalisere rute', 'error');
+      return;
+    }
+
+    const result = await response.json();
+    const optData = result.data || result;
+    if (optData.routes?.[0]?.steps) {
+      const jobSteps = optData.routes[0].steps.filter(s => s.type === 'job');
+      const optimizedStops = jobSteps.map(step => stops[step.job - 1]).filter(Boolean);
+      if (optimizedStops.length === stops.length) {
+        const plannedOptimized = [];
+        for (const s of optimizedStops) {
+          const p = dayData.planned.find(c => c.id === s.id);
+          if (p) plannedOptimized.push(p);
+        }
+        for (const p of dayData.planned) {
+          if (!plannedOptimized.some(o => o.id === p.id)) plannedOptimized.push(p);
+        }
+        dayData.planned = plannedOptimized;
+        renderWeeklyPlan();
+        showToast('Rekkefølge optimalisert', 'success');
+      }
+    }
+  } catch (err) {
+    if (loadingToast) loadingToast.remove();
+    console.warn('[wpOptimizeOrder] Failed:', err);
+    showToast('Feil ved optimalisering', 'error');
+  }
+}
+
 async function wpNavigateDay(dayKey) {
   const dayData = weekPlanState.days[dayKey];
   if (!dayData) return;
@@ -17314,18 +17490,77 @@ async function wpNavigateDay(dayKey) {
     return;
   }
 
-  // Build coordinates: office → customers → office
   const startLat = appConfig.routeStartLat || 69.06888;
   const startLng = appConfig.routeStartLng || 17.65274;
   const startLatLng = [startLat, startLng];
+
+  // Loading toast
+  const loadingToast = showToast('Optimaliserer rute...', 'info', 0);
+
+  // Step 1: Optimize stop order via VROOM (3+ stops)
+  if (stops.length >= 3) {
+    try {
+      const optimizeBody = {
+        jobs: stops.map((s, idx) => ({
+          id: idx + 1,
+          location: [s.lng, s.lat],
+          service: (s.estimertTid || 30) * 60
+        })),
+        vehicles: [{
+          id: 1,
+          profile: 'driving-car',
+          start: [startLng, startLat],
+          end: [startLng, startLat]
+        }]
+      };
+
+      const optHeaders = { 'Content-Type': 'application/json' };
+      const optCsrf = getCsrfToken();
+      if (optCsrf) optHeaders['X-CSRF-Token'] = optCsrf;
+
+      const optResp = await fetch('/api/routes/optimize', {
+        method: 'POST',
+        headers: optHeaders,
+        credentials: 'include',
+        body: JSON.stringify(optimizeBody)
+      });
+
+      if (optResp.ok) {
+        const optResult = await optResp.json();
+        const optData = optResult.data || optResult;
+        if (optData.routes?.[0]?.steps) {
+          const jobSteps = optData.routes[0].steps.filter(s => s.type === 'job');
+          const optimizedStops = jobSteps.map(step => stops[step.job - 1]).filter(Boolean);
+          if (optimizedStops.length === stops.length) {
+            // Reorder stops array
+            stops.length = 0;
+            stops.push(...optimizedStops);
+            // Reorder planned array in state to match
+            const plannedOptimized = [];
+            for (const s of optimizedStops) {
+              const p = dayData.planned.find(c => c.id === s.id);
+              if (p) plannedOptimized.push(p);
+            }
+            for (const p of dayData.planned) {
+              if (!plannedOptimized.some(o => o.id === p.id)) plannedOptimized.push(p);
+            }
+            dayData.planned = plannedOptimized;
+            renderWeeklyPlan();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[wpNavigateDay] Optimization failed, using original order:', e);
+    }
+  }
+
+  // Step 2: Build coordinates and get directions
+  if (loadingToast) loadingToast.textContent = 'Beregner rute...';
   const coordinates = [
     [startLng, startLat],
     ...stops.map(s => [s.lng, s.lat]),
     [startLng, startLat]
   ];
-
-  // Loading toast
-  const loadingToast = showToast('Beregner rute...', 'info', 0);
 
   try {
     const headers = { 'Content-Type': 'application/json' };
@@ -18581,17 +18816,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Setup event listeners
     setupEventListeners();
 
-    // Check for new patch notes
-    checkForNewPatchNotes();
-
     // Initialize chat system
     initChat();
     initChatEventListeners();
-
-    // Patch notes sidebar link
-    document.getElementById('patchNotesLink')?.addEventListener('click', () => {
-      loadAndShowPatchNotes(0);
-    });
   } else {
     // Not logged in - login overlay is already visible by default
     currentView = 'login';
@@ -18664,19 +18891,17 @@ async function initializeApp() {
   initChat();
   initChatEventListeners();
 
-  // Check for new patch notes
-  checkForNewPatchNotes();
-
-  // Patch notes sidebar link
-  document.getElementById('patchNotesLink')?.addEventListener('click', () => {
-    loadAndShowPatchNotes(0);
-  });
-
   Logger.log('initializeApp() complete');
 }
 
 // Setup all event listeners
 function setupEventListeners() {
+  // Patch notes
+  checkForNewPatchNotes();
+  document.getElementById('patchNotesLink')?.addEventListener('click', () => {
+    loadAndShowPatchNotes(0);
+  });
+
   // Logout button - use SPA logout
   document.getElementById('logoutBtnMain')?.addEventListener('click', handleLogout);
 
@@ -19481,6 +19706,49 @@ function setupEventListeners() {
           renderWeeklyPlan();
         }
         break;
+      case 'deleteAvtale':
+        e.stopPropagation();
+        {
+          const delId = actionEl.dataset.avtaleId;
+          const delName = actionEl.dataset.avtaleName || 'denne avtalen';
+          const confirmDel = await showConfirm(`Slett avtale for ${delName}?`, 'Slett');
+          if (confirmDel) {
+            try {
+              const delResp = await apiFetch(`/api/avtaler/${delId}`, { method: 'DELETE' });
+              if (delResp.ok) {
+                showToast('Avtale slettet', 'success');
+                await loadAvtaler();
+                refreshTeamFocus();
+                renderWeeklyPlan();
+              } else {
+                const delErr = await delResp.json().catch(() => ({}));
+                showToast(delErr.error?.message || 'Kunne ikke slette avtale', 'error');
+              }
+            } catch (delError) {
+              showToast('Feil ved sletting', 'error');
+            }
+          }
+        }
+        break;
+      case 'wpAddSearchResult':
+        e.stopPropagation();
+        if (actionEl.classList.contains('disabled')) break;
+        {
+          const searchCustId = Number.parseInt(actionEl.dataset.customerId);
+          const searchCust = customers.find(c => c.id === searchCustId);
+          if (searchCust) {
+            // Auto-select first day if none active
+            if (!weekPlanState.activeDay) {
+              weekPlanState.activeDay = weekDayKeys[0];
+            }
+            addCustomersToWeekPlan([searchCust]);
+            const srchInput = document.getElementById('wpCustomerSearch');
+            if (srchInput) srchInput.value = '';
+            const srchResults = document.getElementById('wpSearchResults');
+            if (srchResults) srchResults.style.display = 'none';
+          }
+        }
+        break;
       case 'saveWeeklyPlan':
         e.stopPropagation();
         await saveWeeklyPlan();
@@ -19528,6 +19796,10 @@ function setupEventListeners() {
             if (badgeEl) badgeEl.textContent = `~${formatMinutes(total)}`;
           }
         }
+        break;
+      case 'wpOptimizeOrder':
+        e.stopPropagation();
+        await wpOptimizeOrder(actionEl.dataset.day);
         break;
       case 'wpNavigateDay':
         e.stopPropagation();
@@ -22559,6 +22831,7 @@ async function loadTodaysWork() {
     const response = await fetch(`/api/todays-work/my-route?date=${twCurrentDate}`, {
       headers: { 'X-CSRF-Token': csrfToken }
     });
+    if (!response.ok) return;
     const json = await response.json();
 
     if (json.success && json.data) {
@@ -22915,7 +23188,10 @@ async function loadAndShowPatchNotes(sinceId) {
     if (!response.ok) return;
     const result = await response.json();
     const notes = result.data || [];
-    if (notes.length === 0) return;
+    if (notes.length === 0) {
+      showPatchNotesEmptyState();
+      return;
+    }
     showPatchNotesModal(notes);
     const latestId = Math.max(...notes.map(n => n.id));
     localStorage.setItem(PATCH_NOTES_STORAGE_KEY, String(latestId));
@@ -22923,6 +23199,42 @@ async function loadAndShowPatchNotes(sinceId) {
   } catch (err) {
     console.warn('Could not load patch notes:', err);
   }
+}
+
+function showPatchNotesEmptyState() {
+  const existing = document.getElementById('patchNotesModal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'patchNotesModal';
+  modal.className = 'patch-notes-overlay';
+  modal.innerHTML = `<div class="patch-notes-modal">
+    <div class="patch-notes-modal-header">
+      <h2><i class="fas fa-bullhorn"></i> Nyheter</h2>
+      <button class="patch-notes-close" id="closePatchNotesBtn" aria-label="Lukk">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="patch-notes-modal-body" style="display:flex;align-items:center;justify-content:center;text-align:center;min-height:200px;">
+      <div>
+        <i class="fas fa-newspaper" style="font-size:48px;color:var(--color-text-muted, #999);margin-bottom:16px;display:block;"></i>
+        <p style="font-size:16px;color:var(--color-text-secondary, #666);margin:0 0 8px;">Ingen nyheter enn\u00e5</p>
+        <p style="font-size:13px;color:var(--color-text-muted, #999);margin:0;">Nye funksjoner og oppdateringer vil vises her.</p>
+      </div>
+    </div>
+    <div class="patch-notes-modal-footer">
+      <button class="patch-notes-close-btn" id="closePatchNotesFooterBtn">Lukk</button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(modal);
+
+  const closeModal = () => modal.remove();
+  modal.querySelector('#closePatchNotesBtn').addEventListener('click', closeModal);
+  modal.querySelector('#closePatchNotesFooterBtn').addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
 }
 
 function showPatchNotesModal(notes) {
@@ -23213,7 +23525,7 @@ function createMoreMenuOverlay() {
   document.getElementById('moreMenuCloseBtn').addEventListener('click', closeMoreMenu);
 
   // Item click handlers
-  overlay.querySelectorAll('.more-menu-item').forEach(btn => {
+  overlay.querySelectorAll('.more-menu-item[data-more-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       const tabName = btn.dataset.moreTab;
       closeMoreMenu();
