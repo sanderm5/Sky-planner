@@ -1922,6 +1922,9 @@ function normalizeBrannsystem(system) {
   if (!system) return null;
   const s = system.trim().toLowerCase();
 
+  // Skip header/invalid values
+  if (s === 'type') return null;
+
   // Check for "both" systems
   if (s.includes('elotec') && s.includes('icas')) return 'Begge';
   if (s.includes('es 801') && s.includes('icas')) return 'Begge';
@@ -11138,16 +11141,44 @@ function generatePopupContent(customer) {
   // Generate custom organization fields from Excel import
   const customFieldsHtml = renderPopupCustomFields(customer);
 
+  // Fallback: show el_type, brann_system, brann_driftstype directly if not rendered by service type registry
+  let directFieldsHtml = '';
+  if (!industryFieldsHtml) {
+    if (customer.el_type) directFieldsHtml += `<p><strong>Type:</strong> ${escapeHtml(customer.el_type)}</p>`;
+    if (customer.brann_system) directFieldsHtml += `<p><strong>Brannsystem:</strong> ${escapeHtml(customer.brann_system)}</p>`;
+    if (customer.brann_driftstype) directFieldsHtml += `<p><strong>Driftstype:</strong> ${escapeHtml(customer.brann_driftstype)}</p>`;
+  }
+  // Extract org_nr from notater [ORGNR:X] tag
+  if (customer.notater) {
+    const orgNrMatch = customer.notater.match(/\[ORGNR:(\d{9})\]/);
+    if (orgNrMatch) directFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNrMatch[1])}</p>`;
+  }
+
+  // Show notater if present (strip internal tags for cleaner display)
+  let notatHtml = '';
+  if (customer.notater) {
+    const cleanedNotater = customer.notater
+      .replace(/\[TRIPLETEX:[^\]]*\]\s*/g, '')
+      .replace(/\[ORGNR:[^\]]*\]\s*/g, '')
+      .replace(/^\s*\|\s*/, '')
+      .trim();
+    if (cleanedNotater) {
+      notatHtml = `<p class="popup-notater"><strong>Notater:</strong> ${escapeHtml(cleanedNotater)}</p>`;
+    }
+  }
+
   return `
     <h3>${escapeHtml(customer.navn)}</h3>
     <p><strong>Kategori:</strong> ${escapeHtml(customer.kategori || 'Annen')}</p>
     ${industryFieldsHtml}
+    ${directFieldsHtml}
     ${customFieldsHtml}
     <p>${escapeHtml(customer.adresse)}</p>
     <p>${escapeHtml(customer.postnummer || '')} ${escapeHtml(customer.poststed || '')}</p>
     ${customer.telefon ? `<p>Tlf: ${escapeHtml(customer.telefon)}</p>` : ''}
     ${customer.epost ? `<p>E-post: ${escapeHtml(customer.epost)}</p>` : ''}
     ${kontrollInfoHtml}
+    ${notatHtml}
     <div class="popup-actions">
       <button class="btn btn-small btn-navigate" data-action="navigateToCustomer" data-lat="${customer.lat}" data-lng="${customer.lng}" data-name="${escapeHtml(customer.navn)}">
         <i class="fas fa-directions"></i> Naviger
@@ -13073,7 +13104,7 @@ async function saveRoute() {
 
   const navn = document.getElementById('ruteNavn').value.trim();
   const beskrivelse = document.getElementById('ruteBeskrivelse').value.trim();
-  const planlagt_dato = document.getElementById('ruteDato').value;
+  const planlagt_dato = normalizeDateValue(document.getElementById('ruteDato').value);
 
   if (!navn) {
     showMessage('Skriv inn et navn for ruten', 'warning');
