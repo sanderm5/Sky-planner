@@ -3,5 +3,6 @@
   "version": 2,
   "buildCommand": "pnpm -w run build:web",
   "installCommand": "pnpm install",
+  "outputDirectory": "apps/web/.vercel/output",
   "framework": null
 }
