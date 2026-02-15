@@ -19,8 +19,8 @@ const { user, organization, payload } = authResult;
 // Check if user is admin (bruker type = admin, klient type = regular user)
 const isAdmin = payload.type === 'bruker';
 
-// API base URL - use proxy in dev to avoid CORS issues
-const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https://app.skyplanner.no') : '';
+// API base URL - always use proxy route (/api/app/...) for both dev and prod
+const apiBaseUrl = '';
 
 // Available event types
 const eventTypes = [

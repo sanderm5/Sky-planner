@@ -22,8 +22,8 @@ const state = url.searchParams.get('state');
 const error = url.searchParams.get('error');
 const errorDescription = url.searchParams.get('error_description');
 
-// API base URL - use proxy in dev to avoid CORS issues
-const apiBaseUrl = import.meta.env.PROD ? (import.meta.env.APP_API_URL || 'https://app.skyplanner.no') : '';
+// API base URL - always use proxy route (/api/app/...) for both dev and prod
+const apiBaseUrl = '';
 ---
 
 <DashboardLayout
