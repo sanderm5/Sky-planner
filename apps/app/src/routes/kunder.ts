@@ -12,6 +12,7 @@ import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { validateKunde, validateSearchInput } from '../utils/validation';
 import { geocodeCustomerData } from '../services/geocoding';
 import { getWebhookService } from '../services/webhooks';
+import { broadcast } from '../services/websocket';
 import type { AuthenticatedRequest, Kunde, CreateKundeRequest, ApiResponse, Organization } from '../types';
 import { cleanImportData } from '../services/import/cleaner';
 
@@ -263,6 +264,11 @@ router.post(
       requestId: req.requestId,
     };
 
+    // Broadcast to other users in same org
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'kunde_created', kunde, req.user?.userId);
+    }
+
     res.status(201).json(response);
   })
 );
@@ -346,6 +352,11 @@ router.put(
       requestId: req.requestId,
     };
 
+    // Broadcast update to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'kunde_updated', kunde, req.user?.userId);
+    }
+
     res.json(response);
   })
 );
@@ -401,6 +412,11 @@ router.delete(
       requestId: req.requestId,
     };
 
+    // Broadcast deletion to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'kunde_deleted', { id }, req.user?.userId);
+    }
+
     res.json(response);
   })
 );
@@ -449,6 +465,11 @@ router.post(
       requestId: req.requestId,
     };
 
+    // Broadcast bulk update - clients should refresh their customer list
+    if (req.organizationId && updated > 0) {
+      broadcast(req.organizationId, 'kunder_bulk_updated', { count: updated }, req.user?.userId);
+    }
+
     res.json(response);
   })
 );
@@ -495,6 +516,11 @@ router.post(
       },
       requestId: req.requestId,
     };
+
+    // Broadcast bulk visit - clients should refresh their customer list
+    if (req.organizationId && updated > 0) {
+      broadcast(req.organizationId, 'kunder_bulk_updated', { count: updated }, req.user?.userId);
+    }
 
     res.json(response);
   })

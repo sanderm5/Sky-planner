@@ -11,6 +11,7 @@ import {
   exportCustomersToCSV,
   exportCustomersToJSON,
   exportCustomersToXLSX,
+  exportCustomersToVCF,
   exportRoutesToCSV,
   exportRoutesToJSON,
   exportRoutesToXLSX,
@@ -69,6 +70,8 @@ router.get(
       result = exportCustomersToJSON(customers);
     } else if (format === 'xlsx') {
       result = exportCustomersToXLSX(customers);
+    } else if (format === 'vcf') {
+      result = exportCustomersToVCF(customers);
     } else {
       result = exportCustomersToCSV(customers);
     }

@@ -1,7 +1,7 @@
 // Sky Planner Service Worker
 // Handles caching strategies for offline support
 
-const SHELL_CACHE = 'skyplanner-shell-v1';
+const SHELL_CACHE = 'skyplanner-shell-v2';
 const CDN_CACHE = 'skyplanner-cdn-v1';
 const TILE_CACHE = 'skyplanner-tiles-v1';
 const API_CACHE = 'skyplanner-api-v1';
@@ -12,8 +12,8 @@ const MAX_TILE_CACHE = 2000;
 const SHELL_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260202-area',
-  '/style.css',
+  '/app.js?v=20260215-dispatch',
+  '/style.css?v=20260215-dispatch',
   '/offline-storage.js?v=1',
   '/sync-manager.js?v=1',
   '/skyplanner-logo.svg',

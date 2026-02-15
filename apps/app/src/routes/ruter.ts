@@ -8,7 +8,8 @@ import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { requireFeature } from '../middleware/features';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
-import type { AuthenticatedRequest, Rute, Kunde, ApiResponse, CreateRuteRequest } from '../types';
+import { broadcast } from '../services/websocket';
+import type { AuthenticatedRequest, Rute, Kunde, Avtale, ApiResponse, CreateRuteRequest } from '../types';
 
 const router: Router = Router();
 
@@ -27,6 +28,8 @@ interface RuteDbService {
   upsertVisitRecord?(ruteId: number, kundeId: number, organizationId: number, data: { visited_at: string; completed: boolean; comment?: string; materials_used?: string[]; equipment_registered?: string[]; todos?: string[] }): Promise<{ id: number }>;
   getVisitRecords?(ruteId: number, organizationId: number): Promise<Array<{ id: number; kunde_id: number; visited_at?: string; completed: boolean; comment?: string; materials_used?: string[]; equipment_registered?: string[]; todos?: string[] }>>;
   updateKunde(id: number, data: Partial<Kunde>, organizationId?: number): Promise<Kunde | null>;
+  createAvtale(data: Partial<Avtale> & { organization_id: number }): Promise<Avtale & { kunde_navn?: string }>;
+  deleteAvtalerByRuteId(ruteId: number, organizationId: number): Promise<number>;
 }
 
 let dbService: RuteDbService;
@@ -136,6 +139,11 @@ router.post(
       requestId: req.requestId,
     };
 
+    // Broadcast to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'rute_created', rute, req.user?.userId);
+    }
+
     res.status(201).json(response);
   })
 );
@@ -192,6 +200,11 @@ router.put(
       requestId: req.requestId,
     };
 
+    // Broadcast to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'rute_updated', rute, req.user?.userId);
+    }
+
     res.json(response);
   })
 );
@@ -221,6 +234,11 @@ router.delete(
       data: { message: 'Rute slettet' },
       requestId: req.requestId,
     };
+
+    // Broadcast to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'rute_deleted', { id }, req.user?.userId);
+    }
 
     res.json(response);
   })
@@ -318,6 +336,53 @@ router.put(
       data: rute,
       requestId: req.requestId,
     };
+
+    // Broadcast assignment to other users (important for ukeplanlegger)
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'rute_updated', rute, req.user?.userId);
+    }
+
+    // Auto-sync: opprett/oppdater kalenderavtaler for kundene i ruten
+    if (req.organizationId) {
+      try {
+        // Alltid slett gamle auto-genererte avtaler for denne ruten
+        await dbService.deleteAvtalerByRuteId(id, req.organizationId);
+
+        // Opprett nye avtaler hvis ruten har tekniker + dato
+        if (planned_date && assigned_to) {
+          const ruteKunder = await dbService.getRuteKunder(id);
+          let currentMinutes = 8 * 60; // Start kl 08:00
+
+          for (const kunde of ruteKunder) {
+            const hours = Math.floor(currentMinutes / 60);
+            const mins = currentMinutes % 60;
+            const klokkeslett = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+            const varighet = kunde.estimert_tid || 30;
+
+            await dbService.createAvtale({
+              kunde_id: kunde.id,
+              dato: planned_date,
+              klokkeslett,
+              type: 'Sky Planner',
+              beskrivelse: `${kunde.navn} (rute: ${rute.navn})`,
+              status: 'planlagt',
+              opprettet_av: req.user?.epost,
+              organization_id: req.organizationId,
+              rute_id: id,
+              varighet,
+            });
+
+            currentMinutes += varighet + 15; // 15 min reisetid mellom kunder
+          }
+
+          apiLogger.info({ ruteId: id, kundeCount: ruteKunder.length, planned_date }, 'Auto-created calendar entries for route');
+          broadcast(req.organizationId, 'avtaler_bulk_created', { rute_id: id, count: ruteKunder.length }, req.user?.userId);
+        }
+      } catch (err) {
+        apiLogger.error({ err, ruteId: id }, 'Failed to auto-sync calendar for route');
+        // Ikke feil ut hele requesten — tildeling er allerede lagret
+      }
+    }
 
     res.json(response);
   })

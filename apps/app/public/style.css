@@ -300,6 +300,284 @@ a:hover {
   color: var(--color-orange);
 }
 
+/* Patch Notes link in sidebar footer */
+.patch-notes-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 0.2s, background 0.2s;
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.patch-notes-link:hover {
+  color: var(--color-orange);
+  background: rgba(255, 152, 0, 0.08);
+}
+
+.patch-notes-badge {
+  width: 8px;
+  height: 8px;
+  background: var(--color-orange);
+  border-radius: 50%;
+  display: inline-block;
+  animation: patchNotesPulse 2s ease-in-out infinite;
+}
+
+@keyframes patchNotesPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* Patch Notes Modal */
+.patch-notes-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 100001;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.patch-notes-modal {
+  background: var(--color-bg-secondary);
+  border-radius: 16px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--color-border);
+}
+
+.patch-notes-modal-header {
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.patch-notes-modal-header h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.patch-notes-modal-header h2 i {
+  color: var(--color-orange);
+  margin-right: 8px;
+}
+
+.patch-notes-close {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+
+.patch-notes-close:hover {
+  color: var(--color-text-primary);
+}
+
+.patch-notes-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.patch-notes-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.patch-notes-close-btn {
+  min-height: 44px;
+  padding: 12px 32px;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  background: var(--color-orange);
+  color: #fff;
+  transition: background 0.2s;
+}
+
+.patch-notes-close-btn:hover {
+  background: var(--color-orange-hover, #e68900);
+}
+
+/* Release entry */
+.patch-note-release {
+  margin-bottom: 24px;
+}
+
+.patch-note-release:last-child {
+  margin-bottom: 0;
+}
+
+.patch-note-release-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.patch-note-version {
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--color-text-primary);
+}
+
+.patch-note-date {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.patch-note-title {
+  font-size: 16px;
+  color: var(--color-text-primary);
+  margin: 0 0 4px 0;
+  font-weight: 600;
+}
+
+.patch-note-summary {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+/* Items list */
+.patch-note-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.patch-note-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 14px;
+}
+
+.patch-note-item:last-child {
+  border-bottom: none;
+}
+
+.patch-note-type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.patch-note-text {
+  color: var(--color-text-primary);
+  line-height: 1.5;
+}
+
+.patch-note-pro-badge {
+  font-size: 10px;
+  background: var(--color-orange);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.patch-note-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.patch-note-description {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.patch-note-tab-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--color-orange);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 6px;
+  transition: opacity 0.2s;
+}
+
+.patch-note-tab-link:hover {
+  opacity: 0.7;
+}
+
+.patch-note-tab-link i {
+  font-size: 10px;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .patch-notes-overlay {
+    padding: 10px;
+  }
+
+  .patch-notes-modal {
+    max-height: 90vh;
+    border-radius: 12px;
+  }
+
+  .patch-notes-modal-header {
+    padding: 16px;
+  }
+
+  .patch-notes-modal-header h2 {
+    font-size: 18px;
+  }
+
+  .patch-notes-modal-body {
+    padding: 16px;
+  }
+}
+
 /* ============================================
    CONTENT PANEL - Side panel for tab content
    ============================================ */
@@ -445,6 +723,125 @@ a:hover {
   pointer-events: auto !important;
   position: relative;
   z-index: 10;
+}
+
+/* WebSocket connection indicator */
+.ws-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  transition: background-color 0.3s ease;
+}
+.ws-connected {
+  background-color: #22c55e;
+}
+.ws-disconnected {
+  background-color: #ef4444;
+}
+
+/* Presence badge on map markers — shows initials of user working on customer */
+.presence-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  /* background-color settes dynamisk via JS (getPresenceColor) per bruker */
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  padding: 0 3px;
+  pointer-events: none;
+  z-index: 10;
+  border: 1.5px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  letter-spacing: 0.5px;
+}
+
+/* Week plan badge on individual markers - large and prominent */
+.wp-plan-badge {
+  position: absolute;
+  top: -10px;
+  left: -12px;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 28px;
+  text-align: center;
+  padding: 0 5px;
+  pointer-events: none;
+  z-index: 11;
+  border: 2.5px solid #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+  letter-spacing: -0.3px;
+}
+
+/* Plan badge on cluster icons (zoomed out) */
+.cluster-plan-badge {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2563eb;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  z-index: 5;
+}
+
+/* Employee filter chips in weekly plan */
+.wp-team-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.wp-team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.15s;
+  color: #fff;
+}
+.wp-team-chip:hover {
+  filter: brightness(1.1);
+  transform: scale(1.03);
+}
+.wp-team-chip.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--color-primary), 0 2px 8px rgba(0,0,0,0.3);
+}
+.wp-team-chip .chip-count {
+  background: rgba(255,255,255,0.3);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.wp-team-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  margin-right: 4px;
 }
 
 .user-bar .user-name {
@@ -2541,6 +2938,105 @@ a:hover {
 }
 
 /* Upcoming avtaler section */
+/* === UKEVISNING === */
+.week-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+.week-day {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 8px 12px;
+  border-left: 3px solid transparent;
+}
+.week-day.today {
+  border-left-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--bg-secondary));
+}
+.week-day-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.week-day-name {
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 70px;
+}
+.week-day-date {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.week-day-time {
+  margin-left: auto;
+  font-size: 11px;
+  background: var(--color-primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 500;
+}
+.week-day-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.week-avtale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.week-avtale:hover {
+  background: var(--bg-hover);
+}
+.week-avtale.completed {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.week-route {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--bg-primary));
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-primary);
+}
+.week-empty {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 2px 8px;
+}
+.week-day-add {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.week-day-add:hover {
+  opacity: 1;
+  color: var(--color-primary);
+}
+.week-summary {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: center;
+}
+
 .upcoming-section {
   margin-top: 24px;
   padding-top: 20px;
@@ -2625,6 +3121,463 @@ a:hover {
 .upcoming-info span {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+/* === Quick delete button on calendar items === */
+.calendar-avtale {
+  position: relative;
+  padding-right: 20px;
+}
+.avtale-content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.avtale-quick-delete {
+  position: absolute;
+  right: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: none;
+  background: rgba(220, 38, 38, 0.85);
+  color: white;
+  font-size: 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.calendar-avtale:hover .avtale-quick-delete {
+  opacity: 1;
+}
+.avtale-quick-delete:hover {
+  background: rgba(185, 28, 28, 1);
+}
+.week-avtale {
+  position: relative;
+  padding-right: 28px;
+}
+.week-avtale .avtale-content {
+  flex: 1;
+  min-width: 0;
+}
+.week-avtale .avtale-quick-delete {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  right: 4px;
+}
+.week-avtale:hover .avtale-quick-delete {
+  opacity: 1;
+}
+
+/* === Creator badges === */
+.avtale-creator {
+  font-size: 8px;
+  background: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 0 3px;
+  border-radius: 2px;
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+.avtale-creator-badge {
+  font-size: 10px;
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
+  color: var(--color-primary);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.upcoming-creator {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* === Geographic area badges === */
+.week-day-areas {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.area-badge {
+  font-size: 10px;
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: help;
+}
+.area-badge i {
+  font-size: 8px;
+  margin-right: 1px;
+}
+.day-area-hint {
+  display: block;
+  font-size: 8px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: help;
+}
+
+/* === Weekly Plan (Ukeplan) === */
+.wp-container {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wp-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+.wp-week-title {
+  font-weight: 700;
+  font-size: 15px;
+  min-width: 60px;
+  text-align: center;
+}
+.wp-status {
+  font-size: 12px;
+  color: var(--color-primary);
+  font-weight: 500;
+  text-align: center;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--bg-secondary));
+  border-radius: 6px;
+}
+.wp-status.muted {
+  color: var(--text-tertiary);
+  background: var(--bg-secondary);
+  font-weight: 400;
+}
+.wp-status i { margin-right: 4px; }
+
+/* Day list */
+.wp-days {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wp-day {
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+  overflow: hidden;
+}
+.wp-day:hover { background: var(--bg-secondary); }
+.wp-day.active {
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--bg-secondary));
+}
+
+/* Day bar */
+.wp-day-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.wp-day-label {
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 32px;
+  color: var(--text-primary);
+}
+.wp-day.today .wp-day-label { color: var(--color-primary); }
+.wp-day-date {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+.wp-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  line-height: 1.4;
+}
+.wp-badge.new {
+  background: var(--color-primary);
+  color: #fff;
+}
+.wp-badge.existing {
+  background: var(--bg-tertiary, var(--color-border));
+  color: var(--text-secondary);
+}
+.wp-active-icon {
+  color: var(--color-primary);
+  font-size: 11px;
+  animation: wp-pulse 1.5s ease-in-out infinite;
+}
+@keyframes wp-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* Day content */
+.wp-day-content {
+  padding: 0 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Dispatch bar - technician assignment (admin only) */
+.wp-dispatch-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 0 0 4px;
+  background: var(--primary-light, #e8f0fe);
+  border: 1px solid var(--primary, #2563eb);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--primary, #2563eb);
+}
+.wp-dispatch-bar i {
+  font-size: 14px;
+}
+.wp-dispatch-bar span {
+  white-space: nowrap;
+}
+.wp-dispatch-select {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--primary, #2563eb);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wp-dispatch-select:focus {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 1px;
+}
+
+/* Customer items */
+.wp-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.wp-item.new {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--bg-primary));
+}
+.wp-item.existing {
+  opacity: 0.7;
+}
+.wp-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wp-item-area {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.wp-item-creator {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.wp-remove {
+  background: none;
+  border: none;
+  color: var(--color-danger, #dc2626);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.wp-item:hover .wp-remove { opacity: 0.6; }
+.wp-remove:hover { opacity: 1 !important; }
+
+.wp-empty-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 8px 0;
+  text-align: center;
+}
+.wp-empty-hint i { margin-right: 4px; }
+
+/* Detailed item layout */
+.wp-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.wp-item-addr {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wp-item-phone {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+/* Estimated time input */
+.wp-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.wp-time-input {
+  width: 40px;
+  padding: 2px 3px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 11px;
+  text-align: center;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+.wp-time-input:focus {
+  border-color: var(--color-primary);
+  outline: none;
+}
+
+/* Time badge in day bar */
+.wp-time-badge {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Day footer */
+.wp-day-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
+}
+.wp-day-summary { font-weight: 500; }
+.wp-nav-btn {
+  font-size: 11px !important;
+  padding: 3px 8px !important;
+}
+
+/* Action bar */
+.wp-actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--color-border);
+}
+.wp-save-btn { flex: 1; }
+.wp-clear-btn { flex-shrink: 0; }
+
+/* === Quick Calendar Menu (from map popups) === */
+.quick-calendar-menu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  min-width: 180px;
+  overflow: hidden;
+}
+.quick-menu-header {
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quick-menu-item {
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.1s;
+}
+.quick-menu-item:hover {
+  background: var(--bg-hover);
+}
+.quick-menu-item i {
+  width: 16px;
+  text-align: center;
+  color: var(--color-primary);
+  font-size: 12px;
+}
+.popup-btn-group {
+  display: inline-flex;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.popup-btn-group .btn {
+  border-radius: 0;
+}
+.popup-btn-group .btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.popup-btn-group .btn:last-child {
+  border-radius: 0 4px 4px 0;
+  padding: 4px 6px;
+  min-width: 0;
+  border-left: 1px solid rgba(255,255,255,0.2);
 }
 
 /* Legacy upcoming routes */
@@ -3139,7 +4092,7 @@ a:hover {
 }
 
 /* Status-based border colors using data-status attribute */
-/* forfalt = overdue (red) - kontroll forfalt - KRAFTIG PULSERENDE GLOW */
+/* forfalt = overdue (red) - kontroll forfalt - utropstegn-badge */
 /* VIKTIG: Bruker !important for å overskrive category-spesifikke bakgrunner */
 .custom-marker-with-label .marker-icon[data-status="forfalt"] {
   width: 52px;
@@ -3149,12 +4102,30 @@ a:hover {
   border-width: 4px;
   border-color: #ef4444;
   box-shadow:
-    0 0 20px rgba(239, 68, 68, 0.8),
-    0 0 40px rgba(239, 68, 68, 0.5),
-    0 0 60px rgba(239, 68, 68, 0.3),
-    inset 0 0 15px rgba(239, 68, 68, 0.3);
-  animation: glow-critical 1.2s ease-in-out infinite;
+    0 0 12px rgba(239, 68, 68, 0.6),
+    0 0 24px rgba(239, 68, 68, 0.3);
   z-index: 100 !important;
+  position: relative;
+}
+/* Utropstegn-badge for forfalte markører */
+.custom-marker-with-label .marker-icon[data-status="forfalt"]::after {
+  content: '!';
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  background: #ef4444;
+  color: white;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  z-index: 101;
 }
 /* Behold kategori-bakgrunn for forfalt status */
 .custom-marker-with-label .marker-icon.el-kontroll[data-status="forfalt"] {
@@ -3274,7 +4245,6 @@ a:hover {
   justify-content: center;
   border: 2px solid #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-  animation: pulse-warning 2s infinite;
 }
 
 /* Legacy marker-dot support */
@@ -3312,7 +4282,6 @@ a:hover {
   justify-content: center;
   border: 2px solid #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-  animation: pulse-warning 2s infinite;
 }
 
 @keyframes pulse-warning {
@@ -3489,7 +4458,6 @@ a:hover {
 /* Status colors for marker dot - high contrast for satellite imagery */
 .custom-marker-with-label.status-overdue .marker-dot {
   background: var(--color-status-overdue) !important;  /* Magenta/pink - forfalt */
-  animation: pulse-overdue-dot 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse-overdue-dot {
@@ -8018,6 +8986,166 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   background: #9E7FFF;
 }
 
+/* Calendar button - teal */
+.btn-calendar {
+  background: #0d9488;
+  color: #fff;
+  border: none;
+}
+.btn-calendar:hover {
+  background: #14b8a6;
+}
+
+/* === AREA SELECT (dra-for-å-velge) === */
+.area-select-toggle-btn {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: none;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #333;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.area-select-toggle-btn:hover {
+  background: #f0f0f0;
+  transform: translateX(-50%);
+}
+.area-select-toggle-btn.active {
+  background: #3b82f6;
+  color: white;
+  box-shadow: 0 2px 12px rgba(59, 130, 246, 0.5);
+}
+.area-select-menu {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  border-radius: 16px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.1);
+  z-index: 10000;
+  min-width: 300px;
+  max-width: 360px;
+  overflow: hidden;
+  animation: asmSlideUp 0.25s ease-out;
+}
+@keyframes asmSlideUp {
+  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+.area-select-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border);
+}
+.asm-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.asm-title strong {
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+.asm-area {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.area-select-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.area-select-close:hover {
+  background: var(--color-bg-tertiary);
+}
+.area-select-menu-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px 14px;
+}
+/* Buttons */
+.asm-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.15s;
+}
+.asm-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.asm-btn:active { transform: translateY(0); }
+.asm-btn i { font-size: 14px; }
+.asm-btn-weekplan {
+  background: #2563eb;
+  color: #fff;
+  grid-column: 1 / -1;
+}
+.asm-btn-route {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+.asm-btn-calendar {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+.asm-btn-check {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  grid-column: 1 / -1;
+}
+/* Day picker for weekplan */
+.asm-day-picker {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 4px 0 2px;
+}
+.asm-day-option {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.asm-day-option:hover {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
 /* Navigate button - blue with directions icon */
 .btn-navigate {
   background: #2196F3;
@@ -8027,6 +9155,81 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
 
 .btn-navigate:hover {
   background: #1976D2;
+}
+
+/* ===== WEEKLY PLAN ROUTE SUMMARY ===== */
+
+.wp-route-summary {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  border-radius: 16px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.1);
+  z-index: 10001;
+  min-width: 320px;
+  max-width: 400px;
+  overflow: hidden;
+  animation: asmSlideUp 0.25s ease-out;
+}
+.wp-route-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--color-bg-tertiary);
+  border-bottom: 1px solid var(--color-border);
+}
+.wp-route-header strong {
+  font-size: 14px;
+}
+.wp-route-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.wp-route-close:hover {
+  background: var(--color-bg-hover);
+}
+.wp-route-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.wp-route-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.wp-route-stat i {
+  color: var(--color-text-secondary);
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+.wp-route-stat.total {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+.wp-route-stat.total i {
+  color: var(--color-primary);
+}
+.wp-route-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+.wp-route-actions .btn {
+  flex: 1;
 }
 
 /* ===== AVHUKING TAB STYLES ===== */
@@ -15918,7 +17121,6 @@ body.is-impersonating #loginOverlay {
 }
 .custom-marker-with-label.status-inquiry .marker-dot {
   background: var(--color-status-inquiry) !important;
-  animation: pulse-overdue-dot 1.8s ease-in-out infinite;
 }
 .custom-marker-with-label.status-confirmed-a .marker-dot {
   background: var(--color-status-confirmed-a) !important;
@@ -15931,7 +17133,6 @@ body.is-impersonating #loginOverlay {
 }
 .custom-marker-with-label.status-this-week .marker-dot {
   background: var(--color-status-this-week) !important;
-  animation: pulse-overdue-dot 1.5s ease-in-out infinite;
 }
 .custom-marker-with-label.status-next-month .marker-dot {
   background: var(--color-status-next-month) !important;
@@ -17214,4 +18415,375 @@ body.is-impersonating #loginOverlay {
     transform: translateX(-50%);
     max-width: 500px;
   }
+}
+
+/* =============================================
+   CHAT / MESSAGING SYSTEM
+   ============================================= */
+
+/* Chat pane — JS sets explicit height via resizeChatContainer() */
+#tab-chat {
+  overflow: hidden;
+  display: none;
+  flex-direction: column;
+}
+
+#tab-chat.active {
+  display: flex !important;
+  flex-direction: column;
+}
+
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Chat header */
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.chat-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* Conversation list */
+.chat-conversations {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chat-conv-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border);
+  transition: background 0.15s ease;
+}
+
+.chat-conv-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.chat-conv-item.unread {
+  background: var(--color-accent-muted);
+}
+
+.chat-conv-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--color-bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.chat-conv-item.unread .chat-conv-icon {
+  background: var(--color-accent);
+  color: white;
+}
+
+.chat-conv-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-conv-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  margin-bottom: 2px;
+}
+
+.chat-conv-preview {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-conv-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.chat-conv-time {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.chat-conv-unread {
+  background: var(--color-accent);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+/* Chat sub-views — each fills the container */
+.chat-conversation-list,
+.chat-message-view,
+.chat-new-dm {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-message-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  flex-shrink: 0;
+}
+
+.chat-message-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+/* Messages area */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.chat-msg {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.chat-msg.other {
+  align-self: flex-start;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-msg.self {
+  align-self: flex-end;
+  background: var(--color-accent);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-msg-sender {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent);
+  margin-bottom: 3px;
+}
+
+.chat-msg.self .chat-msg-sender {
+  color: rgba(255, 255, 255, 0.7);
+  text-align: right;
+}
+
+.chat-msg-time {
+  font-size: 10px;
+  opacity: 0.6;
+  margin-top: 4px;
+  text-align: right;
+}
+
+.chat-msg-date-separator {
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding: 8px 0;
+  position: relative;
+}
+
+.chat-msg-date-separator::before,
+.chat-msg-date-separator::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 30%;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.chat-msg-date-separator::before {
+  left: 0;
+}
+
+.chat-msg-date-separator::after {
+  right: 0;
+}
+
+/* Typing indicator */
+.chat-typing-indicator {
+  padding: 4px 16px 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Chat input area — always pinned at bottom */
+.chat-input-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  flex-shrink: 0;
+}
+
+.chat-input-area input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.chat-input-area input:focus {
+  border-color: var(--color-accent);
+  background: var(--color-bg-elevated);
+}
+
+.chat-input-area input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.chat-input-area .btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Team member list for new DM */
+.chat-team-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.chat-team-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.chat-team-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.chat-team-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-accent-muted);
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.chat-team-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+/* Chat badge on sidebar tab */
+.tab-badge.chat-badge {
+  background: var(--color-accent);
+}
+
+/* Chat empty state */
+.chat-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-text-muted);
+  gap: 12px;
+}
+
+.chat-empty-state i {
+  font-size: 32px;
+  opacity: 0.4;
+}
+
+.chat-empty-state p {
+  font-size: 14px;
+  margin: 0;
+}
+
+/* Load more messages button */
+.chat-load-more {
+  text-align: center;
+  padding: 8px;
+}
+
+.chat-load-more button {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.chat-load-more button:hover {
+  text-decoration: underline;
 }

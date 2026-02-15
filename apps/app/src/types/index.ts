@@ -158,6 +158,7 @@ export interface Kunde {
   kundenummer?: string;     // Customer number from accounting system
   faktura_epost?: string;   // Invoice email from accounting system
   org_nummer?: string;      // Organization number
+  estimert_tid?: number;    // Estimated time per customer in minutes
 
   // Lifecycle tracking
   lifecycle_stage?: string;
@@ -218,6 +219,8 @@ export interface Avtale {
   gjentakelse_regel?: string;
   gjentakelse_slutt?: string;
   original_avtale_id?: number;
+  rute_id?: number;
+  varighet?: number; // minutter
 }
 
 export interface EmailVarsel {
@@ -312,6 +315,28 @@ export interface FeatureWithStatus extends FeatureDefinition {
   config: Record<string, unknown>;
 }
 
+// ============ Patch Notes / Changelog ============
+
+export interface PatchNoteItem {
+  text: string;
+  type: 'nytt' | 'forbedring' | 'fiks';
+  visibility: 'mvp' | 'full';
+  feature_key?: string;
+  tab?: string;
+  description?: string;
+}
+
+export interface PatchNote {
+  id: number;
+  version: string;
+  title: string;
+  summary?: string;
+  items: PatchNoteItem[];
+  published_at: string;
+  created_at?: string;
+  aktiv: boolean;
+}
+
 export interface Organization {
   id: number;
   navn: string;
@@ -343,6 +368,36 @@ export interface Organization {
   app_mode?: AppMode; // 'mvp' = enkel versjon, 'full' = komplett (TRE Allservice)
   dato_modus?: 'full_date' | 'month_year'; // 'full_date' = standard, 'month_year' = kun måned+år
   opprettet?: string;
+}
+
+// ============ Chat / Messaging ============
+
+export interface ChatConversation {
+  id: number;
+  organization_id: number;
+  type: 'org' | 'dm';
+  created_at: string;
+  // Joined/computed fields
+  last_message?: ChatMessage;
+  unread_count?: number;
+  participant_name?: string; // For DMs: the other user's name
+  participant_id?: number;   // For DMs: the other user's id
+}
+
+export interface ChatMessage {
+  id: number;
+  conversation_id: number;
+  sender_id: number;
+  sender_name: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ChatReadStatus {
+  user_id: number;
+  conversation_id: number;
+  last_read_message_id: number;
+  updated_at: string;
 }
 
 // ============ API Types ============
@@ -413,6 +468,8 @@ export interface CreateKundeRequest {
   kontroll_intervall_mnd?: number;
   el_kontroll_intervall?: number;
   brann_kontroll_intervall?: number;
+  org_nummer?: string;
+  estimert_tid?: number;
   notater?: string;
   kontaktperson?: string;
   custom_data?: string;

@@ -64,6 +64,17 @@ interface SupabaseService {
   updateOrganization(id: number, data: Partial<Organization>): Promise<Organization | null>;
   getGlobalStatistics(): Promise<{ totalOrganizations: number; totalKunder: number; totalUsers: number; activeSubscriptions: number }>;
 
+  // Avtaler methods
+  getAllAvtaler(): Promise<unknown[]>;
+  getAvtalerByTenant(organizationId: number, start?: string, end?: string): Promise<unknown[]>;
+  getAvtaleById(id: number): Promise<Record<string, unknown> | null>;
+  createAvtale(data: Record<string, unknown>): Promise<Record<string, unknown>>;
+  updateAvtale(id: number, data: Record<string, unknown>): Promise<Record<string, unknown> | null>;
+  deleteAvtale(id: number): Promise<unknown>;
+  deleteAvtaleSeries(parentId: number, organizationId: number): Promise<number>;
+  deleteAvtalerByRuteId(ruteId: number, organizationId: number): Promise<number>;
+  completeAvtale(id: number, completionData: Record<string, unknown>): Promise<unknown>;
+
   // Onboarding methods
   getOnboardingStatus(organizationId: number): Promise<{
     stage: string;
@@ -830,8 +841,9 @@ class DatabaseService {
         navn, adresse, postnummer, poststed, telefon, epost, lat, lng, notater, kategori,
         siste_el_kontroll, neste_el_kontroll, el_kontroll_intervall,
         siste_brann_kontroll, neste_brann_kontroll, brann_kontroll_intervall,
-        el_type, brann_system, brann_driftstype, organization_id, kontaktperson, custom_data
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        el_type, brann_system, brann_driftstype, organization_id, kontaktperson, custom_data,
+        org_nummer
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -856,7 +868,8 @@ class DatabaseService {
       data.brann_driftstype,
       data.organization_id,
       data.kontaktperson || null,
-      data.custom_data || '{}'
+      data.custom_data || '{}',
+      data.org_nummer || null
     );
 
     return { ...data, id: Number(result.lastInsertRowid) } as Kunde;
@@ -1690,6 +1703,17 @@ class DatabaseService {
   // ============ TEAM MEMBER METHODS ============
 
   async getTeamMembers(organizationId: number): Promise<KlientRecord[]> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('klient')
+        .select('id, navn, epost, telefon, aktiv, sist_innlogget, opprettet')
+        .eq('organization_id', organizationId)
+        .order('navn', { ascending: true });
+      if (error) throw new Error(`Failed to fetch team members: ${error.message}`);
+      return (data || []) as KlientRecord[];
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     return this.sqlite.prepare(`
@@ -2820,6 +2844,19 @@ class DatabaseService {
   async getAllAvtaler(organizationId: number, start?: string, end?: string): Promise<(Avtale & { kunde_navn?: string })[]> {
     this.validateTenantContext(organizationId, 'getAllAvtaler');
 
+    if (this.type === 'supabase' && this.supabase) {
+      const data = await this.supabase.getAvtalerByTenant(organizationId, start, end) as any[];
+      return (data || []).map((a: any) => ({
+        ...a,
+        kunde_navn: a.kunder?.navn,
+        adresse: a.kunder?.adresse,
+        postnummer: a.kunder?.postnummer,
+        poststed: a.kunder?.poststed,
+        telefon: a.kunder?.telefon,
+        kategori: a.kunder?.kategori,
+      }));
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     let sql = `
@@ -2847,6 +2884,20 @@ class DatabaseService {
   async getAvtaleById(id: number, organizationId: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
     this.validateTenantContext(organizationId, 'getAvtaleById');
 
+    if (this.type === 'supabase' && this.supabase) {
+      const a = await this.supabase.getAvtaleById(id) as any;
+      if (!a) return null;
+      return {
+        ...a,
+        kunde_navn: a.kunder?.navn,
+        adresse: a.kunder?.adresse,
+        postnummer: a.kunder?.postnummer,
+        poststed: a.kunder?.poststed,
+        telefon: a.kunder?.telefon,
+        kategori: a.kunder?.kategori,
+      } as Avtale & { kunde_navn?: string };
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const sql = `SELECT a.*, k.navn as kunde_navn, k.adresse, k.postnummer, k.poststed, k.telefon, k.kategori
@@ -2861,12 +2912,25 @@ class DatabaseService {
   async createAvtale(data: Partial<Avtale> & { organization_id: number }): Promise<Avtale & { kunde_navn?: string }> {
     this.validateTenantContext(data.organization_id, 'createAvtale');
 
+    if (this.type === 'supabase' && this.supabase) {
+      const a = await this.supabase.createAvtale(data as any) as any;
+      return {
+        ...a,
+        kunde_navn: a.kunder?.navn,
+        adresse: a.kunder?.adresse,
+        postnummer: a.kunder?.postnummer,
+        poststed: a.kunder?.poststed,
+        telefon: a.kunder?.telefon,
+        kategori: a.kunder?.kategori,
+      } as Avtale & { kunde_navn?: string };
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const stmt = this.sqlite.prepare(`
       INSERT INTO avtaler (kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av, organization_id,
-        er_gjentakelse, gjentakelse_regel, gjentakelse_slutt, original_avtale_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        er_gjentakelse, gjentakelse_regel, gjentakelse_slutt, original_avtale_id, rute_id, varighet)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -2881,15 +2945,47 @@ class DatabaseService {
       data.er_gjentakelse ? 1 : 0,
       data.gjentakelse_regel || null,
       data.gjentakelse_slutt || null,
-      data.original_avtale_id || null
+      data.original_avtale_id || null,
+      data.rute_id || null,
+      data.varighet || null
     );
 
     const avtale = await this.getAvtaleById(Number(result.lastInsertRowid), data.organization_id);
     return avtale!;
   }
 
+  async deleteAvtalerByRuteId(ruteId: number, organizationId: number): Promise<number> {
+    this.validateTenantContext(organizationId, 'deleteAvtalerByRuteId');
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.deleteAvtalerByRuteId(ruteId, organizationId);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    const result = this.sqlite.prepare(
+      'DELETE FROM avtaler WHERE rute_id = ? AND organization_id = ?'
+    ).run(ruteId, organizationId);
+
+    return result.changes;
+  }
+
   async updateAvtale(id: number, data: Partial<Avtale>, organizationId: number): Promise<(Avtale & { kunde_navn?: string }) | null> {
     this.validateTenantContext(organizationId, 'updateAvtale');
+
+    if (this.type === 'supabase' && this.supabase) {
+      const a = await this.supabase.updateAvtale(id, data as any) as any;
+      if (!a) return null;
+      return {
+        ...a,
+        kunde_navn: a.kunder?.navn,
+        adresse: a.kunder?.adresse,
+        postnummer: a.kunder?.postnummer,
+        poststed: a.kunder?.poststed,
+        telefon: a.kunder?.telefon,
+        kategori: a.kunder?.kategori,
+      } as Avtale & { kunde_navn?: string };
+    }
 
     const existing = await this.getAvtaleById(id, organizationId);
     if (!existing) return null;
@@ -2918,6 +3014,11 @@ class DatabaseService {
   async deleteAvtale(id: number, organizationId: number): Promise<boolean> {
     this.validateTenantContext(organizationId, 'deleteAvtale');
 
+    if (this.type === 'supabase' && this.supabase) {
+      await this.supabase.deleteAvtale(id);
+      return true;
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const sql = 'DELETE FROM avtaler WHERE id = ? AND organization_id = ?';
@@ -2929,6 +3030,11 @@ class DatabaseService {
   async completeAvtale(id: number, organizationId: number): Promise<boolean> {
     this.validateTenantContext(organizationId, 'completeAvtale');
 
+    if (this.type === 'supabase' && this.supabase) {
+      await this.supabase.completeAvtale(id, {});
+      return true;
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const sql = `UPDATE avtaler SET status = 'fullført', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND organization_id = ?`;
@@ -2939,6 +3045,10 @@ class DatabaseService {
 
   async deleteAvtaleSeries(parentId: number, organizationId: number): Promise<number> {
     this.validateTenantContext(organizationId, 'deleteAvtaleSeries');
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.deleteAvtaleSeries(parentId, organizationId);
+    }
 
     if (!this.sqlite) throw new Error('Database not initialized');
 
@@ -5970,7 +6080,10 @@ class DatabaseService {
   async getReportKontrollStatus(organizationId: number): Promise<{ overdue: number; upcoming_30: number; upcoming_90: number; ok: number }> {
     if (!this.sqlite) throw new Error('Database not initialized');
 
-    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    // Forfalt = kun når kontrollens måned er passert (første dag i inneværende måned)
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
     const in30 = new Date();
     in30.setDate(in30.getDate() + 30);
     const in30Str = in30.toISOString().slice(0, 10);
@@ -5985,7 +6098,7 @@ class DatabaseService {
         SUM(CASE WHEN neste_kontroll > ? AND neste_kontroll <= ? THEN 1 ELSE 0 END) as upcoming_90,
         SUM(CASE WHEN neste_kontroll > ? OR neste_kontroll IS NULL THEN 1 ELSE 0 END) as ok
       FROM kunder WHERE organization_id = ?
-    `).get(today, today, in30Str, in30Str, in90Str, in90Str, organizationId) as any;
+    `).get(firstOfMonth, today, in30Str, in30Str, in90Str, in90Str, organizationId) as any;
 
     return {
       overdue: result?.overdue || 0,
@@ -6520,6 +6633,68 @@ class DatabaseService {
     return this.getOrganizationFeature(organizationId, featureKey);
   }
 
+  // ============ Patch Notes / Changelog ============
+
+  async getPatchNotes(limit?: number): Promise<import('../types').PatchNote[]> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      let query = supabase
+        .from('patch_notes')
+        .select('*')
+        .eq('aktiv', true)
+        .order('published_at', { ascending: false });
+      if (limit) query = query.limit(limit);
+      const { data, error } = await query;
+      if (error) throw new Error(`Failed to fetch patch notes: ${error.message}`);
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const sql = limit
+      ? 'SELECT * FROM patch_notes WHERE aktiv = 1 ORDER BY published_at DESC LIMIT ?'
+      : 'SELECT * FROM patch_notes WHERE aktiv = 1 ORDER BY published_at DESC';
+    const rows = (limit ? this.sqlite.prepare(sql).all(limit) : this.sqlite.prepare(sql).all()) as any[];
+    return rows.map(r => ({ ...r, items: JSON.parse(r.items || '[]'), aktiv: !!r.aktiv }));
+  }
+
+  async getPatchNotesSince(sinceId: number): Promise<import('../types').PatchNote[]> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('patch_notes')
+        .select('*')
+        .eq('aktiv', true)
+        .gt('id', sinceId)
+        .order('published_at', { ascending: false });
+      if (error) throw new Error(`Failed to fetch patch notes: ${error.message}`);
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const rows = this.sqlite.prepare(
+      'SELECT * FROM patch_notes WHERE aktiv = 1 AND id > ? ORDER BY published_at DESC'
+    ).all(sinceId) as any[];
+    return rows.map(r => ({ ...r, items: JSON.parse(r.items || '[]'), aktiv: !!r.aktiv }));
+  }
+
+  async getLatestPatchNoteId(): Promise<number> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('patch_notes')
+        .select('id')
+        .eq('aktiv', true)
+        .order('published_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`Failed to fetch latest patch note: ${error.message}`);
+      return data?.id ?? 0;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const row = this.sqlite.prepare(
+      'SELECT id FROM patch_notes WHERE aktiv = 1 ORDER BY published_at DESC LIMIT 1'
+    ).get() as { id: number } | undefined;
+    return row?.id ?? 0;
+  }
+
   // ============ Organization Service Types ============
 
   private slugify(name: string): string {
@@ -6762,6 +6937,507 @@ class DatabaseService {
     return this.sqlite.prepare(
       'SELECT * FROM organization_service_types WHERE organization_id = ? AND slug = ?'
     ).get(organizationId, slug) as OrganizationServiceType;
+  }
+
+  // ============ Chat / Messaging ============
+
+  async getOrCreateOrgConversation(organizationId: number): Promise<{ id: number }> {
+    this.validateTenantContext(organizationId, 'getOrCreateOrgConversation');
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      // Try to find existing org conversation
+      const { data: existing } = await supabase
+        .from('chat_conversations')
+        .select('id')
+        .eq('organization_id', organizationId)
+        .eq('type', 'org')
+        .maybeSingle();
+      if (existing) return { id: existing.id };
+
+      // Create new org conversation
+      const { data, error } = await supabase
+        .from('chat_conversations')
+        .insert({ organization_id: organizationId, type: 'org' })
+        .select('id')
+        .single();
+      if (error) throw new Error(`Failed to create org conversation: ${error.message}`);
+      return { id: data.id };
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const existing = this.sqlite.prepare(
+      'SELECT id FROM chat_conversations WHERE organization_id = ? AND type = ?'
+    ).get(organizationId, 'org') as { id: number } | undefined;
+    if (existing) return existing;
+
+    const result = this.sqlite.prepare(
+      'INSERT INTO chat_conversations (organization_id, type) VALUES (?, ?)'
+    ).run(organizationId, 'org');
+    return { id: Number(result.lastInsertRowid) };
+  }
+
+  async getOrCreateDmConversation(organizationId: number, userIds: [number, number]): Promise<{ id: number }> {
+    this.validateTenantContext(organizationId, 'getOrCreateDmConversation');
+    const sorted = [...userIds].sort((a, b) => a - b);
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      // Find existing DM between these two users in this org
+      const { data: conversations } = await supabase
+        .from('chat_conversations')
+        .select('id')
+        .eq('organization_id', organizationId)
+        .eq('type', 'dm');
+
+      if (conversations && conversations.length > 0) {
+        for (const conv of conversations) {
+          const { data: participants } = await supabase
+            .from('chat_participants')
+            .select('user_id')
+            .eq('conversation_id', conv.id)
+            .order('user_id', { ascending: true });
+          const pIds = (participants || []).map((p: { user_id: number }) => p.user_id);
+          if (pIds.length === 2 && pIds[0] === sorted[0] && pIds[1] === sorted[1]) {
+            return { id: conv.id };
+          }
+        }
+      }
+
+      // Create new DM conversation
+      const { data: newConv, error } = await supabase
+        .from('chat_conversations')
+        .insert({ organization_id: organizationId, type: 'dm' })
+        .select('id')
+        .single();
+      if (error) throw new Error(`Failed to create DM conversation: ${error.message}`);
+
+      // Add participants
+      await supabase.from('chat_participants').insert([
+        { conversation_id: newConv.id, user_id: sorted[0] },
+        { conversation_id: newConv.id, user_id: sorted[1] },
+      ]);
+      return { id: newConv.id };
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+    // Find existing DM
+    const dmConversations = this.sqlite.prepare(
+      'SELECT id FROM chat_conversations WHERE organization_id = ? AND type = ?'
+    ).all(organizationId, 'dm') as { id: number }[];
+
+    for (const conv of dmConversations) {
+      const participants = this.sqlite.prepare(
+        'SELECT user_id FROM chat_participants WHERE conversation_id = ? ORDER BY user_id ASC'
+      ).all(conv.id) as { user_id: number }[];
+      const pIds = participants.map(p => p.user_id);
+      if (pIds.length === 2 && pIds[0] === sorted[0] && pIds[1] === sorted[1]) {
+        return { id: conv.id };
+      }
+    }
+
+    // Create new DM
+    const result = this.sqlite.prepare(
+      'INSERT INTO chat_conversations (organization_id, type) VALUES (?, ?)'
+    ).run(organizationId, 'dm');
+    const convId = Number(result.lastInsertRowid);
+    this.sqlite.prepare('INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)').run(convId, sorted[0]);
+    this.sqlite.prepare('INSERT INTO chat_participants (conversation_id, user_id) VALUES (?, ?)').run(convId, sorted[1]);
+    return { id: convId };
+  }
+
+  async getChatConversationsForUser(organizationId: number, userId: number): Promise<import('../types').ChatConversation[]> {
+    this.validateTenantContext(organizationId, 'getChatConversationsForUser');
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+
+      // Get org conversation
+      const { data: orgConvs } = await supabase
+        .from('chat_conversations')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .eq('type', 'org');
+
+      // Get DM conversations the user participates in
+      const { data: dmParticipations } = await supabase
+        .from('chat_participants')
+        .select('conversation_id')
+        .eq('user_id', userId);
+
+      const dmConvIds = (dmParticipations || []).map((p: { conversation_id: number }) => p.conversation_id);
+      let dmConvs: any[] = [];
+      if (dmConvIds.length > 0) {
+        const { data } = await supabase
+          .from('chat_conversations')
+          .select('*')
+          .eq('organization_id', organizationId)
+          .eq('type', 'dm')
+          .in('id', dmConvIds);
+        dmConvs = data || [];
+      }
+
+      const allConvs = [...(orgConvs || []), ...dmConvs];
+
+      // Enrich with last message, unread count, and participant name for DMs
+      const result: import('../types').ChatConversation[] = [];
+      for (const conv of allConvs) {
+        // Last message
+        const { data: lastMsg } = await supabase
+          .from('chat_messages')
+          .select('*')
+          .eq('conversation_id', conv.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Unread count
+        const { data: readStatus } = await supabase
+          .from('chat_read_status')
+          .select('last_read_message_id')
+          .eq('user_id', userId)
+          .eq('conversation_id', conv.id)
+          .maybeSingle();
+
+        const lastReadId = readStatus?.last_read_message_id ?? 0;
+        const { count: unreadCount } = await supabase
+          .from('chat_messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('conversation_id', conv.id)
+          .gt('id', lastReadId)
+          .neq('sender_id', userId);
+
+        // Participant name for DMs
+        let participantName: string | undefined;
+        let participantId: number | undefined;
+        if (conv.type === 'dm') {
+          const { data: parts } = await supabase
+            .from('chat_participants')
+            .select('user_id')
+            .eq('conversation_id', conv.id)
+            .neq('user_id', userId)
+            .limit(1)
+            .maybeSingle();
+          if (parts) {
+            participantId = parts.user_id;
+            const { data: user } = await supabase
+              .from('klient')
+              .select('navn')
+              .eq('id', parts.user_id)
+              .maybeSingle();
+            participantName = user?.navn;
+          }
+        }
+
+        result.push({
+          ...conv,
+          last_message: lastMsg || undefined,
+          unread_count: unreadCount ?? 0,
+          participant_name: participantName,
+          participant_id: participantId,
+        });
+      }
+
+      // Sort: org first, then by last message time descending
+      result.sort((a, b) => {
+        if (a.type === 'org' && b.type !== 'org') return -1;
+        if (a.type !== 'org' && b.type === 'org') return 1;
+        const aTime = a.last_message?.created_at || a.created_at;
+        const bTime = b.last_message?.created_at || b.created_at;
+        return new Date(bTime).getTime() - new Date(aTime).getTime();
+      });
+
+      return result;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Get org conversations
+    const orgConvs = this.sqlite.prepare(
+      'SELECT * FROM chat_conversations WHERE organization_id = ? AND type = ?'
+    ).all(organizationId, 'org') as any[];
+
+    // Get DM conversations
+    const dmConvIds = this.sqlite.prepare(
+      'SELECT conversation_id FROM chat_participants WHERE user_id = ?'
+    ).all(userId) as { conversation_id: number }[];
+    const dmConvs: any[] = [];
+    for (const { conversation_id } of dmConvIds) {
+      const conv = this.sqlite.prepare(
+        'SELECT * FROM chat_conversations WHERE id = ? AND organization_id = ? AND type = ?'
+      ).get(conversation_id, organizationId, 'dm');
+      if (conv) dmConvs.push(conv);
+    }
+
+    const allConvs = [...orgConvs, ...dmConvs];
+    const result: import('../types').ChatConversation[] = [];
+
+    for (const conv of allConvs) {
+      const lastMsg = this.sqlite.prepare(
+        'SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1'
+      ).get(conv.id) as import('../types').ChatMessage | undefined;
+
+      const readStatus = this.sqlite.prepare(
+        'SELECT last_read_message_id FROM chat_read_status WHERE user_id = ? AND conversation_id = ?'
+      ).get(userId, conv.id) as { last_read_message_id: number } | undefined;
+      const lastReadId = readStatus?.last_read_message_id ?? 0;
+
+      const unreadRow = this.sqlite.prepare(
+        'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = ? AND id > ? AND sender_id != ?'
+      ).get(conv.id, lastReadId, userId) as { count: number };
+
+      let participantName: string | undefined;
+      let participantId: number | undefined;
+      if (conv.type === 'dm') {
+        const other = this.sqlite.prepare(
+          'SELECT user_id FROM chat_participants WHERE conversation_id = ? AND user_id != ?'
+        ).get(conv.id, userId) as { user_id: number } | undefined;
+        if (other) {
+          participantId = other.user_id;
+          const user = this.sqlite.prepare('SELECT navn FROM klient WHERE id = ?').get(other.user_id) as { navn: string } | undefined;
+          participantName = user?.navn;
+        }
+      }
+
+      result.push({
+        ...conv,
+        last_message: lastMsg,
+        unread_count: unreadRow.count,
+        participant_name: participantName,
+        participant_id: participantId,
+      });
+    }
+
+    result.sort((a, b) => {
+      if (a.type === 'org' && b.type !== 'org') return -1;
+      if (a.type !== 'org' && b.type === 'org') return 1;
+      const aTime = a.last_message?.created_at || a.created_at;
+      const bTime = b.last_message?.created_at || b.created_at;
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
+    });
+
+    return result;
+  }
+
+  async getChatMessages(conversationId: number, organizationId: number, limit: number = 50, before?: number): Promise<import('../types').ChatMessage[]> {
+    this.validateTenantContext(organizationId, 'getChatMessages');
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+
+      // Verify conversation belongs to this org
+      const { data: conv } = await supabase
+        .from('chat_conversations')
+        .select('id')
+        .eq('id', conversationId)
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+      if (!conv) throw new Error('Conversation not found');
+
+      let query = supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('id', { ascending: false })
+        .limit(limit);
+
+      if (before) {
+        query = query.lt('id', before);
+      }
+
+      const { data, error } = await query;
+      if (error) throw new Error(`Failed to fetch messages: ${error.message}`);
+      return (data || []).reverse() as import('../types').ChatMessage[];
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Verify conversation belongs to this org
+    const conv = this.sqlite.prepare(
+      'SELECT id FROM chat_conversations WHERE id = ? AND organization_id = ?'
+    ).get(conversationId, organizationId);
+    if (!conv) throw new Error('Conversation not found');
+
+    const beforeClause = before ? 'AND id < ?' : '';
+    const params = before ? [conversationId, before, limit] : [conversationId, limit];
+
+    const messages = this.sqlite.prepare(
+      `SELECT * FROM chat_messages WHERE conversation_id = ? ${beforeClause} ORDER BY id DESC LIMIT ?`
+    ).all(...params) as import('../types').ChatMessage[];
+
+    return messages.reverse();
+  }
+
+  async createChatMessage(
+    conversationId: number,
+    organizationId: number,
+    senderId: number,
+    senderName: string,
+    content: string
+  ): Promise<import('../types').ChatMessage> {
+    this.validateTenantContext(organizationId, 'createChatMessage');
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+
+      // Verify conversation belongs to this org
+      const { data: conv } = await supabase
+        .from('chat_conversations')
+        .select('id')
+        .eq('id', conversationId)
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+      if (!conv) throw new Error('Conversation not found');
+
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .insert({
+          conversation_id: conversationId,
+          sender_id: senderId,
+          sender_name: senderName,
+          content,
+        })
+        .select()
+        .single();
+      if (error) throw new Error(`Failed to create message: ${error.message}`);
+      return data as import('../types').ChatMessage;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const conv = this.sqlite.prepare(
+      'SELECT id FROM chat_conversations WHERE id = ? AND organization_id = ?'
+    ).get(conversationId, organizationId);
+    if (!conv) throw new Error('Conversation not found');
+
+    const now = new Date().toISOString();
+    const result = this.sqlite.prepare(
+      'INSERT INTO chat_messages (conversation_id, sender_id, sender_name, content, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(conversationId, senderId, senderName, content, now);
+
+    return {
+      id: Number(result.lastInsertRowid),
+      conversation_id: conversationId,
+      sender_id: senderId,
+      sender_name: senderName,
+      content,
+      created_at: now,
+    };
+  }
+
+  async markChatAsRead(userId: number, conversationId: number, messageId: number): Promise<void> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      await supabase
+        .from('chat_read_status')
+        .upsert(
+          {
+            user_id: userId,
+            conversation_id: conversationId,
+            last_read_message_id: messageId,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,conversation_id' }
+        );
+      return;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+    this.sqlite.prepare(`
+      INSERT INTO chat_read_status (user_id, conversation_id, last_read_message_id, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, conversation_id) DO UPDATE SET
+        last_read_message_id = MAX(last_read_message_id, excluded.last_read_message_id),
+        updated_at = excluded.updated_at
+    `).run(userId, conversationId, messageId, new Date().toISOString());
+  }
+
+  async getChatUnreadCounts(userId: number, organizationId: number): Promise<{ conversationId: number; count: number }[]> {
+    this.validateTenantContext(organizationId, 'getChatUnreadCounts');
+
+    if (this.type === 'supabase') {
+      // Get all conversations for this org that user participates in
+      const conversations = await this.getChatConversationsForUser(organizationId, userId);
+      return conversations.map(c => ({
+        conversationId: c.id,
+        count: c.unread_count ?? 0,
+      }));
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    // Get org conversations
+    const orgConvs = this.sqlite.prepare(
+      'SELECT id FROM chat_conversations WHERE organization_id = ? AND type = ?'
+    ).all(organizationId, 'org') as { id: number }[];
+
+    // Get DM conversations
+    const dmParts = this.sqlite.prepare(
+      `SELECT cp.conversation_id FROM chat_participants cp
+       JOIN chat_conversations cc ON cc.id = cp.conversation_id
+       WHERE cp.user_id = ? AND cc.organization_id = ? AND cc.type = 'dm'`
+    ).all(userId, organizationId) as { conversation_id: number }[];
+
+    const allConvIds = [...orgConvs.map(c => c.id), ...dmParts.map(p => p.conversation_id)];
+    const result: { conversationId: number; count: number }[] = [];
+
+    for (const convId of allConvIds) {
+      const readStatus = this.sqlite.prepare(
+        'SELECT last_read_message_id FROM chat_read_status WHERE user_id = ? AND conversation_id = ?'
+      ).get(userId, convId) as { last_read_message_id: number } | undefined;
+      const lastReadId = readStatus?.last_read_message_id ?? 0;
+      const row = this.sqlite.prepare(
+        'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = ? AND id > ? AND sender_id != ?'
+      ).get(convId, lastReadId, userId) as { count: number };
+      if (row.count > 0) {
+        result.push({ conversationId: convId, count: row.count });
+      }
+    }
+
+    return result;
+  }
+
+  async getChatConversationById(conversationId: number, organizationId: number): Promise<import('../types').ChatConversation | null> {
+    this.validateTenantContext(organizationId, 'getChatConversationById');
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('chat_conversations')
+        .select('*')
+        .eq('id', conversationId)
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+      if (error) throw new Error(`Failed to fetch conversation: ${error.message}`);
+      return data as import('../types').ChatConversation | null;
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return (this.sqlite.prepare(
+      'SELECT * FROM chat_conversations WHERE id = ? AND organization_id = ?'
+    ).get(conversationId, organizationId) as import('../types').ChatConversation | undefined) || null;
+  }
+
+  async getChatConversationParticipants(conversationId: number): Promise<number[]> {
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data } = await supabase
+        .from('chat_participants')
+        .select('user_id')
+        .eq('conversation_id', conversationId);
+      return (data || []).map((p: { user_id: number }) => p.user_id);
+    }
+
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const rows = this.sqlite.prepare(
+      'SELECT user_id FROM chat_participants WHERE conversation_id = ?'
+    ).all(conversationId) as { user_id: number }[];
+    return rows.map(r => r.user_id);
+  }
+
+  async getChatTotalUnread(userId: number, organizationId: number): Promise<number> {
+    this.validateTenantContext(organizationId, 'getChatTotalUnread');
+    const counts = await this.getChatUnreadCounts(userId, organizationId);
+    return counts.reduce((sum, c) => sum + c.count, 0);
   }
 }
 

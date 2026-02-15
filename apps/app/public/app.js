@@ -19,6 +19,8 @@ let selectedBrannsystem = localStorage.getItem('selectedBrannsystem') || 'all'; 
 let selectedElType = localStorage.getItem('selectedElType') || 'all'; // 'all', 'Landbruk', 'Næring', 'Bolig', etc.
 let currentCalendarMonth = new Date().getMonth();
 let currentCalendarYear = new Date().getFullYear();
+let calendarViewMode = 'month'; // 'month' or 'week'
+let currentWeekStart = null; // Date object for start of current week view
 let bulkSelectedCustomers = new Set(); // For bulk "marker som ferdig" funksjon
 let bulkSelectMode = false; // Toggle for checkbox-modus
 let filterAbortController = null; // For å unngå race condition i applyFilters
@@ -3806,6 +3808,7 @@ async function handleSpaLogin(e) {
       authToken = data.accessToken || data.token;
       if (data.expiresAt) accessTokenExpiresAt = data.expiresAt;
       localStorage.setItem('userName', data.klient?.navn || data.bruker?.navn || 'Bruker');
+      localStorage.setItem('userEmail', email || data.klient?.epost || data.bruker?.epost || '');
       localStorage.setItem('userRole', data.klient?.rolle || data.bruker?.rolle || 'bruker');
       localStorage.setItem('userType', data.klient?.type || 'klient');
 
@@ -8105,7 +8108,7 @@ function toggleMapLegend() {
 }
 
 // Simple toast notification
-function showToast(message, type = 'info') {
+function showToast(message, type = 'info', duration = 3000) {
   // Remove existing toast
   const existing = document.querySelector('.toast-notification');
   if (existing) existing.remove();
@@ -8124,11 +8127,15 @@ function showToast(message, type = 'info') {
     toast.classList.add('visible');
   });
 
-  // Remove after 3 seconds
-  setTimeout(() => {
-    toast.classList.remove('visible');
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
+  // Remove after duration (0 = persistent, caller must remove manually)
+  if (duration > 0) {
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      setTimeout(() => toast.remove(), 300);
+    }, duration);
+  }
+
+  return toast;
 }
 
 // Initialize misc event listeners
@@ -9222,6 +9229,7 @@ function handleLogout() {
   authToken = null;
   isSuperAdmin = false;
   localStorage.removeItem('userName');
+  localStorage.removeItem('userEmail');
   localStorage.removeItem('userRole');
   localStorage.removeItem('userType');
   localStorage.removeItem('isSuperAdmin');
@@ -9304,6 +9312,7 @@ async function checkExistingAuth() {
         // Update user info
         if (user) {
           localStorage.setItem('userName', user.navn || 'Bruker');
+          localStorage.setItem('userEmail', user.epost || '');
           localStorage.setItem('userType', user.type || 'klient');
           localStorage.setItem('userRole', user.type === 'bruker' ? 'admin' : 'klient');
           // Store super admin flag
@@ -9372,6 +9381,7 @@ async function checkExistingAuth() {
   authToken = null;
   localStorage.removeItem('authToken');
   localStorage.removeItem('userName');
+  localStorage.removeItem('userEmail');
   localStorage.removeItem('userRole');
   localStorage.removeItem('userType');
   return false;
@@ -9754,10 +9764,30 @@ function showSubscriptionError(errorData) {
 let ws = null;
 let wsReconnectTimer = null;
 let wsReconnectAttempts = 0;
+let wsInitialized = false;
 const MAX_RECONNECT_ATTEMPTS = 10;
+
+// Presence tracking: kundeId → { userId, userName, initials }
+const presenceClaims = new Map();
+let currentClaimedKundeId = null;
+let myUserId = null;
+let myInitials = null;
+
+// Update connection indicator in UI
+function updateWsConnectionIndicator(connected) {
+  const indicator = document.getElementById('ws-connection-indicator');
+  if (indicator) {
+    indicator.className = connected ? 'ws-indicator ws-connected' : 'ws-indicator ws-disconnected';
+    indicator.title = connected ? 'Sanntidsoppdateringer aktiv' : 'Frakoblet - prøver å koble til...';
+  }
+}
 
 // Initialize WebSocket connection for real-time updates
 function initWebSocket() {
+  // Guard: only initialize once (called from multiple init paths)
+  if (wsInitialized && ws && ws.readyState !== WebSocket.CLOSED) return;
+  wsInitialized = true;
+
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}`;
 
@@ -9767,6 +9797,7 @@ function initWebSocket() {
     ws.onopen = () => {
       Logger.log('WebSocket connected - sanntidsoppdateringer aktiv');
       wsReconnectAttempts = 0;
+      updateWsConnectionIndicator(true);
     };
 
     ws.onmessage = (event) => {
@@ -9780,14 +9811,17 @@ function initWebSocket() {
 
     ws.onclose = () => {
       Logger.log('WebSocket disconnected');
+      updateWsConnectionIndicator(false);
       attemptReconnect();
     };
 
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
+      updateWsConnectionIndicator(false);
     };
   } catch (error) {
     console.error('Failed to create WebSocket:', error);
+    updateWsConnectionIndicator(false);
   }
 }
 
@@ -9803,6 +9837,7 @@ function attemptReconnect() {
 
   wsReconnectTimer = setTimeout(() => {
     Logger.log(`Attempting WebSocket reconnection (${wsReconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+    wsInitialized = false; // Allow re-init for reconnect
     initWebSocket();
   }, delay);
 }
@@ -9814,6 +9849,19 @@ function handleRealtimeUpdate(message) {
   switch (type) {
     case 'connected':
       Logger.log('Server:', data || message.message);
+      // Store own identity
+      if (data && data.userId) {
+        myUserId = data.userId;
+        myInitials = data.initials || '';
+      }
+      // Load initial presence state
+      if (data && data.presence) {
+        presenceClaims.clear();
+        for (const [kundeId, claim] of Object.entries(data.presence)) {
+          presenceClaims.set(Number(kundeId), claim);
+        }
+        updatePresenceBadges();
+      }
       break;
 
     case 'kunde_created':
@@ -9849,10 +9897,292 @@ function handleRealtimeUpdate(message) {
       updateSelectionUI();
       break;
 
+    case 'kunder_bulk_updated':
+      // Bulk update - reload all customers
+      Logger.log(`Bulk update: ${data.count} kunder oppdatert av annen bruker`);
+      loadCustomers();
+      break;
+
+    case 'rute_created':
+    case 'rute_updated':
+    case 'rute_deleted':
+      // Route changed - reload routes
+      Logger.log(`Rute ${type.replace('rute_', '')}: ${data.navn || data.id}`);
+      loadRoutes();
+      if (type === 'rute_created') {
+        showNotification(`Ny rute opprettet: ${data.navn || 'Uten navn'}`);
+      }
+      break;
+
+    case 'avtale_created':
+    case 'avtale_updated':
+    case 'avtale_deleted':
+    case 'avtale_series_deleted':
+    case 'avtaler_bulk_created':
+      // Calendar changed - reload if calendar is visible
+      Logger.log(`Avtale ${type.replace('avtale_', '').replace('avtaler_', '')}`);
+      if (typeof loadAvtaler === 'function') {
+        loadAvtaler();
+      }
+      break;
+
+    case 'customer_claimed':
+      // Someone started working on a customer
+      presenceClaims.set(data.kundeId, {
+        userId: data.userId,
+        userName: data.userName,
+        initials: data.initials,
+      });
+      updatePresenceBadgeForKunde(data.kundeId);
+      // Show notification if someone else claimed (not ourselves)
+      if (data.userId !== myUserId) {
+        Logger.log(`${data.userName} jobber med kunde #${data.kundeId}`);
+      }
+      break;
+
+    case 'customer_released':
+      // Someone stopped working on a customer
+      presenceClaims.delete(data.kundeId);
+      updatePresenceBadgeForKunde(data.kundeId);
+      break;
+
+    case 'user_offline':
+      // Another user went offline — remove all their claims
+      for (const [kundeId, claim] of presenceClaims) {
+        if (claim.userId === data.userId) {
+          presenceClaims.delete(kundeId);
+          updatePresenceBadgeForKunde(kundeId);
+        }
+      }
+      Logger.log(`Bruker frakoblet: ${data.userName}`);
+      break;
+
     case 'time_update':
       // Periodic time update - refresh day counters
       updateDayCounters();
       break;
+
+    case 'chat_message':
+      handleIncomingChatMessage(data);
+      break;
+
+    case 'chat_typing':
+      handleChatTyping(data);
+      break;
+
+    case 'chat_typing_stop':
+      handleChatTypingStop(data);
+      break;
+
+    case 'pong':
+      break;
+  }
+}
+
+// ========================================
+// PRESENCE: Show who is working on which customer
+// ========================================
+
+/**
+ * Send a claim_customer message via WebSocket
+ */
+function claimCustomer(kundeId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // Release previous claim if any
+  if (currentClaimedKundeId && currentClaimedKundeId !== kundeId) {
+    releaseCustomer(currentClaimedKundeId);
+  }
+  currentClaimedKundeId = kundeId;
+  const userName = localStorage.getItem('userName') || 'Bruker';
+  ws.send(JSON.stringify({ type: 'claim_customer', kundeId, userName }));
+}
+
+/**
+ * Send a release_customer message via WebSocket
+ */
+function releaseCustomer(kundeId) {
+  if (!kundeId) return;
+  if (currentClaimedKundeId === kundeId) {
+    currentClaimedKundeId = null;
+  }
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'release_customer', kundeId }));
+}
+
+/**
+ * Get a deterministic color for a user ID (for presence badges)
+ * Uses 10 visually distinct colors — each user always gets the same one
+ */
+const PRESENCE_COLORS = [
+  '#2563eb', // blå
+  '#dc2626', // rød
+  '#16a34a', // grønn
+  '#9333ea', // lilla
+  '#ea580c', // oransje
+  '#0891b2', // cyan
+  '#c026d3', // magenta
+  '#ca8a04', // gul
+  '#4f46e5', // indigo
+  '#0d9488', // teal
+];
+function getPresenceColor(userId) {
+  return PRESENCE_COLORS[userId % PRESENCE_COLORS.length];
+}
+
+/**
+ * Update presence badge on a specific customer's marker
+ */
+function updatePresenceBadgeForKunde(kundeId) {
+  if (!markers || !markers[kundeId]) return;
+  const marker = markers[kundeId];
+  const el = marker.getElement();
+  if (!el) return;
+
+  // Remove existing presence badge
+  const existing = el.querySelector('.presence-badge');
+  if (existing) existing.remove();
+
+  // Add badge if someone has claimed this customer
+  const claim = presenceClaims.get(kundeId);
+  if (claim && claim.userId !== myUserId) {
+    const badge = document.createElement('div');
+    badge.className = 'presence-badge';
+    badge.style.backgroundColor = getPresenceColor(claim.userId);
+    badge.textContent = claim.initials;
+    badge.title = `${claim.userName} jobber med denne kunden`;
+    el.appendChild(badge);
+  }
+}
+
+/**
+ * Update all presence badges on map markers
+ */
+function updatePresenceBadges() {
+  if (!markers) return;
+  for (const kundeId of Object.keys(markers)) {
+    updatePresenceBadgeForKunde(Number(kundeId));
+  }
+}
+
+/**
+ * Update week plan badges on map markers.
+ * Shows initials of who planned/owns each customer for the current week.
+ */
+function updateWeekPlanBadges() {
+  if (!markers) return;
+
+  // Use team members to get consistent colors per person
+  const teamMembers = getWeekTeamMembers();
+  const colorByName = new Map();
+  teamMembers.forEach(m => colorByName.set(m.name, m.color));
+
+  // Build a map: kundeId → { initials, day, color }
+  const planMap = new Map();
+  const userName = localStorage.getItem('userName') || '';
+  const userInitials = getCreatorDisplay(userName, true);
+
+  // Planned (unsaved) customers from weekly plan
+  if (weekPlanState.days) {
+    for (const dayKey of weekDayKeys) {
+      const dayData = weekPlanState.days[dayKey];
+      if (!dayData) continue;
+      for (const c of dayData.planned) {
+        planMap.set(c.id, {
+          initials: userInitials,
+          day: weekDayLabels[weekDayKeys.indexOf(dayKey)].substring(0, 3),
+          color: colorByName.get(userName) || TEAM_COLORS[0],
+          creator: userName
+        });
+      }
+    }
+  }
+
+  // Existing avtaler for the current week
+  if (weekPlanState.days) {
+    const weekDates = new Set(weekDayKeys.map(k => weekPlanState.days[k]?.date).filter(Boolean));
+    for (const a of avtaler) {
+      if (!weekDates.has(a.dato) || !a.kunde_id) continue;
+      if (planMap.has(a.kunde_id)) continue;
+      const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+      if (!creator) continue;
+      const initials = getCreatorDisplay(creator, true);
+      const dayDate = new Date(a.dato + 'T00:00:00');
+      const dayIdx = (dayDate.getDay() + 6) % 7;
+      planMap.set(a.kunde_id, {
+        initials,
+        day: dayIdx < 5 ? weekDayLabels[dayIdx].substring(0, 3) : '',
+        color: colorByName.get(creator) || TEAM_COLORS[1],
+        creator
+      });
+    }
+  }
+
+  // Update all markers
+  for (const kundeId of Object.keys(markers)) {
+    const marker = markers[kundeId];
+    const el = marker.getElement();
+    if (!el) continue;
+
+    // Remove existing plan badge
+    const existing = el.querySelector('.wp-plan-badge');
+    if (existing) existing.remove();
+
+    const plan = planMap.get(Number(kundeId));
+    if (plan) {
+      const badge = document.createElement('div');
+      badge.className = 'wp-plan-badge';
+      badge.style.backgroundColor = plan.color;
+      badge.textContent = plan.initials;
+      badge.title = `${plan.day} - ${plan.initials}`;
+      el.appendChild(badge);
+    }
+  }
+
+  // Refresh cluster icons so they pick up planned data
+  if (markerClusterGroup) {
+    // Store plan data on marker options for cluster icon access
+    for (const [kundeId, plan] of planMap) {
+      if (markers[kundeId]) {
+        markers[kundeId].options.customerData = {
+          ...markers[kundeId].options.customerData,
+          planned: true,
+          plannedInitials: plan.initials,
+          plannedColor: plan.color
+        };
+      }
+    }
+    // Clear planned flag for non-planned markers
+    for (const kundeId of Object.keys(markers)) {
+      if (!planMap.has(Number(kundeId)) && markers[kundeId].options.customerData) {
+        delete markers[kundeId].options.customerData.planned;
+        delete markers[kundeId].options.customerData.plannedInitials;
+        delete markers[kundeId].options.customerData.plannedColor;
+      }
+    }
+    markerClusterGroup.refreshClusters();
+  }
+}
+
+// Lightweight re-apply of plan badges on visible markers (uses data stored on marker.options)
+function reapplyPlanBadges() {
+  if (!markers) return;
+
+  for (const kundeId of Object.keys(markers)) {
+    const marker = markers[kundeId];
+    const el = marker.getElement();
+    if (!el) continue;
+
+    // Skip if badge already exists
+    if (el.querySelector('.wp-plan-badge')) continue;
+
+    const cd = marker.options.customerData;
+    if (cd && cd.planned && cd.plannedInitials) {
+      const badge = document.createElement('div');
+      badge.className = 'wp-plan-badge';
+      badge.style.backgroundColor = cd.plannedColor || TEAM_COLORS[0];
+      badge.textContent = cd.plannedInitials;
+      el.appendChild(badge);
+    }
   }
 }
 
@@ -10374,6 +10704,19 @@ function initMap() {
       }
     });
   });
+
+  // Re-apply badges and focus styling on ANY map zoom/pan (new marker DOM elements appear)
+  map.on('moveend', () => {
+    requestAnimationFrame(() => {
+      reapplyPlanBadges();
+      if (wpFocusedMemberIds || wpRouteActive) applyTeamFocusToMarkers();
+    });
+  });
+  markerClusterGroup.on('animationend', () => {
+    reapplyPlanBadges();
+    if (wpFocusedMemberIds || wpRouteActive) applyTeamFocusToMarkers();
+  });
+
   Logger.log('initMap() markerClusterGroup created and added to map');
 
   // Handle cluster click - show popup with options
@@ -10477,6 +10820,9 @@ function initMap() {
 
   // Update marker labels visibility based on zoom level
   map.on('zoomend', updateMarkerLabelsVisibility);
+
+  // Init area select (dra-for-å-velge)
+  initAreaSelect();
 }
 
 // Show/hide marker labels based on zoom level
@@ -10630,11 +10976,16 @@ function renderOmradeFilter() {
   if (!filterContainer) return;
 
   filterContainer.innerHTML = `
-    <select id="omradeSelect">
-      <option value="alle">Alle områder</option>
-      <option value="varsler">Trenger kontroll</option>
-      ${omrader.map(o => `<option value="${escapeHtml(o.poststed)}">${escapeHtml(o.poststed)} (${o.antall})</option>`).join('')}
-    </select>
+    <div style="display:flex;gap:4px;align-items:center;">
+      <select id="omradeSelect" style="flex:1;">
+        <option value="alle">Alle områder</option>
+        <option value="varsler">Trenger kontroll</option>
+        ${omrader.map(o => `<option value="${escapeHtml(o.poststed)}">${escapeHtml(o.poststed)} (${o.antall})</option>`).join('')}
+      </select>
+      <button id="showOverdueInAreaBtn" class="btn btn-small btn-warning" style="display:none;white-space:nowrap;" title="Vis forfalte i området på kartet">
+        <i class="fas fa-exclamation-triangle"></i>
+      </button>
+    </div>
   `;
 
   // Use event delegation on filterContainer to avoid memory leaks
@@ -10647,7 +10998,36 @@ function renderOmradeFilter() {
     currentFilter = e.target.value;
     showOnlyWarnings = currentFilter === 'varsler';
     applyFilters();
+
+    // Vis/skjul knapp for å vise forfalte i valgt område
+    const overdueBtn = document.getElementById('showOverdueInAreaBtn');
+    if (overdueBtn) {
+      overdueBtn.style.display = (currentFilter !== 'alle' && currentFilter !== 'varsler') ? 'inline-flex' : 'none';
+    }
   });
+
+  // Knapp: vis forfalte i valgt område på kartet
+  const overdueBtn = document.getElementById('showOverdueInAreaBtn');
+  if (overdueBtn) {
+    overdueBtn.addEventListener('click', () => {
+      const currentMonthValue = new Date().getFullYear() * 12 + new Date().getMonth();
+      const overdueInArea = customers.filter(c => {
+        if (c.poststed !== currentFilter) return false;
+        const nextDate = getNextControlDate(c);
+        if (!nextDate) return false;
+        const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+        return controlMonthValue < currentMonthValue;
+      });
+      if (overdueInArea.length === 0) {
+        showToast('Ingen forfalte kontroller i dette området', 'info');
+        return;
+      }
+      const ids = overdueInArea.map(c => c.id);
+      showCustomersOnMap(ids);
+      highlightCustomersOnMap(ids);
+      showToast(`${overdueInArea.length} forfalte kontroller i ${currentFilter}`, 'warning');
+    });
+  }
 }
 
 // Apply all filters
@@ -10761,6 +11141,14 @@ async function applyFilters() {
   renderCustomerList(filtered);
   renderMarkers(filtered);
   updateCategoryFilterCounts();
+
+  // Fremhev søketreff på kartet
+  const activeSearch = searchInput?.value?.trim();
+  if (activeSearch && filtered.length > 0 && filtered.length < 50) {
+    highlightCustomersOnMap(filtered.map(c => c.id));
+  } else {
+    clearMapHighlights();
+  }
 
   // Update search result counter
   const counterEl = document.getElementById('filterResultCount');
@@ -10881,9 +11269,13 @@ function createClusterIcon(cluster) {
   const areaNames = new Set();
   let warningCount = 0;
 
-  // Collect all unique area names and count warnings from marker options (not popup)
+  // Collect all unique area names, count warnings and planned markers
+  const plannedByUser = new Map(); // initials → count
+  let plannedCount = 0;
+  let focusedInCluster = 0; // how many of the focused member's markers are in this cluster
+  let routeStopsInCluster = 0; // how many route stop markers are in this cluster
+
   markers.forEach(marker => {
-    // Use stored customer data on marker (set in renderMarkers)
     const customerData = marker.options.customerData;
     if (customerData) {
       if (customerData.poststed) {
@@ -10892,11 +11284,32 @@ function createClusterIcon(cluster) {
       if (customerData.hasWarning) {
         warningCount++;
       }
+      if (customerData.planned) {
+        plannedCount++;
+        const initials = customerData.plannedInitials || '?';
+        plannedByUser.set(initials, (plannedByUser.get(initials) || 0) + 1);
+      }
+      // Check if this marker belongs to the focused team member
+      if (wpFocusedMemberIds && customerData.id != null && wpFocusedMemberIds.has(Number(customerData.id))) {
+        focusedInCluster++;
+      }
+      // Check if this marker is a route stop
+      if (wpRouteStopIds && customerData.id != null && wpRouteStopIds.has(Number(customerData.id))) {
+        routeStopsInCluster++;
+      }
     }
   });
 
   const size = markers.length;
   const warningBadge = warningCount > 0 ? `<div class="cluster-warning">${warningCount}</div>` : '';
+
+  // Plan badge on cluster: shows initials and count
+  let planBadge = '';
+  if (plannedCount > 0) {
+    const entries = Array.from(plannedByUser.entries());
+    const badgeText = entries.map(([init, count]) => `${init} ${count}`).join(' · ');
+    planBadge = `<div class="cluster-plan-badge">${badgeText}</div>`;
+  }
 
   // Use "Region Nord" only when nearly all customers are clustered (zoomed fully out)
   let areaText;
@@ -10912,12 +11325,21 @@ function createClusterIcon(cluster) {
   else if (size >= 20) sizeClass = 'cluster-large';
   else if (size >= 8) sizeClass = 'cluster-medium';
 
+  // Dim cluster if route/focus is active and this cluster has none of the highlighted markers
+  let dimStyle = '';
+  if (wpRouteActive && wpRouteStopIds) {
+    dimStyle = routeStopsInCluster === 0 ? 'opacity:0.3;filter:grayscale(0.8);pointer-events:none;' : '';
+  } else if (wpFocusedMemberIds) {
+    dimStyle = focusedInCluster === 0 ? 'opacity:0.15;filter:grayscale(1);pointer-events:none;' : '';
+  }
+
   return L.divIcon({
     html: `
-      <div class="cluster-icon ${sizeClass}">
-        <div class="cluster-count">${size}</div>
+      <div class="cluster-icon ${sizeClass}" style="${dimStyle}">
+        <div class="cluster-count">${wpFocusedMemberIds && focusedInCluster > 0 ? focusedInCluster : size}</div>
         <div class="cluster-area">${areaText}</div>
         ${warningBadge}
+        ${planBadge}
       </div>
     `,
     className: 'custom-cluster',
@@ -10971,7 +11393,11 @@ function getControlStatus(customer) {
   const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
   const dateFormatted = formatDateInline(nextDate);
 
-  if (daysUntil < 0) {
+  // Forfalt = kun når kontrollens måned+år er i fortiden (ikke bare dato passert)
+  const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+  const currentMonthValue = today.getFullYear() * 12 + today.getMonth();
+
+  if (controlMonthValue < currentMonthValue) {
     return { status: 'forfalt', label: `${Math.abs(daysUntil)} dager over`, class: 'status-overdue', date: dateFormatted, daysUntil };
   } else if (daysUntil <= 7) {
     return { status: 'denne-uke', label: `${daysUntil} dager`, class: 'status-this-week', date: dateFormatted, daysUntil };
@@ -11149,11 +11575,13 @@ function generatePopupContent(customer) {
     if (customer.brann_system) directFieldsHtml += `<p><strong>Brannsystem:</strong> ${escapeHtml(customer.brann_system)}</p>`;
     if (customer.brann_driftstype) directFieldsHtml += `<p><strong>Driftstype:</strong> ${escapeHtml(customer.brann_driftstype)}</p>`;
   }
-  // Extract org_nr from notater [ORGNR:X] tag
-  if (customer.notater) {
-    const orgNrMatch = customer.notater.match(/\[ORGNR:(\d{9})\]/);
-    if (orgNrMatch) directFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNrMatch[1])}</p>`;
-  }
+  // Show org.nr. from dedicated field or fallback to notater tag
+  const orgNr = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]);
+  if (orgNr) directFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
+  // Show Tripletex kundenummer and prosjektnummer if present
+  if (customer.kundenummer) directFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
+  if (customer.prosjektnummer) directFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
+  if (customer.estimert_tid) directFieldsHtml += `<p><strong>Est. tid:</strong> ${customer.estimert_tid} min</p>`;
 
   // Show notater if present (strip internal tags for cleaner display)
   let notatHtml = '';
@@ -11168,7 +11596,16 @@ function generatePopupContent(customer) {
     }
   }
 
+  // Presence warning: show if another user is working on this customer
+  const claim = presenceClaims.get(customer.id);
+  const presenceBanner = (claim && claim.userId !== myUserId)
+    ? `<div class="presence-warning-banner" style="background:${escapeHtml(getPresenceColor(claim.userId))}18;border-left:3px solid ${escapeHtml(getPresenceColor(claim.userId))};padding:6px 10px;margin-bottom:8px;border-radius:4px;font-size:13px;">
+        <strong>${escapeHtml(claim.initials)}</strong> ${escapeHtml(claim.userName)} jobber med denne kunden
+      </div>`
+    : '';
+
   return `
+    ${presenceBanner}
     <h3>${escapeHtml(customer.navn)}</h3>
     <p><strong>Kategori:</strong> ${escapeHtml(customer.kategori || 'Annen')}</p>
     ${industryFieldsHtml}
@@ -11187,6 +11624,14 @@ function generatePopupContent(customer) {
       <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
         ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
       </button>
+      <div class="popup-btn-group">
+        <button class="btn btn-small btn-calendar" data-action="quickAddToday" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
+          <i class="fas fa-calendar-plus"></i> I dag
+        </button>
+        <button class="btn btn-small btn-calendar" data-action="showCalendarQuickMenu" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
+          <i class="fas fa-chevron-down" style="font-size:9px"></i>
+        </button>
+      </div>
       <button class="btn btn-small btn-success" data-action="quickMarkVisited" data-customer-id="${customer.id}">
         <i class="fas fa-check"></i> Marker besøkt
       </button>
@@ -11528,6 +11973,301 @@ function hideMarkerTooltip() {
 
 // ========================================
 
+// === AREA SELECT (dra-for-å-velge kunder på kartet) ===
+let areaSelectMode = false;
+let areaSelectRect = null;
+let areaSelectStart = null;
+
+function initAreaSelect() {
+  if (!map) return;
+
+  // Legg til flytende knapp over kartet
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (!mapContainer) return;
+  const existingBtn = document.getElementById('areaSelectToggle');
+  if (existingBtn) existingBtn.remove();
+  const btn = document.createElement('button');
+  btn.id = 'areaSelectToggle';
+  btn.className = 'area-select-toggle-btn';
+  btn.title = 'Velg område';
+  btn.innerHTML = '<i class="fas fa-expand"></i>';
+  btn.addEventListener('click', () => toggleAreaSelect());
+  mapContainer.appendChild(btn);
+
+  // Mouse events for area selection
+  map.on('mousedown', onAreaSelectStart);
+  map.on('mousemove', onAreaSelectMove);
+  map.on('mouseup', onAreaSelectEnd);
+}
+
+function toggleAreaSelect() {
+  areaSelectMode = !areaSelectMode;
+  const btn = document.getElementById('areaSelectToggle');
+  const mapEl = document.getElementById('map');
+
+  if (areaSelectMode) {
+    btn?.classList.add('active');
+    mapEl.style.cursor = 'crosshair';
+    map.dragging.disable();
+    showToast('Dra over kunder for å velge dem', 'info');
+  } else {
+    btn?.classList.remove('active');
+    mapEl.style.cursor = '';
+    map.dragging.enable();
+    if (areaSelectRect) {
+      map.removeLayer(areaSelectRect);
+      areaSelectRect = null;
+    }
+  }
+}
+
+function onAreaSelectStart(e) {
+  if (!areaSelectMode) return;
+  areaSelectStart = e.latlng;
+  if (areaSelectRect) {
+    map.removeLayer(areaSelectRect);
+  }
+  areaSelectRect = L.rectangle([e.latlng, e.latlng], {
+    color: '#3b82f6',
+    weight: 2,
+    fillOpacity: 0.15,
+    dashArray: '6, 4'
+  }).addTo(map);
+}
+
+function onAreaSelectMove(e) {
+  if (!areaSelectMode || !areaSelectStart || !areaSelectRect) return;
+  areaSelectRect.setBounds(L.latLngBounds(areaSelectStart, e.latlng));
+}
+
+function onAreaSelectEnd(e) {
+  if (!areaSelectMode || !areaSelectStart || !areaSelectRect) return;
+
+  const bounds = areaSelectRect.getBounds();
+  areaSelectStart = null;
+
+  // Finn kunder innenfor rektangelet
+  const selected = customers.filter(c =>
+    c.lat && c.lng && bounds.contains(L.latLng(c.lat, c.lng))
+  );
+
+  if (selected.length === 0) {
+    map.removeLayer(areaSelectRect);
+    areaSelectRect = null;
+    showToast('Ingen kunder i valgt område', 'info');
+    return;
+  }
+
+  // Vis handlingsmeny (alltid vis valg)
+  showAreaSelectMenu(selected, bounds.getCenter());
+}
+
+function showAreaSelectMenu(selectedCustomersList, center) {
+  // Fjern eksisterende meny
+  document.getElementById('areaSelectMenu')?.remove();
+
+  // Initialize weekplan if not yet (so button is always available)
+  if (!weekPlanState.weekStart) {
+    initWeekPlanState(new Date());
+  }
+  const wpDayActive = weekPlanState.activeDay;
+  const wpDayLabel = wpDayActive ? weekDayLabels[weekDayKeys.indexOf(wpDayActive)] : '';
+  const showWpButton = true;
+
+  // Build weekplan day picker if no active day but tab is open
+  let wpDayPickerHtml = '';
+  if (showWpButton && !wpDayActive) {
+    wpDayPickerHtml = `
+      <div class="asm-day-picker" id="asmDayPicker" style="display:none;">
+        ${weekDayKeys.map((key, i) => {
+          const dayData = weekPlanState.days[key];
+          if (!dayData) return '';
+          const d = new Date(dayData.date);
+          const label = weekDayLabels[i];
+          const dateNum = d.getDate();
+          return `<button class="asm-day-option" data-wp-day="${key}">${label} ${dateNum}.</button>`;
+        }).join('')}
+      </div>`;
+  }
+
+  // Collect area names for context
+  const areas = [...new Set(selectedCustomersList.map(c => c.poststed).filter(Boolean))];
+  const areaText = areas.length > 0 ? areas.slice(0, 2).join(', ') : '';
+
+  const menu = document.createElement('div');
+  menu.id = 'areaSelectMenu';
+  menu.className = 'area-select-menu';
+  menu.innerHTML = `
+    <div class="area-select-menu-header">
+      <div class="asm-title">
+        <strong>${selectedCustomersList.length} kunder valgt</strong>
+        ${areaText ? `<span class="asm-area">${escapeHtml(areaText)}</span>` : ''}
+      </div>
+      <button class="area-select-close" id="closeAreaMenu">&times;</button>
+    </div>
+    <div class="area-select-menu-actions">
+      ${showWpButton ? `
+        <button class="btn btn-small asm-btn asm-btn-weekplan" id="areaAddToWeekPlan">
+          <i class="fas fa-clipboard-list"></i> ${wpDayActive ? `Legg til ${escapeHtml(wpDayLabel)}` : 'Legg til ukeplan'}
+        </button>
+        ${wpDayPickerHtml}
+      ` : ''}
+      <button class="btn btn-small asm-btn asm-btn-route" id="areaAddToRoute">
+        <i class="fas fa-route"></i> Legg til rute
+      </button>
+      <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToCalendar">
+        <i class="fas fa-calendar-plus"></i> Legg i kalender
+      </button>
+      <button class="btn btn-small asm-btn asm-btn-check" id="areaMarkVisited">
+        <i class="fas fa-check-circle"></i> Avhuking
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(menu);
+
+  // Legg til ukeplan
+  const wpBtn = document.getElementById('areaAddToWeekPlan');
+  if (wpBtn) {
+    wpBtn.addEventListener('click', () => {
+      if (wpDayActive) {
+        // Aktiv dag finnes — legg til direkte
+        addCustomersToWeekPlan(selectedCustomersList);
+        closeAreaSelectMenu();
+        renderWeeklyPlan();
+      } else {
+        // Vis dag-picker
+        const picker = document.getElementById('asmDayPicker');
+        if (picker) {
+          picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
+        }
+      }
+    });
+
+    // Dag-picker knapper
+    const dayPicker = document.getElementById('asmDayPicker');
+    if (dayPicker) {
+      dayPicker.querySelectorAll('.asm-day-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const dayKey = btn.dataset.wpDay;
+          weekPlanState.activeDay = dayKey;
+          addCustomersToWeekPlan(selectedCustomersList);
+          closeAreaSelectMenu();
+          renderWeeklyPlan();
+        });
+      });
+    }
+  }
+
+  // Legg til rute
+  document.getElementById('areaAddToRoute').addEventListener('click', () => {
+    selectedCustomersList.forEach(c => selectedCustomers.add(c.id));
+    updateSelectionUI();
+    closeAreaSelectMenu();
+    showToast(`${selectedCustomersList.length} kunder lagt til rute`, 'success');
+  });
+
+  // Legg i kalender - vis datepicker med tidspunkt
+  document.getElementById('areaAddToCalendar').addEventListener('click', () => {
+    const actionsDiv = menu.querySelector('.area-select-menu-actions');
+    actionsDiv.innerHTML = `
+      <div style="padding:4px 0;">
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Dato</label>
+        <input type="date" id="areaCalDate" value="${new Date().toISOString().split('T')[0]}"
+          style="width:100%;padding:6px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box;">
+      </div>
+      <div style="padding:4px 0;">
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Type</label>
+        <select id="areaCalType" style="width:100%;padding:6px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box;">
+          ${serviceTypeRegistry ? serviceTypeRegistry.renderCategoryOptions('Kontroll') : '<option>Kontroll</option>'}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;padding-top:4px;">
+        <button class="btn btn-small btn-secondary" id="areaCalBack" style="flex:1;">
+          <i class="fas fa-arrow-left"></i> Tilbake
+        </button>
+        <button class="btn btn-small btn-primary" id="areaCalConfirm" style="flex:2;">
+          Opprett ${selectedCustomersList.length} avtaler
+        </button>
+      </div>
+    `;
+
+    document.getElementById('areaCalBack').addEventListener('click', () => {
+      // Gjenoppbygg opprinnelig meny
+      showAreaSelectMenu(selectedCustomersList, center);
+    });
+
+    document.getElementById('areaCalConfirm').addEventListener('click', async () => {
+      const dato = document.getElementById('areaCalDate').value;
+      const type = document.getElementById('areaCalType').value || 'Kontroll';
+      if (!dato) {
+        showToast('Velg en dato', 'error');
+        return;
+      }
+      const confirmBtn = document.getElementById('areaCalConfirm');
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Oppretter...';
+      let created = 0;
+      let lastError = '';
+      for (const c of selectedCustomersList) {
+        try {
+          // Bruk kundens kategori som type hvis mulig, ellers valgt type
+          const avtaleType = c.kategori || type || undefined;
+          const response = await apiFetch('/api/avtaler', {
+            method: 'POST',
+            body: JSON.stringify({
+              kunde_id: c.id,
+              dato,
+              type: avtaleType,
+              beskrivelse: avtaleType || 'Kontroll',
+              opprettet_av: localStorage.getItem('userName') || 'admin'
+            })
+          });
+          if (response.ok) {
+            created++;
+          } else {
+            const errData = await response.json().catch(() => ({}));
+            lastError = errData.error?.message || errData.error || response.statusText;
+            console.error(`Avtale-feil for ${c.navn} (${response.status}):`, errData);
+          }
+        } catch (err) {
+          console.error('Feil ved opprettelse av avtale:', err);
+          lastError = err.message;
+        }
+      }
+      if (created > 0) {
+        showToast(`${created} avtaler opprettet for ${dato}`, 'success');
+      } else {
+        showToast(`Kunne ikke opprette avtaler: ${lastError}`, 'error');
+      }
+      closeAreaSelectMenu();
+      // Oppdater kalender
+      await loadAvtaler();
+      renderCalendar();
+    });
+  });
+
+  // Legg til avhuking
+  document.getElementById('areaMarkVisited').addEventListener('click', () => {
+    selectedCustomersList.forEach(c => bulkSelectedCustomers.add(c.id));
+    updateBulkSelectionUI();
+    closeAreaSelectMenu();
+    showToast(`${selectedCustomersList.length} kunder lagt til avhuking`, 'success');
+  });
+
+  // Lukk
+  document.getElementById('closeAreaMenu').addEventListener('click', closeAreaSelectMenu);
+}
+
+function closeAreaSelectMenu() {
+  document.getElementById('areaSelectMenu')?.remove();
+  if (areaSelectRect) {
+    map.removeLayer(areaSelectRect);
+    areaSelectRect = null;
+  }
+  toggleAreaSelect(); // Gå ut av velg-modus
+}
+
 // Render markers on map
 let renderMarkersRetryCount = 0;
 const MAX_RENDER_RETRIES = 10;
@@ -11639,6 +12379,7 @@ function renderMarkers(customerData) {
       const marker = L.marker([customer.lat, customer.lng], {
         icon,
         customerData: {
+          id: customer.id,
           poststed: customer.poststed,
           hasWarning: showWarning
         }
@@ -11766,6 +12507,11 @@ function renderMarkers(customerData) {
       markerClusterGroup.addLayer(item.marker);
     });
     Logger.log('renderMarkers: Added', markersToAdd.length, 'markers to cluster group');
+
+    // Re-apply presence badges after markers are in DOM
+    if (presenceClaims.size > 0) {
+      setTimeout(updatePresenceBadges, 200);
+    }
   }
 }
 
@@ -12639,21 +13385,24 @@ async function planSimpleRoute(customerData) {
       })
     });
 
-    const data = await response.json();
+    const rawData = await response.json();
 
     if (!response.ok) {
       // Parse ORS error message
-      if (data.error && data.error.message) {
-        if (data.error.message.includes('Could not find routable point')) {
+      if (rawData.error && rawData.error.message) {
+        if (rawData.error.message.includes('Could not find routable point')) {
           throw new Error('En eller flere kunder har koordinater som ikke er nær en vei. Velg andre kunder eller oppdater koordinatene.');
         }
-        throw new Error(data.error.message);
+        throw new Error(rawData.error.message);
       }
       throw new Error('Kunne ikke beregne rute');
     }
 
-    if (data.features && data.features.length > 0) {
-      const feature = data.features[0];
+    // Handle wrapped ({ success, data }) or raw ORS response
+    const geoData = rawData.data || rawData;
+
+    if (geoData.features && geoData.features.length > 0) {
+      const feature = geoData.features[0];
       drawRouteFromGeoJSON(feature);
 
       // Add start marker (company location)
@@ -12685,11 +13434,17 @@ async function planSimpleRoute(customerData) {
       const bounds = L.latLngBounds(allPoints);
       map.fitBounds(bounds, { padding: [50, 50] });
 
-      showRouteInfo(
-        customerData,
-        feature.properties.summary.duration,
-        feature.properties.summary.distance
-      );
+      // Extract summary from segments fallback
+      let duration = feature.properties?.summary?.duration || 0;
+      let distance = feature.properties?.summary?.distance || 0;
+      if (duration === 0 && feature.properties?.segments?.length > 0) {
+        for (const seg of feature.properties.segments) {
+          duration += seg.duration || 0;
+          distance += seg.distance || 0;
+        }
+      }
+
+      showRouteInfo(customerData, duration, distance);
     }
   } catch (error) {
     console.error('Enkel rute feil:', error);
@@ -12731,10 +13486,12 @@ async function drawRoute(orderedCustomers) {
       body: JSON.stringify({ coordinates })
     });
 
-    const data = await response.json();
+    const rawData = await response.json();
+    // Handle wrapped ({ success, data }) or raw ORS response
+    const geoData = rawData.data || rawData;
 
-    if (data.features && data.features.length > 0) {
-      drawRouteFromGeoJSON(data.features[0]);
+    if (geoData.features && geoData.features.length > 0) {
+      drawRouteFromGeoJSON(geoData.features[0]);
     }
   } catch (error) {
     console.error('Tegning av rute feil:', error);
@@ -12774,25 +13531,20 @@ async function drawRoute(orderedCustomers) {
 function drawRouteFromGeoJSON(feature) {
   clearRoute();
 
-  // Create route pane if it doesn't exist (ensures route is above tiles)
-  if (!map.getPane('routePane')) {
-    map.createPane('routePane');
-    map.getPane('routePane').style.zIndex = 450;
-  }
-
-  routeLayer = L.geoJSON(feature, {
-    pane: 'routePane',
-    style: {
+  if (feature && feature.geometry && feature.geometry.coordinates) {
+    // Convert GeoJSON [lng, lat] to Leaflet [lat, lng] and draw polyline directly
+    const routeCoords = feature.geometry.coordinates.map(c => [c[1], c[0]]);
+    routeLayer = L.polyline(routeCoords, {
       color: '#2563eb',
       weight: 6,
       opacity: 0.9,
       lineCap: 'round',
       lineJoin: 'round'
-    }
-  }).addTo(map);
+    }).addTo(map);
 
-  // Bring route to front
-  routeLayer.bringToFront();
+    // Bring route to front
+    routeLayer.bringToFront();
+  }
 }
 
 // Clear route from map
@@ -12961,19 +13713,29 @@ async function updateRouteAfterReorder() {
     });
 
     if (response.ok) {
-      const data = await response.json();
+      const rawData = await response.json();
+      // Handle wrapped ({ success, data }) or raw ORS response
+      const geoData = rawData.data || rawData;
 
-      if (data.features && data.features.length > 0) {
-        const feature = data.features[0];
-        const props = feature.properties.summary;
+      if (geoData.features && geoData.features.length > 0) {
+        const feature = geoData.features[0];
+        // Extract summary (with segments fallback)
+        let duration = feature.properties?.summary?.duration || 0;
+        let distance = feature.properties?.summary?.distance || 0;
+        if (duration === 0 && feature.properties?.segments?.length > 0) {
+          for (const seg of feature.properties.segments) {
+            duration += seg.duration || 0;
+            distance += seg.distance || 0;
+          }
+        }
 
         // Update stats
-        currentRouteData.duration = props.duration;
-        currentRouteData.distance = props.distance;
+        currentRouteData.duration = duration;
+        currentRouteData.distance = distance;
 
-        const hours = Math.floor(props.duration / 3600);
-        const minutes = Math.floor((props.duration % 3600) / 60);
-        const km = (props.distance / 1000).toFixed(1);
+        const hours = Math.floor(duration / 3600);
+        const minutes = Math.floor((duration % 3600) / 60);
+        const km = (distance / 1000).toFixed(1);
 
         document.getElementById('routeDuration').textContent = `${hours > 0 ? `${hours}t ` : ''}${minutes} min`;
         document.getElementById('routeDistance').textContent = `${km} km`;
@@ -13829,22 +14591,43 @@ function editCustomer(id) {
   const customer = customers.find(c => c.id === id);
   if (!customer) return;
 
+  // Claim this customer (presence system)
+  claimCustomer(id);
+
   // Populate dynamic dropdowns first
   populateDynamicDropdowns(customer);
 
   document.getElementById('modalTitle').textContent = 'Rediger kunde';
+
+  // Show presence warning if another user is working on this customer
+  const existingBanner = document.getElementById('presenceWarningBanner');
+  if (existingBanner) existingBanner.remove();
+  const claim = presenceClaims.get(id);
+  if (claim && claim.userId !== myUserId) {
+    const banner = document.createElement('div');
+    banner.id = 'presenceWarningBanner';
+    banner.style.cssText = `background:${getPresenceColor(claim.userId)}18;border-left:3px solid ${getPresenceColor(claim.userId)};padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:13px;color:#333;`;
+    banner.innerHTML = `<strong>${escapeHtml(claim.initials)}</strong> ${escapeHtml(claim.userName)} jobber med denne kunden`;
+    const modalTitle = document.getElementById('modalTitle');
+    modalTitle.parentNode.insertBefore(banner, modalTitle.nextSibling);
+  }
+
   document.getElementById('customerId').value = customer.id;
   document.getElementById('navn').value = customer.navn || '';
   document.getElementById('adresse').value = customer.adresse || '';
   document.getElementById('postnummer').value = customer.postnummer || '';
   document.getElementById('poststed').value = customer.poststed || '';
+  // Fyll org_nummer fra dedikert felt, eller fallback til [ORGNR:] tag i notater
+  const orgNrValue = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]) || '';
+  document.getElementById('org_nummer').value = orgNrValue;
+  document.getElementById('estimert_tid').value = customer.estimert_tid || '';
   document.getElementById('telefon').value = customer.telefon || '';
   document.getElementById('epost').value = customer.epost || '';
   const trimDate = (v) => appConfig.datoModus === 'month_year' && v && v.length >= 7 ? v.substring(0, 7) : (v || '');
   document.getElementById('siste_kontroll').value = trimDate(customer.siste_kontroll);
   document.getElementById('neste_kontroll').value = trimDate(customer.neste_kontroll);
   document.getElementById('kontroll_intervall').value = customer.kontroll_intervall_mnd || 12;
-  document.getElementById('notater').value = customer.notater || '';
+  document.getElementById('notater').value = (customer.notater || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').replace(/^\s*\|\s*/, '').trim();
   document.getElementById('lat').value = customer.lat || '';
   document.getElementById('lng').value = customer.lng || '';
 
@@ -13883,6 +14666,32 @@ function editCustomer(id) {
 
   // Highlight missing fields
   highlightMissingFields(customer);
+
+  // Show integration buttons if relevant
+  const integrationSection = document.getElementById('integrationActionsSection');
+  const tripletexBtn = document.getElementById('pushToTripletexBtn');
+  const ekkBtn = document.getElementById('createEkkReportBtn');
+  let showIntegrationSection = false;
+
+  if (tripletexBtn && appConfig.integrations?.tripletex?.active !== false) {
+    const isLinked = customer.external_source === 'tripletex' && customer.external_id;
+    document.getElementById('tripletexBtnLabel').textContent = isLinked ? 'Oppdater i Tripletex' : 'Opprett i Tripletex';
+    tripletexBtn.classList.remove('hidden');
+    showIntegrationSection = true;
+  } else if (tripletexBtn) {
+    tripletexBtn.classList.add('hidden');
+  }
+
+  if (ekkBtn && hasFeature('ekk_integration')) {
+    ekkBtn.classList.remove('hidden');
+    showIntegrationSection = true;
+  } else if (ekkBtn) {
+    ekkBtn.classList.add('hidden');
+  }
+
+  if (integrationSection) {
+    integrationSection.classList.toggle('hidden', !showIntegrationSection);
+  }
 }
 
 // Highlight fields that are missing data
@@ -14962,13 +15771,15 @@ async function saveCustomer(e) {
     poststed: poststed,
     telefon: document.getElementById('telefon').value,
     epost: document.getElementById('epost').value,
+    org_nummer: document.getElementById('org_nummer').value || null,
+    estimert_tid: Number.parseInt(document.getElementById('estimert_tid').value) || null,
     lat: lat,
     lng: lng,
     siste_kontroll: normalizeDateValue(document.getElementById('siste_kontroll').value) || null,
     neste_kontroll: normalizeDateValue(document.getElementById('neste_kontroll').value) || null,
     kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || 12,
     kategori: kategori,
-    notater: document.getElementById('notater').value,
+    notater: (document.getElementById('notater').value || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').trim(),
     // El-type specification
     el_type: document.getElementById('el_type') ? document.getElementById('el_type').value : null,
     // Separate El-Kontroll felt
@@ -15014,6 +15825,7 @@ async function saveCustomer(e) {
       await saveCustomerEmailSettings(savedCustomerId);
     }
 
+    releaseCustomer(currentClaimedKundeId);
     customerModal.classList.add('hidden');
 
     // Reset filter to show all customers so the new/updated one is visible
@@ -15045,6 +15857,7 @@ async function deleteCustomer() {
 
   try {
     await apiFetch(`/api/kunder/${customerId}`, { method: 'DELETE' });
+    releaseCustomer(currentClaimedKundeId);
     customerModal.classList.add('hidden');
     selectedCustomers.delete(Number.parseInt(customerId));
     await loadCustomers();
@@ -15205,6 +16018,14 @@ function updateGeocodeQualityBadge(quality) {
 }
 
 // Format date
+function getISOWeekNumber(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+  const yearStart = new Date(d.getFullYear(), 0, 4);
+  return Math.round(((d - yearStart) / 86400000 + 1) / 7);
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   const date = new Date(dateStr);
@@ -15430,12 +16251,14 @@ function renderOverdue() {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const currentMonthValue = today.getFullYear() * 12 + today.getMonth();
 
-  // Get overdue customers - use getNextControlDate to check all date fields
+  // Get overdue customers - forfalt kun når kontrollens måned er passert
   let overdueCustomers = customers.filter(c => {
     const nextDate = getNextControlDate(c);
     if (!nextDate) return false;
-    return nextDate < today;
+    const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+    return controlMonthValue < currentMonthValue;
   });
 
   // Calculate days overdue for each
@@ -15723,6 +16546,1075 @@ function renderWarnings() {
   container.innerHTML = html;
 }
 
+// === Calendar helper functions ===
+
+function formatDateISO(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function getNextMonday(fromDate) {
+  const d = new Date(fromDate);
+  const day = d.getDay();
+  const daysUntilMonday = day === 0 ? 1 : (8 - day);
+  d.setDate(d.getDate() + daysUntilMonday);
+  return d;
+}
+
+function addDaysToDate(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function getCreatorDisplay(name, short = false) {
+  if (!name || name === 'admin') return '';
+  const parts = name.trim().split(/\s+/);
+  if (short) {
+    // Initialer: "Sander Martinsen" → "SM"
+    return parts.map(p => p[0].toUpperCase()).join('');
+  }
+  // Kort: "Sander Martinsen" → "Sander M."
+  if (parts.length > 1) {
+    return parts[0] + ' ' + parts[1][0].toUpperCase() + '.';
+  }
+  return parts[0];
+}
+
+function getUniqueAreas(dayAvtaler) {
+  const areaMap = new Map();
+  dayAvtaler.forEach(a => {
+    const area = a.kunder?.poststed || a.poststed || null;
+    if (!area) return;
+    if (!areaMap.has(area)) {
+      areaMap.set(area, { count: 0, customers: [] });
+    }
+    const group = areaMap.get(area);
+    group.count++;
+    group.customers.push(a.kunder?.navn || a.kunde_navn || 'Ukjent');
+  });
+  return areaMap;
+}
+
+function getAreaTooltip(dayAvtaler) {
+  const areas = getUniqueAreas(dayAvtaler);
+  return Array.from(areas.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(([area, data]) => `${area}: ${data.count}`)
+    .join(', ');
+}
+
+function renderAreaBadges(dayAvtaler) {
+  const areas = getUniqueAreas(dayAvtaler);
+  if (areas.size === 0) return '';
+
+  const sorted = Array.from(areas.entries()).sort((a, b) => b[1].count - a[1].count);
+  return `
+    <div class="week-day-areas">
+      ${sorted.map(([area, data]) => `
+        <span class="area-badge" title="${escapeHtml(data.customers.join(', '))}">
+          <i class="fas fa-map-marker-alt"></i> ${escapeHtml(area)} (${data.count})
+        </span>
+      `).join('')}
+    </div>
+  `;
+}
+
+// === WEEKLY PLAN (Ukeplan - planlagte oppdrag) ===
+
+const weekDayKeys = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag'];
+const weekDayLabels = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag'];
+const monthNamesShort = ['jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des'];
+
+function formatMinutes(totalMin) {
+  if (!totalMin || totalMin <= 0) return '';
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0) return `${m} min`;
+  return m > 0 ? `${h}t ${m}min` : `${h}t`;
+}
+
+function getDayEstimatedTotal(dayKey) {
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return 0;
+  return dayData.planned.reduce((sum, c) => sum + (c.estimertTid || 30), 0);
+}
+
+const TEAM_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#ca8a04'];
+let wpFocusedTeamMember = null; // currently highlighted team member name
+let wpFocusedMemberIds = null; // Set of customer IDs for focused member (used by cluster icons)
+let wpRouteActive = false; // true when navigating a route (dims markers)
+let wpRouteStopIds = null; // Set of customer IDs that are stops in the active route
+
+function getWeekTeamMembers() {
+  if (!weekPlanState.days) return [];
+  const weekDates = new Set(weekDayKeys.map(k => weekPlanState.days[k]?.date).filter(Boolean));
+  const teamMap = new Map(); // name → { initials, count, kundeIds: Set }
+
+  // Planned (unsaved) - use global assigned technician, or current user
+  const userName = localStorage.getItem('userName') || '';
+  const globalAssigned = weekPlanState.globalAssignedTo || userName;
+  for (const dayKey of weekDayKeys) {
+    const dayData = weekPlanState.days[dayKey];
+    if (!dayData || dayData.planned.length === 0) continue;
+    const assignedName = globalAssigned || userName;
+    if (!assignedName) continue;
+    for (const c of dayData.planned) {
+      if (!teamMap.has(assignedName)) teamMap.set(assignedName, { initials: getCreatorDisplay(assignedName, true), count: 0, kundeIds: new Set() });
+      const entry = teamMap.get(assignedName);
+      entry.count++;
+      entry.kundeIds.add(c.id);
+    }
+  }
+
+  // Existing avtaler this week
+  for (const a of avtaler) {
+    if (!weekDates.has(a.dato) || !a.kunde_id) continue;
+    const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+    if (!creator) continue;
+    if (!teamMap.has(creator)) teamMap.set(creator, { initials: getCreatorDisplay(creator, true), count: 0, kundeIds: new Set() });
+    const entry = teamMap.get(creator);
+    if (!entry.kundeIds.has(a.kunde_id)) {
+      entry.count++;
+      entry.kundeIds.add(a.kunde_id);
+    }
+  }
+
+  // Convert to array sorted by count desc, then assign colors by sorted position
+  const sorted = Array.from(teamMap.entries()).map(([name, data]) => ({
+    name,
+    initials: data.initials,
+    count: data.count,
+    kundeIds: data.kundeIds,
+    color: '' // assigned after sort
+  })).sort((a, b) => b.count - a.count);
+
+  sorted.forEach((member, idx) => {
+    member.color = TEAM_COLORS[idx % TEAM_COLORS.length];
+  });
+  return sorted;
+}
+
+function focusTeamMemberOnMap(memberName) {
+  if (wpFocusedTeamMember === memberName) {
+    // Toggle off - remove focus
+    wpFocusedTeamMember = null;
+    wpFocusedMemberIds = null;
+    applyTeamFocusToMarkers();
+    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    renderWeeklyPlan();
+    return;
+  }
+
+  wpFocusedTeamMember = memberName;
+  const team = getWeekTeamMembers();
+  const member = team.find(t => t.name === memberName);
+  if (!member) return;
+
+  // Normalize all IDs to numbers for consistent lookup
+  wpFocusedMemberIds = new Set([...member.kundeIds].map(id => Number(id)));
+
+  // Collect bounds from actual map markers
+  const bounds = [];
+  for (const kundeId of wpFocusedMemberIds) {
+    const m = markers[kundeId];
+    if (m) {
+      const ll = m.getLatLng();
+      if (ll && ll.lat && ll.lng) {
+        bounds.push(ll);
+      }
+    }
+  }
+
+  // Zoom map FIRST, then apply styling after zoom settles
+  if (bounds.length > 0) {
+    const latLngBounds = L.latLngBounds(bounds);
+    map.fitBounds(latLngBounds.pad(0.5), { maxZoom: 11, padding: [40, 40] });
+  }
+
+  // Delay focus styling until after zoom animation completes
+  setTimeout(() => {
+    applyTeamFocusToMarkers();
+    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+  }, 400);
+
+  renderWeeklyPlan();
+}
+
+// Refresh focused member IDs after plan changes (remove/delete).
+// If the focused member no longer has customers, reset focus entirely.
+function refreshTeamFocus() {
+  if (!wpFocusedTeamMember) return;
+  const team = getWeekTeamMembers();
+  const member = team.find(t => t.name === wpFocusedTeamMember);
+  if (!member || member.kundeIds.size === 0) {
+    // Member no longer has any customers — clear focus
+    wpFocusedTeamMember = null;
+    wpFocusedMemberIds = null;
+  } else {
+    wpFocusedMemberIds = new Set([...member.kundeIds].map(id => Number(id)));
+  }
+  applyTeamFocusToMarkers();
+  if (markerClusterGroup) markerClusterGroup.refreshClusters();
+}
+
+// Apply focus/dim styling to individual markers (called after zoom changes too)
+function applyTeamFocusToMarkers() {
+  for (const kundeId of Object.keys(markers)) {
+    const el = markers[kundeId]?.getElement?.();
+    if (!el) continue;
+    const id = Number(kundeId);
+
+    if (wpRouteActive) {
+      // Route active: highlight route stops, dim everything else
+      if (wpRouteStopIds && wpRouteStopIds.has(id)) {
+        el.style.opacity = '1';
+        el.style.filter = '';
+        el.style.pointerEvents = '';
+      } else {
+        el.style.opacity = '0.3';
+        el.style.filter = 'grayscale(0.8)';
+        el.style.pointerEvents = 'none';
+      }
+    } else if (wpFocusedMemberIds) {
+      // Team focus active
+      if (wpFocusedMemberIds.has(id)) {
+        el.style.opacity = '1';
+        el.style.filter = '';
+        el.style.pointerEvents = '';
+      } else {
+        el.style.opacity = '0.15';
+        el.style.filter = 'grayscale(1)';
+        el.style.pointerEvents = 'none';
+      }
+    } else {
+      // Nothing active - reset
+      el.style.opacity = '';
+      el.style.filter = '';
+      el.style.pointerEvents = '';
+    }
+  }
+}
+
+let weekPlanState = {
+  weekStart: null,
+  activeDay: null,
+  days: {},
+  globalAssignedTo: ''
+};
+
+function initWeekPlanState(weekStart) {
+  const start = new Date(weekStart);
+  start.setHours(0, 0, 0, 0);
+  // Ensure it's a Monday
+  const day = start.getDay();
+  if (day !== 1) {
+    start.setDate(start.getDate() - ((day + 6) % 7));
+  }
+  weekPlanState.weekStart = new Date(start);
+  weekPlanState.days = {};
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    weekPlanState.days[weekDayKeys[i]] = {
+      date: formatDateISO(d),
+      planned: [],
+      assignedTo: ''
+    };
+  }
+}
+
+function getWeekPlanTotalPlanned() {
+  let total = 0;
+  for (const key of weekDayKeys) {
+    total += (weekPlanState.days[key]?.planned?.length || 0);
+  }
+  return total;
+}
+
+let wpTeamMembers = null;
+async function loadWpTeamMembers() {
+  if (wpTeamMembers) return wpTeamMembers;
+  try {
+    const resp = await fetch('/api/team-members', { headers: { 'X-CSRF-Token': csrfToken } });
+    const json = await resp.json();
+    if (json.success && json.data) {
+      wpTeamMembers = json.data.filter(m => m.aktiv);
+    }
+  } catch (e) { /* silent */ }
+  return wpTeamMembers || [];
+}
+
+async function renderWeeklyPlan() {
+  const container = document.getElementById('weeklyPlanContainer');
+  if (!container) return;
+
+  // Initialize state for current week if not set
+  if (!weekPlanState.weekStart) {
+    initWeekPlanState(new Date());
+  }
+
+  // Ensure avtaler are loaded
+  if (avtaler.length === 0) {
+    await loadAvtaler();
+  }
+
+  // Load team members for technician assignment dropdown
+  const allTeamMembers = await loadWpTeamMembers();
+
+  const weekNum = getISOWeekNumber(weekPlanState.weekStart);
+  const totalPlanned = getWeekPlanTotalPlanned();
+  const todayStr = formatDateISO(new Date());
+
+  let html = `<div class="wp-container">`;
+
+  // Header: week nav
+  html += `
+    <div class="wp-header">
+      <button class="btn btn-small btn-secondary" data-action="weekPlanPrev"><i class="fas fa-chevron-left"></i></button>
+      <span class="wp-week-title">Uke ${weekNum}</span>
+      <button class="btn btn-small btn-secondary" data-action="weekPlanNext"><i class="fas fa-chevron-right"></i></button>
+    </div>
+  `;
+
+  // Admin: technician assignment panel
+  const wpIsAdmin = localStorage.getItem('userRole') === 'admin' || localStorage.getItem('userType') === 'bruker';
+  if (wpIsAdmin && allTeamMembers.length > 0) {
+    const globalAssigned = weekPlanState.globalAssignedTo || '';
+    const tmOpts = allTeamMembers.map(m =>
+      `<option value="${escapeHtml(m.navn)}" ${globalAssigned === m.navn ? 'selected' : ''}>${escapeHtml(m.navn)}</option>`
+    ).join('');
+    html += `<div class="wp-dispatch-bar">
+      <i class="fas fa-user-hard-hat"></i>
+      <span>Planlegg for:</span>
+      <select class="wp-dispatch-select" id="wpDispatchSelect">
+        <option value="">Meg selv</option>
+        ${tmOpts}
+      </select>
+    </div>`;
+  }
+
+  // Status bar when selecting
+  if (weekPlanState.activeDay) {
+    const dispatchName = weekPlanState.globalAssignedTo || '';
+    const forWho = dispatchName ? ` for ${dispatchName}` : '';
+    html += `<div class="wp-status"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet for <strong>${weekDayLabels[weekDayKeys.indexOf(weekPlanState.activeDay)]}</strong>${forWho}</div>`;
+  } else if (totalPlanned === 0) {
+    html += `<div class="wp-status muted"><i class="fas fa-hand-pointer"></i> Velg en dag for å starte</div>`;
+  }
+
+  // Team bar - show all employees with planned work this week
+  const teamMembers = getWeekTeamMembers();
+  if (teamMembers.length > 0) {
+    html += `<div class="wp-team-bar">`;
+    html += `<span class="wp-team-label"><i class="fas fa-users"></i></span>`;
+    for (const member of teamMembers) {
+      const isActive = wpFocusedTeamMember === member.name;
+      html += `<span class="wp-team-chip ${isActive ? 'active' : ''}" style="background:${member.color}" data-action="focusTeamMember" data-member-name="${escapeHtml(member.name)}" title="Vis ${escapeHtml(member.name)} på kartet">${escapeHtml(member.initials)} <span class="chip-count">${member.count}</span></span>`;
+    }
+    if (wpFocusedTeamMember) {
+      html += `<span class="wp-team-chip" style="background:var(--bg-tertiary, #666);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle"><i class="fas fa-times"></i></span>`;
+    }
+    html += `</div>`;
+  }
+
+  // Build team color map for consistent coloring
+  const teamColorMap = new Map(teamMembers.map(m => [m.name, m.color]));
+  const currentUser = localStorage.getItem('userName') || '';
+  const currentUserColor = teamColorMap.get(currentUser) || TEAM_COLORS[0];
+
+  // Day list
+  html += `<div class="wp-days">`;
+
+  for (let i = 0; i < 5; i++) {
+    const dayKey = weekDayKeys[i];
+    const dayData = weekPlanState.days[dayKey];
+    const dateStr = dayData.date;
+    const dayDate = new Date(dateStr + 'T00:00:00');
+    const isActive = weekPlanState.activeDay === dayKey;
+    const isToday = todayStr === dateStr;
+    const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+    const plannedCount = dayData.planned.length;
+    const existingCount = existingAvtaler.length;
+    const hasContent = plannedCount > 0 || existingCount > 0;
+
+    // Day row (clickable header)
+    html += `<div class="wp-day ${isActive ? 'active' : ''} ${isToday ? 'today' : ''}" data-day="${dayKey}" data-action="setActiveDay">`;
+
+    // Day bar
+    const estTotalBar = getDayEstimatedTotal(dayKey);
+    html += `<div class="wp-day-bar">`;
+    html += `<span class="wp-day-label">${weekDayLabels[i].substring(0, 3)}</span>`;
+    html += `<span class="wp-day-date">${dayDate.getDate()}. ${monthNamesShort[dayDate.getMonth()]}</span>`;
+    if (plannedCount > 0) {
+      html += `<span class="wp-badge new">${plannedCount} ny${plannedCount > 1 ? 'e' : ''}</span>`;
+    }
+    if (existingCount > 0) {
+      html += `<span class="wp-badge existing">${existingCount}</span>`;
+    }
+    if (estTotalBar > 0) {
+      html += `<span class="wp-time-badge">~${formatMinutes(estTotalBar)}</span>`;
+    }
+    if (isActive) {
+      html += `<i class="fas fa-crosshairs wp-active-icon"></i>`;
+    }
+    html += `</div>`;
+
+    // Expanded content (always visible if has content, or if active)
+    if (hasContent || isActive) {
+      html += `<div class="wp-day-content">`;
+
+      // Global technician assignment colors
+      const dayAssignedName = weekPlanState.globalAssignedTo || currentUser;
+      const dayAssignedInitials = dayAssignedName ? getCreatorDisplay(dayAssignedName, true) : '';
+      const dayAssignedColor = teamColorMap.get(dayAssignedName) || currentUserColor;
+
+      // Planned customers (new - detailed)
+      for (const c of dayData.planned) {
+        const addrParts = [c.adresse, c.postnummer, c.poststed].filter(Boolean);
+        const addrStr = addrParts.join(', ');
+        html += `
+          <div class="wp-item new" style="border-left:3px solid ${dayAssignedColor}">
+            ${dayAssignedInitials ? `<span class="wp-item-creator" style="background:${dayAssignedColor}">${escapeHtml(dayAssignedInitials)}</span>` : ''}
+            <div class="wp-item-main">
+              <span class="wp-item-name">${escapeHtml(c.navn)}</span>
+              ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
+              ${c.telefon ? `<span class="wp-item-phone"><i class="fas fa-phone" style="font-size:8px;margin-right:2px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
+            </div>
+            <div class="wp-item-meta">
+              <input type="number" class="wp-time-input" value="${c.estimertTid || 30}" min="5" step="5"
+                data-action="setEstimatedTime" data-day="${dayKey}" data-customer-id="${c.id}">
+              <span>min</span>
+              <button class="wp-remove" data-action="removeFromPlan" data-day="${dayKey}" data-customer-id="${c.id}" title="Fjern">&times;</button>
+            </div>
+          </div>`;
+      }
+
+      // Existing avtaler (with team color-coded creator)
+      for (const a of existingAvtaler) {
+        const name = a.kunder?.navn || a.kunde_navn || 'Ukjent';
+        const addr = [a.kunder?.adresse, a.kunder?.postnummer, a.kunder?.poststed].filter(Boolean).join(', ');
+        const creatorName = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+        const creatorInitials = creatorName ? getCreatorDisplay(creatorName, true) : '';
+        const creatorColor = creatorName ? (teamColorMap.get(creatorName) || '#999') : '';
+        html += `
+          <div class="wp-item existing" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" style="${creatorColor ? 'border-left:3px solid ' + creatorColor : ''}" title="${creatorName ? 'Opprettet av ' + escapeHtml(creatorName) : ''}">
+            ${creatorInitials ? `<span class="wp-item-creator" style="background:${creatorColor}">${escapeHtml(creatorInitials)}</span>` : ''}
+            <div class="wp-item-main">
+              <span class="wp-item-name">${escapeHtml(name)}</span>
+              ${addr ? `<span class="wp-item-addr">${escapeHtml(addr)}</span>` : ''}
+            </div>
+          </div>`;
+      }
+
+      // Empty active day hint
+      if (!hasContent && isActive) {
+        html += `<div class="wp-empty-hint"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet</div>`;
+      }
+
+      html += `</div>`;
+
+      // Day footer with summary and navigate button
+      if (hasContent) {
+        const estTotal = getDayEstimatedTotal(dayKey);
+        const totalCount = plannedCount + existingCount;
+        const hasCoords = dayData.planned.some(c => c.lat && c.lng) ||
+          existingAvtaler.some(a => { const k = customers.find(c => c.id === a.kunde_id); return k?.lat && k?.lng; });
+        html += `<div class="wp-day-footer">`;
+        html += `<span class="wp-day-summary">${totalCount} kunder${estTotal > 0 ? ` · ~${formatMinutes(estTotal)}` : ''}</span>`;
+        if (hasCoords) {
+          html += `<button class="btn btn-small btn-secondary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i class="fas fa-directions"></i> Naviger</button>`;
+        }
+        html += `</div>`;
+      }
+    }
+
+    html += `</div>`; // close wp-day
+  }
+
+  html += `</div>`; // close wp-days
+
+  // Action bar (sticky at bottom)
+  if (totalPlanned > 0) {
+    html += `
+      <div class="wp-actions">
+        <button class="btn btn-primary wp-save-btn" data-action="saveWeeklyPlan"><i class="fas fa-check"></i> Opprett ${totalPlanned} avtale${totalPlanned > 1 ? 'r' : ''}</button>
+        <button class="btn btn-secondary wp-clear-btn" data-action="clearWeekPlan"><i class="fas fa-trash"></i></button>
+      </div>`;
+  }
+
+  html += `</div>`; // close wp-container
+  container.innerHTML = html;
+
+  // Right-click context menu on existing avtaler
+  container.addEventListener('contextmenu', (e) => {
+    const item = e.target.closest('.wp-item.existing[data-avtale-id]');
+    if (!item) return;
+    e.preventDefault();
+    const avtaleId = item.dataset.avtaleId;
+    const avtaleName = item.dataset.avtaleName;
+    showWpContextMenu(avtaleId, avtaleName, e.clientX, e.clientY);
+  });
+
+  // Update map markers with plan badges
+  updateWeekPlanBadges();
+}
+
+function addCustomersToWeekPlan(customersList) {
+  if (!weekPlanState.activeDay) return;
+
+  const dayKey = weekPlanState.activeDay;
+  const dayData = weekPlanState.days[dayKey];
+  const dateStr = dayData.date;
+  const existingAvtaleKundeIds = new Set(
+    avtaler.filter(a => a.dato === dateStr).map(a => a.kunde_id)
+  );
+
+  let added = 0;
+  let skippedExisting = 0;
+  let skippedDuplicate = 0;
+
+  for (const customer of customersList) {
+    // Skip if already has an avtale for this date
+    if (existingAvtaleKundeIds.has(customer.id)) {
+      skippedExisting++;
+      continue;
+    }
+
+    // Skip if already planned for this day
+    if (dayData.planned.some(c => c.id === customer.id)) {
+      skippedDuplicate++;
+      continue;
+    }
+
+    dayData.planned.push({
+      id: customer.id,
+      navn: customer.navn,
+      adresse: customer.adresse || '',
+      postnummer: customer.postnummer || '',
+      poststed: customer.poststed || '',
+      telefon: customer.telefon || '',
+      kategori: customer.kategori || null,
+      lat: customer.lat || null,
+      lng: customer.lng || null,
+      estimertTid: 30
+    });
+    added++;
+  }
+
+  let msg = `${added} kunder lagt til ${weekDayLabels[weekDayKeys.indexOf(dayKey)]}`;
+  if (skippedExisting > 0) msg += ` (${skippedExisting} har allerede avtale)`;
+  if (skippedDuplicate > 0) msg += ` (${skippedDuplicate} allerede lagt til)`;
+  showToast(msg, added > 0 ? 'success' : 'info');
+
+  renderWeeklyPlan();
+}
+
+async function saveWeeklyPlan() {
+  const totalPlanned = getWeekPlanTotalPlanned();
+  if (totalPlanned === 0) return;
+
+  const confirmed = await showConfirm(
+    `Opprett ${totalPlanned} avtaler for uke ${getISOWeekNumber(weekPlanState.weekStart)}?`,
+    'Bekreft oppretting'
+  );
+  if (!confirmed) return;
+
+  let created = 0;
+  let errors = 0;
+  let lastError = '';
+  const userName = localStorage.getItem('userName') || 'admin';
+
+  // Collect all planned items with per-day technician assignment
+  const allItems = [];
+  for (const dayKey of weekDayKeys) {
+    const dayData = weekPlanState.days[dayKey];
+    const assignedName = weekPlanState.globalAssignedTo || userName;
+    for (const customer of dayData.planned) {
+      allItems.push({ customer, date: dayData.date, opprettetAv: assignedName });
+    }
+  }
+
+  // Show progress toast
+  const progressToast = showToast(`Oppretter avtaler... 0/${allItems.length}`, 'info', 0);
+
+  // Process in parallel batches of 5
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < allItems.length; i += BATCH_SIZE) {
+    const batch = allItems.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async ({ customer, date, opprettetAv }) => {
+        const payload = {
+          kunde_id: customer.id,
+          dato: date,
+          beskrivelse: customer.kategori || 'Planlagt oppdrag',
+          opprettet_av: opprettetAv
+        };
+        const response = await apiFetch('/api/avtaler', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = errData.error?.message || errData.error || errData.message || response.statusText;
+          throw new Error(`${customer.navn}: ${errMsg}`);
+        }
+        return customer.navn;
+      })
+    );
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        created++;
+      } else {
+        errors++;
+        lastError = r.reason?.message || 'Ukjent feil';
+        console.error('Avtale-feil:', r.reason);
+      }
+    }
+
+    // Update progress
+    if (progressToast) {
+      const done = Math.min(i + BATCH_SIZE, allItems.length);
+      const span = progressToast.querySelector('span');
+      if (span) span.textContent = `Oppretter avtaler... ${done}/${allItems.length}`;
+    }
+  }
+
+  // Remove progress toast
+  if (progressToast) progressToast.remove();
+
+  if (created > 0) {
+    showToast(`${created} avtaler opprettet!`, 'success');
+  }
+  if (errors > 0) {
+    showToast(`${errors} avtaler feilet: ${lastError}`, 'error');
+  }
+
+  // Clear planned, reload
+  for (const dayKey of weekDayKeys) {
+    weekPlanState.days[dayKey].planned = [];
+  }
+  weekPlanState.activeDay = null;
+
+  // Deactivate area select if active
+  if (areaSelectMode) toggleAreaSelect();
+
+  await loadAvtaler();
+  refreshTeamFocus();
+  renderWeeklyPlan();
+}
+
+// Weekly plan context menu for existing avtaler
+function showWpContextMenu(avtaleId, avtaleName, x, y) {
+  closeWpContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'marker-context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    <div class="context-menu-header">${escapeHtml(avtaleName)}</div>
+    <div class="context-menu-item" role="menuitem" data-wp-action="delete" data-id="${escapeHtml(avtaleId)}">
+      <i class="fas fa-trash"></i> Slett avtale
+    </div>
+  `;
+
+  // Position
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  document.body.appendChild(menu);
+
+  // Adjust if off-screen
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = `${x - rect.width}px`;
+    if (rect.bottom > window.innerHeight) menu.style.top = `${y - rect.height}px`;
+  });
+
+  // Click handler
+  menu.addEventListener('click', async (e) => {
+    const item = e.target.closest('[data-wp-action]');
+    if (!item) return;
+    const action = item.dataset.wpAction;
+    const id = item.dataset.id;
+
+    if (action === 'delete') {
+      closeWpContextMenu();
+      try {
+        const response = await apiFetch(`/api/avtaler/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+          showToast('Avtale slettet', 'success');
+          await loadAvtaler();
+          refreshTeamFocus();
+          renderWeeklyPlan();
+        } else {
+          const err = await response.json().catch(() => ({}));
+          showToast(err.error?.message || 'Kunne ikke slette avtale', 'error');
+        }
+      } catch (err) {
+        showToast('Feil ved sletting: ' + err.message, 'error');
+      }
+    }
+  });
+
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', closeWpContextMenu, { once: true });
+  }, 10);
+
+  activeWpContextMenu = menu;
+}
+
+let activeWpContextMenu = null;
+function closeWpContextMenu() {
+  if (activeWpContextMenu) {
+    activeWpContextMenu.remove();
+    activeWpContextMenu = null;
+  }
+}
+
+function clearWeekPlan() {
+  for (const dayKey of weekDayKeys) {
+    weekPlanState.days[dayKey].planned = [];
+  }
+  weekPlanState.activeDay = null;
+  if (areaSelectMode) toggleAreaSelect();
+  refreshTeamFocus();
+  renderWeeklyPlan();
+  showToast('Plan tømt', 'info');
+}
+
+async function wpNavigateDay(dayKey) {
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return;
+  const dateStr = dayData.date;
+
+  // Collect all customers with coordinates + estimated time
+  const stops = [];
+
+  // Planned customers
+  for (const c of dayData.planned) {
+    if (c.lat && c.lng) {
+      stops.push({ id: c.id, lat: c.lat, lng: c.lng, navn: c.navn, adresse: c.adresse || '', estimertTid: c.estimertTid || 30 });
+    }
+  }
+
+  // Existing avtaler - look up coordinates from customers array
+  const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+  for (const a of existingAvtaler) {
+    const kunde = customers.find(c => c.id === a.kunde_id);
+    if (kunde?.lat && kunde?.lng) {
+      if (!stops.some(s => s.lat === kunde.lat && s.lng === kunde.lng)) {
+        stops.push({ id: kunde.id, lat: kunde.lat, lng: kunde.lng, navn: kunde.navn, adresse: kunde.adresse || '', estimertTid: 30 });
+      }
+    }
+  }
+
+  if (stops.length === 0) {
+    showToast('Ingen kunder med koordinater for denne dagen', 'info');
+    return;
+  }
+
+  // Build coordinates: office → customers → office
+  const startLat = appConfig.routeStartLat || 69.06888;
+  const startLng = appConfig.routeStartLng || 17.65274;
+  const startLatLng = [startLat, startLng];
+  const coordinates = [
+    [startLng, startLat],
+    ...stops.map(s => [s.lng, s.lat]),
+    [startLng, startLat]
+  ];
+
+  // Loading toast
+  const loadingToast = showToast('Beregner rute...', 'info', 0);
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    const csrfToken = getCsrfToken();
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+    const response = await fetch('/api/routes/directions', {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify({ coordinates })
+    });
+
+    // Remove loading toast
+    if (loadingToast) loadingToast.remove();
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      console.error('[wpNavigateDay] API error:', response.status, errBody);
+      showToast(`Kunne ikke beregne rute (${response.status})`, 'error');
+      return;
+    }
+
+    const rawData = await response.json();
+
+    // Handle wrapped ({ success, data: {...} }) or raw ORS response
+    const geoData = rawData.data || rawData;
+    const feature = geoData.features?.[0];
+
+    // Extract driving summary
+    let drivingSeconds = 0;
+    let distanceMeters = 0;
+    if (feature?.properties?.summary) {
+      drivingSeconds = feature.properties.summary.duration || 0;
+      distanceMeters = feature.properties.summary.distance || 0;
+    }
+    // Fallback: sum segments if no top-level summary
+    if (drivingSeconds === 0 && feature?.properties?.segments?.length > 0) {
+      for (const seg of feature.properties.segments) {
+        drivingSeconds += seg.duration || 0;
+        distanceMeters += seg.distance || 0;
+      }
+    }
+
+    // Clear any existing route
+    clearRoute();
+
+    // Dim all markers/clusters via CSS class on map
+    wpRouteActive = true;
+    wpRouteStopIds = new Set(stops.map(s => Number(s.id)));
+    applyTeamFocusToMarkers();
+    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+
+    // Build route line: start → stop1 → stop2 → ... → start
+    const linePoints = [startLatLng, ...stops.map(s => [s.lat, s.lng]), startLatLng];
+
+    // Try ORS road-following geometry, fall back to straight lines
+    let routeDrawn = false;
+    if (feature?.geometry?.coordinates?.length > 2) {
+      try {
+        const geomType = feature.geometry.type;
+        let routeCoords;
+        if (geomType === 'MultiLineString') {
+          routeCoords = feature.geometry.coordinates.flat().map(c => [c[1], c[0]]);
+        } else {
+          routeCoords = feature.geometry.coordinates.map(c => [c[1], c[0]]);
+        }
+        if (routeCoords.length > 2 && !isNaN(routeCoords[0][0]) && !isNaN(routeCoords[0][1])) {
+          routeLayer = L.polyline(routeCoords, {
+            color: '#2563eb', weight: 5, opacity: 0.85,
+            lineCap: 'round', lineJoin: 'round'
+          }).addTo(map);
+          routeDrawn = true;
+        }
+      } catch (e) {
+        console.warn('[wpNavigateDay] ORS geometry failed:', e);
+      }
+    }
+    // Fallback: straight dashed lines between stops
+    if (!routeDrawn) {
+      routeLayer = L.polyline(linePoints, {
+        color: '#2563eb', weight: 4, opacity: 0.7,
+        dashArray: '10, 8', lineCap: 'round', lineJoin: 'round'
+      }).addTo(map);
+    }
+
+    // Fit map to route
+    const allPoints = [startLatLng, ...stops.map(s => [s.lat, s.lng])];
+    map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+
+    // Store for export to Maps
+    currentRouteData = { customers: stops, duration: drivingSeconds, distance: distanceMeters };
+
+    // Show summary panel
+    showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters);
+
+  } catch (err) {
+    if (loadingToast) loadingToast.remove();
+    console.error('Ruteberegning feilet:', err);
+    showToast('Feil ved ruteberegning', 'error');
+    wpRouteActive = false;
+    wpRouteStopIds = null;
+    applyTeamFocusToMarkers();
+    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+  }
+}
+
+// Show weekly plan route summary panel
+function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
+  // Only remove previous panel element (don't clear route - we just drew a new one)
+  const oldPanel = document.getElementById('wpRouteSummary');
+  if (oldPanel) oldPanel.remove();
+
+  const drivingMin = Math.round(drivingSeconds / 60);
+  const customerMin = stops.reduce((sum, s) => sum + (s.estimertTid || 30), 0);
+  const totalMin = drivingMin + customerMin;
+  const km = (distanceMeters / 1000).toFixed(1);
+  const dayLabel = weekDayLabels[weekDayKeys.indexOf(dayKey)];
+
+  const panel = document.createElement('div');
+  panel.id = 'wpRouteSummary';
+  panel.className = 'wp-route-summary';
+  panel.innerHTML = `
+    <div class="wp-route-header">
+      <strong>${escapeHtml(dayLabel)} — ${stops.length} stopp</strong>
+      <button class="wp-route-close" data-action="closeWpRoute">&times;</button>
+    </div>
+    <div class="wp-route-stats">
+      <div class="wp-route-stat">
+        <i class="fas fa-car"></i>
+        <span>Kjøretid: ~${formatMinutes(drivingMin)}</span>
+      </div>
+      <div class="wp-route-stat">
+        <i class="fas fa-user-clock"></i>
+        <span>Hos kunder: ~${formatMinutes(customerMin)}</span>
+      </div>
+      <div class="wp-route-stat total">
+        <i class="fas fa-clock"></i>
+        <span>Totalt: ~${formatMinutes(totalMin)}</span>
+      </div>
+      <div class="wp-route-stat">
+        <i class="fas fa-road"></i>
+        <span>${km} km</span>
+      </div>
+    </div>
+    <div class="wp-route-actions">
+      <button class="btn btn-small btn-primary" data-action="wpExportMaps" data-day="${dayKey}">
+        <i class="fas fa-external-link-alt"></i> Åpne i Maps
+      </button>
+      <button class="btn btn-small btn-secondary" data-action="closeWpRoute">
+        <i class="fas fa-times"></i> Lukk rute
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+}
+
+// Close weekly plan route summary and clear route from map
+function closeWpRouteSummary() {
+  const panel = document.getElementById('wpRouteSummary');
+  if (panel) panel.remove();
+  clearRoute();
+  wpRouteActive = false;
+  wpRouteStopIds = null;
+  applyTeamFocusToMarkers();
+  if (markerClusterGroup) markerClusterGroup.refreshClusters();
+}
+
+// Export weekly plan route to Google/Apple Maps
+function wpExportToMaps() {
+  if (!currentRouteData || !currentRouteData.customers.length) return;
+
+  const stops = currentRouteData.customers;
+  const startLat = appConfig.routeStartLat || 69.06888;
+  const startLng = appConfig.routeStartLng || 17.65274;
+  const startCoord = `${startLat},${startLng}`;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  if (isIOS) {
+    const daddr = stops.map(s => `${s.lat},${s.lng}`).join('+to:') + `+to:${startCoord}`;
+    window.open(`https://maps.apple.com/?saddr=${startCoord}&daddr=${daddr}&dirflg=d`, '_blank');
+  } else {
+    const waypoints = stops.map(s => `${s.lat},${s.lng}`).join('|');
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${startCoord}&destination=${startCoord}`;
+    url += `&waypoints=${encodeURIComponent(waypoints)}&travelmode=driving`;
+    window.open(url, '_blank');
+  }
+}
+
+// === Quick Calendar Menu (from map markers) ===
+
+function closeCalendarQuickMenu() {
+  document.getElementById('quickCalendarMenu')?.remove();
+  document.removeEventListener('click', handleQuickMenuOutsideClick);
+}
+
+function handleQuickMenuOutsideClick(e) {
+  const menu = document.getElementById('quickCalendarMenu');
+  if (menu && !menu.contains(e.target)) {
+    closeCalendarQuickMenu();
+  }
+}
+
+function showCalendarQuickMenu(customerId, customerName, anchorEl) {
+  closeCalendarQuickMenu();
+
+  const today = new Date();
+  const tomorrow = addDaysToDate(today, 1);
+  const nextMonday = getNextMonday(today);
+
+  const menu = document.createElement('div');
+  menu.id = 'quickCalendarMenu';
+  menu.className = 'quick-calendar-menu';
+  menu.innerHTML = `
+    <div class="quick-menu-header">${escapeHtml(customerName)}</div>
+    <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(today)}">
+      <i class="fas fa-calendar-day"></i> I dag (${today.getDate()}.${today.getMonth() + 1})
+    </div>
+    <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(tomorrow)}">
+      <i class="fas fa-calendar-day"></i> I morgen (${tomorrow.getDate()}.${tomorrow.getMonth() + 1})
+    </div>
+    <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(nextMonday)}">
+      <i class="fas fa-calendar-week"></i> Neste mandag (${nextMonday.getDate()}.${nextMonday.getMonth() + 1})
+    </div>
+    <div class="quick-menu-item" data-action="addCustomerToCalendar" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}">
+      <i class="fas fa-calendar-alt"></i> Velg dato...
+    </div>
+  `;
+
+  document.body.appendChild(menu);
+
+  // Position near anchor element
+  if (anchorEl) {
+    const rect = anchorEl.getBoundingClientRect();
+    menu.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
+    menu.style.top = (rect.bottom + 4) + 'px';
+  } else {
+    menu.style.left = '50%';
+    menu.style.top = '50%';
+    menu.style.transform = 'translate(-50%, -50%)';
+  }
+
+  // Ensure menu stays within viewport
+  requestAnimationFrame(() => {
+    const menuRect = menu.getBoundingClientRect();
+    if (menuRect.bottom > window.innerHeight) {
+      menu.style.top = (window.innerHeight - menuRect.height - 10) + 'px';
+    }
+    if (menuRect.right > window.innerWidth) {
+      menu.style.left = (window.innerWidth - menuRect.width - 10) + 'px';
+    }
+  });
+
+  setTimeout(() => {
+    document.addEventListener('click', handleQuickMenuOutsideClick);
+  }, 10);
+}
+
+async function quickAddAvtaleForDate(customerId, customerName, date) {
+  const customer = customers.find(c => c.id === customerId);
+  const avtaleType = customer?.kategori || 'Kontroll';
+
+  try {
+    const response = await apiFetch('/api/avtaler', {
+      method: 'POST',
+      body: JSON.stringify({
+        kunde_id: customerId,
+        dato: date,
+        type: avtaleType,
+        beskrivelse: avtaleType,
+        opprettet_av: localStorage.getItem('userName') || 'admin'
+      })
+    });
+
+    if (response.ok) {
+      showToast(`${customerName} lagt til ${date}`, 'success');
+      await loadAvtaler();
+      renderCalendar();
+    } else {
+      const err = await response.json().catch(() => ({}));
+      showToast('Kunne ikke opprette avtale: ' + (err.error || 'ukjent feil'), 'error');
+    }
+  } catch (err) {
+    console.error('Error quick-adding avtale:', err);
+    showToast('Kunne ikke opprette avtale', 'error');
+  }
+}
+
 // Load avtaler from API
 async function loadAvtaler() {
   try {
@@ -15730,6 +17622,10 @@ async function loadAvtaler() {
     if (response.ok) {
       const avtaleResult = await response.json();
       avtaler = avtaleResult.data || avtaleResult;
+      // Refresh plan badges on map if weekly plan is active
+      if (weekPlanState.weekStart) {
+        updateWeekPlanBadges();
+      }
     }
   } catch (error) {
     console.error('Error loading avtaler:', error);
@@ -15773,9 +17669,14 @@ async function renderCalendar() {
       <button class="calendar-nav" id="prevMonth"><i class="fas fa-chevron-left"></i></button>
       <h3>${monthNames[currentCalendarMonth]} ${currentCalendarYear}</h3>
       <button class="calendar-nav" id="nextMonth"><i class="fas fa-chevron-right"></i></button>
-      <button class="btn btn-primary calendar-add-btn" id="addAvtaleBtn">
-        <i class="fas fa-plus"></i> Ny avtale
-      </button>
+      <div style="margin-left:auto;display:flex;gap:4px;">
+        <button class="btn btn-small ${calendarViewMode === 'week' ? 'btn-primary' : 'btn-secondary'}" id="toggleWeekView">
+          <i class="fas fa-calendar-week"></i> Uke
+        </button>
+        <button class="btn btn-primary calendar-add-btn" id="addAvtaleBtn">
+          <i class="fas fa-plus"></i> Ny avtale
+        </button>
+      </div>
     </div>
     <div class="calendar-grid">
       <div class="calendar-day-header">Man</div>
@@ -15805,17 +17706,25 @@ async function renderCalendar() {
     const isPast = dayDate < today;
     const hasContent = dayRoutes.length > 0 || dayAvtaler.length > 0;
 
+    const areaHint = dayAvtaler.length > 0 ? getAreaTooltip(dayAvtaler) : '';
+    const areaCount = dayAvtaler.length > 0 ? getUniqueAreas(dayAvtaler).size : 0;
+
     html += `
       <div class="calendar-day ${isToday ? 'today' : ''} ${isPast ? 'past' : ''} ${hasContent ? 'has-content' : ''}"
            data-date="${dateStr}" data-action="openDayDetail">
         <span class="day-number">${day}</span>
+        ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} ${areaCount === 1 ? 'omr.' : 'omr.'}</span>` : ''}
         <div class="calendar-events">
           ${dayAvtaler.map(a => `
             <div class="calendar-avtale ${a.status === 'fullført' ? 'completed' : ''}"
-                 data-avtale-id="${a.id}" data-action="editAvtale">
-              ${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.6em;margin-right:2px" title="Gjentakende"></i>' : ''}
-              ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
-              <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</span>
+                 data-avtale-id="${a.id}">
+              <div class="avtale-content" data-avtale-id="${a.id}" data-action="editAvtale">
+                ${a.rute_id ? '<i class="fas fa-route" style="font-size:0.6em;margin-right:2px;color:var(--primary)" title="Fra rute"></i>' : ''}${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.6em;margin-right:2px" title="Gjentakende"></i>' : ''}
+                ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
+                <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</span>
+                ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="avtale-creator" title="Opprettet av ${escapeHtml(a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.opprettet_av, true))}</span>` : ''}
+              </div>
+              <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale"><i class="fas fa-times"></i></button>
             </div>
           `).join('')}
           ${dayRoutes.map(r => `
@@ -15830,7 +17739,97 @@ async function renderCalendar() {
 
   html += '</div>';
 
-  // Upcoming section
+  // === UKEVISNING ===
+  if (calendarViewMode === 'week' && currentWeekStart) {
+    // Erstatt månedsgriden med ukevisning
+    const weekDayNames = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
+    const weekNum = getISOWeekNumber(currentWeekStart);
+
+    html = `
+      <div class="calendar-header">
+        <button class="calendar-nav" id="prevWeek"><i class="fas fa-chevron-left"></i></button>
+        <h3>Uke ${weekNum} - ${currentWeekStart.getFullYear()}</h3>
+        <button class="calendar-nav" id="nextWeek"><i class="fas fa-chevron-right"></i></button>
+        <div style="margin-left:auto;display:flex;gap:4px;">
+          <button class="btn btn-small btn-secondary" id="toggleWeekView">
+            <i class="fas fa-calendar-alt"></i> Måned
+          </button>
+          <button class="btn btn-primary calendar-add-btn" id="addAvtaleBtn">
+            <i class="fas fa-plus"></i> Ny avtale
+          </button>
+        </div>
+      </div>
+      <div class="week-view">
+    `;
+
+    let totalWeekMinutes = 0;
+    for (let i = 0; i < 7; i++) {
+      const dayDate = new Date(currentWeekStart);
+      dayDate.setDate(currentWeekStart.getDate() + i);
+      const dateStr = dayDate.toISOString().slice(0, 10);
+      const todayCheck = new Date();
+      todayCheck.setHours(0, 0, 0, 0);
+      const isToday = dayDate.getTime() === todayCheck.getTime();
+
+      const dayAvtaler = avtaler.filter(a => a.dato === dateStr);
+      const dayRoutes = savedRoutes.filter(r => r.planlagt_dato === dateStr);
+
+      // Beregn total estimert tid for denne dagen
+      let dayMinutes = 0;
+      dayAvtaler.forEach(a => {
+        const kunde = customers.find(c => c.id === a.kunde_id);
+        if (kunde?.estimert_tid) dayMinutes += kunde.estimert_tid;
+      });
+      totalWeekMinutes += dayMinutes;
+
+      html += `
+        <div class="week-day ${isToday ? 'today' : ''}" data-date="${dateStr}">
+          <div class="week-day-header">
+            <span class="week-day-name">${weekDayNames[i]}</span>
+            <span class="week-day-date">${dayDate.getDate()}. ${monthNames[dayDate.getMonth()].substring(0, 3)}</span>
+            ${dayMinutes > 0 ? `<span class="week-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
+          </div>
+          ${renderAreaBadges(dayAvtaler)}
+          <div class="week-day-content">
+            ${dayAvtaler.map(a => {
+              const kunde = customers.find(c => c.id === a.kunde_id);
+              const estTid = a.varighet ? ` (${a.varighet}m)` : (kunde?.estimert_tid ? ` (${kunde.estimert_tid}m)` : '');
+              return `
+                <div class="week-avtale ${a.status === 'fullført' ? 'completed' : ''}" data-avtale-id="${a.id}">
+                  <div class="avtale-content" data-avtale-id="${a.id}" data-action="editAvtale">
+                    ${a.rute_id ? '<i class="fas fa-route" style="font-size:0.6em;margin-right:2px;color:var(--primary)" title="Fra rute"></i>' : ''}
+                    ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
+                    <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}${estTid}</span>
+                    ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="avtale-creator-badge" title="Opprettet av ${escapeHtml(a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.opprettet_av))}</span>` : ''}
+                  </div>
+                  <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale"><i class="fas fa-times"></i></button>
+                </div>
+              `;
+            }).join('')}
+            ${dayRoutes.map(r => `
+              <div class="week-route" data-route-id="${r.id}" data-action="loadSavedRoute">
+                <i class="fas fa-route"></i> ${escapeHtml(r.navn)}
+              </div>
+            `).join('')}
+            ${dayAvtaler.length === 0 && dayRoutes.length === 0 ? '<div class="week-empty">Ingen avtaler</div>' : ''}
+          </div>
+          <div class="week-day-add" data-date="${dateStr}" data-action="openDayDetail">
+            <i class="fas fa-plus"></i> Legg til
+          </div>
+        </div>
+      `;
+    }
+
+    html += `</div>`;
+    html += `<div class="week-summary"><strong>Total estimert tid denne uken:</strong> ${Math.floor(totalWeekMinutes / 60)}t ${totalWeekMinutes % 60}m</div>`;
+
+    container.innerHTML = html;
+    runTabCleanup('calendar');
+    // Event listeners legges til nedenfor (felles kode)
+  }
+
+  if (calendarViewMode !== 'week') {
+  // Upcoming section (kun månedsvisning)
   const upcomingAvtaler = avtaler
     .filter(a => new Date(a.dato) >= today && a.status !== 'fullført')
     .sort((a, b) => {
@@ -15854,6 +17853,7 @@ async function renderCalendar() {
               <div class="upcoming-info">
                 <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
                 <span>${a.klokkeslett ? a.klokkeslett.substring(0, 5) : ''} ${a.type || ''}</span>
+                ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="upcoming-creator">Av: ${escapeHtml(getCreatorDisplay(a.opprettet_av))}</span>` : ''}
               </div>
             </div>
           `).join('')}
@@ -15863,9 +17863,8 @@ async function renderCalendar() {
   }
 
   container.innerHTML = html;
-
-  // Cleanup old listeners first
   runTabCleanup('calendar');
+  } // end if (calendarViewMode !== 'week')
 
   // Get elements
   const prevBtn = document.getElementById('prevMonth');
@@ -15892,17 +17891,51 @@ async function renderCalendar() {
   };
 
   const handleAddAvtale = () => openAvtaleModal();
+  const toggleWeekBtn = document.getElementById('toggleWeekView');
+  const handleToggleWeek = () => {
+    if (calendarViewMode === 'month') {
+      calendarViewMode = 'week';
+      // Sett ukestart til mandag i inneværende uke
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+      monday.setHours(0, 0, 0, 0);
+      currentWeekStart = monday;
+    } else {
+      calendarViewMode = 'month';
+    }
+    renderCalendar();
+  };
 
   // Add event listeners
   prevBtn?.addEventListener('click', handlePrevMonth);
   nextBtn?.addEventListener('click', handleNextMonth);
   addBtn?.addEventListener('click', handleAddAvtale);
+  toggleWeekBtn?.addEventListener('click', handleToggleWeek);
+
+  // Ukevisning: navigasjonsknapper
+  const prevWeekBtn = document.getElementById('prevWeek');
+  const nextWeekBtn = document.getElementById('nextWeek');
+  const handlePrevWeek = () => {
+    currentWeekStart.setDate(currentWeekStart.getDate() - 7);
+    renderCalendar();
+  };
+  const handleNextWeek = () => {
+    currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+    renderCalendar();
+  };
+  prevWeekBtn?.addEventListener('click', handlePrevWeek);
+  nextWeekBtn?.addEventListener('click', handleNextWeek);
 
   // Store cleanup function
   tabCleanupFunctions.calendar = () => {
     prevBtn?.removeEventListener('click', handlePrevMonth);
     nextBtn?.removeEventListener('click', handleNextMonth);
     addBtn?.removeEventListener('click', handleAddAvtale);
+    toggleWeekBtn?.removeEventListener('click', handleToggleWeek);
+    prevWeekBtn?.removeEventListener('click', handlePrevWeek);
+    nextWeekBtn?.removeEventListener('click', handleNextWeek);
   };
 }
 
@@ -16092,7 +18125,7 @@ async function saveAvtale(e) {
     klokkeslett: document.getElementById('avtaleKlokkeslett').value || null,
     type: document.getElementById('avtaleType').value,
     beskrivelse: document.getElementById('avtaleBeskrivelse').value || null,
-    opprettet_av: localStorage.getItem('klientEpost') || 'admin',
+    opprettet_av: localStorage.getItem('userName') || 'admin',
     ...(gjentakelse && !avtaleId ? {
       gjentakelse_regel: gjentakelse,
       gjentakelse_slutt: document.getElementById('avtaleGjentakelseSlutt').value || undefined,
@@ -16329,6 +18362,7 @@ function logoutUser(logoutAllDevices = false) {
 
   // Clear UI-related localStorage (keep non-auth items)
   localStorage.removeItem('userName');
+  localStorage.removeItem('userEmail');
   localStorage.removeItem('userRole');
   localStorage.removeItem('userType');
   localStorage.removeItem('isSuperAdmin');
@@ -16546,6 +18580,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Setup event listeners
     setupEventListeners();
+
+    // Check for new patch notes
+    checkForNewPatchNotes();
+
+    // Initialize chat system
+    initChat();
+    initChatEventListeners();
+
+    // Patch notes sidebar link
+    document.getElementById('patchNotesLink')?.addEventListener('click', () => {
+      loadAndShowPatchNotes(0);
+    });
   } else {
     // Not logged in - login overlay is already visible by default
     currentView = 'login';
@@ -16614,6 +18660,18 @@ async function initializeApp() {
   // Initialize Today's Work feature
   initTodaysWork();
 
+  // Initialize chat system
+  initChat();
+  initChatEventListeners();
+
+  // Check for new patch notes
+  checkForNewPatchNotes();
+
+  // Patch notes sidebar link
+  document.getElementById('patchNotesLink')?.addEventListener('click', () => {
+    loadAndShowPatchNotes(0);
+  });
+
   Logger.log('initializeApp() complete');
 }
 
@@ -16652,6 +18710,7 @@ function setupEventListeners() {
   document.getElementById('mobileRouteFabBtn')?.addEventListener('click', planRoute);
   customerForm?.addEventListener('submit', saveCustomer);
   document.getElementById('cancelBtn')?.addEventListener('click', () => {
+    releaseCustomer(currentClaimedKundeId);
     customerModal.classList.add('hidden');
   });
   document.getElementById('deleteCustomerBtn')?.addEventListener('click', deleteCustomer);
@@ -16714,6 +18773,33 @@ function setupEventListeners() {
     // Close dropdown when clicking outside
     document.addEventListener('click', () => exportDropdown.classList.add('hidden'));
   }
+
+  // Integration buttons in customer modal
+  document.getElementById('pushToTripletexBtn')?.addEventListener('click', () => {
+    const kundeId = Number(document.getElementById('customerId').value);
+    if (kundeId) pushCustomerToTripletex(kundeId);
+  });
+
+  document.getElementById('createEkkReportBtn')?.addEventListener('click', async () => {
+    const kundeId = Number(document.getElementById('customerId').value);
+    if (!kundeId) return;
+    try {
+      const response = await apiFetch('/api/ekk/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kunde_id: kundeId, report_type: 'elkontroll' }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        showNotification('EKK-rapport opprettet som utkast', 'success');
+      } else {
+        showNotification(data.error?.message || 'Kunne ikke opprette rapport', 'error');
+      }
+    } catch (err) {
+      showNotification('Feil ved oppretting av EKK-rapport', 'error');
+    }
+  });
+
   document.getElementById('closeImportModal')?.addEventListener('click', closeImportModal);
   document.getElementById('customerSearchInput')?.addEventListener('input', (e) => {
     customerAdminSearch = e.target.value;
@@ -16812,6 +18898,7 @@ function setupEventListeners() {
   // Close modals on escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      releaseCustomer(currentClaimedKundeId);
       customerModal.classList.add('hidden');
       apiKeyModal.classList.add('hidden');
       document.getElementById('saveRouteModal')?.classList.add('hidden');
@@ -16820,6 +18907,7 @@ function setupEventListeners() {
 
   // Close modal on X button click
   document.getElementById('closeCustomerModal')?.addEventListener('click', () => {
+    releaseCustomer(currentClaimedKundeId);
     customerModal.classList.add('hidden');
   });
   document.getElementById('closeApiKeyModal')?.addEventListener('click', () => {
@@ -16832,6 +18920,7 @@ function setupEventListeners() {
   // Close modal on backdrop click
   customerModal.addEventListener('click', (e) => {
     if (e.target === customerModal) {
+      releaseCustomer(currentClaimedKundeId);
       customerModal.classList.add('hidden');
     }
   });
@@ -16922,9 +19011,11 @@ function setupEventListeners() {
     'avhuking': 'Avhuking',
     'routes': 'Ruter',
     'calendar': 'Kalender',
+    'weekly-plan': 'Planlagte oppdrag',
     'planner': 'Planlegger',
     'statistikk': 'Statistikk',
     'missingdata': 'Mangler data',
+    'chat': 'Meldinger',
     'admin': 'Admin'
   };
 
@@ -17047,6 +19138,23 @@ function setupEventListeners() {
         runTabCleanup(prevTab);
       }
 
+      // Deactivate weekly plan area-select mode when leaving that tab
+      if (prevTab === 'weekly-plan') {
+        if (weekPlanState.activeDay) {
+          weekPlanState.activeDay = null;
+          if (areaSelectMode) toggleAreaSelect();
+        }
+        // Reset team focus - restore all markers
+        if (wpFocusedTeamMember) {
+          wpFocusedTeamMember = null;
+          wpFocusedMemberIds = null;
+          applyTeamFocusToMarkers();
+          if (markerClusterGroup) markerClusterGroup.refreshClusters();
+        }
+        // Close route summary if open
+        closeWpRouteSummary();
+      }
+
       // Remove active class from all tabs and panes
       tabItems.forEach(t => t.classList.remove('active'));
       tabPanes.forEach(p => p.classList.remove('active'));
@@ -17089,6 +19197,8 @@ function setupEventListeners() {
           renderSavedRoutes();
         } else if (tabName === 'calendar') {
           renderCalendar();
+        } else if (tabName === 'weekly-plan') {
+          renderWeeklyPlan();
         } else if (tabName === 'planner') {
           renderPlanner();
         } else if (tabName === 'email') {
@@ -17103,6 +19213,8 @@ function setupEventListeners() {
           loadAdminData();
         } else if (tabName === 'todays-work') {
           loadTodaysWork();
+        } else if (tabName === 'chat') {
+          onChatTabOpened();
         }
       }
     });
@@ -17298,8 +19410,39 @@ function setupEventListeners() {
   // Also update at midnight to ensure day changes are reflected
   scheduleNextMidnightUpdate();
 
+  // Technician dispatch handler for weekly plan (admin only)
+  document.addEventListener('change', (e) => {
+    if (e.target.classList.contains('wp-dispatch-select')) {
+      weekPlanState.globalAssignedTo = e.target.value;
+      renderWeeklyPlan();
+    }
+  });
+
+  // Estimated time input handler for weekly plan
+  document.addEventListener('change', (e) => {
+    if (e.target.classList.contains('wp-time-input')) {
+      const input = e.target;
+      const day = input.dataset.day;
+      const customerId = Number.parseInt(input.dataset.customerId);
+      const val = Math.max(5, parseInt(input.value) || 30);
+      input.value = val;
+      const item = weekPlanState.days[day]?.planned.find(c => c.id === customerId);
+      if (item) {
+        item.estimertTid = val;
+        const dayEl = input.closest('.wp-day');
+        const summaryEl = dayEl?.querySelector('.wp-day-summary');
+        const badgeEl = dayEl?.querySelector('.wp-time-badge');
+        const total = getDayEstimatedTotal(day);
+        const dayPlanned = weekPlanState.days[day].planned.length;
+        const dayExisting = avtaler.filter(a => a.dato === weekPlanState.days[day].date).length;
+        if (summaryEl) summaryEl.textContent = `${dayPlanned + dayExisting} kunder · ~${formatMinutes(total)}`;
+        if (badgeEl) badgeEl.textContent = `~${formatMinutes(total)}`;
+      }
+    }
+  });
+
   // Global event delegation for data-action buttons (CSP-compliant)
-  document.addEventListener('click', (e) => {
+  document.addEventListener('click', async (e) => {
     const actionEl = e.target.closest('[data-action]');
     if (!actionEl) return;
 
@@ -17311,6 +19454,133 @@ function setupEventListeners() {
         break;
       case 'toggleCustomerSelection':
         toggleCustomerSelection(Number.parseInt(actionEl.dataset.customerId));
+        break;
+      // === Weekly Plan actions ===
+      case 'setActiveDay':
+        e.stopPropagation();
+        const clickedDay = actionEl.dataset.day;
+        if (weekPlanState.activeDay === clickedDay) {
+          // Deselect if clicking same day
+          weekPlanState.activeDay = null;
+          if (areaSelectMode) toggleAreaSelect();
+          renderWeeklyPlan();
+        } else {
+          weekPlanState.activeDay = clickedDay;
+          if (!areaSelectMode) toggleAreaSelect();
+          showToast(`Dra over kunder på kartet for ${weekDayLabels[weekDayKeys.indexOf(clickedDay)]}`, 'info');
+          renderWeeklyPlan();
+        }
+        break;
+      case 'removeFromPlan':
+        e.stopPropagation();
+        const rmDay = actionEl.dataset.day;
+        const rmId = Number.parseInt(actionEl.dataset.customerId);
+        if (weekPlanState.days[rmDay]) {
+          weekPlanState.days[rmDay].planned = weekPlanState.days[rmDay].planned.filter(c => c.id !== rmId);
+          refreshTeamFocus();
+          renderWeeklyPlan();
+        }
+        break;
+      case 'saveWeeklyPlan':
+        e.stopPropagation();
+        await saveWeeklyPlan();
+        break;
+      case 'clearWeekPlan':
+        e.stopPropagation();
+        clearWeekPlan();
+        break;
+      case 'weekPlanPrev':
+        e.stopPropagation();
+        if (getWeekPlanTotalPlanned() > 0) {
+          const confirmNav = await showConfirm('Du har ulagrede endringer. Vil du bytte uke?', 'Bytt uke');
+          if (!confirmNav) break;
+        }
+        closeWpRouteSummary();
+        initWeekPlanState(addDaysToDate(weekPlanState.weekStart, -7));
+        renderWeeklyPlan();
+        break;
+      case 'weekPlanNext':
+        e.stopPropagation();
+        if (getWeekPlanTotalPlanned() > 0) {
+          const confirmNavNext = await showConfirm('Du har ulagrede endringer. Vil du bytte uke?', 'Bytt uke');
+          if (!confirmNavNext) break;
+        }
+        closeWpRouteSummary();
+        initWeekPlanState(addDaysToDate(weekPlanState.weekStart, 7));
+        renderWeeklyPlan();
+        break;
+      case 'setEstimatedTime':
+        e.stopPropagation();
+        {
+          const etDay = actionEl.dataset.day;
+          const etId = Number.parseInt(actionEl.dataset.customerId);
+          const etVal = Math.max(5, parseInt(actionEl.value) || 30);
+          const etItem = weekPlanState.days[etDay]?.planned.find(c => c.id === etId);
+          if (etItem) {
+            etItem.estimertTid = etVal;
+            // Update summary text without full re-render
+            const summaryEl = actionEl.closest('.wp-day')?.querySelector('.wp-day-summary');
+            const badgeEl = actionEl.closest('.wp-day')?.querySelector('.wp-time-badge');
+            const total = getDayEstimatedTotal(etDay);
+            const dayPlanned = weekPlanState.days[etDay].planned.length;
+            const dayExisting = avtaler.filter(a => a.dato === weekPlanState.days[etDay].date).length;
+            if (summaryEl) summaryEl.textContent = `${dayPlanned + dayExisting} kunder · ~${formatMinutes(total)}`;
+            if (badgeEl) badgeEl.textContent = `~${formatMinutes(total)}`;
+          }
+        }
+        break;
+      case 'wpNavigateDay':
+        e.stopPropagation();
+        await wpNavigateDay(actionEl.dataset.day);
+        break;
+      case 'closeWpRoute':
+        e.stopPropagation();
+        closeWpRouteSummary();
+        break;
+      case 'wpExportMaps':
+        e.stopPropagation();
+        wpExportToMaps();
+        break;
+      case 'focusTeamMember':
+        e.stopPropagation();
+        focusTeamMemberOnMap(actionEl.dataset.memberName);
+        break;
+
+      case 'quickAddToday':
+        e.stopPropagation();
+        const todayCustomerId = Number.parseInt(actionEl.dataset.customerId);
+        const todayCustomerName = actionEl.dataset.customerName;
+        await quickAddAvtaleForDate(todayCustomerId, todayCustomerName, formatDateISO(new Date()));
+        closeCalendarQuickMenu();
+        break;
+      case 'showCalendarQuickMenu':
+        e.stopPropagation();
+        showCalendarQuickMenu(
+          Number.parseInt(actionEl.dataset.customerId),
+          actionEl.dataset.customerName,
+          actionEl
+        );
+        break;
+      case 'quickAddAvtale':
+        e.stopPropagation();
+        const qaCustomerId = Number.parseInt(actionEl.dataset.customerId);
+        const qaCustomerName = actionEl.dataset.customerName;
+        const qaDate = actionEl.dataset.quickDate;
+        await quickAddAvtaleForDate(qaCustomerId, qaCustomerName, qaDate);
+        closeCalendarQuickMenu();
+        break;
+      case 'addCustomerToCalendar':
+        closeCalendarQuickMenu();
+        const calCustomerId = Number.parseInt(actionEl.dataset.customerId);
+        const calCustomerName = actionEl.dataset.customerName;
+        openAvtaleModal(null, null);
+        // Pre-fill kunde i avtale-modalen
+        setTimeout(() => {
+          const kundeSearch = document.getElementById('avtaleKundeSearch');
+          const kundeHidden = document.getElementById('avtaleKunde');
+          if (kundeSearch) kundeSearch.value = calCustomerName;
+          if (kundeHidden) kundeHidden.value = calCustomerId;
+        }, 100);
         break;
       case 'editCustomer':
         editCustomer(Number.parseInt(actionEl.dataset.customerId));
@@ -17382,6 +19652,7 @@ function setupEventListeners() {
         e.stopPropagation();
         const mapIds = actionEl.dataset.customerIds.split(',').map(id => Number.parseInt(id));
         showCustomersOnMap(mapIds);
+        highlightCustomersOnMap(mapIds);
         break;
       case 'showClusterOnMap':
         SmartRouteEngine.showClusterOnMap(Number.parseInt(actionEl.dataset.clusterId));
@@ -17394,9 +19665,33 @@ function setupEventListeners() {
         break;
       case 'editAvtale':
         e.stopPropagation();
-        const avtaleId = Number.parseInt(actionEl.dataset.avtaleId);
-        const avtale = avtaler.find(a => a.id === avtaleId);
-        if (avtale) openAvtaleModal(avtale);
+        const editAvtaleId = Number.parseInt(actionEl.dataset.avtaleId);
+        const editAvtale = avtaler.find(a => a.id === editAvtaleId);
+        if (editAvtale) openAvtaleModal(editAvtale);
+        break;
+      case 'quickDeleteAvtale':
+        e.stopPropagation();
+        const delAvtaleId = Number.parseInt(actionEl.dataset.avtaleId);
+        const delAvtale = avtaler.find(a => a.id === delAvtaleId);
+        const delName = delAvtale?.kunder?.navn || delAvtale?.kunde_navn || 'denne avtalen';
+        const delConfirmed = await showConfirm(
+          `Slett avtale for ${delName}?`,
+          'Bekreft sletting'
+        );
+        if (!delConfirmed) break;
+        try {
+          const delResponse = await apiFetch(`/api/avtaler/${delAvtaleId}`, { method: 'DELETE' });
+          if (delResponse.ok) {
+            showToast('Avtale slettet', 'success');
+            await loadAvtaler();
+            renderCalendar();
+          } else {
+            showToast('Kunne ikke slette avtalen', 'error');
+          }
+        } catch (err) {
+          console.error('Error quick-deleting avtale:', err);
+          showToast('Kunne ikke slette avtalen', 'error');
+        }
         break;
       case 'quickMarkVisited':
         e.stopPropagation();
@@ -17501,10 +19796,13 @@ function sendManualReminder(customerId) {
 function getOverdueCustomers() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const currentMonthValue = today.getFullYear() * 12 + today.getMonth();
 
   return customers.filter(c => {
     if (!c.neste_kontroll) return false;
-    return new Date(c.neste_kontroll) < today;
+    const nextDate = new Date(c.neste_kontroll);
+    const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+    return controlMonthValue < currentMonthValue;
   });
 }
 
@@ -19032,6 +21330,625 @@ window.addClusterToRoute = addClusterToRoute;
 window.zoomToCluster = zoomToCluster;
 
 // ========================================
+// CHAT / MESSAGING SYSTEM
+// ========================================
+
+const chatState = {
+  conversations: [],
+  activeConversation: null,
+  activeConversationType: null,
+  messages: {},
+  unreadCounts: {},
+  totalUnread: 0,
+  orgConversationId: null,
+  typingUsers: {},
+  view: 'list', // 'list' | 'messages' | 'newDm'
+};
+
+let chatTypingTimer = null;
+let chatIsTyping = false;
+let chatNotificationSound = null;
+
+// Initialize notification sound (small beep)
+function initChatSound() {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    chatNotificationSound = audioCtx;
+  } catch (e) {
+    // Audio not supported
+  }
+}
+
+function playChatNotificationSound() {
+  try {
+    if (!chatNotificationSound) initChatSound();
+    if (!chatNotificationSound) return;
+    const ctx = chatNotificationSound;
+    if (ctx.state === 'suspended') ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 800;
+    osc.type = 'sine';
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+// Build headers for chat API calls (includes CSRF token)
+function chatHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  const csrf = getCsrfToken();
+  if (csrf) headers['X-CSRF-Token'] = csrf;
+  return headers;
+}
+
+// Initialize chat system
+async function initChat() {
+  try {
+    const response = await fetch('/api/chat/init', {
+      method: 'POST',
+      headers: chatHeaders(),
+    });
+    if (!response.ok) {
+      console.error('Chat init failed:', response.status, response.statusText);
+      try { console.error('Chat init body:', await response.text()); } catch {}
+      return;
+    }
+    const result = await response.json();
+    if (result.success && result.data) {
+      chatState.orgConversationId = result.data.orgConversationId;
+      chatState.totalUnread = result.data.totalUnread;
+      updateChatBadge();
+    }
+  } catch (e) {
+    console.error('Failed to init chat:', e);
+  }
+}
+
+// Fetch conversations
+async function loadChatConversations() {
+  try {
+    const response = await fetch('/api/chat/conversations');
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result.success && result.data) {
+      chatState.conversations = result.data;
+      // Update unread counts
+      chatState.totalUnread = 0;
+      chatState.unreadCounts = {};
+      for (const conv of result.data) {
+        if (conv.unread_count > 0) {
+          chatState.unreadCounts[conv.id] = conv.unread_count;
+          chatState.totalUnread += conv.unread_count;
+        }
+      }
+      updateChatBadge();
+      renderChatConversations();
+    }
+  } catch (e) {
+    console.error('Failed to load conversations:', e);
+  }
+}
+
+// Fetch messages for a conversation
+async function loadChatMessages(conversationId, before) {
+  try {
+    let url = `/api/chat/conversations/${conversationId}/messages?limit=50`;
+    if (before) url += `&before=${before}`;
+    const response = await fetch(url);
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result.success && result.data) {
+      if (before) {
+        // Prepend older messages
+        chatState.messages[conversationId] = [...result.data, ...(chatState.messages[conversationId] || [])];
+      } else {
+        chatState.messages[conversationId] = result.data;
+      }
+      renderChatMessages(conversationId);
+    }
+  } catch (e) {
+    console.error('Failed to load messages:', e);
+  }
+}
+
+// Send a message
+async function sendChatMessage(conversationId, content) {
+  if (!content.trim()) return;
+  try {
+    const response = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: chatHeaders(),
+      body: JSON.stringify({ content: content.trim() }),
+    });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result.success && result.data) {
+      // Add message locally (optimistic)
+      if (!chatState.messages[conversationId]) chatState.messages[conversationId] = [];
+      chatState.messages[conversationId].push(result.data);
+      renderChatMessages(conversationId);
+      scrollChatToBottom();
+      // Update conversation list
+      loadChatConversations();
+    }
+  } catch (e) {
+    console.error('Failed to send message:', e);
+  }
+}
+
+// Mark conversation as read
+async function markChatAsRead(conversationId) {
+  const messages = chatState.messages[conversationId];
+  if (!messages || messages.length === 0) return;
+  const lastMsg = messages[messages.length - 1];
+  try {
+    await fetch(`/api/chat/conversations/${conversationId}/read`, {
+      method: 'PUT',
+      headers: chatHeaders(),
+      body: JSON.stringify({ messageId: lastMsg.id }),
+    });
+    // Update local state
+    const prevCount = chatState.unreadCounts[conversationId] || 0;
+    chatState.totalUnread = Math.max(0, chatState.totalUnread - prevCount);
+    delete chatState.unreadCounts[conversationId];
+    updateChatBadge();
+  } catch (e) {
+    console.error('Failed to mark as read:', e);
+  }
+}
+
+// Create or find DM conversation
+async function startDmConversation(targetUserId) {
+  try {
+    const response = await fetch('/api/chat/conversations/dm', {
+      method: 'POST',
+      headers: chatHeaders(),
+      body: JSON.stringify({ targetUserId }),
+    });
+    if (!response.ok) return null;
+    const result = await response.json();
+    if (result.success && result.data) {
+      return result.data.id;
+    }
+  } catch (e) {
+    console.error('Failed to start DM:', e);
+  }
+  return null;
+}
+
+// Handle incoming chat message from WebSocket
+function handleIncomingChatMessage(data) {
+  const convId = data.conversation_id;
+  // Add to local messages if we have this conversation loaded
+  if (chatState.messages[convId]) {
+    // Avoid duplicates
+    if (!chatState.messages[convId].some(m => m.id === data.id)) {
+      chatState.messages[convId].push(data);
+    }
+  }
+
+  // Update unread count (if not viewing this conversation)
+  const isViewingThis = chatState.activeConversation === convId && chatState.view === 'messages';
+  if (!isViewingThis) {
+    chatState.unreadCounts[convId] = (chatState.unreadCounts[convId] || 0) + 1;
+    chatState.totalUnread++;
+    updateChatBadge();
+    playChatNotificationSound();
+  } else {
+    // Auto-mark as read if viewing
+    markChatAsRead(convId);
+    renderChatMessages(convId);
+    scrollChatToBottom();
+  }
+
+  // Update conversation list
+  renderChatConversations();
+
+  // Remove typing indicator for this user
+  handleChatTypingStop({ conversationId: convId, userId: data.sender_id });
+}
+
+// Handle typing indicator
+function handleChatTyping(data) {
+  const key = `${data.conversationId}-${data.userId}`;
+  chatState.typingUsers[key] = data.userName;
+  renderTypingIndicator(data.conversationId);
+  // Auto-clear after 5 seconds
+  setTimeout(() => {
+    delete chatState.typingUsers[key];
+    renderTypingIndicator(data.conversationId);
+  }, 5000);
+}
+
+function handleChatTypingStop(data) {
+  const key = `${data.conversationId}-${data.userId}`;
+  delete chatState.typingUsers[key];
+  renderTypingIndicator(data.conversationId);
+}
+
+// Send typing indicator
+function sendChatTypingStart(conversationId) {
+  if (chatIsTyping) return;
+  chatIsTyping = true;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'chat_typing_start', conversationId }));
+  }
+  clearTimeout(chatTypingTimer);
+  chatTypingTimer = setTimeout(() => {
+    chatIsTyping = false;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'chat_typing_stop', conversationId }));
+    }
+  }, 3000);
+}
+
+// Update chat badge
+function updateChatBadge() {
+  const badge = document.getElementById('chatUnreadBadge');
+  if (!badge) return;
+  if (chatState.totalUnread > 0) {
+    badge.textContent = chatState.totalUnread > 99 ? '99+' : chatState.totalUnread;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// Format chat timestamp
+function formatChatTime(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+
+  const time = d.toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' });
+
+  if (isToday) return time;
+  if (isYesterday) return `I g\u00e5r ${time}`;
+  return d.toLocaleDateString('no-NO', { day: 'numeric', month: 'short' }) + ' ' + time;
+}
+
+function formatChatDate(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return 'I dag';
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return 'I g\u00e5r';
+  return d.toLocaleDateString('no-NO', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+// Get initials from name
+function getChatInitials(name) {
+  if (!name) return '??';
+  const parts = name.split(/[\s.\-_]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.substring(0, 2).toUpperCase();
+}
+
+// Render conversation list
+function renderChatConversations() {
+  const container = document.getElementById('chatConversations');
+  if (!container) return;
+
+  if (chatState.conversations.length === 0) {
+    container.innerHTML = `
+      <div class="chat-empty-state">
+        <i class="fas fa-comments"></i>
+        <p>Ingen samtaler enn\u00e5</p>
+        <p>Start en ny samtale med en kollega</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = chatState.conversations.map(conv => {
+    const unread = chatState.unreadCounts[conv.id] || 0;
+    const isOrg = conv.type === 'org';
+    const name = isOrg ? 'Teamchat' : escapeHtml(conv.participant_name || 'Ukjent');
+    const icon = isOrg ? 'fa-users' : 'fa-user';
+    const preview = conv.last_message
+      ? escapeHtml(conv.last_message.content.substring(0, 50))
+      : 'Ingen meldinger enn\u00e5';
+    const time = conv.last_message ? formatChatTime(conv.last_message.created_at) : '';
+
+    return `
+      <div class="chat-conv-item ${unread > 0 ? 'unread' : ''}" data-conv-id="${conv.id}" data-conv-type="${conv.type}">
+        <div class="chat-conv-icon"><i class="fas ${icon}"></i></div>
+        <div class="chat-conv-info">
+          <div class="chat-conv-name">${name}</div>
+          <div class="chat-conv-preview">${preview}</div>
+        </div>
+        <div class="chat-conv-meta">
+          <span class="chat-conv-time">${time}</span>
+          ${unread > 0 ? `<span class="chat-conv-unread">${unread}</span>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  // Attach click handlers
+  container.querySelectorAll('.chat-conv-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const convId = parseInt(item.dataset.convId, 10);
+      const convType = item.dataset.convType;
+      openChatConversation(convId, convType);
+    });
+  });
+}
+
+// Open a conversation
+async function openChatConversation(conversationId, type) {
+  chatState.activeConversation = conversationId;
+  chatState.activeConversationType = type;
+  chatState.view = 'messages';
+
+  // Set title
+  const titleEl = document.getElementById('chatMessageTitle');
+  if (type === 'org') {
+    titleEl.textContent = 'Teamchat';
+  } else {
+    const conv = chatState.conversations.find(c => c.id === conversationId);
+    titleEl.textContent = conv?.participant_name || 'Direktemelding';
+  }
+
+  // Show message view, hide others
+  document.getElementById('chatConversationList').style.display = 'none';
+  document.getElementById('chatNewDm').style.display = 'none';
+  document.getElementById('chatMessageView').style.display = 'flex';
+
+  // Load messages
+  await loadChatMessages(conversationId);
+  scrollChatToBottom();
+
+  // Mark as read
+  markChatAsRead(conversationId);
+}
+
+// Render messages
+function renderChatMessages(conversationId) {
+  const container = document.getElementById('chatMessages');
+  if (!container || chatState.activeConversation !== conversationId) return;
+
+  const messages = chatState.messages[conversationId] || [];
+  if (messages.length === 0) {
+    container.innerHTML = `
+      <div class="chat-empty-state">
+        <i class="fas fa-comment-dots"></i>
+        <p>Ingen meldinger enn\u00e5. Si hei!</p>
+      </div>`;
+    return;
+  }
+
+  // Group by date
+  let lastDate = '';
+  let html = '';
+
+  // Load more button if we have exactly 50 messages (might be more)
+  if (messages.length >= 50) {
+    html += `<div class="chat-load-more"><button onclick="loadOlderChatMessages()">Last eldre meldinger</button></div>`;
+  }
+
+  for (const msg of messages) {
+    const msgDate = new Date(msg.created_at).toDateString();
+    if (msgDate !== lastDate) {
+      lastDate = msgDate;
+      html += `<div class="chat-msg-date-separator">${formatChatDate(msg.created_at)}</div>`;
+    }
+
+    const isSelf = msg.sender_id === myUserId;
+    const time = new Date(msg.created_at).toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' });
+
+    html += `
+      <div class="chat-msg ${isSelf ? 'self' : 'other'}">
+        <div class="chat-msg-sender">${escapeHtml(msg.sender_name)}</div>
+        <div class="chat-msg-content">${escapeHtml(msg.content)}</div>
+        <div class="chat-msg-time">${time}</div>
+      </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// Scroll chat to bottom
+function scrollChatToBottom() {
+  const container = document.getElementById('chatMessages');
+  if (container) {
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+  }
+}
+
+// Load older messages
+function loadOlderChatMessages() {
+  if (!chatState.activeConversation) return;
+  const messages = chatState.messages[chatState.activeConversation] || [];
+  if (messages.length === 0) return;
+  const oldestId = messages[0].id;
+  loadChatMessages(chatState.activeConversation, oldestId);
+}
+
+// Render typing indicator
+function renderTypingIndicator(conversationId) {
+  const indicator = document.getElementById('chatTypingIndicator');
+  const text = document.getElementById('chatTypingText');
+  if (!indicator || !text || chatState.activeConversation !== conversationId) return;
+
+  const prefix = `${conversationId}-`;
+  const typingNames = Object.entries(chatState.typingUsers)
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([, name]) => name);
+
+  if (typingNames.length === 0) {
+    indicator.style.display = 'none';
+  } else {
+    indicator.style.display = '';
+    if (typingNames.length === 1) {
+      text.textContent = `${typingNames[0]} skriver...`;
+    } else {
+      text.textContent = `${typingNames.join(' og ')} skriver...`;
+    }
+  }
+}
+
+// Show new DM view
+async function showNewDmView() {
+  chatState.view = 'newDm';
+  document.getElementById('chatConversationList').style.display = 'none';
+  document.getElementById('chatMessageView').style.display = 'none';
+  document.getElementById('chatNewDm').style.display = 'flex';
+
+  const container = document.getElementById('chatTeamList');
+  container.innerHTML = `
+    <div class="chat-empty-state">
+      <i class="fas fa-spinner fa-spin"></i>
+      <p>Laster teammedlemmer...</p>
+    </div>`;
+
+  // Load team members
+  try {
+    const response = await fetch('/api/chat/team-members');
+    if (!response.ok) {
+      console.error('Team members failed:', response.status, response.statusText);
+      try { console.error('Team members body:', await response.text()); } catch {}
+      container.innerHTML = `
+        <div class="chat-empty-state">
+          <i class="fas fa-exclamation-triangle"></i>
+          <p>Kunne ikke laste teammedlemmer</p>
+          <p style="font-size:12px;opacity:0.7">Bruk Teamchat for \u00e5 sende melding til alle</p>
+        </div>`;
+      return;
+    }
+    const result = await response.json();
+    if (result.success && result.data) {
+      if (result.data.length === 0) {
+        container.innerHTML = `
+          <div class="chat-empty-state">
+            <i class="fas fa-user-slash"></i>
+            <p>Ingen andre teammedlemmer funnet</p>
+            <p style="font-size:12px;opacity:0.7">G\u00e5 tilbake og bruk Teamchat for \u00e5 sende melding til alle</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = result.data.map(member => `
+        <div class="chat-team-item" data-user-id="${member.id}">
+          <div class="chat-team-avatar">${getChatInitials(member.navn)}</div>
+          <div class="chat-team-name">${escapeHtml(member.navn)}</div>
+        </div>
+      `).join('');
+
+      container.querySelectorAll('.chat-team-item').forEach(item => {
+        item.addEventListener('click', async () => {
+          const userId = parseInt(item.dataset.userId, 10);
+          const convId = await startDmConversation(userId);
+          if (convId) {
+            await loadChatConversations();
+            openChatConversation(convId, 'dm');
+          }
+        });
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load team members:', e);
+    container.innerHTML = `
+      <div class="chat-empty-state">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p>Feil ved lasting av teammedlemmer</p>
+        <p style="font-size:12px;opacity:0.7">G\u00e5 tilbake og bruk Teamchat for \u00e5 sende melding til alle</p>
+      </div>`;
+  }
+}
+
+// Navigate back to conversation list
+function showChatConversationList() {
+  chatState.view = 'list';
+  chatState.activeConversation = null;
+  chatState.activeConversationType = null;
+  document.getElementById('chatMessageView').style.display = 'none';
+  document.getElementById('chatNewDm').style.display = 'none';
+  document.getElementById('chatConversationList').style.display = '';
+  loadChatConversations();
+}
+
+// Initialize chat event listeners
+function initChatEventListeners() {
+  // Send button
+  document.getElementById('chatSendBtn')?.addEventListener('click', () => {
+    const input = document.getElementById('chatInput');
+    if (input && chatState.activeConversation) {
+      sendChatMessage(chatState.activeConversation, input.value);
+      input.value = '';
+      chatIsTyping = false;
+    }
+  });
+
+  // Enter key to send
+  document.getElementById('chatInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const input = e.target;
+      if (input.value.trim() && chatState.activeConversation) {
+        sendChatMessage(chatState.activeConversation, input.value);
+        input.value = '';
+        chatIsTyping = false;
+      }
+    }
+  });
+
+  // Typing indicator
+  document.getElementById('chatInput')?.addEventListener('input', () => {
+    if (chatState.activeConversation) {
+      sendChatTypingStart(chatState.activeConversation);
+    }
+  });
+
+  // Back button
+  document.getElementById('chatBackBtn')?.addEventListener('click', showChatConversationList);
+
+  // New DM button
+  document.getElementById('chatNewDmBtn')?.addEventListener('click', showNewDmView);
+
+  // New DM back button
+  document.getElementById('chatNewDmBackBtn')?.addEventListener('click', showChatConversationList);
+}
+
+// Load chat when chat tab is opened
+function onChatTabOpened() {
+  loadChatConversations();
+  resizeChatContainer();
+}
+
+// Explicitly size the chat container to fill available space
+function resizeChatContainer() {
+  const tabContent = document.querySelector('.tab-content');
+  const chatPane = document.getElementById('tab-chat');
+  if (!tabContent || !chatPane) return;
+  const available = tabContent.clientHeight;
+  chatPane.style.height = available + 'px';
+  chatPane.style.maxHeight = available + 'px';
+}
+
+// Re-size on window resize
+window.addEventListener('resize', () => {
+  const chatPane = document.getElementById('tab-chat');
+  if (chatPane && chatPane.classList.contains('active')) {
+    resizeChatContainer();
+  }
+});
+
+// Make load older messages available globally
+window.loadOlderChatMessages = loadOlderChatMessages;
+
+// ========================================
 // SUPER ADMIN FUNCTIONS
 // ========================================
 
@@ -19959,6 +22876,146 @@ function initMobileUI() {
 }
 
 // ============================================
+// PATCH NOTES / NYHETER
+// ============================================
+
+const PATCH_NOTES_STORAGE_KEY = 'skyplanner_lastSeenPatchNote';
+
+async function checkForNewPatchNotes() {
+  try {
+    const lastSeenId = parseInt(localStorage.getItem(PATCH_NOTES_STORAGE_KEY) || '0', 10);
+    const csrfToken = getCsrfToken();
+    const headers = {};
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    const response = await fetch('/api/patch-notes/latest-id', {
+      credentials: 'include',
+      headers
+    });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result.data && result.data.latestId > lastSeenId) {
+      showPatchNotesBadge();
+      await loadAndShowPatchNotes(lastSeenId);
+    }
+  } catch (err) {
+    console.warn('Could not check patch notes:', err);
+  }
+}
+
+async function loadAndShowPatchNotes(sinceId) {
+  try {
+    const csrfToken = getCsrfToken();
+    const headers = {};
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    const url = sinceId > 0 ? `/api/patch-notes?since=${sinceId}` : '/api/patch-notes';
+    const response = await fetch(url, {
+      credentials: 'include',
+      headers
+    });
+    if (!response.ok) return;
+    const result = await response.json();
+    const notes = result.data || [];
+    if (notes.length === 0) return;
+    showPatchNotesModal(notes);
+    const latestId = Math.max(...notes.map(n => n.id));
+    localStorage.setItem(PATCH_NOTES_STORAGE_KEY, String(latestId));
+    hidePatchNotesBadge();
+  } catch (err) {
+    console.warn('Could not load patch notes:', err);
+  }
+}
+
+function showPatchNotesModal(notes) {
+  const existing = document.getElementById('patchNotesModal');
+  if (existing) existing.remove();
+
+  const typeLabels = { nytt: 'Nytt', forbedring: 'Forbedring', fiks: 'Fiks' };
+  const typeColors = { nytt: '#10b981', forbedring: '#3b82f6', fiks: '#f59e0b' };
+
+  let contentHtml = '';
+  for (const note of notes) {
+    const dateStr = new Date(note.published_at).toLocaleDateString('nb-NO', {
+      year: 'numeric', month: 'long', day: 'numeric'
+    });
+
+    const itemsHtml = (note.items || []).map(item => {
+      const typeLabel = typeLabels[item.type] || item.type;
+      const typeColor = typeColors[item.type] || '#666';
+      const proBadge = item.visibility === 'full'
+        ? '<span class="patch-note-pro-badge">Pro</span>'
+        : '';
+      const tabLink = item.tab
+        ? `<button class="patch-note-tab-link" data-patch-tab="${escapeHtml(item.tab)}">Vis <i class="fas fa-arrow-right"></i></button>`
+        : '';
+      const descHtml = item.description
+        ? `<span class="patch-note-description">${escapeHtml(item.description)}</span>`
+        : '';
+      return `<li class="patch-note-item">
+        <span class="patch-note-type" style="background: ${typeColor};">${escapeHtml(typeLabel)}</span>
+        <div class="patch-note-item-content">
+          <span class="patch-note-text">${escapeHtml(item.text)}${proBadge}${tabLink}</span>
+          ${descHtml}
+        </div>
+      </li>`;
+    }).join('');
+
+    contentHtml += `<div class="patch-note-release">
+      <div class="patch-note-release-header">
+        <span class="patch-note-version">${escapeHtml(note.version)}</span>
+        <span class="patch-note-date">${escapeHtml(dateStr)}</span>
+      </div>
+      <h3 class="patch-note-title">${escapeHtml(note.title)}</h3>
+      ${note.summary ? `<p class="patch-note-summary">${escapeHtml(note.summary)}</p>` : ''}
+      <ul class="patch-note-items">${itemsHtml}</ul>
+    </div>`;
+  }
+
+  const modal = document.createElement('div');
+  modal.id = 'patchNotesModal';
+  modal.className = 'patch-notes-overlay';
+  modal.innerHTML = `<div class="patch-notes-modal">
+    <div class="patch-notes-modal-header">
+      <h2><i class="fas fa-bullhorn"></i> Nyheter</h2>
+      <button class="patch-notes-close" id="closePatchNotesBtn" aria-label="Lukk">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="patch-notes-modal-body">${contentHtml}</div>
+    <div class="patch-notes-modal-footer">
+      <button class="patch-notes-close-btn" id="closePatchNotesFooterBtn">Lukk</button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(modal);
+
+  const closeModal = () => modal.remove();
+  modal.querySelector('#closePatchNotesBtn').addEventListener('click', closeModal);
+  modal.querySelector('#closePatchNotesFooterBtn').addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  // Tab navigation links
+  modal.querySelectorAll('.patch-note-tab-link').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.dataset.patchTab;
+      closeModal();
+      switchToTab(tabName);
+    });
+  });
+}
+
+function showPatchNotesBadge() {
+  const badge = document.getElementById('patchNotesBadge');
+  if (badge) badge.style.display = '';
+}
+
+function hidePatchNotesBadge() {
+  const badge = document.getElementById('patchNotesBadge');
+  if (badge) badge.style.display = 'none';
+}
+
+// ============================================
 // BOTTOM TAB BAR
 // ============================================
 
@@ -20143,6 +23200,10 @@ function createMoreMenuOverlay() {
           ${item.badgeId ? `<span class="more-menu-badge" data-mirror-badge="${escapeHtml(item.badgeId)}" style="display:none;"></span>` : ''}
         </button>
       `).join('')}
+      <button class="more-menu-item" id="moreMenuPatchNotes">
+        <i class="fas fa-bullhorn"></i>
+        <span>Nyheter</span>
+      </button>
     </div>
   `;
 
@@ -20164,6 +23225,12 @@ function createMoreMenuOverlay() {
       hideMobileFilterSheet();
       switchToTab(tabName);
     });
+  });
+
+  // Patch notes button in More menu
+  document.getElementById('moreMenuPatchNotes')?.addEventListener('click', () => {
+    closeMoreMenu();
+    loadAndShowPatchNotes(0);
   });
 }
 

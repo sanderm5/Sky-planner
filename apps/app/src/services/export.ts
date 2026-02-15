@@ -147,6 +147,39 @@ export function exportCustomersToXLSX(customers: CustomerExportRow[]): ExportRes
   };
 }
 
+// ============ vCard Export ============
+
+function vcfEscape(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\n/g, '\\n');
+}
+
+export function exportCustomersToVCF(customers: CustomerExportRow[]): ExportResult {
+  const vcards = customers.map((c) => {
+    const lines = ['BEGIN:VCARD', 'VERSION:3.0', `FN:${vcfEscape(c.navn)}`];
+    if (c.telefon) lines.push(`TEL;TYPE=WORK:${c.telefon.replace(/\s/g, '')}`);
+    if (c.epost) lines.push(`EMAIL;TYPE=WORK:${vcfEscape(c.epost)}`);
+    if (c.adresse) {
+      lines.push(
+        `ADR;TYPE=WORK:;;${vcfEscape(c.adresse)};${vcfEscape(c.poststed || '')};;${vcfEscape(c.postnummer || '')};Norge`
+      );
+    }
+    if (c.kategori) lines.push(`CATEGORIES:${vcfEscape(c.kategori)}`);
+    lines.push('END:VCARD');
+    return lines.join('\r\n');
+  });
+
+  const timestamp = new Date().toISOString().split('T')[0];
+  return {
+    data: vcards.join('\r\n'),
+    filename: `kunder_${timestamp}.vcf`,
+    contentType: 'text/vcard; charset=utf-8',
+  };
+}
+
 // ============ Routes Export ============
 
 export interface RouteExportRow {

@@ -403,12 +403,14 @@ router.get(
     };
 
     const today = getNorwegianToday();
+    const currentMonthValue = today.getFullYear() * 12 + today.getMonth();
 
-    // Calculate forfalt (overdue)
+    // Calculate forfalt (overdue) - kun når kontrollens måned er passert
     const forfalt = kunder.filter(k => {
       const nextDate = getNextControlDate(k);
       if (!nextDate) return false;
-      return nextDate < today;
+      const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+      return controlMonthValue < currentMonthValue;
     });
 
     // Calculate upcoming controls (within 30 days)

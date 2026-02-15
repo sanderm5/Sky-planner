@@ -83,6 +83,8 @@ async function createKunde(kunde) {
     prosjektnummer: kunde.prosjektnummer,
     kundenummer: kunde.kundenummer,
     faktura_epost: kunde.faktura_epost,
+    org_nummer: kunde.org_nummer,
+    estimert_tid: kunde.estimert_tid,
   };
 
   const { data, error } = await getClient()
@@ -133,6 +135,8 @@ async function updateKunde(id, kunde, organizationId) {
       prosjektnummer: kunde.prosjektnummer,
       kundenummer: kunde.kundenummer,
       faktura_epost: kunde.faktura_epost,
+      org_nummer: kunde.org_nummer,
+      estimert_tid: kunde.estimert_tid,
     })
     .eq('id', id);
 
@@ -894,7 +898,12 @@ async function createAvtale(avtale) {
       type: avtale.type || 'El-Kontroll',
       beskrivelse: avtale.beskrivelse || null,
       status: avtale.status || 'planlagt',
-      opprettet_av: avtale.opprettet_av || null
+      opprettet_av: avtale.opprettet_av || null,
+      organization_id: avtale.organization_id || null,
+      er_gjentakelse: avtale.er_gjentakelse || false,
+      gjentakelse_regel: avtale.gjentakelse_regel || null,
+      gjentakelse_slutt: avtale.gjentakelse_slutt || null,
+      original_avtale_id: avtale.original_avtale_id || null
     })
     .select(`
       *,
@@ -938,6 +947,49 @@ async function deleteAvtale(id) {
 
   if (error) throw error;
   return { success: true };
+}
+
+async function deleteAvtaleSeries(parentId, organizationId) {
+  // Delete all instances linked to this parent
+  const { data: instances } = await getClient()
+    .from('avtaler')
+    .select('id')
+    .eq('original_avtale_id', parentId)
+    .eq('organization_id', organizationId);
+
+  let count = 0;
+  if (instances) {
+    const { error: instErr } = await getClient()
+      .from('avtaler')
+      .delete()
+      .eq('original_avtale_id', parentId)
+      .eq('organization_id', organizationId);
+    if (instErr) throw instErr;
+    count += instances.length;
+  }
+
+  // Delete the parent
+  const { error: parentErr } = await getClient()
+    .from('avtaler')
+    .delete()
+    .eq('id', parentId)
+    .eq('organization_id', organizationId);
+  if (parentErr) throw parentErr;
+  count++;
+
+  return count;
+}
+
+async function deleteAvtalerByRuteId(ruteId, organizationId) {
+  const { data, error } = await getClient()
+    .from('avtaler')
+    .delete()
+    .eq('rute_id', ruteId)
+    .eq('organization_id', organizationId)
+    .select('id');
+
+  if (error) throw error;
+  return data?.length || 0;
 }
 
 async function completeAvtale(id, completionData) {
@@ -2134,6 +2186,8 @@ export {
   createAvtale,
   updateAvtale,
   deleteAvtale,
+  deleteAvtaleSeries,
+  deleteAvtalerByRuteId,
   completeAvtale,
   // Kontaktlogg
   getKontaktloggByKunde,

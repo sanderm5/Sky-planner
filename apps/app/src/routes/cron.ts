@@ -493,6 +493,37 @@ router.post('/sync-integrations', verifyCronSecret, async (_req: Request, res: R
 });
 
 /**
+ * POST /api/cron/backup
+ * Kryptert backup av hele databasen til Supabase Storage
+ */
+router.post('/backup', verifyCronSecret, async (_req: Request, res: Response) => {
+  const startTime = Date.now();
+
+  try {
+    // Dynamic import of the backup script (CommonJS)
+    const { createBackup } = require('../../scripts/auto-backup.cjs');
+    const result = await createBackup();
+
+    const duration = Date.now() - startTime;
+    logger.info({ duration, result }, 'Backup cron completed');
+
+    res.json({
+      success: true,
+      duration_ms: duration,
+      result,
+    });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error({ error, duration }, 'Backup cron failed');
+    res.status(500).json({
+      success: false,
+      duration_ms: duration,
+      error: error instanceof Error ? error.message : 'Backup failed',
+    });
+  }
+});
+
+/**
  * GET /api/cron/health
  * Health check for cron monitoring
  */

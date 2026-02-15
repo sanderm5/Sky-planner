@@ -7,6 +7,7 @@ import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
+import { broadcast } from '../services/websocket';
 import type { AuthenticatedRequest, Avtale, ApiResponse, CreateAvtaleRequest, Organization } from '../types';
 
 const router: Router = Router();
@@ -75,9 +76,6 @@ function formatDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-// WebSocket broadcast function (optional)
-let wsBroadcast: ((event: string, data: unknown) => void) | null = null;
-
 let dbService: AvtaleDbService;
 
 /**
@@ -88,7 +86,6 @@ export function initAvtalerRoutes(
   broadcastFn?: (event: string, data: unknown) => void
 ): Router {
   dbService = databaseService;
-  wsBroadcast = broadcastFn || null;
   return router;
 }
 
@@ -181,16 +178,6 @@ router.post(
       throw Errors.badRequest('Ugyldig sluttdato for gjentakelse (bruk YYYY-MM-DD)');
     }
 
-    // Validate type based on app_mode
-    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
-    const appMode = org?.app_mode ?? 'mvp';
-
-    if (appMode === 'full') {
-      if (type && !['El-Kontroll', 'Brannvarsling'].includes(type)) {
-        throw Errors.badRequest('Type må være "El-Kontroll" eller "Brannvarsling"');
-      }
-    }
-
     if (status && !['planlagt', 'fullført'].includes(status)) {
       throw Errors.badRequest('Status må være "planlagt" eller "fullført"');
     }
@@ -202,7 +189,7 @@ router.post(
       kunde_id: kunde_id ? Number.parseInt(kunde_id) : undefined,
       dato,
       klokkeslett,
-      type: appMode === 'full' ? (type || 'El-Kontroll') : (type || undefined),
+      type: type || undefined,
       beskrivelse,
       organization_id: req.organizationId,
       opprettet_av: opprettet_av || req.user?.epost,
@@ -241,9 +228,9 @@ router.post(
       instanceCount,
     });
 
-    // Broadcast to WebSocket clients
-    if (wsBroadcast) {
-      wsBroadcast('avtale_created', avtale);
+    // Broadcast to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'avtale_created', avtale, req.user?.userId);
     }
 
     const response: ApiResponse<AvtaleMedKunde> = {
@@ -279,16 +266,6 @@ router.put(
       throw Errors.badRequest('Ugyldig klokkeslett format (bruk HH:MM eller HH:MM:SS)');
     }
 
-    // Validate type based on app_mode
-    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
-    const appMode = org?.app_mode ?? 'mvp';
-
-    if (appMode === 'full') {
-      if (type && !['El-Kontroll', 'Brannvarsling'].includes(type)) {
-        throw Errors.badRequest('Type må være "El-Kontroll" eller "Brannvarsling"');
-      }
-    }
-
     if (status && !['planlagt', 'fullført'].includes(status)) {
       throw Errors.badRequest('Status må være "planlagt" eller "fullført"');
     }
@@ -307,9 +284,9 @@ router.put(
       fields: Object.keys(req.body),
     });
 
-    // Broadcast to WebSocket clients
-    if (wsBroadcast) {
-      wsBroadcast('avtale_updated', avtale);
+    // Broadcast to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'avtale_updated', avtale, req.user?.userId);
     }
 
     const response: ApiResponse<AvtaleMedKunde> = {
@@ -343,8 +320,8 @@ router.delete(
     logAudit(apiLogger, 'DELETE', req.user!.userId, 'avtale', id);
 
     // Broadcast to WebSocket clients
-    if (wsBroadcast) {
-      wsBroadcast('avtale_deleted', { id });
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'avtale_deleted', { id }, req.user?.userId);
     }
 
     const response: ApiResponse = {
@@ -381,8 +358,8 @@ router.delete(
 
     logAudit(apiLogger, 'DELETE_SERIES', req.user!.userId, 'avtale', parentId, { deletedCount });
 
-    if (wsBroadcast) {
-      wsBroadcast('avtale_series_deleted', { parentId, deletedCount });
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'avtale_series_deleted', { parentId, deletedCount }, req.user?.userId);
     }
 
     const response: ApiResponse = {
@@ -420,6 +397,11 @@ router.post(
       data: { message: 'Avtale markert som fullført' },
       requestId: req.requestId,
     };
+
+    // Broadcast completion to other users
+    if (req.organizationId) {
+      broadcast(req.organizationId, 'avtale_updated', { id, status: 'fullført' }, req.user?.userId);
+    }
 
     res.json(response);
   })

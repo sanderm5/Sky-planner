@@ -35,11 +35,11 @@ export declare function generateTOTPUri(secret: string, accountName: string, iss
 /**
  * Encrypt TOTP secret for storage
  */
-export declare function encryptTOTPSecret(secret: string, encryptionKey: string): string;
+export declare function encryptTOTPSecret(secret: string, encryptionKey: string, salt?: string): string;
 /**
  * Decrypt TOTP secret from storage
  */
-export declare function decryptTOTPSecret(encryptedData: string, encryptionKey: string): string;
+export declare function decryptTOTPSecret(encryptedData: string, encryptionKey: string, salt?: string): string;
 export interface TOTPSetupData {
     secret: string;
     uri: string;

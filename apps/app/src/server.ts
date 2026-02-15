@@ -9,6 +9,7 @@ import { initSentry, Sentry } from './services/sentry';
 // Initialize Sentry before anything else
 initSentry();
 
+import http from 'http';
 import express, { Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -50,6 +51,8 @@ import publicApiV1Routes, { initPublicCustomersRoutes } from './routes/public-ap
 import webhooksRoutes from './routes/webhooks';
 import docsRoutes from './routes/docs';
 import cronRoutes from './routes/cron';
+import cron from 'node-cron';
+import { sendAlert } from './services/alerts';
 import integrationWebhooksRoutes from './routes/integration-webhooks';
 import exportRoutes, { initExportRoutes } from './routes/export';
 import featuresRoutes, { initFeaturesRoutes } from './routes/features';
@@ -58,7 +61,10 @@ import customerEmailRoutes, { initCustomerEmailRoutes } from './routes/customer-
 import ekkRoutes, { initEkkRoutes } from './routes/ekk';
 import outlookRoutes, { initOutlookRoutes } from './routes/outlook';
 import todaysWorkRoutes, { initTodaysWorkRoutes } from './routes/todays-work';
+import patchNotesRoutes, { initPatchNotesRoutes } from './routes/patch-notes';
+import chatRoutes, { initChatRoutes } from './routes/chat';
 import { csrfTokenMiddleware, csrfProtection, getCsrfTokenHandler } from './middleware/csrf';
+import { initWebSocketServer, shutdownWebSocket } from './services/websocket';
 import type { AuthenticatedRequest } from './types';
 
 // Validate environment and get config
@@ -111,6 +117,12 @@ async function initializeApp() {
   // Initialize todays-work routes
   initTodaysWorkRoutes(db as Parameters<typeof initTodaysWorkRoutes>[0]);
 
+  // Initialize patch-notes routes
+  initPatchNotesRoutes(db as Parameters<typeof initPatchNotesRoutes>[0]);
+
+  // Initialize chat routes
+  initChatRoutes(db as Parameters<typeof initChatRoutes>[0]);
+
   return db;
 }
 
@@ -153,7 +165,9 @@ app.use(
           'https://*.tiles.mapbox.com',
           'https://events.mapbox.com',
           'https://unpkg.com',
-          ...(process.env.NODE_ENV !== 'production' ? ['wss://localhost:*', 'ws://localhost:*'] : []),
+          ...(process.env.NODE_ENV !== 'production'
+            ? ['wss://localhost:*', 'ws://localhost:*']
+            : ['wss://app.skyplanner.no', 'wss://skyplanner.no']),
         ],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'https://cdnjs.cloudflare.com'],
         workerSrc: ["'self'", 'blob:'],
@@ -339,6 +353,12 @@ app.use('/api/outlook', requireTenantAuth, requireActiveSubscription, outlookRou
 // Today's work routes (field technician daily view)
 app.use('/api/todays-work', requireTenantAuth, requireActiveSubscription, todaysWorkRoutes);
 
+// Patch notes / changelog
+app.use('/api/patch-notes', requireTenantAuth, patchNotesRoutes);
+
+// Chat / messaging
+app.use('/api/chat', requireTenantAuth, requireActiveSubscription, chatRoutes);
+
 // Import routes (Excel import with staging)
 app.use('/api/import', requireTenantAuth, requireActiveSubscription, importRoutes);
 
@@ -470,20 +490,69 @@ app.use(errorHandler);
 // ===== START SERVER =====
 const PORT = config.PORT;
 
+// Create HTTP server (shared with WebSocket)
+const server = http.createServer(app);
+
 // Initialize and start
 initializeApp()
   .then(() => {
     // Register graceful shutdown handlers for database cleanup
     registerShutdownHandlers();
 
-    app.listen(PORT, config.HOST, () => {
+    // Initialize WebSocket server on same HTTP server
+    initWebSocketServer(server);
+
+    server.listen(PORT, config.HOST, () => {
       logger.info({
         host: config.HOST,
         port: PORT,
         environment: config.NODE_ENV,
         database: config.DATABASE_TYPE,
       }, `Server startet på ${config.HOST}:${PORT}`);
+
+      // Auto-backup: 3x daglig (kl 06:00, 14:00, 22:00)
+      if (config.DATABASE_TYPE === 'supabase' && process.env.BACKUP_ENCRYPTION_KEY && config.NODE_ENV === 'production') {
+        cron.schedule('0 6,14,22 * * *', async () => {
+          logger.info('Starter automatisk backup...');
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { createBackup } = require('../../scripts/auto-backup.cjs');
+            const result = await createBackup();
+
+            if (result?.missingCriticalTables?.length > 0) {
+              await sendAlert({
+                title: 'Backup fullført med advarsler',
+                message: `Backup fullført men kritiske tabeller mangler: ${result.missingCriticalTables.join(', ')}. ${result.totalRows} rader fra ${result.tables} tabeller.`,
+                severity: 'warning',
+                source: 'backup',
+                metadata: result,
+              });
+            } else {
+              logger.info({ result }, 'Automatisk backup fullført');
+            }
+          } catch (error) {
+            logger.error({ error }, 'Automatisk backup feilet');
+            await sendAlert({
+              title: 'Backup feilet!',
+              message: `Automatisk backup feilet: ${error instanceof Error ? error.message : 'Ukjent feil'}. Sjekk logger for detaljer.`,
+              severity: 'critical',
+              source: 'backup',
+              metadata: { error: error instanceof Error ? error.message : String(error) },
+            }).catch(alertErr => {
+              logger.error({ alertErr }, 'Kunne ikke sende backup-feil-varsel');
+            });
+          }
+        });
+        logger.info('Auto-backup aktivert (kl 06:00, 14:00, 22:00)');
+      }
     });
+
+    // Graceful shutdown for WebSocket
+    const gracefulShutdown = () => {
+      shutdownWebSocket();
+    };
+    process.on('SIGINT', gracefulShutdown);
+    process.on('SIGTERM', gracefulShutdown);
   })
   .catch((error) => {
     logger.fatal({ error }, 'Failed to initialize application');

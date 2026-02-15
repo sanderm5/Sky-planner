@@ -581,6 +581,14 @@ async function main() {
         diffs.push({ field: 'brann_system', dbVal: dbMatch.brann_system, csvVal: null });
       }
 
+      // Intervall-felt: CSV er fasit — nullstill DB-verdi hvis CSV ikke har data
+      if (csv.brann_kontroll_intervall === null && dbMatch.brann_kontroll_intervall != null) {
+        diffs.push({ field: 'brann_kontroll_intervall', dbVal: dbMatch.brann_kontroll_intervall, csvVal: null });
+      }
+      if (csv.el_kontroll_intervall === null && dbMatch.el_kontroll_intervall != null) {
+        diffs.push({ field: 'el_kontroll_intervall', dbVal: dbMatch.el_kontroll_intervall, csvVal: null });
+      }
+
       // Notater comparison - merge rather than replace
       const mergedNotater = mergeNotater(dbMatch.notater, csv.notater);
       if (normalizeString(dbMatch.notater) !== normalizeString(mergedNotater) && mergedNotater) {

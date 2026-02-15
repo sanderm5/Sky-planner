@@ -604,7 +604,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+" crossorigin="anonymous" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" />
-  <link rel="stylesheet" href="style.css?v=20260202-area" />
+  <link rel="stylesheet" href="style.css?v=20260215-dispatch" />
 </head>
 <body>
   <!-- ========== IMPERSONATION BANNER (super-admin only) ========== -->
@@ -729,6 +729,7 @@
 
       <!-- User info / Logout -->
       <div class="user-bar" id="userBar" style="display: none;">
+        <span id="ws-connection-indicator" class="ws-indicator ws-disconnected" title="Kobler til..."></span>
         <span class="user-name" id="userNameDisplay"></span>
         <div class="user-bar-actions">
           <button class="theme-toggle-btn" id="themeToggleBtn" title="Bytt tema">
@@ -779,6 +780,10 @@
           <i class="fas fa-calendar"></i>
           <span>Kalender</span>
         </button>
+        <button class="tab-item" data-tab="weekly-plan">
+          <i class="fas fa-clipboard-list"></i>
+          <span>Ukeplan</span>
+        </button>
         <button class="tab-item" data-tab="planner">
           <i class="fas fa-route"></i>
           <span>Ruteplanlegger</span>
@@ -791,6 +796,11 @@
           <i class="fas fa-exclamation-circle"></i>
           <span>Mangler data</span>
           <span class="tab-badge missing-badge" id="missingDataBadge" style="display: none;">0</span>
+        </button>
+        <button class="tab-item" data-tab="chat" id="chatTab">
+          <i class="fas fa-comments"></i>
+          <span>Meldinger</span>
+          <span class="tab-badge chat-badge" id="chatUnreadBadge" style="display: none;">0</span>
         </button>
         <button class="tab-item admin-only" data-tab="admin" id="adminTab" style="display: none;">
           <i class="fas fa-shield-alt"></i>
@@ -819,6 +829,11 @@
       </div>
 
       <div class="sidebar-footer">
+        <button class="patch-notes-link" id="patchNotesLink" title="Nyheter og oppdateringer">
+          <i class="fas fa-bullhorn"></i>
+          <span>Nyheter</span>
+          <span class="patch-notes-badge" id="patchNotesBadge" style="display: none;"></span>
+        </button>
         <a href="https://efffekt.no" target="_blank" rel="noopener">Efffekt AS</a>
       </div>
     </aside>
@@ -936,6 +951,9 @@
                   </button>
                   <button class="export-option" data-format="json">
                     <i class="fas fa-file-code"></i> JSON
+                  </button>
+                  <button class="export-option" data-format="vcf">
+                    <i class="fas fa-address-card"></i> Kontakter (.vcf)
                   </button>
                 </div>
               </div>
@@ -1141,6 +1159,11 @@
           <div id="calendarContainer" class="calendar-container">
             <!-- Kalender lastes her -->
           </div>
+        </div>
+
+        <!-- Tab: Weekly Plan / Ukeplan -->
+        <div class="tab-pane" id="tab-weekly-plan">
+          <div id="weeklyPlanContainer"></div>
         </div>
 
         <!-- Tab: Planner / Ruteplanlegger -->
@@ -1622,6 +1645,59 @@
             </div>
           </div>
         </div>
+
+        <!-- Tab: Chat / Meldinger -->
+        <div class="tab-pane" id="tab-chat">
+          <div class="chat-container">
+            <!-- Chat conversation list view -->
+            <div class="chat-conversation-list" id="chatConversationList">
+              <div class="tab-header chat-header">
+                <h2><i class="fas fa-comments"></i> Meldinger</h2>
+                <button class="btn btn-icon btn-small" id="chatNewDmBtn" title="Ny melding">
+                  <i class="fas fa-plus"></i>
+                </button>
+              </div>
+              <div class="chat-conversations" id="chatConversations">
+                <!-- Fylles med JavaScript -->
+              </div>
+            </div>
+
+            <!-- Chat message view (hidden by default) -->
+            <div class="chat-message-view" id="chatMessageView" style="display: none;">
+              <div class="chat-message-header">
+                <button class="btn btn-icon btn-small" id="chatBackBtn">
+                  <i class="fas fa-arrow-left"></i>
+                </button>
+                <span class="chat-message-title" id="chatMessageTitle">Teamchat</span>
+              </div>
+              <div class="chat-messages" id="chatMessages">
+                <!-- Fylles med JavaScript -->
+              </div>
+              <div class="chat-typing-indicator" id="chatTypingIndicator" style="display: none;">
+                <span id="chatTypingText"></span>
+              </div>
+              <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="Skriv en melding..." maxlength="2000" autocomplete="off">
+                <button class="btn btn-primary btn-icon" id="chatSendBtn" title="Send">
+                  <i class="fas fa-paper-plane"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- New DM view (hidden by default) -->
+            <div class="chat-new-dm" id="chatNewDm" style="display: none;">
+              <div class="chat-message-header">
+                <button class="btn btn-icon btn-small" id="chatNewDmBackBtn">
+                  <i class="fas fa-arrow-left"></i>
+                </button>
+                <span class="chat-message-title">Ny melding</span>
+              </div>
+              <div class="chat-team-list" id="chatTeamList">
+                <!-- Fylles med JavaScript -->
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1807,6 +1883,17 @@
           <div class="form-group">
             <label for="poststed">Poststed</label>
             <input type="text" id="poststed" placeholder="Fylles automatisk">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="org_nummer">Org.nr.</label>
+            <input type="text" id="org_nummer" maxlength="9" pattern="\d{9}" placeholder="9 siffer" inputmode="numeric">
+          </div>
+          <div class="form-group">
+            <label for="estimert_tid">Estimert tid (min)</label>
+            <input type="number" id="estimert_tid" min="0" max="480" step="15" placeholder="60" inputmode="numeric">
           </div>
         </div>
 
@@ -2058,6 +2145,21 @@
                 <i class="fas fa-plus"></i> Legg til
               </button>
             </div>
+          </div>
+        </div>
+
+        <!-- Integrasjonshandlinger -->
+        <div id="integrationActionsSection" class="form-section hidden" style="border-top: 1px solid var(--border); padding-top: 12px; margin-top: 8px;">
+          <label style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px; display: block;">
+            <i class="fas fa-plug"></i> Integrasjoner
+          </label>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="pushToTripletexBtn" class="btn btn-secondary btn-small hidden">
+              <i class="fas fa-cloud-upload-alt"></i> <span id="tripletexBtnLabel">Opprett i Tripletex</span>
+            </button>
+            <button type="button" id="createEkkReportBtn" class="btn btn-secondary btn-small hidden">
+              <i class="fas fa-file-medical-alt"></i> Opprett EKK-rapport
+            </button>
           </div>
         </div>
 
@@ -2419,7 +2521,7 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
   <script src="offline-storage.js?v=1"></script>
   <script src="sync-manager.js?v=1"></script>
-  <script src="app.js?v=20260202-area"></script>
+  <script src="app.js?v=20260215-dispatch"></script>
   <script>
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {

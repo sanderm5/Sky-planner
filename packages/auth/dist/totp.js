@@ -104,8 +104,8 @@ export function generateTOTPUri(secret, accountName, issuer = 'Sky Planner') {
 /**
  * Encrypt TOTP secret for storage
  */
-export function encryptTOTPSecret(secret, encryptionKey) {
-    const key = crypto.scryptSync(encryptionKey, 'totp-salt', 32);
+export function encryptTOTPSecret(secret, encryptionKey, salt = 'totp-salt') {
+    const key = crypto.scryptSync(encryptionKey, salt, 32);
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     let encrypted = cipher.update(secret, 'utf8', 'hex');
@@ -117,12 +117,12 @@ export function encryptTOTPSecret(secret, encryptionKey) {
 /**
  * Decrypt TOTP secret from storage
  */
-export function decryptTOTPSecret(encryptedData, encryptionKey) {
+export function decryptTOTPSecret(encryptedData, encryptionKey, salt = 'totp-salt') {
     const [ivHex, authTagHex, encrypted] = encryptedData.split(':');
     if (!ivHex || !authTagHex || !encrypted) {
         throw new Error('Invalid encrypted data format');
     }
-    const key = crypto.scryptSync(encryptionKey, 'totp-salt', 32);
+    const key = crypto.scryptSync(encryptionKey, salt, 32);
     const iv = Buffer.from(ivHex, 'hex');
     const authTag = Buffer.from(authTagHex, 'hex');
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
@@ -185,12 +185,11 @@ function base32Decode(encoded) {
  * Timing-safe string comparison
  */
 function timingSafeCompare(a, b) {
-    if (a.length !== b.length) {
-        // Still compare to prevent timing leaks on length
-        const dummy = Buffer.from(a);
-        crypto.timingSafeEqual(dummy, dummy);
-        return false;
-    }
-    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+    const maxLen = Math.max(a.length, b.length);
+    const bufA = Buffer.alloc(maxLen);
+    const bufB = Buffer.alloc(maxLen);
+    Buffer.from(a).copy(bufA);
+    Buffer.from(b).copy(bufB);
+    return a.length === b.length && crypto.timingSafeEqual(bufA, bufB);
 }
 //# sourceMappingURL=totp.js.map
