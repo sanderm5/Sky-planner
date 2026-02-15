@@ -1659,12 +1659,12 @@ function updateControlSectionHeaders() {
 
   const elHeader = document.querySelector('#elKontrollSection .control-section-header');
   if (elHeader && elService) {
-    elHeader.innerHTML = `<i class="fas ${elService.icon}" style="color: ${elService.color}"></i> ${elService.name}`;
+    elHeader.innerHTML = `<i class="fas ${escapeHtml(elService.icon)}" style="color: ${escapeHtml(elService.color)}"></i> ${escapeHtml(elService.name)}`;
   }
 
   const brannHeader = document.querySelector('#brannvarslingSection .control-section-header');
   if (brannHeader && brannService) {
-    brannHeader.innerHTML = `<i class="fas ${brannService.icon}" style="color: ${brannService.color}"></i> ${brannService.name}`;
+    brannHeader.innerHTML = `<i class="fas ${escapeHtml(brannService.icon)}" style="color: ${escapeHtml(brannService.color)}"></i> ${escapeHtml(brannService.name)}`;
   }
 }
 
@@ -3021,8 +3021,9 @@ const SmartRouteEngine = {
 
     const customerIds = cluster.customers.map(c => c.id);
     createRouteFromCustomerIds(customerIds);
-    switchToTab('routes');
-    showToast(`Opprettet rute for ${cluster.primaryArea} med ${cluster.customerCount} kunder`);
+    showToast(`${cluster.customerCount} kunder valgt fra ${cluster.primaryArea}. Beregner rute...`);
+    // Auto-calculate route after selecting customers
+    planRoute();
   },
 
   // Fallback: Område-basert gruppering (som den gamle metoden)
@@ -13170,20 +13171,22 @@ function renderSavedRoutes() {
 
   container.innerHTML = savedRoutes.map(route => {
     const km = route.total_distanse ? (route.total_distanse / 1000).toFixed(1) : '-';
-    const statusClass = route.status === 'fullført' ? 'status-completed' : 'status-planned';
+    const isCompleted = route.status === 'fullført' || route.status === 'fullfort';
+    const statusClass = isCompleted ? 'status-completed' : 'status-planned';
+    const statusLabel = isCompleted ? 'Fullført' : 'Planlagt';
 
     return `
       <div class="saved-route-item" data-id="${route.id}">
         <div class="route-header">
           <h4>${escapeHtml(route.navn)}</h4>
-          <span class="route-status ${statusClass}">${escapeHtml(route.status)}</span>
+          <span class="route-status ${statusClass}">${statusLabel}</span>
         </div>
         <p>${route.antall_kunder} kunder • ${km} km</p>
         ${route.planlagt_dato ? `<p class="route-date">Planlagt: ${formatDate(route.planlagt_dato)}</p>` : ''}
         <div class="route-item-actions">
           <button class="btn btn-small btn-primary" data-action="loadSavedRoute" data-route-id="${route.id}">Last inn</button>
-          ${route.status !== 'fullført' ? `<button class="btn btn-small btn-field-work" data-action="startFieldWork" data-route-id="${route.id}"><i class="fas fa-route"></i> Kjør rute</button>` : ''}
-          ${route.status !== 'fullført' ? `<button class="btn btn-small btn-success" data-action="markRouteVisited" data-route-id="${route.id}"><i class="fas fa-check"></i> Marker besøkt</button>` : ''}
+          ${!isCompleted ? `<button class="btn btn-small btn-field-work" data-action="startFieldWork" data-route-id="${route.id}"><i class="fas fa-route"></i> Kjør rute</button>` : ''}
+          ${!isCompleted ? `<button class="btn btn-small btn-success" data-action="markRouteVisited" data-route-id="${route.id}"><i class="fas fa-check"></i> Marker besøkt</button>` : ''}
           <button class="btn btn-small btn-danger" data-action="deleteRoute" data-route-id="${route.id}">Slett</button>
         </div>
       </div>
@@ -17518,20 +17521,8 @@ function createRouteFromCustomerIds(customerIds) {
   selectedCustomers.clear();
   customersForRoute.forEach(c => selectedCustomers.add(c.id));
 
-  // Re-render markers
-  renderMarkers(customers);
-
-  // Switch to routes tab
-  const routesTab = document.querySelector('[data-tab="routes"]');
-  if (routesTab) {
-    routesTab.click();
-  }
-
-  // Update route panel
-  updateRouteSelection();
-
-  // Show confirmation
-  showMessage(`${customersForRoute.length} kunder lagt til for ruteplanlegging. Klikk "Beregn rute" for å lage kjørerute.`, 'success');
+  // Update UI
+  updateSelectionUI();
 }
 
 // === EMAIL FUNCTIONS ===
