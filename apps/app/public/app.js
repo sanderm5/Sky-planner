@@ -18614,7 +18614,11 @@ function logoutUser(logoutAllDevices = false) {
   // Reset auth state
   authToken = null;
 
-  window.location.href = '/login.html';
+  // Stop inactivity tracking and dismiss any warning modal
+  stopInactivityTracking();
+
+  // Show login screen (SPA - no redirect)
+  showLoginView();
 }
 
 // ========================================
