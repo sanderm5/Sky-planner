@@ -27,7 +27,7 @@ apps/app/
 │   ├── routes/
 │   │   ├── auth.ts         # Autentisering
 │   │   ├── kunder.ts       # Kunde-CRUD
-│   │   ├── config.ts       # App-konfigurasjon (branding, kart, etc.)
+│   │   ├── config.ts       # App-konfigurasjon + ruteoptimalisering (VROOM)
 │   │   ├── onboarding.ts   # Onboarding-flow
 │   │   ├── team-members.ts # Teammedlemmer
 │   │   ├── api-keys.ts     # API-nøkler
@@ -36,6 +36,22 @@ apps/app/
 │   │   ├── export.ts       # Dataeksport (CSV, JSON, GDPR)
 │   │   ├── integrations.ts # Regnskapssystem-integrasjoner
 │   │   ├── integration-webhooks.ts # Innkommende webhooks fra regnskapssystem
+│   │   ├── avtaler.ts      # Kalender-avtaler
+│   │   ├── ruter.ts        # Ruter og ruteplanlegging
+│   │   ├── chat.ts         # Chat-meldinger
+│   │   ├── patch-notes.ts  # Patch notes / changelog
+│   │   ├── todays-work.ts  # Dagens arbeid-widget
+│   │   ├── features.ts     # Feature flags
+│   │   ├── industries.ts   # Bransjer
+│   │   ├── service-types.ts # Tjenestetyper
+│   │   ├── tags.ts         # Kunde-tags
+│   │   ├── reports.ts      # Rapporter
+│   │   ├── kontaktlogg.ts  # Kontaktlogg
+│   │   ├── kontaktpersoner.ts # Kontaktpersoner
+│   │   ├── customer-emails.ts # Kunde-e-poster
+│   │   ├── email.ts        # E-postfunksjonalitet
+│   │   ├── ekk.ts          # EKK-integrasjon
+│   │   ├── outlook.ts      # Outlook-kalendersynkronisering
 │   │   ├── cron.ts         # Planlagte vedlikeholdsoppgaver
 │   │   ├── super-admin.ts  # Super admin-funksjoner
 │   │   ├── docs.ts         # API-dokumentasjon
@@ -214,6 +230,14 @@ pnpm build        # Kompiler TypeScript
 - `account_deletion_requests` - GDPR kontosletting-forespørsler
 - `totp_pending_sessions` - 2FA-sesjoner under innlogging
 - `totp_audit_log` - Revisjonslogg for 2FA-hendelser
+- `feature_definitions` - Feature-flag-katalog
+- `organization_features` - Feature-aktivering per organisasjon
+- `patch_notes` - Changelog/nyheter (global, items JSONB med visibility)
+- `chat_messages` - Chat-meldinger
+- `todays_work` - Dagens arbeid-oppgaver
+- `organizations` - Organisasjoner (multi-tenant)
+- `brukere` - Brukere/ansatte per organisasjon
+- `klient` - Klient/eier-brukere (auth)
 
 ---
 
@@ -224,20 +248,33 @@ pnpm build        # Kompiler TypeScript
 3. **Ruter** - Lagrede ruter
 4. **Kalender** - Månedsoversikt
 5. **Planlegger** - År/område-planlegging
+6. **Ukeplan** - Ukentlig ruteplanlegging med:
+   - Manuell kundesøk (alltid synlig)
+   - Nummererte stopp med team-initialer og farger
+   - Tidsestimater per stopp (08:00-08:30 format)
+   - Progresjonslinje (estimert tid vs 8-timers dag)
+   - Ruteoptimalisering via VROOM API
+   - Slett/fjern kunder fra plan
+   - Per-kunde tilordning (hvem la til kunden)
 
 ---
 
 ## Integrasjoner
 
 ### Eksterne tjenester
-- **OpenRouteService** - Ruteoptimalisering
+- **OpenRouteService** - Ruteoptimalisering og VROOM (route optimization)
 - **Kartverket API** - Geokoding
 - **Leaflet** - Interaktivt kart
+- **Mapbox** - Satellittbilder og mørkt kart
 
 ### Regnskapssystemer
 - **Tripletex** - Synkronisering av kunder + innkommende webhooks
 - **Fiken** - Synkronisering av kunder
 - **PowerOffice** - Synkronisering av kunder
+
+### Andre integrasjoner
+- **EKK** - El-kontroll-integrasjon
+- **Outlook** - Kalendersynkronisering
 
 ---
 
@@ -251,6 +288,10 @@ pnpm build        # Kompiler TypeScript
 | CORS | Streng origin-validering (prod: ALLOWED_ORIGINS) |
 | RLS | Row-Level Security for multi-tenant isolasjon |
 | Innholdsvalidering | Avviser forespørsler uten riktig Content-Type |
+| Inaktivitets-logout | Auto-logout etter 15 min inaktivitet (varsel etter 13 min) |
+| Kontolåsing | Låser konto ved gjentatte feilet innlogginger |
+| TOTP | Replay-beskyttelse mot gjenbruk av 2FA-koder |
+| Backup-kryptering | AES-256-GCM kryptering av database-backups |
 
 **Middleware-rekkefølge:** Helmet → CORS → Body parsing → Cookie → CSRF-token → CSRF-validering → Content-Type → Request ID → Logging → Rate limiting
 
@@ -279,3 +320,23 @@ pnpm build        # Kompiler TypeScript
 | 016_mvp_friendly_defaults | MVP-vennlige standardverdier |
 | 017_failed_sync_items | Retry-mekanisme for feilede synkroniseringer |
 | 018_import_enhancements | Duplikatdeteksjon, kvalitetsrapport, flerark-støtte |
+| 019_security_and_features | Sikkerhetsforbedringer og feature-system |
+| 020_integration_tables | Integrasjonstabeller |
+| 021_prosjektnummer | Prosjektnummer-felt |
+| 022_kundenummer_fakturaepost | Kundenummer og faktura-e-post |
+| 023_feature_modules | Feature-modul-system (definitions + per-org) |
+| 024_customer_lifecycle | Kundelivssyklus |
+| 025_rls_multi_tenancy | RLS multi-tenancy policyer |
+| 026_field_work | Feltarbeid |
+| 027_email_templates | E-postmaler |
+| 028_ekk_integration | EKK-integrasjon |
+| 029_outlook_sync | Outlook-kalendersynkronisering |
+| 030_organization_service_types | Organisasjonsspecifikke tjenestetyper |
+| 031_smart_clusters_feature | Smarte klynger-feature |
+| 032_todays_work | Dagens arbeid-widget |
+| 033_date_mode | Datoformat-modus |
+| 034_smart_clusters_default_enabled | Smarte klynger aktivert for alle |
+| 035_patch_notes | Patch notes / changelog |
+| 036_chat | Chat-system |
+| 037_rute_kalender_sync | Rute-kalender-synkronisering |
+| 038_account_lockout | Kontolåsing ved feil innlogging |

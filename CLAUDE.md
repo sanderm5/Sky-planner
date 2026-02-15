@@ -28,17 +28,23 @@ Dette er en **monorepo** med Turborepo og pnpm workspaces.
 
 ### [apps/app](apps/app/CLAUDE.md) - Hovedapplikasjon
 Intern applikasjon for kundeadministrasjon med:
-- Interaktivt kart med kundemarkører
-- Ruteoptimalisering for serviceturer
+- Interaktivt kart med kundemarkører og smarte klynger
+- Ruteoptimalisering for serviceturer (VROOM/ORS)
+- Ukeplan med manuell kundesøk, nummererte stopp, tidsestimater, progresjonslinje og ruteoptimalisering
 - Kalender og avtaler
 - Import-system for kundedata (CSV, Excel) med AI-mapping, duplikatdeteksjon og auto-rensing
 - Eksport-system (CSV, JSON) med GDPR-komplett dataeksport
 - API-nøkler og Public API (v1)
 - Webhooks for integrasjoner (utgående + innkommende fra regnskapssystem)
 - Regnskapssystem-integrasjoner (Tripletex, Fiken, PowerOffice)
+- EKK-integrasjon og Outlook-kalendersynkronisering
+- Patch notes / changelog-system med feature-filtrering
+- Chat-system
 - CSRF-beskyttelse, rate limiting, sikkerhetshoder (Helmet)
 - Cron-jobber for opprydding, kontosletting og integrasjonssynkronisering
 - Varslingssystem (Slack, Discord, generisk webhook)
+- Inaktivitets-auto-logout (15 min)
+- Kontolåsing ved gjentatte feilet innlogginger
 
 **Stack:** Express.js, TypeScript, Vanilla JS, Leaflet, Supabase
 
@@ -113,6 +119,19 @@ pnpm typecheck
 
 ---
 
+## Deployment
+
+| App | Plattform | URL |
+|-----|-----------|-----|
+| `apps/web` | Vercel | `sky-planner-web.vercel.app` |
+| `apps/app` | Railway | `skyplannerapp-production.up.railway.app` |
+
+**Viktig:** `JWT_SECRET` må være identisk på Vercel og Railway for at SSO/proxy skal fungere.
+
+Web-appen proxyer API-kall via `/api/app/...` → Railway backend `/api/...` (se `apps/web/src/pages/api/app/[...path].ts`).
+
+---
+
 ## Miljøvariabler
 
 Kopier `.env.example` til `.env` i `apps/app/`:
@@ -125,7 +144,7 @@ SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_KEY=eyJ...
 
 # Sikkerhet
-JWT_SECRET=...                  # Min 64 tegn i produksjon, delt med apps/web
+JWT_SECRET=...                  # Min 64 tegn i produksjon, IDENTISK på web og app
 ENCRYPTION_SALT=...             # Påkrevd i produksjon
 COOKIE_DOMAIN=.skyplanner.no   # For cross-subdomain SSO
 ALLOWED_ORIGINS=...             # Komma-separert
@@ -147,4 +166,7 @@ CRON_SECRET=...                 # Beskytter cron-endepunkter
 # Varsling (valgfritt)
 ALERT_SLACK_WEBHOOK=...
 ALERT_DISCORD_WEBHOOK=...
+
+# Backup-kryptering
+BACKUP_ENCRYPTION_KEY=...       # AES-256-GCM, generer med openssl rand -base64 48
 ```
