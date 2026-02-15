@@ -553,6 +553,7 @@ export interface EnvConfig {
 
   // Encryption
   ENCRYPTION_SALT: string;
+  INTEGRATION_ENCRYPTION_KEY: string;
 
   // Tripletex
   TRIPLETEX_ENV: 'test' | 'production';

@@ -67,7 +67,7 @@ export async function requireAuth(
 
   try {
     const config = getConfig();
-    const decoded = jwt.verify(token, config.JWT_SECRET) as JWTPayload;
+    const decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
 
     // Check if token has been blacklisted (logout)
     const tokenId = getTokenId(decoded);
@@ -293,7 +293,7 @@ export async function optionalAuth(
 
   try {
     const config = getConfig();
-    const decoded = jwt.verify(token, config.JWT_SECRET) as JWTPayload;
+    const decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
 
     // Check if token has been blacklisted (logout)
     const tokenId = getTokenId(decoded);
@@ -323,7 +323,7 @@ export function generateToken(
 ): string {
   const config = getConfig();
   const jti = crypto.randomUUID();
-  return jwt.sign({ ...payload, jti }, config.JWT_SECRET, { expiresIn: expiresIn as jwt.SignOptions['expiresIn'] });
+  return jwt.sign({ ...payload, jti }, config.JWT_SECRET, { algorithm: 'HS256', expiresIn: expiresIn as jwt.SignOptions['expiresIn'] });
 }
 
 /**
@@ -332,7 +332,7 @@ export function generateToken(
 export function verifyToken(token: string): JWTPayload | null {
   try {
     const config = getConfig();
-    return jwt.verify(token, config.JWT_SECRET) as JWTPayload;
+    return jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
   } catch {
     return null;
   }

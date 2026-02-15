@@ -520,7 +520,7 @@ router.get(
     }
 
     try {
-      const decoded = jwt.verify(token, config.JWT_SECRET) as JWTPayload;
+      const decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
 
       // Check if token has been blacklisted (logout)
       const tokenId = getTokenId(decoded);
@@ -651,7 +651,7 @@ async function sendLoginNotification(
       <p><strong>Type:</strong> ${userType}</p>
       <p><strong>Tidspunkt:</strong> ${now}</p>
       <p><strong>IP-adresse:</strong> ${ip}</p>
-      <p><strong>Enhet:</strong> ${userAgent}</p>
+      <p><strong>Enhet:</strong> ${userAgent ? userAgent.substring(0, 100) : 'Ukjent'}</p>
     `;
 
     await emailService.sendEmail(notifyEmail, subject, message);

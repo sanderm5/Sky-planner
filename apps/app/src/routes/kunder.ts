@@ -9,7 +9,7 @@ import * as XLSX from 'xlsx';
 import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
-import { validateKunde } from '../utils/validation';
+import { validateKunde, validateSearchInput } from '../utils/validation';
 import { geocodeCustomerData } from '../services/geocoding';
 import { getWebhookService } from '../services/webhooks';
 import type { AuthenticatedRequest, Kunde, CreateKundeRequest, ApiResponse, Organization } from '../types';
@@ -92,9 +92,8 @@ router.get(
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const limit = Math.min(Number.parseInt(req.query.limit as string) || 100, 500);
     const offset = Math.max(Number.parseInt(req.query.offset as string) || 0, 0);
-    // Limit search string length to prevent performance issues with LIKE queries
     const rawSearch = req.query.search as string | undefined;
-    const search = rawSearch ? rawSearch.substring(0, 100) : undefined;
+    const search = rawSearch ? validateSearchInput(rawSearch) ?? undefined : undefined;
     const kategori = req.query.kategori as string | undefined;
     const status = req.query.status as string | undefined;
 

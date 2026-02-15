@@ -19,6 +19,7 @@ export function signToken(
   const { expiresIn = '24h' } = options;
   const tokenPayload = { ...payload, jti: payload.jti || crypto.randomUUID() };
   return jwt.sign(tokenPayload, secret, {
+    algorithm: 'HS256',
     expiresIn: expiresIn as jwt.SignOptions['expiresIn'],
   });
 }
@@ -29,7 +30,7 @@ export function signToken(
  */
 export function verifyToken(token: string, secret: string): VerifyResult {
   try {
-    const payload = jwt.verify(token, secret) as JWTPayload;
+    const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as JWTPayload;
     return { success: true, payload };
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {

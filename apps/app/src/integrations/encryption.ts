@@ -11,11 +11,11 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 
 /**
- * Derive an encryption key from the JWT secret
+ * Derive an encryption key using a dedicated integration key (separate from JWT_SECRET)
  */
 function deriveKey(): Buffer {
   const config = getConfig();
-  return crypto.scryptSync(config.JWT_SECRET, config.ENCRYPTION_SALT, 32);
+  return crypto.scryptSync(config.INTEGRATION_ENCRYPTION_KEY, config.ENCRYPTION_SALT, 32);
 }
 
 /**

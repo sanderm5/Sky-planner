@@ -46,7 +46,7 @@ router.get(
     const token = extractToken(req as AuthenticatedRequest);
     if (token) {
       try {
-        const decoded = jwt.verify(token, envConfig.JWT_SECRET) as JWTPayload;
+        const decoded = jwt.verify(token, envConfig.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
         if (decoded.organizationId) {
           organization = await dbService.getOrganizationById(decoded.organizationId);
 

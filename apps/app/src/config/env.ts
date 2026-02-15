@@ -120,13 +120,13 @@ export function validateEnvironment(): EnvConfig {
 
   // Check JWT secret strength in production
   const jwtSecret = getEnvString('JWT_SECRET', '');
-  if (isProduction && jwtSecret && jwtSecret.length < 32) {
-    errors.push('JWT_SECRET må være minst 32 tegn i produksjon');
+  if (isProduction && jwtSecret && jwtSecret.length < 64) {
+    errors.push('JWT_SECRET må være minst 64 tegn i produksjon (HMAC-SHA256)');
   }
 
   // Check encryption salt in production
   if (isProduction && !process.env.ENCRYPTION_SALT) {
-    warnings.push('ENCRYPTION_SALT bør settes i produksjon for bedre sikkerhet');
+    errors.push('ENCRYPTION_SALT er påkrevd i produksjon');
   }
 
   // Log warnings
@@ -218,6 +218,14 @@ export function validateEnvironment(): EnvConfig {
         throw new Error('ENCRYPTION_SALT must be set in production');
       }
       return 'skyplanner-dev-salt-change-in-prod';
+    })(),
+
+    // Dedicated key for integration credential encryption (separate from JWT_SECRET)
+    INTEGRATION_ENCRYPTION_KEY: (() => {
+      const key = getEnvString('INTEGRATION_ENCRYPTION_KEY');
+      if (key) return key;
+      // Fallback to JWT_SECRET for backward compatibility
+      return jwtSecret || `dev-${crypto.randomBytes(32).toString('hex')}`;
     })(),
   };
 
