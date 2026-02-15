@@ -16987,11 +16987,6 @@ async function renderWeeklyPlan() {
     if (hasContent || isActive) {
       html += `<div class="wp-day-content">`;
 
-      // Global technician assignment colors
-      const dayAssignedName = weekPlanState.globalAssignedTo || currentUser;
-      const dayAssignedInitials = dayAssignedName ? getCreatorDisplay(dayAssignedName, true) : '';
-      const dayAssignedColor = teamColorMap.get(dayAssignedName) || currentUserColor;
-
       // Progress bar showing estimated time vs 8-hour workday
       if (hasContent) {
         const estProgress = getDayEstimatedTotal(dayKey);
@@ -17015,9 +17010,12 @@ async function renderWeeklyPlan() {
         const startTime = formatTimeOfDay(cumulativeMin);
         cumulativeMin += (c.estimertTid || 30);
         const endTime = formatTimeOfDay(cumulativeMin);
+        const custAssignedName = c.addedBy || currentUser;
+        const custInitials = custAssignedName ? getCreatorDisplay(custAssignedName, true) : '';
+        const custColor = teamColorMap.get(custAssignedName) || currentUserColor;
         html += `
-          <div class="wp-item new wp-timeline-item" style="border-left:3px solid ${dayAssignedColor}">
-            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${dayAssignedColor}">${stopIndex}</span>${dayAssignedInitials ? `<span class="wp-stop-initials" style="background:${dayAssignedColor}">${escapeHtml(dayAssignedInitials)}</span>` : ''}</span>
+          <div class="wp-item new wp-timeline-item" style="border-left:3px solid ${custColor}">
+            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${custColor}">${stopIndex}</span>${custInitials ? `<span class="wp-stop-initials" style="background:${custColor}">${escapeHtml(custInitials)}</span>` : ''}</span>
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(c.navn)}</span>
               ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
@@ -17200,7 +17198,8 @@ function addCustomersToWeekPlan(customersList) {
       kategori: customer.kategori || null,
       lat: customer.lat || null,
       lng: customer.lng || null,
-      estimertTid: 30
+      estimertTid: 30,
+      addedBy: weekPlanState.globalAssignedTo || localStorage.getItem('userName') || 'admin'
     });
     added++;
   }
@@ -17228,12 +17227,12 @@ async function saveWeeklyPlan() {
   let lastError = '';
   const userName = localStorage.getItem('userName') || 'admin';
 
-  // Collect all planned items with per-day technician assignment
+  // Collect all planned items with per-customer technician assignment
   const allItems = [];
   for (const dayKey of weekDayKeys) {
     const dayData = weekPlanState.days[dayKey];
-    const assignedName = weekPlanState.globalAssignedTo || userName;
     for (const customer of dayData.planned) {
+      const assignedName = customer.addedBy || weekPlanState.globalAssignedTo || userName;
       allItems.push({ customer, date: dayData.date, opprettetAv: assignedName });
     }
   }
