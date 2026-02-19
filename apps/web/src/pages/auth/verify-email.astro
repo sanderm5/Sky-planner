@@ -45,11 +45,14 @@ const result = status ? messages[status as keyof typeof messages] : error ? mess
 ---
 
 <!DOCTYPE html>
-<html lang="no">
+<html lang="nb">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bekreft e-post - Sky Planner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles/auth.css">
   <style>
     .result-container {
@@ -89,6 +92,7 @@ const result = status ? messages[status as keyof typeof messages] : error ? mess
     }
 
     .result-title {
+      font-family: 'Fraunces', Georgia, serif;
       font-size: 24px;
       font-weight: 600;
       margin: 0 0 12px;
@@ -127,7 +131,7 @@ const result = status ? messages[status as keyof typeof messages] : error ? mess
     }
   </style>
 </head>
-<body style="background-color: #f4f4f5; min-height: 100vh;">
+<body style="background-color: #f4f4f5; min-height: 100vh; font-family: 'Plus Jakarta Sans', system-ui, sans-serif;">
   <div class="result-container">
     {result ? (
       <>

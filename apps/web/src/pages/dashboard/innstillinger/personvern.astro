@@ -50,14 +50,14 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
     <a href="/dashboard/innstillinger/sikkerhet" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
       Sikkerhet
     </a>
-    <a href="/dashboard/innstillinger/personvern" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+    <a href="/dashboard/innstillinger/personvern" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm" aria-current="page">
       Personvern
     </a>
   </div>
 
   <!-- Loading -->
   <div id="loading-state" class="glass-card p-8 text-center">
-    <svg class="w-6 h-6 text-primary-400 animate-spin mx-auto mb-3" fill="none" viewBox="0 0 24 24">
+    <svg class="w-6 h-6 text-primary-400 animate-spin mx-auto mb-3" fill="none" viewBox="0 0 24 24" aria-hidden="true">
       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
       <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
     </svg>
@@ -68,7 +68,7 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
   <div id="pending-banner" class="hidden mb-6">
     <div class="bg-red-500/10 border border-red-500/20 rounded-xl p-5">
       <div class="flex gap-3">
-        <svg class="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
         </svg>
         <div class="flex-1">
@@ -94,7 +94,7 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
     <div class="glass-card p-6">
       <div class="flex items-start gap-4">
         <div class="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center flex-shrink-0">
-          <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
           </svg>
         </div>
@@ -109,7 +109,7 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
             target="_blank"
             class="inline-flex items-center px-4 py-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors font-medium text-sm"
           >
-            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
             </svg>
             Eksporter mine data
@@ -123,25 +123,25 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
       <h2 class="text-lg font-semibold text-white mb-4">Dine rettigheter</h2>
       <div class="space-y-3 text-sm text-dark-300">
         <div class="flex gap-3">
-          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
           </svg>
           <span><strong class="text-white">Innsyn:</strong> Du kan når som helst se all data vi har om deg gjennom dashboard og eksportfunksjonen.</span>
         </div>
         <div class="flex gap-3">
-          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
           </svg>
           <span><strong class="text-white">Retting:</strong> Du kan oppdatere dine opplysninger under Generelt-innstillinger.</span>
         </div>
         <div class="flex gap-3">
-          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
           </svg>
           <span><strong class="text-white">Portabilitet:</strong> Eksporter dine data i maskinlesbart format (JSON).</span>
         </div>
         <div class="flex gap-3">
-          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
           </svg>
           <span><strong class="text-white">Sletting:</strong> Be om sletting av kontoen din med 30 dagers angrefrist.</span>
@@ -166,11 +166,11 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
   </div>
 
   <!-- Delete Confirmation Modal -->
-  <div id="delete-modal" class="fixed inset-0 z-50 hidden">
+  <div id="delete-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="delete-overlay"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-md p-6 relative">
-        <h3 class="text-lg font-semibold text-white mb-2">Slett konto</h3>
+        <h3 id="delete-modal-title" class="text-lg font-semibold text-white mb-2">Slett konto</h3>
         <p class="text-dark-400 text-sm mb-2">
           Er du sikker på at du vil slette kontoen din? Følgende skjer:
         </p>
@@ -197,7 +197,7 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
             <label class="input-label" for="delete-password">Passord *</label>
             <input type="password" id="delete-password" class="input w-full" placeholder="Bekreft med passordet ditt" />
           </div>
-          <p id="delete-error" class="text-red-400 text-sm hidden"></p>
+          <p id="delete-error" class="text-red-400 text-sm hidden" role="alert" aria-live="assertive"></p>
         </div>
 
         <div class="flex gap-3">
@@ -335,6 +335,13 @@ const appUrl = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://s
 
         btn.disabled = false;
         btn.textContent = 'Ja, slett kontoen min';
+      });
+
+      // Escape key to close modal
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && !deleteModal.classList.contains('hidden')) {
+          closeModal(deleteModal);
+        }
       });
 
       // Enter key in password input

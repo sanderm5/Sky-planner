@@ -68,7 +68,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
     <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
       API-nøkler
     </a>
-    <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+    <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm" aria-current="page">
       Webhooks
     </a>
     <a href="/dashboard/innstillinger/sikkerhet" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
@@ -86,7 +86,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
     </div>
     {isAdmin && (
       <button id="btn-create" class="btn-primary">
-        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
         </svg>
         Ny webhook
@@ -127,17 +127,17 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
   </div>
 
   <!-- Create Modal -->
-  <div id="modal-create" class="fixed inset-0 z-50 hidden">
+  <div id="modal-create" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="create-webhook-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="overlay-create"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-lg p-6 relative max-h-[90vh] overflow-y-auto">
-        <button id="close-create" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-create" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors" aria-label="Lukk">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
 
-        <h2 class="text-xl font-bold text-white mb-6">Opprett ny webhook</h2>
+        <h2 id="create-webhook-modal-title" class="text-xl font-bold text-white mb-6">Opprett ny webhook</h2>
 
         <form id="form-create" class="space-y-6">
           <div>
@@ -201,7 +201,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
             </div>
           </div>
 
-          <div id="create-error" class="text-red-400 text-sm hidden"></div>
+          <div id="create-error" class="text-red-400 text-sm hidden" role="alert" aria-live="assertive"></div>
 
           <div class="flex gap-3">
             <button type="button" id="cancel-create" class="btn-secondary flex-1">Avbryt</button>
@@ -213,7 +213,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
   </div>
 
   <!-- Webhook Created Modal -->
-  <div id="modal-webhook-created" class="fixed inset-0 z-50 hidden">
+  <div id="modal-webhook-created" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="webhook-created-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-lg p-6 relative">
@@ -223,7 +223,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
             </svg>
           </div>
-          <h2 class="text-xl font-bold text-white mb-2">Webhook opprettet!</h2>
+          <h2 id="webhook-created-modal-title" class="text-xl font-bold text-white mb-2">Webhook opprettet!</h2>
           <p class="text-dark-400 text-sm">Kopier secret na - den vises kun en gang.</p>
         </div>
 
@@ -231,7 +231,7 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
           <label class="text-xs text-dark-400 block mb-2">Webhook Secret</label>
           <div class="flex items-center gap-2">
             <code id="new-webhook-secret" class="flex-1 text-primary-400 font-mono text-sm break-all"></code>
-            <button id="copy-secret" class="btn-secondary p-2" title="Kopier">
+            <button id="copy-secret" class="btn-secondary p-2" title="Kopier" aria-label="Kopier webhook-secret">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
               </svg>
@@ -252,17 +252,17 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
   </div>
 
   <!-- Deliveries Modal -->
-  <div id="modal-deliveries" class="fixed inset-0 z-50 hidden">
+  <div id="modal-deliveries" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="deliveries-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="overlay-deliveries"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-2xl p-6 relative max-h-[80vh] overflow-y-auto">
-        <button id="close-deliveries" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-deliveries" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors" aria-label="Lukk">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
 
-        <h2 class="text-xl font-bold text-white mb-6">Leveringshistorikk</h2>
+        <h2 id="deliveries-modal-title" class="text-xl font-bold text-white mb-6">Leveringshistorikk</h2>
 
         <div id="deliveries-content">
           <div class="text-center py-8">
@@ -317,6 +317,14 @@ const eventsByCategory = eventTypes.reduce((acc: Record<string, typeof eventType
   document.getElementById('overlay-deliveries')?.addEventListener('click', () => hideModal(deliveriesModal));
 
   createBtn?.addEventListener('click', () => showModal(createModal));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (!createModal?.classList.contains('hidden')) hideModal(createModal);
+      if (!webhookCreatedModal?.classList.contains('hidden')) { hideModal(webhookCreatedModal); loadWebhooks(); }
+      if (!deliveriesModal?.classList.contains('hidden')) hideModal(deliveriesModal);
+    }
+  });
 
   // Copy secret
   document.getElementById('copy-secret')?.addEventListener('click', async () => {

@@ -39,7 +39,7 @@ const activeCount = users.filter(u => u.aktiv).length;
       class="btn-primary"
       disabled={activeCount >= organization.max_brukere}
     >
-      <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
       </svg>
       Inviter bruker
@@ -72,11 +72,11 @@ const activeCount = users.filter(u => u.aktiv).length;
       <table class="w-full">
         <thead>
           <tr class="border-b border-dark-700/50">
-            <th class="text-left p-4 text-sm font-medium text-dark-300">Navn</th>
-            <th class="text-left p-4 text-sm font-medium text-dark-300">E-post</th>
-            <th class="text-left p-4 text-sm font-medium text-dark-300 hidden sm:table-cell">Telefon</th>
-            <th class="text-left p-4 text-sm font-medium text-dark-300">Status</th>
-            <th class="text-right p-4 text-sm font-medium text-dark-300">Handlinger</th>
+            <th scope="col" class="text-left p-4 text-sm font-medium text-dark-300">Navn</th>
+            <th scope="col" class="text-left p-4 text-sm font-medium text-dark-300">E-post</th>
+            <th scope="col" class="text-left p-4 text-sm font-medium text-dark-300 hidden sm:table-cell">Telefon</th>
+            <th scope="col" class="text-left p-4 text-sm font-medium text-dark-300">Status</th>
+            <th scope="col" class="text-right p-4 text-sm font-medium text-dark-300">Handlinger</th>
           </tr>
         </thead>
         <tbody id="users-table-body">
@@ -113,8 +113,9 @@ const activeCount = users.filter(u => u.aktiv).length;
                     class="edit-user-btn p-2 text-dark-400 hover:text-white hover:bg-dark-700/50 rounded-lg transition-colors"
                     data-user={JSON.stringify({ id: u.id, navn: u.navn, epost: u.epost, telefon: u.telefon, aktiv: u.aktiv })}
                     title="Rediger"
+                    aria-label="Rediger"
                   >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                     </svg>
                   </button>
@@ -124,13 +125,14 @@ const activeCount = users.filter(u => u.aktiv).length;
                       data-user-id={u.id}
                       data-aktiv={u.aktiv}
                       title={u.aktiv ? 'Deaktiver' : 'Aktiver'}
+                      aria-label={u.aktiv ? 'Deaktiver' : 'Aktiver'}
                     >
                       {u.aktiv ? (
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
                         </svg>
                       ) : (
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                       )}
@@ -146,17 +148,17 @@ const activeCount = users.filter(u => u.aktiv).length;
   </div>
 
   <!-- Invite User Modal -->
-  <div id="invite-modal" class="fixed inset-0 z-50 hidden">
+  <div id="invite-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="invite-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="invite-modal-overlay"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-md p-6 relative">
-        <button id="close-invite-modal" class="absolute top-4 right-4 text-dark-400 hover:text-white">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-invite-modal" class="absolute top-4 right-4 text-dark-400 hover:text-white" aria-label="Lukk">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
 
-        <h2 class="text-xl font-bold text-white mb-6">Inviter ny bruker</h2>
+        <h2 id="invite-modal-title" class="text-xl font-bold text-white mb-6">Inviter ny bruker</h2>
 
         <form id="invite-form" class="space-y-4">
           <div>
@@ -177,7 +179,7 @@ const activeCount = users.filter(u => u.aktiv).length;
             <p class="text-xs text-dark-400 mt-1">Minst 8 tegn. Brukeren kan endre dette senere.</p>
           </div>
 
-          <div id="invite-error" class="form-error hidden"></div>
+          <div id="invite-error" class="form-error hidden" role="alert" aria-live="assertive"></div>
 
           <div class="flex gap-3 pt-2">
             <button type="button" id="cancel-invite" class="btn-secondary flex-1">
@@ -193,17 +195,17 @@ const activeCount = users.filter(u => u.aktiv).length;
   </div>
 
   <!-- Edit User Modal -->
-  <div id="edit-modal" class="fixed inset-0 z-50 hidden">
+  <div id="edit-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="edit-modal-overlay"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-md p-6 relative">
-        <button id="close-edit-modal" class="absolute top-4 right-4 text-dark-400 hover:text-white">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-edit-modal" class="absolute top-4 right-4 text-dark-400 hover:text-white" aria-label="Lukk">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
 
-        <h2 class="text-xl font-bold text-white mb-6">Rediger bruker</h2>
+        <h2 id="edit-modal-title" class="text-xl font-bold text-white mb-6">Rediger bruker</h2>
 
         <form id="edit-form" class="space-y-4">
           <input type="hidden" id="edit-user-id" name="id" />
@@ -225,7 +227,7 @@ const activeCount = users.filter(u => u.aktiv).length;
             <p class="text-xs text-dark-400 mt-1">La feltet være tomt for å beholde eksisterende passord.</p>
           </div>
 
-          <div id="edit-error" class="form-error hidden"></div>
+          <div id="edit-error" class="form-error hidden" role="alert" aria-live="assertive"></div>
 
           <div class="flex gap-3 pt-2">
             <button type="button" id="cancel-edit" class="btn-secondary flex-1">

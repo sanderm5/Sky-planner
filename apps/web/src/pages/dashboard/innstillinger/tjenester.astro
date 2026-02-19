@@ -34,7 +34,7 @@ const apiBaseUrl = '';
     <a href="/dashboard/innstillinger" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
       Generelt
     </a>
-    <a href="/dashboard/innstillinger/tjenester" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+    <a href="/dashboard/innstillinger/tjenester" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm" aria-current="page">
       Tjenestekategorier
     </a>
     <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
@@ -102,7 +102,7 @@ const apiBaseUrl = '';
     </div>
 
     <!-- Error state -->
-    <div id="error" class="hidden text-center py-8">
+    <div id="error" class="hidden text-center py-8" role="alert" aria-live="assertive">
       <p class="text-red-400 text-sm mb-3" id="error-msg">Kunne ikke laste tjenestekategorier.</p>
       <button id="btn-retry" class="btn btn-secondary text-sm">Prøv igjen</button>
     </div>
@@ -120,7 +120,7 @@ const apiBaseUrl = '';
   </div>
 
   <!-- Add/Edit Modal -->
-  <div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm">
+  <div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="bg-dark-800 border border-dark-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
       <h3 id="modal-title" class="text-lg font-semibold text-white mb-6">Ny tjenestekategori</h3>
       <form id="modal-form" class="space-y-5">
@@ -131,7 +131,7 @@ const apiBaseUrl = '';
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-medium text-dark-300 mb-1.5">Farge</label>
-            <input type="color" id="field-color" class="w-full h-10 rounded-lg cursor-pointer bg-dark-700 border border-dark-600" value="#F97316">
+            <input type="color" id="field-color" class="w-full h-10 rounded-lg cursor-pointer bg-dark-700 border border-dark-600" value="#5E81AC">
           </div>
           <div>
             <label class="block text-sm font-medium text-dark-300 mb-1.5">Intervall (mnd)</label>
@@ -288,7 +288,7 @@ const apiBaseUrl = '';
     editingId = st ? st.id : null;
     document.getElementById('modal-title').textContent = st ? 'Rediger tjenestekategori' : 'Ny tjenestekategori';
     document.getElementById('field-name').value = st ? st.name : '';
-    document.getElementById('field-color').value = st ? st.color : '#F97316';
+    document.getElementById('field-color').value = st ? st.color : '#5E81AC';
     document.getElementById('field-interval').value = st ? st.default_interval_months : 12;
     document.getElementById('field-description').value = st ? (st.description || '') : '';
 

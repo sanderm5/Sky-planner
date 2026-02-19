@@ -33,11 +33,12 @@ const { title, user, organization, currentPath } = Astro.props;
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" />
   <title>{title} | Skyplanner</title>
 </head>
 <body class="min-h-screen bg-dark-950">
+  <a href="#main-content" class="skip-to-content">Hopp til hovedinnhold</a>
   <div class="flex min-h-screen">
     <!-- Sidebar -->
     <Sidebar
@@ -49,12 +50,13 @@ const { title, user, organization, currentPath } = Astro.props;
     <div class="flex-1 flex flex-col lg:ml-64">
       <!-- Header -->
       <DashboardHeader
+        title={title}
         user={user}
         organization={organization}
       />
 
       <!-- Page Content -->
-      <main class="flex-1 p-6 lg:p-8">
+      <main id="main-content" class="flex-1 p-6 lg:p-8">
         <div class="max-w-7xl mx-auto">
           <slot />
         </div>
@@ -76,17 +78,31 @@ const { title, user, organization, currentPath } = Astro.props;
       sidebar?.classList.remove('-translate-x-full');
       overlay?.classList.remove('hidden');
       document.body.classList.add('overflow-hidden');
+      menuToggle?.setAttribute('aria-expanded', 'true');
     }
 
     function closeSidebarFn() {
       sidebar?.classList.add('-translate-x-full');
       overlay?.classList.add('hidden');
       document.body.classList.remove('overflow-hidden');
+      menuToggle?.setAttribute('aria-expanded', 'false');
     }
 
     menuToggle?.addEventListener('click', openSidebar);
     closeSidebar?.addEventListener('click', closeSidebarFn);
     overlay?.addEventListener('click', closeSidebarFn);
+
+    // Close sidebar on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (!sidebar?.classList.contains('-translate-x-full')) closeSidebarFn();
+        if (!userMenu?.classList.contains('hidden')) {
+          userMenu?.classList.add('hidden');
+          userMenuButton?.setAttribute('aria-expanded', 'false');
+          userMenuButton?.focus();
+        }
+      }
+    });
 
     // User dropdown toggle
     const userMenuButton = document.getElementById('user-menu-button');
@@ -94,11 +110,13 @@ const { title, user, organization, currentPath } = Astro.props;
 
     userMenuButton?.addEventListener('click', (e) => {
       e.stopPropagation();
-      userMenu?.classList.toggle('hidden');
+      const isHidden = userMenu?.classList.toggle('hidden');
+      userMenuButton?.setAttribute('aria-expanded', isHidden ? 'false' : 'true');
     });
 
     document.addEventListener('click', () => {
       userMenu?.classList.add('hidden');
+      userMenuButton?.setAttribute('aria-expanded', 'false');
     });
   </script>
 </body>

@@ -39,6 +39,12 @@ export const ALL: APIRoute = async ({ request, params }) => {
       headers.set('x-csrf-token', csrfToken);
     }
 
+    // Forward client IP for accurate rate limiting
+    const forwardedFor = request.headers.get('x-forwarded-for');
+    if (forwardedFor) {
+      headers.set('x-forwarded-for', forwardedFor);
+    }
+
     // Build request options
     const options: RequestInit = {
       method: request.method,
@@ -59,7 +65,7 @@ export const ALL: APIRoute = async ({ request, params }) => {
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
       // Skip headers that shouldn't be forwarded
-      if (!['transfer-encoding', 'connection'].includes(key.toLowerCase())) {
+      if (!['transfer-encoding', 'connection', 'content-encoding', 'content-length'].includes(key.toLowerCase())) {
         responseHeaders.set(key, value);
       }
     });

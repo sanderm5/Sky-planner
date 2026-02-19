@@ -202,6 +202,8 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       organizationSlug: organization?.slug,
       subscriptionStatus: organization?.subscription_status,
       subscriptionPlan: organization?.plan_type,
+      trialEndsAt: organization?.trial_ends_at,
+      currentPeriodEnd: organization?.current_period_end,
     };
 
     const token = auth.signToken(tokenPayload, JWT_SECRET, { expiresIn: '24h' });

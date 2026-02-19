@@ -20,14 +20,14 @@ const authLinks = [
 ];
 ---
 
-<footer class="bg-dark-950 border-t border-dark-800/50">
+<footer class="bg-dark-950 border-t border-dark-800/50" role="contentinfo">
   <div class="container-wide px-4 sm:px-6 lg:px-8 py-12">
     <div class="grid grid-cols-2 md:grid-cols-4 gap-8 lg:gap-12">
       <!-- Brand -->
       <div class="col-span-2 md:col-span-1">
-        <a href="/" class="flex items-center gap-2 mb-4">
+        <a href="/" class="flex items-center gap-2 mb-4" aria-label="Skyplanner - Gå til forsiden">
           <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center">
-            <svg class="w-4 h-4" viewBox="0 0 32 32" fill="none">
+            <svg class="w-4 h-4" viewBox="0 0 32 32" fill="none" aria-hidden="true">
               <rect x="5" y="18" width="5" height="10" rx="1" fill="white" opacity="0.5"/>
               <rect x="13" y="12" width="5" height="16" rx="1" fill="white" opacity="0.75"/>
               <rect x="21" y="6" width="5" height="22" rx="1" fill="white"/>
@@ -39,7 +39,7 @@ const authLinks = [
         <p class="text-sm text-dark-400 max-w-xs">
           Kundeadministrasjon og ruteplanlegging for servicebedrifter.
         </p>
-        <p class="text-sm text-dark-500 mt-4">
+        <p class="text-sm text-dark-400 mt-4">
           Efffekt AS
         </p>
       </div>
@@ -89,14 +89,14 @@ const authLinks = [
 
     <!-- Bottom Bar -->
     <div class="border-t border-dark-800/50 mt-12 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-      <p class="text-sm text-dark-500">
+      <p class="text-sm text-dark-400">
         &copy; {currentYear} Skyplanner. Alle rettigheter reservert.
       </p>
       <div class="flex items-center gap-6">
-        <a href="/personvern" class="text-sm text-dark-500 hover:text-dark-300 transition-colors">
+        <a href="/personvern" class="text-sm text-dark-400 hover:text-dark-300 transition-colors">
           Personvern
         </a>
-        <a href="/vilkar" class="text-sm text-dark-500 hover:text-dark-300 transition-colors">
+        <a href="/vilkar" class="text-sm text-dark-400 hover:text-dark-300 transition-colors">
           Vilkår
         </a>
       </div>

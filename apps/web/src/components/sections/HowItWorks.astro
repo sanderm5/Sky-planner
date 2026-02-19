@@ -21,8 +21,9 @@ const steps = [
 ];
 ---
 
-<section class="section">
-  <div class="container-wide">
+<section class="section relative overflow-hidden">
+  <div class="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary-500/15 to-transparent" aria-hidden="true"></div>
+  <div class="container-wide relative">
     <div class="text-center mb-16">
       <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4" data-animate="fade-up">
         Kom i gang på 3 enkle steg
@@ -60,7 +61,7 @@ const steps = [
     <div class="text-center mt-12" data-animate="fade-up">
       <a href="/auth/registrer" class="btn-primary text-lg px-8 py-4">
         Start gratis i dag
-        <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
         </svg>
       </a>

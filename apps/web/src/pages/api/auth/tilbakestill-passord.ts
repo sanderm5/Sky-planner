@@ -76,7 +76,7 @@ export const POST: APIRoute = async ({ request }) => {
       // For bruker, we need a similar function - let's use the Supabase client directly
       const client = db.getSupabaseClient();
       const { error } = await client
-        .from('bruker')
+        .from('brukere')
         .update({ passord_hash: hashedPassword })
         .eq('id', resetToken.user_id);
 

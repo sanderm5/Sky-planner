@@ -13,7 +13,7 @@ import Badge from '../../components/ui/Badge.astro';
     </div>
 
     <form id="register-form" class="space-y-6">
-      <div id="error-message" class="form-error hidden"></div>
+      <div id="error-message" class="form-error hidden" role="alert" aria-live="assertive"></div>
 
       <div class="grid grid-cols-2 gap-4">
         <div class="col-span-2 sm:col-span-1">
@@ -63,7 +63,7 @@ import Badge from '../../components/ui/Badge.astro';
           class="input"
           placeholder="Minst 8 tegn"
         />
-        <p class="text-xs text-dark-500 mt-1">Minimum 8 tegn</p>
+        <p class="text-xs text-dark-400 mt-1">Minimum 8 tegn</p>
       </div>
 
       <div class="flex items-start">
@@ -90,7 +90,7 @@ import Badge from '../../components/ui/Badge.astro';
         <span id="btn-loading" class="hidden">Oppretter konto...</span>
       </button>
 
-      <p class="text-xs text-dark-500 text-center">
+      <p class="text-xs text-dark-400 text-center">
         Du får tilgang til alle funksjoner i 14 dager.
         Etter prøveperioden kontakter vi deg for tilbud.
       </p>

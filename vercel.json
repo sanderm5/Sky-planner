@@ -3,5 +3,11 @@
   "version": 2,
   "buildCommand": "pnpm -w run build:web",
   "installCommand": "pnpm install",
-  "outputDirectory": ".vercel/output"
+  "outputDirectory": "apps/web/.vercel/output",
+  "crons": [
+    {
+      "path": "/api/cron/backup",
+      "schedule": "0 6,14,22 * * *"
+    }
+  ]
 }

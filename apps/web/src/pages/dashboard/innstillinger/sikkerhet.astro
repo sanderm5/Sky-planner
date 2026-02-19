@@ -46,7 +46,7 @@ const isFullMode = (organization as any).app_mode === 'full';
     <a href="/dashboard/innstillinger/webhooks" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
       Webhooks
     </a>
-    <a href="/dashboard/innstillinger/sikkerhet" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+    <a href="/dashboard/innstillinger/sikkerhet" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm" aria-current="page">
       Sikkerhet
     </a>
     <a href="/dashboard/innstillinger/personvern" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
@@ -65,8 +65,8 @@ const isFullMode = (organization as any).app_mode === 'full';
     </div>
 
     <!-- Loading state -->
-    <div id="loading-state" class="flex items-center gap-3 text-dark-400">
-      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+    <div id="loading-state" class="flex items-center gap-3 text-dark-400" role="status" aria-label="Laster">
+      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -126,8 +126,8 @@ const isFullMode = (organization as any).app_mode === 'full';
     </div>
 
     <!-- Sessions loading -->
-    <div id="sessions-loading" class="flex items-center gap-3 text-dark-400">
-      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+    <div id="sessions-loading" class="flex items-center gap-3 text-dark-400" role="status" aria-label="Laster">
+      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
       </svg>
@@ -149,12 +149,13 @@ const isFullMode = (organization as any).app_mode === 'full';
   </div>
 
   <!-- Setup Modal -->
-  <div id="setup-modal" class="fixed inset-0 z-50 hidden">
+  <div id="setup-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="setup-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="setup-overlay"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-lg p-6 relative max-h-[90vh] overflow-y-auto">
-        <button id="setup-close" class="absolute top-4 right-4 text-dark-400 hover:text-white">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <h2 id="setup-modal-title" class="visually-hidden">2FA-oppsett</h2>
+        <button id="setup-close" class="absolute top-4 right-4 text-dark-400 hover:text-white" aria-label="Lukk">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
@@ -209,7 +210,7 @@ const isFullMode = (organization as any).app_mode === 'full';
               placeholder="000000"
               autocomplete="one-time-code"
             />
-            <p id="verify-error" class="text-red-400 text-sm mt-2 hidden"></p>
+            <p id="verify-error" class="text-red-400 text-sm mt-2 hidden" role="alert" aria-live="assertive"></p>
           </div>
           <button id="btn-verify" class="btn-primary w-full">Aktiver 2FA</button>
         </div>
@@ -232,18 +233,18 @@ const isFullMode = (organization as any).app_mode === 'full';
   </div>
 
   <!-- Disable Modal -->
-  <div id="disable-modal" class="fixed inset-0 z-50 hidden">
+  <div id="disable-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="disable-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="disable-overlay"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-md p-6 relative">
-        <h3 class="text-lg font-semibold text-white mb-2">Deaktiver 2FA</h3>
+        <h3 id="disable-modal-title" class="text-lg font-semibold text-white mb-2">Deaktiver 2FA</h3>
         <p class="text-dark-400 text-sm mb-4">
           Dette vil fjerne det ekstra sikkerhetslaget fra kontoen din. Skriv inn passordet ditt for å bekrefte.
         </p>
         <div class="mb-4">
           <label class="input-label" for="disable-password">Passord</label>
           <input type="password" id="disable-password" class="input w-full" placeholder="Ditt passord" />
-          <p id="disable-error" class="text-red-400 text-sm mt-2 hidden"></p>
+          <p id="disable-error" class="text-red-400 text-sm mt-2 hidden" role="alert" aria-live="assertive"></p>
         </div>
         <div class="flex gap-3">
           <button id="btn-cancel-disable" class="flex-1 px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
@@ -449,6 +450,13 @@ const isFullMode = (organization as any).app_mode === 'full';
       });
       document.getElementById('setup-overlay').addEventListener('click', function() {
         closeModal(setupModal);
+      });
+
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          if (!setupModal.classList.contains('hidden')) closeModal(setupModal);
+          if (!disableModal.classList.contains('hidden')) closeModal(disableModal);
+        }
       });
 
       // Disable flow

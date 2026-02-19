@@ -39,7 +39,7 @@ const apiBaseUrl = '';
     <a href="/dashboard/innstillinger/tjenester" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
       Tjenestekategorier
     </a>
-    <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+    <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm" aria-current="page">
       Integrasjoner
     </a>
     <a href="/dashboard/innstillinger/api-nokler" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
@@ -64,7 +64,7 @@ const apiBaseUrl = '';
   <!-- Integration Cards -->
   <div id="integrations-container" class="space-y-6">
     <div class="glass-card p-8 text-center">
-      <svg class="w-8 h-8 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+      <svg class="w-8 h-8 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24" aria-hidden="true">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
       </svg>
@@ -73,17 +73,17 @@ const apiBaseUrl = '';
   </div>
 
   <!-- Connect Modal: Tripletex -->
-  <div id="modal-tripletex" class="fixed inset-0 z-50 hidden">
+  <div id="modal-tripletex" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="modal-tripletex-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="overlay-tripletex"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-md p-6 relative">
-        <button id="close-tripletex" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-tripletex" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors" aria-label="Lukk">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
 
-        <h2 class="text-xl font-bold text-white mb-2">Koble til Tripletex</h2>
+        <h2 id="modal-tripletex-title" class="text-xl font-bold text-white mb-2">Koble til Tripletex</h2>
         <p class="text-dark-400 text-sm mb-6">
           Du finner Consumer Token og Employee Token i Tripletex under Innstillinger &rarr; API-tilgang.
         </p>
@@ -113,7 +113,7 @@ const apiBaseUrl = '';
             />
           </div>
 
-          <div id="tripletex-error" class="text-red-400 text-sm hidden"></div>
+          <div id="tripletex-error" class="text-red-400 text-sm hidden" role="alert" aria-live="assertive"></div>
 
           <div class="flex gap-3 pt-2">
             <button type="button" id="cancel-tripletex" class="btn-secondary flex-1">Avbryt</button>
@@ -125,17 +125,17 @@ const apiBaseUrl = '';
   </div>
 
   <!-- Connect Modal: Fiken -->
-  <div id="modal-fiken" class="fixed inset-0 z-50 hidden">
+  <div id="modal-fiken" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="modal-fiken-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="overlay-fiken"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-md p-6 relative">
-        <button id="close-fiken" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-fiken" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors" aria-label="Lukk">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
 
-        <h2 class="text-xl font-bold text-white mb-2">Koble til Fiken</h2>
+        <h2 id="modal-fiken-title" class="text-xl font-bold text-white mb-2">Koble til Fiken</h2>
         <p class="text-dark-400 text-sm mb-6">
           Du finner API-nøkkel i Fiken under Innstillinger &rarr; Integrasjoner &rarr; API-nøkler.
         </p>
@@ -153,7 +153,7 @@ const apiBaseUrl = '';
             />
           </div>
 
-          <div id="fiken-error" class="text-red-400 text-sm hidden"></div>
+          <div id="fiken-error" class="text-red-400 text-sm hidden" role="alert" aria-live="assertive"></div>
 
           <div class="flex gap-3 pt-2">
             <button type="button" id="cancel-fiken" class="btn-secondary flex-1">Avbryt</button>
@@ -165,29 +165,29 @@ const apiBaseUrl = '';
   </div>
 
   <!-- Sync Modal -->
-  <div id="modal-sync" class="fixed inset-0 z-50 hidden">
+  <div id="modal-sync" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="modal-sync-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="overlay-sync"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-md p-6 relative">
-        <button id="close-sync" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-sync" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors" aria-label="Lukk">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
 
         <div id="sync-loading" class="text-center">
-          <svg class="w-12 h-12 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+          <svg class="w-12 h-12 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <h2 class="text-xl font-bold text-white mb-2">Synkroniserer...</h2>
+          <h2 id="modal-sync-title" class="text-xl font-bold text-white mb-2">Synkroniserer...</h2>
           <p class="text-dark-400 text-sm">Henter kunder fra regnskapssystemet</p>
         </div>
 
         <div id="sync-result" class="hidden">
           <div class="text-center mb-6">
             <div class="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-              <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
               </svg>
             </div>
@@ -216,9 +216,9 @@ const apiBaseUrl = '';
           <button id="sync-close" class="btn-primary w-full">Lukk</button>
         </div>
 
-        <div id="sync-error" class="hidden text-center">
+        <div id="sync-error" class="hidden text-center" role="alert" aria-live="assertive">
           <div class="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
-            <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
             </svg>
           </div>
@@ -231,23 +231,23 @@ const apiBaseUrl = '';
   </div>
 
   <!-- Preview/Selection Modal -->
-  <div id="modal-preview" class="fixed inset-0 z-50 hidden">
+  <div id="modal-preview" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="modal-preview-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="overlay-preview"></div>
     <div class="absolute inset-0 flex items-center justify-center p-4">
       <div class="glass-card w-full max-w-4xl max-h-[85vh] p-6 relative flex flex-col">
-        <button id="close-preview" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors z-10">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <button id="close-preview" class="absolute top-4 right-4 text-dark-400 hover:text-white transition-colors z-10" aria-label="Lukk">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
 
         <!-- Loading state -->
         <div id="preview-loading" class="text-center py-12">
-          <svg class="w-12 h-12 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+          <svg class="w-12 h-12 text-primary-400 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <h2 class="text-xl font-bold text-white mb-2">Henter kunder...</h2>
+          <h2 id="modal-preview-title" class="text-xl font-bold text-white mb-2">Henter kunder...</h2>
           <p class="text-dark-400 text-sm">Kontakter regnskapssystemet</p>
         </div>
 
@@ -288,7 +288,7 @@ const apiBaseUrl = '';
           <!-- Import options -->
           <div id="preview-options" class="mt-4 pt-4 border-t border-dark-700">
             <button type="button" id="toggle-options" class="flex items-center gap-2 text-sm text-dark-300 hover:text-white transition-colors mb-3">
-              <svg class="w-4 h-4 transition-transform" id="options-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-4 h-4 transition-transform" id="options-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
               </svg>
               Importinnstillinger
@@ -330,9 +330,9 @@ const apiBaseUrl = '';
         </div>
 
         <!-- Error state -->
-        <div id="preview-error" class="hidden text-center py-12">
+        <div id="preview-error" class="hidden text-center py-12" role="alert" aria-live="assertive">
           <div class="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
-            <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
             </svg>
           </div>
@@ -392,6 +392,18 @@ const apiBaseUrl = '';
   document.getElementById('sync-close')?.addEventListener('click', () => hideModal('sync'));
   document.getElementById('sync-error-close')?.addEventListener('click', () => hideModal('sync'));
   document.getElementById('preview-error-close')?.addEventListener('click', () => hideModal('preview'));
+
+  // Escape key handler for all modals
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      ['tripletex', 'fiken', 'sync', 'preview'].forEach(id => {
+        const modal = document.getElementById(`modal-${id}`);
+        if (modal && !modal.classList.contains('hidden')) {
+          hideModal(id);
+        }
+      });
+    }
+  });
 
   // Render integration cards
   function renderIntegrations() {

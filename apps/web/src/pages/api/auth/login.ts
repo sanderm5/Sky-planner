@@ -369,6 +369,8 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       organizationSlug: organization?.slug,
       subscriptionStatus: organization?.subscription_status,
       subscriptionPlan: organization?.plan_type,
+      trialEndsAt: organization?.trial_ends_at,
+      currentPeriodEnd: organization?.current_period_end,
     };
 
     const token = auth.signToken(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
@@ -379,7 +381,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     const decoded = auth.decodeToken(token);
     if (decoded?.jti) {
       const userAgent = request.headers.get('user-agent') || '';
-      supabase.from('active_sessions').insert({
+      await supabase.from('active_sessions').insert({
         user_id: user.id,
         user_type: userType,
         jti: decoded.jti,

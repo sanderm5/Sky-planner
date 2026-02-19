@@ -99,16 +99,16 @@ const comparisonFeatures = [
               {plan.features.map((feature) => (
                 <li class="flex items-center gap-3">
                   {feature.included ? (
-                    <svg class="w-5 h-5 text-secondary-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <svg class="w-5 h-5 text-secondary-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                       <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                     </svg>
                   ) : (
-                    <svg class="w-5 h-5 text-dark-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <svg class="w-5 h-5 text-dark-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                       <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
                     </svg>
                   )}
                   <span class:list={[
-                    feature.included ? 'text-dark-200' : 'text-dark-500'
+                    feature.included ? 'text-dark-200' : 'text-dark-400'
                   ]}>
                     {feature.name}
                   </span>
@@ -159,10 +159,10 @@ const comparisonFeatures = [
         <table class="w-full min-w-[600px]">
           <thead>
             <tr>
-              <th class="text-left">Funksjon</th>
-              <th class="text-center">Standard</th>
-              <th class="text-center text-primary-400">Premium</th>
-              <th class="text-center">Enterprise</th>
+              <th scope="col" class="text-left">Funksjon</th>
+              <th scope="col" class="text-center">Standard</th>
+              <th scope="col" class="text-center text-primary-400">Premium</th>
+              <th scope="col" class="text-center">Enterprise</th>
             </tr>
           </thead>
           <tbody>
@@ -172,11 +172,11 @@ const comparisonFeatures = [
                 <td class="text-center">
                   {typeof feature.standard === 'boolean' ? (
                     feature.standard ? (
-                      <svg class="w-5 h-5 text-secondary-500 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                      <svg class="w-5 h-5 text-secondary-500 mx-auto" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                       </svg>
                     ) : (
-                      <svg class="w-5 h-5 text-dark-600 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                      <svg class="w-5 h-5 text-dark-600 mx-auto" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                         <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                       </svg>
                     )
@@ -187,11 +187,11 @@ const comparisonFeatures = [
                 <td class="text-center">
                   {typeof feature.premium === 'boolean' ? (
                     feature.premium ? (
-                      <svg class="w-5 h-5 text-secondary-500 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                      <svg class="w-5 h-5 text-secondary-500 mx-auto" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                       </svg>
                     ) : (
-                      <svg class="w-5 h-5 text-dark-600 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                      <svg class="w-5 h-5 text-dark-600 mx-auto" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                         <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                       </svg>
                     )
@@ -202,11 +202,11 @@ const comparisonFeatures = [
                 <td class="text-center">
                   {typeof feature.enterprise === 'boolean' ? (
                     feature.enterprise ? (
-                      <svg class="w-5 h-5 text-secondary-500 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                      <svg class="w-5 h-5 text-secondary-500 mx-auto" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
                       </svg>
                     ) : (
-                      <svg class="w-5 h-5 text-dark-600 mx-auto" fill="currentColor" viewBox="0 0 20 20">
+                      <svg class="w-5 h-5 text-dark-600 mx-auto" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                         <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                       </svg>
                     )
@@ -234,7 +234,7 @@ const comparisonFeatures = [
           <details class="group">
             <summary class="flex items-center justify-between cursor-pointer list-none p-2">
               <span class="font-medium text-white">Kan jeg bytte plan senere?</span>
-              <svg class="w-5 h-5 text-dark-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-5 h-5 text-dark-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </summary>
@@ -248,7 +248,7 @@ const comparisonFeatures = [
           <details class="group">
             <summary class="flex items-center justify-between cursor-pointer list-none p-2">
               <span class="font-medium text-white">Hva skjer etter prøveperioden?</span>
-              <svg class="w-5 h-5 text-dark-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-5 h-5 text-dark-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </summary>
@@ -262,7 +262,7 @@ const comparisonFeatures = [
           <details class="group">
             <summary class="flex items-center justify-between cursor-pointer list-none p-2">
               <span class="font-medium text-white">Tilbyr dere rabatt for årlig betaling?</span>
-              <svg class="w-5 h-5 text-dark-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-5 h-5 text-dark-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </summary>

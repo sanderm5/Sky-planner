@@ -50,7 +50,7 @@ if ((organization as any).industry_template_id) {
 
   <!-- Settings Navigation -->
   <div class="mb-8 flex flex-wrap gap-2">
-    <a href="/dashboard/innstillinger" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm">
+    <a href="/dashboard/innstillinger" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm" aria-current="page">
       Generelt
     </a>
     <a href="/dashboard/innstillinger/tjenester" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
@@ -221,7 +221,7 @@ if ((organization as any).industry_template_id) {
                   />
                 ) : (
                   <div class="w-24 h-24 rounded-xl bg-dark-700 border border-dark-600 flex items-center justify-center" id="logo-placeholder">
-                    <svg class="w-10 h-10 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-10 h-10 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                   </div>
@@ -239,7 +239,7 @@ if ((organization as any).industry_template_id) {
             <div class="flex-1">
               <div class="flex flex-col gap-3">
                 <label class="btn-secondary cursor-pointer inline-flex items-center justify-center max-w-xs">
-                  <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                   <span id="upload-btn-text">Last opp logo</span>
@@ -262,7 +262,7 @@ if ((organization as any).industry_template_id) {
               </div>
               <p class="text-xs text-dark-400 mt-3">PNG, JPG, SVG eller WebP. Maks 2MB.</p>
               <p class="text-xs text-dark-400">Anbefalt størrelse: 200x200px eller større.</p>
-              <div id="upload-status" class="mt-2 text-sm hidden">
+              <div id="upload-status" class="mt-2 text-sm hidden" role="alert" aria-live="assertive">
                 <span class="text-green-400" id="upload-success">Logo lastet opp!</span>
                 <span class="text-red-400 hidden" id="upload-error">Feil ved opplasting</span>
               </div>
@@ -272,27 +272,6 @@ if ((organization as any).industry_template_id) {
           <input type="hidden" id="logo-url" name="logo_url" value={organization.logo_url || ''} />
         </div>
 
-        <div>
-          <label class="input-label" for="primary-color">Primærfarge</label>
-          <div class="flex items-center gap-3 max-w-md">
-            <input
-              type="color"
-              id="color-picker"
-              value={organization.primary_color || '#f97316'}
-              class="w-12 h-12 rounded-lg cursor-pointer border-0 bg-transparent"
-            />
-            <input
-              type="text"
-              id="primary-color"
-              name="primary_color"
-              value={organization.primary_color || ''}
-              class="input flex-1"
-              placeholder="#f97316"
-              pattern="^#[0-9A-Fa-f]{6}$"
-            />
-          </div>
-          <p class="text-xs text-dark-400 mt-1">Hex-fargekode (f.eks. #f97316). Brukes i appen for å tilpasse utseendet.</p>
-        </div>
       </div>
     </div>
 
@@ -329,7 +308,7 @@ if ((organization as any).industry_template_id) {
       <button type="submit" class="btn-primary" id="save-btn">
         Lagre endringer
       </button>
-      <div id="save-status" class="text-sm hidden">
+      <div id="save-status" class="text-sm hidden" role="alert" aria-live="assertive">
         <span class="text-green-400" id="save-success">Endringer lagret!</span>
         <span class="text-red-400 hidden" id="save-error">Kunne ikke lagre endringer</span>
       </div>
@@ -375,8 +354,6 @@ if ((organization as any).industry_template_id) {
   const saveStatus = document.getElementById('save-status');
   const saveSuccess = document.getElementById('save-success');
   const saveError = document.getElementById('save-error');
-  const colorPicker = document.getElementById('color-picker') as HTMLInputElement;
-  const primaryColorInput = document.getElementById('primary-color') as HTMLInputElement;
   const logoUrlInput = document.getElementById('logo-url') as HTMLInputElement;
   const deleteOrgBtn = document.getElementById('delete-org-btn');
 
@@ -517,17 +494,6 @@ if ((organization as any).industry_template_id) {
   const uploadSuccess = document.getElementById('upload-success');
   const uploadError = document.getElementById('upload-error');
 
-  // Sync color picker with text input
-  colorPicker?.addEventListener('input', () => {
-    primaryColorInput.value = colorPicker.value;
-  });
-
-  primaryColorInput?.addEventListener('input', () => {
-    if (primaryColorInput.value.match(/^#[0-9A-Fa-f]{6}$/)) {
-      colorPicker.value = primaryColorInput.value;
-    }
-  });
-
   // Logo upload handler
   logoUpload?.addEventListener('change', async () => {
     const file = logoUpload.files?.[0];
@@ -636,7 +602,6 @@ if ((organization as any).industry_template_id) {
     const formData = new FormData(form);
     const data: Record<string, string | null> = {
       navn: formData.get('navn') as string,
-      primary_color: (formData.get('primary_color') as string) || null,
       dato_modus: (formData.get('dato_modus') as string) || 'full_date',
     };
 
