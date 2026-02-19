@@ -111,7 +111,7 @@ export class ApiKeyService {
     }
 
     // Check rate limit
-    const rateLimitResult = this.checkRateLimit(
+    const rateLimitResult = await this.checkRateLimit(
       apiKey.id,
       apiKey.rate_limit_requests,
       apiKey.rate_limit_window_seconds * 1000
@@ -137,7 +137,7 @@ export class ApiKeyService {
    * Check rate limit for an API key
    * Uses DB-backed counting with short TTL cache for performance
    */
-  checkRateLimit(apiKeyId: number, limit: number, windowMs: number): RateLimitResult {
+  async checkRateLimit(apiKeyId: number, limit: number, windowMs: number): Promise<RateLimitResult> {
     const now = Date.now();
     const windowStart = now - windowMs;
     const cached = rateLimitCache.get(apiKeyId);
@@ -153,13 +153,23 @@ export class ApiKeyService {
       };
     }
 
-    // Cache miss: start fresh count (DB sync happens via logUsage)
-    // The actual DB count is loaded asynchronously below
+    // Cache miss: sync from DB before deciding
+    await this.syncRateLimitFromDb(apiKeyId, windowMs);
+
+    const synced = rateLimitCache.get(apiKeyId);
+    if (synced) {
+      synced.count++;
+      return {
+        allowed: synced.count <= limit,
+        limit,
+        remaining: Math.max(0, limit - synced.count),
+        resetAt: Math.ceil((synced.windowStart + windowMs) / 1000),
+      };
+    }
+
+    // Fallback if sync failed: start fresh count
     const newRecord = { count: 1, windowStart: now, expiresAt: now + CACHE_TTL_MS };
     rateLimitCache.set(apiKeyId, newRecord);
-
-    // Async: load actual count from DB to sync cache
-    this.syncRateLimitFromDb(apiKeyId, windowMs).catch(() => {});
 
     return {
       allowed: true,
@@ -184,6 +194,13 @@ export class ApiKeyService {
         const additionalSinceSync = Math.max(0, cached.count - 1);
         cached.count = count + additionalSinceSync;
         cached.expiresAt = now + CACHE_TTL_MS;
+      } else {
+        // Create cache entry from DB count
+        rateLimitCache.set(apiKeyId, {
+          count,
+          windowStart: now,
+          expiresAt: now + CACHE_TTL_MS,
+        });
       }
     } catch {
       // Non-critical: cache will self-correct on next sync

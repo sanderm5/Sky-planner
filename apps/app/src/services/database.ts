@@ -62,7 +62,7 @@ interface SupabaseService {
   getBrukerCountForOrganization(organizationId: number): Promise<number>;
   getKlienterForOrganization(organizationId: number): Promise<KlientRecord[]>;
   updateOrganization(id: number, data: Partial<Organization>): Promise<Organization | null>;
-  getGlobalStatistics(): Promise<{ totalOrganizations: number; totalKunder: number; totalUsers: number; activeSubscriptions: number }>;
+  getGlobalStatistics(): Promise<{ totalOrganizations: number; totalKunder: number; totalUsers: number; activeSubscriptions: number; organizationsByPlan?: Record<string, number> }>;
 
   // Avtaler methods
   getAllAvtaler(): Promise<unknown[]>;
@@ -2114,6 +2114,10 @@ class DatabaseService {
   async getAllRuter(organizationId: number): Promise<(Rute & { antall_kunder: number })[]> {
     this.validateTenantContext(organizationId, 'getAllRuter');
 
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getAllRuter(organizationId);
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const sql = `SELECT r.*, (SELECT COUNT(*) FROM rute_kunder WHERE rute_id = r.id) as antall_kunder
@@ -2129,6 +2133,11 @@ class DatabaseService {
    */
   async getRouteForUserByDate(userId: number, date: string, organizationId: number): Promise<Rute | null> {
     this.validateTenantContext(organizationId, 'getRouteForUserByDate');
+
+    if (this.type === 'supabase' && this.supabase) {
+      // Not yet implemented for Supabase — returns null gracefully
+      return null;
+    }
 
     if (!this.sqlite) throw new Error('Database not initialized');
 
@@ -2147,6 +2156,10 @@ class DatabaseService {
   async getRuteById(id: number, organizationId: number): Promise<Rute | null> {
     this.validateTenantContext(organizationId, 'getRuteById');
 
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getRuteById(id);
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const sql = 'SELECT * FROM ruter WHERE id = ? AND organization_id = ?';
@@ -2156,6 +2169,10 @@ class DatabaseService {
   }
 
   async createRute(data: Partial<Rute> & { kunde_ids?: number[] }): Promise<Rute> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.createRute(data);
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const stmt = this.sqlite.prepare(`
@@ -2181,6 +2198,10 @@ class DatabaseService {
    */
   async updateRute(id: number, data: Partial<Rute>, organizationId: number): Promise<Rute | null> {
     this.validateTenantContext(organizationId, 'updateRute');
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.updateRute(id, data);
+    }
 
     const existing = await this.getRuteById(id, organizationId);
     if (!existing) return null;
@@ -2215,6 +2236,11 @@ class DatabaseService {
   async deleteRute(id: number, organizationId: number): Promise<boolean> {
     this.validateTenantContext(organizationId, 'deleteRute');
 
+    if (this.type === 'supabase' && this.supabase) {
+      await this.supabase.deleteRute(id);
+      return true;
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     // Verify ownership first
@@ -2231,6 +2257,11 @@ class DatabaseService {
   }
 
   async getRuteKunder(ruteId: number): Promise<(Kunde & { rekkefolge: number })[]> {
+    if (this.type === 'supabase' && this.supabase) {
+      const rute = await this.supabase.getRuteById(ruteId);
+      return rute?.kunder || [];
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     return this.sqlite.prepare(`
@@ -2248,6 +2279,11 @@ class DatabaseService {
    */
   async setRuteKunder(ruteId: number, kundeIds: number[], organizationId: number): Promise<void> {
     this.validateTenantContext(organizationId, 'setRuteKunder');
+
+    if (this.type === 'supabase' && this.supabase) {
+      await this.supabase.updateRute(ruteId, { kunde_ids: kundeIds });
+      return;
+    }
 
     if (!this.sqlite) throw new Error('Database not initialized');
 
@@ -2280,6 +2316,10 @@ class DatabaseService {
     organizationId: number
   ): Promise<{ success: boolean; oppdaterte_kunder: number }> {
     this.validateTenantContext(organizationId, 'completeRute');
+
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.completeRute(id, dato);
+    }
 
     const rute = await this.getRuteById(id, organizationId);
     if (!rute) return { success: false, oppdaterte_kunder: 0 };
@@ -4176,7 +4216,7 @@ class DatabaseService {
         totalCustomers: stats.totalKunder,
         totalUsers: stats.totalUsers,
         activeSubscriptions: stats.activeSubscriptions,
-        organizationsByPlan: {}, // TODO: implement if needed
+        organizationsByPlan: stats.organizationsByPlan || {},
       };
     }
 
@@ -6131,7 +6171,7 @@ class DatabaseService {
         SUM(CASE WHEN neste_kontroll > ? AND neste_kontroll <= ? THEN 1 ELSE 0 END) as upcoming_90,
         SUM(CASE WHEN neste_kontroll > ? OR neste_kontroll IS NULL THEN 1 ELSE 0 END) as ok
       FROM kunder WHERE organization_id = ?
-    `).get(firstOfMonth, today, in30Str, in30Str, in90Str, in90Str, organizationId) as any;
+    `).get(firstOfMonth, firstOfMonth, in30Str, in30Str, in90Str, in90Str, organizationId) as any;
 
     return {
       overdue: result?.overdue || 0,

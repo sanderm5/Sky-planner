@@ -116,6 +116,7 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const EXEMPT_PATH_PREFIXES = [
   '/api/v1/', // Public API uses API key auth
   '/api/webhooks', // Webhooks use signature verification
+  '/api/integration-webhooks', // External integration webhooks use token verification
   '/api/cron', // Cron jobs use secret verification
   '/api/docs', // API documentation is read-only
 ];

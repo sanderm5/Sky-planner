@@ -1,0 +1,59 @@
+/*
+ * Polarnatt — Sky Planner shared theme variables.
+ * Source of truth: packages/theme/src/colors.js
+ *
+ * Imported by:
+ *   - apps/app/public/index.html  (<link>)
+ *   - apps/web/src/styles/global.css (@import)
+ *
+ * Naming: --sky-* prefix to avoid collision with app-specific vars.
+ * Each app maps --sky-* → their own convention in their own :root.
+ */
+
+:root {
+  /* === Backgrounds === */
+  --sky-bg-primary:   #0A0E16;
+  --sky-bg-secondary: #10161E;
+  --sky-bg-tertiary:  #182028;
+  --sky-bg-elevated:  #1E2832;
+  --sky-bg-hover:     #263440;
+
+  /* === Accent === */
+  --sky-accent:       #5E81AC;
+  --sky-accent-hover: #7A9BBF;
+  --sky-accent-dark:  #4A6D8C;
+  --sky-accent-deep:  #3D5A7E;
+
+  /* === Borders === */
+  --sky-border:       #202E3E;
+  --sky-border-light: #304258;
+
+  /* === Text === */
+  --sky-text-primary:   #D8E2EC;
+  --sky-text-secondary: #8898AC;
+  --sky-text-muted:     #5E7088;
+
+  /* === Nordic accents === */
+  --sky-frost:  #88C0D0;
+  --sky-purple: #B48EAD;
+  --sky-green:  #5EB48C;
+  --sky-aurora: #4ADE80;
+
+  /* === RGB (space-separated for Tailwind alpha) === */
+  --sky-bg-primary-rgb:   10 14 22;
+  --sky-bg-secondary-rgb: 16 22 30;
+  --sky-bg-tertiary-rgb:  24 32 40;
+  --sky-bg-elevated-rgb:  30 40 50;
+  --sky-bg-hover-rgb:     38 52 64;
+
+  --sky-border-rgb:       32 46 62;
+  --sky-border-light-rgb: 48 66 88;
+
+  --sky-text-primary-rgb:   216 226 236;
+  --sky-text-secondary-rgb: 136 152 172;
+  --sky-text-muted-rgb:     94 112 136;
+
+  --sky-accent-rgb:           94 129 172;
+  --sky-accent-secondary-rgb: 132 156 185;
+  --sky-accent-tertiary-rgb:  168 182 200;
+}

@@ -72,8 +72,6 @@ async function createKunde(kunde) {
     brann_kontroll_intervall: kunde.brann_kontroll_intervall || 12,
     // Driftskategori
     brann_driftstype: kunde.brann_driftstype,
-    // Custom organization fields
-    custom_data: kunde.custom_data || '{}',
     // Organization (multi-tenant support)
     organization_id: kunde.organization_id,
     // Integration sync fields
@@ -126,8 +124,6 @@ async function updateKunde(id, kunde, organizationId) {
       brann_kontroll_intervall: kunde.brann_kontroll_intervall || 12,
       // Driftskategori
       brann_driftstype: kunde.brann_driftstype,
-      // Custom organization fields
-      custom_data: kunde.custom_data,
       // Integration sync fields
       external_source: kunde.external_source,
       external_id: kunde.external_id,
@@ -304,7 +300,6 @@ async function bulkImportKunder(kunder) {
       siste_brann_kontroll: k.siste_brann_kontroll || null,
       neste_brann_kontroll: k.neste_brann_kontroll || null,
       brann_kontroll_intervall: k.brann_kontroll_intervall || 12,
-      custom_data: k.custom_data || '{}',
       organization_id: k.organization_id,
       external_source: k.external_source || null,
       external_id: k.external_id || null,
@@ -320,10 +315,16 @@ async function bulkImportKunder(kunder) {
 
 // ===== RUTER =====
 
-async function getAllRuter() {
-  const { data: ruter, error } = await getClient()
+async function getAllRuter(organizationId) {
+  let query = getClient()
     .from('ruter')
-    .select('*')
+    .select('*');
+
+  if (organizationId) {
+    query = query.eq('organization_id', organizationId);
+  }
+
+  const { data: ruter, error } = await query
     .order('planlagt_dato', { ascending: false })
     .order('opprettet', { ascending: false });
 
@@ -1280,11 +1281,26 @@ async function getGlobalStatistics() {
 
   if (subError) throw subError;
 
+  // Get plan distribution
+  const { data: planOrgs, error: planError } = await getClient()
+    .from('organizations')
+    .select('plan_type, subscription_status')
+    .eq('aktiv', true);
+
+  if (planError) throw planError;
+
+  const organizationsByPlan = {};
+  for (const org of (planOrgs || [])) {
+    const plan = org.plan_type || 'free';
+    organizationsByPlan[plan] = (organizationsByPlan[plan] || 0) + 1;
+  }
+
   return {
     totalOrganizations: totalOrganizations || 0,
     totalKunder: totalKunder || 0,
     totalUsers: totalUsers || 0,
     activeSubscriptions: activeSubscriptions || 0,
+    organizationsByPlan,
   };
 }
 

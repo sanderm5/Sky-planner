@@ -8,7 +8,7 @@ import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { broadcast } from '../services/websocket';
-import type { AuthenticatedRequest, Avtale, ApiResponse, CreateAvtaleRequest, Organization } from '../types';
+import type { AuthenticatedRequest, Avtale, ApiResponse, CreateAvtaleRequest, Organization, Kunde } from '../types';
 
 const router: Router = Router();
 
@@ -32,6 +32,7 @@ interface AvtaleDbService {
   deleteAvtaleSeries(parentId: number, organizationId?: number): Promise<number>;
   completeAvtale(id: number, organizationId?: number): Promise<boolean>;
   getOrganizationById(id: number): Promise<Organization | null>;
+  getKundeById(id: number, organizationId: number): Promise<Kunde | null>;
 }
 
 // Valid recurrence rules
@@ -41,6 +42,7 @@ const VALID_GJENTAKELSE = ['daglig', 'ukentlig', 'annenhver_uke', 'manedlig', '3
  * Expand a recurrence rule into dates from a start date
  */
 function expandRecurringDates(startDate: string, regel: string, endDate?: string): string[] {
+  const MAX_INSTANCES = 365;
   const dates: string[] = [];
   const start = new Date(startDate);
   const maxEnd = endDate ? new Date(endDate) : new Date(start);
@@ -48,11 +50,18 @@ function expandRecurringDates(startDate: string, regel: string, endDate?: string
     maxEnd.setFullYear(maxEnd.getFullYear() + 1); // Default: 1 year ahead
   }
 
+  // Cap end date to max 2 years from start
+  const absoluteMax = new Date(start);
+  absoluteMax.setFullYear(absoluteMax.getFullYear() + 2);
+  if (maxEnd > absoluteMax) {
+    maxEnd.setTime(absoluteMax.getTime());
+  }
+
   let current = new Date(start);
   // Skip the first date (parent already has it)
   advanceDate(current, regel);
 
-  while (current <= maxEnd) {
+  while (current <= maxEnd && dates.length < MAX_INSTANCES) {
     dates.push(formatDate(current));
     advanceDate(current, regel);
   }
@@ -159,7 +168,7 @@ router.post(
   '/',
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const { kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av, gjentakelse_regel, gjentakelse_slutt } = req.body;
+    const { kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av, gjentakelse_regel, gjentakelse_slutt, varighet } = req.body;
 
     if (!dato || !/^\d{4}-\d{2}-\d{2}$/.test(dato)) {
       throw Errors.badRequest('Dato er påkrevd (format YYYY-MM-DD)');
@@ -184,8 +193,20 @@ router.post(
 
     const isRecurring = !!gjentakelse_regel;
 
+    // Verify customer belongs to this organization
+    if (kunde_id) {
+      const parsedKundeId = Number.parseInt(kunde_id);
+      if (Number.isNaN(parsedKundeId)) {
+        throw Errors.badRequest('Ugyldig kunde-ID');
+      }
+      const kunde = await dbService.getKundeById(parsedKundeId, req.organizationId!);
+      if (!kunde) {
+        throw Errors.badRequest('Ugyldig kunde-ID');
+      }
+    }
+
     // Create the parent avtale
-    const avtaleData: CreateAvtaleRequest & { organization_id?: number; opprettet_av?: string; er_gjentakelse?: boolean; gjentakelse_regel?: string; gjentakelse_slutt?: string } = {
+    const avtaleData: CreateAvtaleRequest & { organization_id?: number; opprettet_av?: string; er_gjentakelse?: boolean; gjentakelse_regel?: string; gjentakelse_slutt?: string; varighet?: number } = {
       kunde_id: kunde_id ? Number.parseInt(kunde_id) : undefined,
       dato,
       klokkeslett,
@@ -195,6 +216,7 @@ router.post(
       opprettet_av: opprettet_av || req.user?.epost,
       gjentakelse_regel: gjentakelse_regel || undefined,
       gjentakelse_slutt: gjentakelse_slutt || undefined,
+      varighet: varighet ? Number.parseInt(varighet) : undefined,
     };
 
     if (isRecurring) {
@@ -256,7 +278,7 @@ router.put(
       throw Errors.badRequest('Ugyldig avtale-ID');
     }
 
-    const { kunde_id, dato, klokkeslett, type, beskrivelse, status } = req.body;
+    const { kunde_id, dato, klokkeslett, type, beskrivelse, status, varighet } = req.body;
 
     if (dato && !/^\d{4}-\d{2}-\d{2}$/.test(dato)) {
       throw Errors.badRequest('Ugyldig datoformat (bruk YYYY-MM-DD)');
@@ -272,7 +294,7 @@ router.put(
 
     const avtale = await dbService.updateAvtale(
       id,
-      { kunde_id, dato, klokkeslett, type, beskrivelse, status },
+      { kunde_id, dato, klokkeslett, type, beskrivelse, status, varighet: varighet ? Number.parseInt(varighet) : undefined },
       req.organizationId
     );
 

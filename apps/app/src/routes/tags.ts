@@ -27,6 +27,7 @@ interface TagDbService {
   getTagsForKunde(kundeId: number, organizationId: number): Promise<Tag[]>;
   addTagToKunde(kundeId: number, tagId: number): Promise<boolean>;
   removeTagFromKunde(kundeId: number, tagId: number): Promise<boolean>;
+  getKundeById(id: number, organizationId: number): Promise<{ id: number } | null>;
 }
 
 let dbService: TagDbService;
@@ -212,6 +213,18 @@ router.post(
       throw Errors.badRequest('Ugyldig kunde-ID eller tag-ID');
     }
 
+    // Verify customer belongs to this organization
+    const kunde = await dbService.getKundeById(kundeId, req.organizationId!);
+    if (!kunde) {
+      throw Errors.notFound('Kunde');
+    }
+
+    // Verify tag belongs to this organization
+    const orgTags = await dbService.getTagsByOrganization(req.organizationId!);
+    if (!orgTags.some(t => t.id === tagId)) {
+      throw Errors.notFound('Tag');
+    }
+
     const success = await dbService.addTagToKunde(kundeId, tagId);
     if (!success) {
       throw Errors.badRequest('Kunne ikke legge til tag');
@@ -241,6 +254,18 @@ router.delete(
     const tagId = Number.parseInt(req.params.tagId);
     if (Number.isNaN(kundeId) || Number.isNaN(tagId)) {
       throw Errors.badRequest('Ugyldig kunde-ID eller tag-ID');
+    }
+
+    // Verify customer belongs to this organization
+    const kunde = await dbService.getKundeById(kundeId, req.organizationId!);
+    if (!kunde) {
+      throw Errors.notFound('Kunde');
+    }
+
+    // Verify tag belongs to this organization
+    const orgTags = await dbService.getTagsByOrganization(req.organizationId!);
+    if (!orgTags.some(t => t.id === tagId)) {
+      throw Errors.notFound('Tag');
     }
 
     const success = await dbService.removeTagFromKunde(kundeId, tagId);

@@ -3,7 +3,7 @@
  * Exports organization data in various formats
  */
 
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { createLogger } from './logger';
 
 const logger = createLogger('export');
@@ -124,20 +124,20 @@ export function exportCustomersToJSON(customers: CustomerExportRow[]): ExportRes
   };
 }
 
-export function exportCustomersToXLSX(customers: CustomerExportRow[]): ExportResult {
-  const rows = customers.map((c) => {
-    const row: Record<string, unknown> = {};
-    for (const col of CUSTOMER_COLUMNS) {
-      row[col.label] = c[col.key] ?? '';
-    }
-    return row;
-  });
+export async function exportCustomersToXLSX(customers: CustomerExportRow[]): Promise<ExportResult> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Kunder');
 
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Kunder');
+  worksheet.columns = CUSTOMER_COLUMNS.map((col) => ({
+    header: col.label,
+    key: col.key,
+  }));
 
-  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  for (const c of customers) {
+    worksheet.addRow(c);
+  }
+
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   const timestamp = new Date().toISOString().split('T')[0];
 
   return {
@@ -219,20 +219,20 @@ export function exportRoutesToJSON(routes: RouteExportRow[]): ExportResult {
   };
 }
 
-export function exportRoutesToXLSX(routes: RouteExportRow[]): ExportResult {
-  const rows = routes.map((r) => {
-    const row: Record<string, unknown> = {};
-    for (const col of ROUTE_COLUMNS) {
-      row[col.label] = r[col.key] ?? '';
-    }
-    return row;
-  });
+export async function exportRoutesToXLSX(routes: RouteExportRow[]): Promise<ExportResult> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Ruter');
 
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Ruter');
+  worksheet.columns = ROUTE_COLUMNS.map((col) => ({
+    header: col.label,
+    key: col.key,
+  }));
 
-  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  for (const r of routes) {
+    worksheet.addRow(r);
+  }
+
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   const timestamp = new Date().toISOString().split('T')[0];
 
   return {

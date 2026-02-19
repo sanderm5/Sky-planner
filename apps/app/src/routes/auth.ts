@@ -585,7 +585,7 @@ router.get(
       }
 
       // Generate a fresh token for localStorage (for subsequent API calls)
-      const freshToken = generateToken({
+      const freshTokenPayload: Record<string, unknown> = {
         userId: decoded.userId,
         epost: decoded.epost,
         organizationId: decoded.organizationId,
@@ -595,7 +595,15 @@ router.get(
         subscriptionPlan: organization?.plan_type,
         trialEndsAt: organization?.trial_ends_at,
         currentPeriodEnd: organization?.current_period_end,
-      }, '24h');
+      };
+
+      // Preserve impersonation flags so subscription bypass works on fresh tokens
+      if (decoded.isImpersonating) {
+        freshTokenPayload.isImpersonating = true;
+        freshTokenPayload.originalUserId = decoded.originalUserId;
+      }
+
+      const freshToken = generateToken(freshTokenPayload as Omit<JWTPayload, 'iat' | 'exp' | 'jti'>, '24h');
 
       // Check if user is super admin (only for bruker type)
       const brukerRecord = user as BrukerRecord;
@@ -672,7 +680,7 @@ async function sendLoginNotification(
     const now = new Date().toLocaleString('nb-NO', { timeZone: 'Europe/Oslo' });
     const subject = `Innlogging: ${user.navn} (${userType})`;
     const message = `
-      <h2>Ny innlogging på TREkontroll</h2>
+      <h2>Ny innlogging på Sky Planner</h2>
       <p><strong>Bruker:</strong> ${user.navn}</p>
       <p><strong>E-post:</strong> ${user.epost}</p>
       <p><strong>Type:</strong> ${userType}</p>

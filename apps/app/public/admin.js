@@ -41,20 +41,15 @@ async function initAdminPanel() {
   try {
     // Verify super-admin status (auth via httpOnly cookie)
     const verifyRes = await fetchWithAuth(`${AUTH_API}/verify`);
-    console.log('[Admin] Verify response status:', verifyRes.status);
 
     if (!verifyRes.ok) {
-      console.log('[Admin] Verify failed, redirecting to login');
       redirectToLogin();
       return;
     }
 
     const verifyData = await verifyRes.json();
-    console.log('[Admin] Verify data:', verifyData);
-    console.log('[Admin] User isSuperAdmin:', verifyData.data?.user?.isSuperAdmin);
 
     if (!verifyData.data?.user?.isSuperAdmin) {
-      console.log('[Admin] Not super-admin, redirecting to main app');
       // Not a super-admin, redirect to main app
       window.location.href = '/';
       return;
@@ -170,8 +165,42 @@ function setupEventListeners() {
     loadSentryIssues(e.target.value);
   });
 
-  // Click outside panel to close (but not when modals are open)
+  // Event delegation for dynamically rendered buttons (CSP-compliant, no inline onclick)
   document.addEventListener('click', (e) => {
+    const actionEl = e.target.closest('[data-action]');
+    if (actionEl) {
+      const action = actionEl.dataset.action;
+      switch (action) {
+        case 'selectOrg': {
+          const orgId = Number(actionEl.dataset.orgId);
+          if (orgId) selectOrg(orgId);
+          break;
+        }
+        case 'impersonateOrg': {
+          const orgId = Number(actionEl.dataset.orgId);
+          if (orgId) impersonateOrg(orgId);
+          break;
+        }
+        case 'editCustomer': {
+          const customerId = Number(actionEl.dataset.customerId);
+          if (customerId) editCustomer(customerId);
+          break;
+        }
+        case 'deleteCustomer': {
+          const customerId = Number(actionEl.dataset.customerId);
+          if (customerId) deleteCustomer(customerId);
+          break;
+        }
+        case 'openUserModal': {
+          const userId = Number(actionEl.dataset.userId);
+          if (userId) openUserModal(userId);
+          break;
+        }
+      }
+      return; // Handled action, skip click-outside check
+    }
+
+    // Click outside panel to close (but not when modals are open)
     if (orgPanel.classList.contains('open') &&
         !orgPanel.contains(e.target) &&
         !e.target.closest('.btn-view') &&
@@ -476,10 +505,23 @@ async function loadOrganizations() {
       // Handle paginated response format: { organizations: [...], pagination: {...} }
       organizations = Array.isArray(data.data) ? data.data : (data.data?.organizations || []);
       renderOrganizations(organizations);
+    } else {
+      console.error('Failed to load organizations:', data);
+      const tbody = document.getElementById('orgsTableBody');
+      tbody.innerHTML = `
+        <tr class="empty-row">
+          <td colspan="7" style="color: #f87171;">Feil: ${escapeHtml(data.error?.message || 'Ukjent feil')}</td>
+        </tr>
+      `;
     }
   } catch (error) {
     console.error('Failed to load organizations:', error);
-    showError('Kunne ikke laste bedrifter');
+    const tbody = document.getElementById('orgsTableBody');
+    tbody.innerHTML = `
+      <tr class="empty-row">
+        <td colspan="7" style="color: #f87171;">Nettverksfeil: ${escapeHtml(error.message)}</td>
+      </tr>
+    `;
   }
 }
 
@@ -523,10 +565,10 @@ function renderOrganizations(orgs) {
         <span class="date-text">${formatDate(org.opprettet)}</span>
       </td>
       <td class="actions-cell">
-        <button class="btn-sm btn-view" onclick="selectOrg(${org.id})">
+        <button class="btn-sm btn-view" data-action="selectOrg" data-org-id="${org.id}">
           <i class="fas fa-eye"></i> Vis
         </button>
-        <button class="btn-sm btn-impersonate-small" onclick="impersonateOrg(${org.id})">
+        <button class="btn-sm btn-impersonate-small" data-action="impersonateOrg" data-org-id="${org.id}">
           <i class="fas fa-user-secret"></i>
         </button>
       </td>
@@ -614,7 +656,7 @@ async function loadOrgCustomers(orgId) {
     const data = await res.json();
 
     if (data.success) {
-      const kunder = data.data.kunder || [];
+      const kunder = data.data.data || [];
       document.getElementById('customerCount').textContent = `${kunder.length} kunder`;
 
       if (kunder.length === 0) {
@@ -629,10 +671,10 @@ async function loadOrgCustomers(orgId) {
             <span class="customer-address">${escapeHtml(k.adresse || '')} ${escapeHtml(k.poststed || '')}</span>
           </div>
           <div class="customer-actions">
-            <button class="btn-icon" onclick="editCustomer(${k.id})" title="Rediger">
+            <button class="btn-icon" data-action="editCustomer" data-customer-id="${k.id}" title="Rediger">
               <i class="fas fa-edit"></i>
             </button>
-            <button class="btn-icon btn-danger" onclick="deleteCustomer(${k.id})" title="Slett">
+            <button class="btn-icon btn-danger" data-action="deleteCustomer" data-customer-id="${k.id}" title="Slett">
               <i class="fas fa-trash"></i>
             </button>
           </div>
@@ -663,7 +705,7 @@ async function loadOrgUsers(orgId) {
       }
 
       usersList.innerHTML = users.map(u => `
-        <div class="user-card" onclick="openUserModal(${u.id})" data-user-id="${u.id}">
+        <div class="user-card" data-action="openUserModal" data-user-id="${u.id}">
           <div class="user-avatar">
             <i class="fas fa-user"></i>
           </div>
@@ -1160,7 +1202,7 @@ async function editCustomer(customerId) {
     }
 
     if (data.success) {
-      const customer = data.data.kunder.find(k => k.id === customerId);
+      const customer = (data.data.data || []).find(k => k.id === customerId);
       if (customer) {
         // Only set editingCustomerId after we've verified the data is valid
         editingCustomerId = customerId;
