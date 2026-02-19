@@ -221,7 +221,7 @@ class ImportService {
     apiLogger.info({ organizationId, fileName }, 'Starting Excel upload and parse');
 
     // Parse Excel file
-    const parsed = parseExcelBuffer(fileBuffer);
+    const parsed = await parseExcelBuffer(fileBuffer);
 
     // Run auto-cleaning on parsed data
     const { cleanedRows, report: cleaningReport } = cleanImportData(parsed.rows, parsed.headers);

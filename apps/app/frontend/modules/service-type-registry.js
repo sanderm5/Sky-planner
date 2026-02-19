@@ -1,0 +1,965 @@
+// ========================================
+// SERVICE TYPE REGISTRY (Multi-Industry Support)
+// ========================================
+
+/**
+ * ServiceTypeRegistry - Manages dynamic service types loaded from server config
+ * Replaces hardcoded 'Sky Planner', 'Brannvarsling' with configurable service types
+ */
+class ServiceTypeRegistry {
+  constructor() {
+    this.serviceTypes = new Map();
+    this.intervals = [];
+    this.industryTemplate = null;
+    this.initialized = false;
+  }
+
+  /**
+   * Initialize registry from appConfig
+   */
+  loadFromConfig(config) {
+    this.serviceTypes.clear();
+
+    if (config.serviceTypes && Array.isArray(config.serviceTypes)) {
+      config.serviceTypes.forEach(st => {
+        this.serviceTypes.set(st.slug, {
+          id: st.id,
+          name: st.name,
+          slug: st.slug,
+          icon: st.icon || 'fa-wrench',
+          color: st.color || '#5E81AC',
+          defaultInterval: st.defaultInterval || 12,
+          description: st.description || '',
+          subtypes: st.subtypes || [],
+          equipmentTypes: st.equipmentTypes || []
+        });
+      });
+    }
+
+    // Fallback: Generic service type if none were loaded from config
+    // This only happens for unauthenticated requests (login page) or orgs without service types
+    if (this.serviceTypes.size === 0) {
+      this.serviceTypes.set('service', {
+        id: 0,
+        name: 'Service',
+        slug: 'service',
+        icon: 'fa-wrench',
+        color: '#5E81AC',
+        defaultInterval: 12,
+        description: 'Generell tjeneste',
+        subtypes: [],
+        equipmentTypes: []
+      });
+      Logger.log('Using generic fallback service type (no types configured for this org)');
+    }
+
+    this.intervals = config.intervals || [];
+    this.industryTemplate = config.industryTemplate || null;
+    this.initialized = true;
+
+    Logger.log(`ServiceTypeRegistry loaded: ${this.serviceTypes.size} service types`);
+  }
+
+  /**
+   * Load service types from an industry template (fetched from API)
+   */
+  async loadFromIndustry(industrySlug) {
+    try {
+      const response = await fetch(`/api/industries/${industrySlug}`);
+      if (!response.ok) return false;
+      const data = await response.json();
+
+      if (data.success && data.data) {
+        this.serviceTypes.clear();
+
+        const industry = data.data;
+        this.industryTemplate = {
+          id: industry.id,
+          name: industry.name,
+          slug: industry.slug,
+          icon: industry.icon,
+          color: industry.color
+        };
+
+        // Load service types from industry
+        if (industry.serviceTypes && Array.isArray(industry.serviceTypes)) {
+          industry.serviceTypes.forEach(st => {
+            this.serviceTypes.set(st.slug, {
+              id: st.id,
+              name: st.name,
+              slug: st.slug,
+              icon: st.icon || 'fa-wrench',
+              color: st.color || '#5E81AC',
+              defaultInterval: st.defaultInterval || 12,
+              description: st.description || '',
+              subtypes: st.subtypes || [],
+              equipmentTypes: st.equipment || []
+            });
+          });
+        }
+
+        // Load intervals from industry
+        if (industry.intervals && Array.isArray(industry.intervals)) {
+          this.intervals = industry.intervals.map(i => ({
+            months: i.months,
+            label: i.label,
+            isDefault: i.isDefault
+          }));
+        }
+
+        this.initialized = true;
+        Logger.log(`ServiceTypeRegistry loaded from industry '${industrySlug}': ${this.serviceTypes.size} service types`);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error loading industry service types:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get all service types as array
+   */
+  getAll() {
+    return Array.from(this.serviceTypes.values());
+  }
+
+  /**
+   * Get service type by slug
+   */
+  getBySlug(slug) {
+    return this.serviceTypes.get(slug);
+  }
+
+  /**
+   * Get service type by ID
+   */
+  getById(id) {
+    return this.getAll().find(st => st.id === id);
+  }
+
+  /**
+   * Get the default (first) service type for fallback behavior
+   * Used when no specific category matches
+   */
+  getDefaultServiceType() {
+    const all = this.getAll();
+    return all.length > 0 ? all[0] : {
+      slug: 'service',
+      name: 'Service',
+      icon: 'fa-wrench',
+      color: '#5E81AC'
+    };
+  }
+
+  /**
+   * Generate icon HTML for a service type
+   */
+  getIcon(slugOrServiceType) {
+    const st = typeof slugOrServiceType === 'string'
+      ? this.getBySlug(slugOrServiceType)
+      : slugOrServiceType;
+    if (!st) return '<i class="fas fa-wrench"></i>';
+    return `<i class="fas ${st.icon}" style="color: ${st.color}"></i>`;
+  }
+
+  /**
+   * Format interval as label
+   */
+  formatInterval(months) {
+    const interval = this.intervals.find(i => i.months === months);
+    if (interval?.label) return interval.label;
+    if (months < 12) return `${months} mnd`;
+    if (months === 12) return '1 år';
+    if (months % 12 === 0) return `${months / 12} år`;
+    return `${months} mnd`;
+  }
+
+  /**
+   * Get available intervals for dropdowns
+   */
+  getIntervalOptions() {
+    if (this.intervals.length > 0) {
+      return this.intervals.map(i => ({
+        value: i.months,
+        label: i.label || this.formatInterval(i.months),
+        isDefault: i.isDefault
+      }));
+    }
+    // Fallback to common intervals
+    return [
+      { value: 6, label: '6 mnd', isDefault: false },
+      { value: 12, label: '1 år', isDefault: false },
+      { value: 24, label: '2 år', isDefault: false },
+      { value: 36, label: '3 år', isDefault: true },
+      { value: 60, label: '5 år', isDefault: false }
+    ];
+  }
+
+  /**
+   * Generate category tabs HTML
+   */
+  renderCategoryTabs(activeCategory = 'all') {
+    const serviceTypes = this.getAll();
+
+    let html = `<button class="kategori-tab ${activeCategory === 'all' ? 'active' : ''}" data-kategori="alle">Alle</button>`;
+
+    serviceTypes.forEach(st => {
+      const isActive = activeCategory === st.slug || activeCategory === st.name;
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${st.name}">
+        ${this.getIcon(st)} ${st.name}
+      </button>`;
+    });
+
+    // Add "Begge" tab for combined categories (backward compatibility)
+    if (serviceTypes.length >= 2) {
+      const combinedName = serviceTypes.map(st => st.name).join(' + ');
+      const isActive = activeCategory === combinedName || activeCategory === 'El-Kontroll + Brannvarsling';
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${combinedName}">
+        ${serviceTypes.map(st => this.getIcon(st)).join('')} Begge
+      </button>`;
+    }
+
+    return html;
+  }
+
+  /**
+   * Generate category select options HTML
+   */
+  renderCategoryOptions(selectedValue = '') {
+    const serviceTypes = this.getAll();
+    let html = '';
+
+    serviceTypes.forEach(st => {
+      const selected = selectedValue === st.name || selectedValue === st.slug ? 'selected' : '';
+      html += `<option value="${escapeHtml(st.name)}" ${selected}>${escapeHtml(st.name)}</option>`;
+    });
+
+    // Combined option for backward compatibility
+    if (serviceTypes.length >= 2) {
+      const combinedName = serviceTypes.map(st => st.name).join(' + ');
+      const selected = selectedValue === combinedName ? 'selected' : '';
+      html += `<option value="${escapeHtml(combinedName)}" ${selected}>Begge (${escapeHtml(combinedName)})</option>`;
+    }
+
+    return html;
+  }
+
+  /**
+   * Generate subtype options for a service type
+   */
+  renderSubtypeOptions(serviceTypeSlug, selectedValue = '') {
+    const st = this.getBySlug(serviceTypeSlug);
+    if (!st || !st.subtypes || st.subtypes.length === 0) return '';
+
+    let html = '<option value="">Ikke valgt</option>';
+    st.subtypes.forEach(sub => {
+      const selected = selectedValue === sub.name || selectedValue === sub.slug ? 'selected' : '';
+      html += `<option value="${escapeHtml(sub.name)}" ${selected}>${escapeHtml(sub.name)}</option>`;
+    });
+
+    return html;
+  }
+
+  /**
+   * Generate equipment options for a service type
+   */
+  renderEquipmentOptions(serviceTypeSlug, selectedValue = '') {
+    const st = this.getBySlug(serviceTypeSlug);
+
+    // Fallback for brannvarsling equipment types - grouped by brand
+    if (serviceTypeSlug === 'brannvarsling' && (!st || !st.equipmentTypes || st.equipmentTypes.length === 0)) {
+      const isSelected = (val) => selectedValue === val ? 'selected' : '';
+      let html = '<option value="">Ikke valgt</option>';
+      html += `<optgroup label="Elotec">`;
+      html += `<option value="Elotec" ${isSelected('Elotec')}>Elotec</option>`;
+      html += `<option value="ES 801" ${isSelected('ES 801')}>ES 801</option>`;
+      html += `<option value="ES 601" ${isSelected('ES 601')}>ES 601</option>`;
+      html += `<option value="2 x Elotec" ${isSelected('2 x Elotec')}>2 x Elotec</option>`;
+      html += `</optgroup>`;
+      html += `<optgroup label="ICAS">`;
+      html += `<option value="ICAS" ${isSelected('ICAS')}>ICAS</option>`;
+      html += `</optgroup>`;
+      html += `<optgroup label="Begge">`;
+      html += `<option value="Elotec + ICAS" ${isSelected('Elotec + ICAS')}>Elotec + ICAS</option>`;
+      html += `</optgroup>`;
+      return html;
+    }
+
+    if (!st || !st.equipmentTypes || st.equipmentTypes.length === 0) return '';
+
+    let html = '<option value="">Ikke valgt</option>';
+    st.equipmentTypes.forEach(eq => {
+      const selected = selectedValue === eq.name || selectedValue === eq.slug ? 'selected' : '';
+      html += `<option value="${escapeHtml(eq.name)}" ${selected}>${escapeHtml(eq.name)}</option>`;
+    });
+
+    return html;
+  }
+
+  /**
+   * Generate interval select options
+   */
+  renderIntervalOptions(selectedValue = null) {
+    const options = this.getIntervalOptions();
+    let html = '';
+
+    options.forEach(opt => {
+      const selected = selectedValue === opt.value || (selectedValue === null && opt.isDefault) ? 'selected' : '';
+      html += `<option value="${escapeHtml(String(opt.value))}" ${selected}>${escapeHtml(opt.label)}</option>`;
+    });
+
+    return html;
+  }
+
+  /**
+   * Check if customer matches a category filter
+   */
+  matchesCategory(customer, categoryFilter) {
+    if (categoryFilter === 'all' || categoryFilter === 'alle') return true;
+
+    const kategori = customer.kategori || '';
+
+    // Direct match with service type slug or name
+    const st = this.getBySlug(categoryFilter);
+    if (st) {
+      // Exact match only - "Brannvarsling" should NOT match "El-Kontroll + Brannvarsling"
+      return kategori === st.name;
+    }
+
+    // Check for combined category (backward compatibility)
+    if (categoryFilter.includes('-') || categoryFilter.includes('+')) {
+      const serviceTypes = this.getAll();
+      const allMatched = serviceTypes.every(st => kategori.includes(st.name));
+      return allMatched && kategori.includes('+');
+    }
+
+    // Legacy direct string match - exact match only
+    return kategori === categoryFilter;
+  }
+
+  /**
+   * Check if a category is known in the current industry
+   */
+  isKnownCategory(kategori) {
+    if (!kategori) return true; // null/empty is considered "default"
+
+    const serviceTypes = this.getAll();
+
+    // Check for exact match
+    for (const st of serviceTypes) {
+      if (kategori === st.name) return true;
+    }
+
+    // Check for combined category (contains '+')
+    if (kategori.includes('+')) {
+      const parts = kategori.split('+').map(p => p.trim());
+      return parts.every(part => serviceTypes.some(st => st.name === part));
+    }
+
+    // Check for partial match
+    for (const st of serviceTypes) {
+      if (kategori.toLowerCase().includes(st.slug.toLowerCase()) ||
+          kategori.toLowerCase().includes(st.name.toLowerCase())) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Get CSS class for category badge
+   * Dynamically returns the service type slug as CSS class
+   * Returns 'unknown-category' for categories not in current industry
+   */
+  getCategoryClass(kategori) {
+    const serviceTypes = this.getAll();
+    const defaultSt = this.getDefaultServiceType();
+
+    // Helper to normalize category strings for comparison
+    const normalizeCategory = (str) => {
+      if (!str) return '';
+      return str.toLowerCase()
+        .replace(/[\s-]+/g, '')  // Remove spaces and hyphens
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, ''); // Remove accents
+    };
+
+    // Helper to find matching service type
+    const findServiceType = (categoryName) => {
+      const normalizedCat = normalizeCategory(categoryName);
+      for (const st of serviceTypes) {
+        if (normalizedCat === normalizeCategory(st.name) ||
+            normalizedCat === normalizeCategory(st.slug)) {
+          return st;
+        }
+      }
+      for (const st of serviceTypes) {
+        if (normalizedCat.includes(normalizeCategory(st.slug)) ||
+            normalizeCategory(st.slug).includes(normalizedCat)) {
+          return st;
+        }
+      }
+      return null;
+    };
+
+    if (!kategori) return defaultSt.slug;
+
+    // Combined category (contains '+')
+    if (kategori.includes('+')) {
+      const parts = kategori.split('+').map(p => p.trim());
+      const matchedTypes = parts.map(part => findServiceType(part)).filter(Boolean);
+      return matchedTypes.length > 0 ? 'combined' : defaultSt.slug;
+    }
+
+    // Single category - use normalized matching
+    const matchedSt = findServiceType(kategori);
+    if (matchedSt) {
+      return matchedSt.slug;
+    }
+
+    // Fallback: check svgIcons directly for known categories
+    const normalizedKat = normalizeCategory(kategori);
+    for (const slug of Object.keys(svgIcons)) {
+      if (normalizedKat.includes(normalizeCategory(slug)) ||
+          normalizeCategory(slug).includes(normalizedKat)) {
+        return slug;
+      }
+    }
+
+    // Unknown category - use default service type as fallback
+    return defaultSt.slug;
+  }
+
+  /**
+   * Get icon HTML for a category (handles combined categories)
+   * Uses premium SVG icons when available, falls back to default service type
+   */
+  getIconForCategory(kategori) {
+    const serviceTypes = this.getAll();
+    const defaultSt = this.getDefaultServiceType();
+
+    // Helper to normalize category strings for comparison
+    // "El-Kontroll" -> "elkontroll", "Brannvarsling" -> "brannvarsling"
+    const normalizeCategory = (str) => {
+      if (!str) return '';
+      return str.toLowerCase()
+        .replace(/[\s-]+/g, '')  // Remove spaces and hyphens
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, ''); // Remove accents
+    };
+
+    // Helper to get icon HTML - white FontAwesome icon on colored marker background
+    const getIconHtml = (st) => {
+      return `<i class="fas ${st.icon}"></i>`;
+    };
+
+    // Helper to find matching service type using normalized comparison
+    const findServiceType = (categoryName) => {
+      const normalizedCat = normalizeCategory(categoryName);
+      // First: exact normalized match
+      for (const st of serviceTypes) {
+        if (normalizedCat === normalizeCategory(st.name) ||
+            normalizedCat === normalizeCategory(st.slug)) {
+          return st;
+        }
+      }
+      // Second: partial normalized match
+      for (const st of serviceTypes) {
+        if (normalizedCat.includes(normalizeCategory(st.slug)) ||
+            normalizeCategory(st.slug).includes(normalizedCat)) {
+          return st;
+        }
+      }
+      return null;
+    };
+
+    if (!kategori) return getIconHtml(defaultSt);
+
+    // Check for combined category (contains '+')
+    if (kategori.includes('+')) {
+      const parts = kategori.split('+').map(p => p.trim());
+      const matchedTypes = parts.map(part => findServiceType(part)).filter(Boolean);
+      if (matchedTypes.length > 0) {
+        return matchedTypes.map(st => getIconHtml(st)).join('');
+      }
+      return getIconHtml(defaultSt);
+    }
+
+    // Single service type - use normalized matching
+    const matchedSt = findServiceType(kategori);
+    if (matchedSt) {
+      return getIconHtml(matchedSt);
+    }
+
+    // Fallback: check svgIcons directly for known categories
+    const normalizedKat = normalizeCategory(kategori);
+    for (const slug of Object.keys(svgIcons)) {
+      if (normalizedKat.includes(normalizeCategory(slug)) ||
+          normalizeCategory(slug).includes(normalizedKat)) {
+        return `<span class="marker-svg-icon">${svgIcons[slug]}</span>`;
+      }
+    }
+
+    // Unknown category - use default service type icon as fallback
+    return getIconHtml(defaultSt);
+  }
+
+  /**
+   * Generate driftskategori options (brann-related subtypes)
+   */
+  renderDriftsOptions(selectedValue = '') {
+    const brannService = this.getBySlug('brannvarsling');
+    if (!brannService || !brannService.subtypes || brannService.subtypes.length === 0) {
+      // Fallback to default options - includes all common driftstyper
+      const defaults = ['Storfe', 'Sau', 'Storfe/Sau', 'Geit', 'Gris', 'Svin', 'Gartneri', 'Korn', 'Fjærfeoppdrett', 'Sau/Geit'];
+      let html = '<option value="">Ingen / Ikke valgt</option>';
+      defaults.forEach(d => {
+        const selected = selectedValue === d ? 'selected' : '';
+        html += `<option value="${d}" ${selected}>${d}</option>`;
+      });
+      return html;
+    }
+
+    let html = '<option value="">Ingen / Ikke valgt</option>';
+    brannService.subtypes.forEach(subtype => {
+      const selected = subtype.name === selectedValue ? 'selected' : '';
+      html += `<option value="${subtype.name}" ${selected}>${subtype.name}</option>`;
+    });
+    return html;
+  }
+
+  /**
+   * Render dynamic service sections for customer modal
+   * @param {Object} customer - Customer object with optional services array
+   * @returns {string} HTML for all service sections
+   */
+  renderServiceSections(customer = {}) {
+    const serviceTypes = this.getAll();
+    if (serviceTypes.length === 0) return '';
+
+    const services = customer.services || [];
+    let html = '';
+
+    serviceTypes.forEach(st => {
+      // Find existing service data for this type
+      const serviceData = services.find(s =>
+        s.service_type_slug === st.slug || s.service_type_id === st.id
+      ) || {};
+
+      const hasSubtypes = st.subtypes && st.subtypes.length > 0;
+      const hasEquipment = st.equipmentTypes && st.equipmentTypes.length > 0;
+
+      html += `
+        <div class="control-section service-section" data-service-slug="${st.slug}" data-service-id="${st.id}">
+          <div class="control-section-header">
+            <i class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
+          </div>
+
+          ${hasSubtypes ? `
+          <div class="form-group">
+            <label for="service_${st.slug}_subtype">Type</label>
+            <select id="service_${st.slug}_subtype" name="service_${st.slug}_subtype">
+              ${this.renderSubtypeOptions(st.slug, serviceData.subtype_name || '')}
+            </select>
+          </div>
+          ` : ''}
+
+          ${hasEquipment ? `
+          <div class="form-group">
+            <label for="service_${st.slug}_equipment">System/Utstyr</label>
+            <select id="service_${st.slug}_equipment" name="service_${st.slug}_equipment">
+              ${this.renderEquipmentOptions(st.slug, serviceData.equipment_name || '')}
+            </select>
+          </div>
+          ` : ''}
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="service_${st.slug}_siste">Siste kontroll</label>
+              <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="service_${st.slug}_siste" name="service_${st.slug}_siste"
+                     value="${appConfig.datoModus === 'month_year' && serviceData.siste_kontroll ? serviceData.siste_kontroll.substring(0, 7) : (serviceData.siste_kontroll || '')}">
+            </div>
+            <div class="form-group">
+              <label for="service_${st.slug}_neste">Neste kontroll</label>
+              <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="service_${st.slug}_neste" name="service_${st.slug}_neste"
+                     value="${appConfig.datoModus === 'month_year' && serviceData.neste_kontroll ? serviceData.neste_kontroll.substring(0, 7) : (serviceData.neste_kontroll || '')}">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="service_${st.slug}_intervall">Intervall</label>
+            <select id="service_${st.slug}_intervall" name="service_${st.slug}_intervall">
+              ${this.renderIntervalOptions(serviceData.intervall_months || st.defaultInterval)}
+            </select>
+          </div>
+        </div>
+      `;
+    });
+
+    return html;
+  }
+
+  /**
+   * Parse form data for services from dynamically rendered sections
+   * @returns {Array} Array of service objects
+   */
+  parseServiceFormData() {
+    const serviceTypes = this.getAll();
+    const services = [];
+
+    serviceTypes.forEach(st => {
+      const section = document.querySelector(`.service-section[data-service-slug="${st.slug}"]`);
+      if (!section) return;
+
+      const sisteInput = document.getElementById(`service_${st.slug}_siste`);
+      const nesteInput = document.getElementById(`service_${st.slug}_neste`);
+      const intervallSelect = document.getElementById(`service_${st.slug}_intervall`);
+      const subtypeSelect = document.getElementById(`service_${st.slug}_subtype`);
+      const equipmentSelect = document.getElementById(`service_${st.slug}_equipment`);
+
+      const siste = normalizeDateValue(sisteInput?.value) || null;
+      const neste = normalizeDateValue(nesteInput?.value) || null;
+      const intervall = intervallSelect?.value ? parseInt(intervallSelect.value, 10) : st.defaultInterval;
+      const subtype = subtypeSelect?.value || null;
+      const equipment = equipmentSelect?.value || null;
+
+      // Only include service if it has dates
+      if (siste || neste) {
+        services.push({
+          service_type_id: st.id,
+          service_type_slug: st.slug,
+          siste_kontroll: siste,
+          neste_kontroll: neste,
+          intervall_months: intervall,
+          subtype_name: subtype,
+          equipment_name: equipment
+        });
+      }
+    });
+
+    return services;
+  }
+
+  /**
+   * Get the combined kategori string from services array
+   * @param {Array} services - Array of service objects
+   * @returns {string} Combined kategori like "El-Kontroll + Brannvarsling"
+   */
+  getKategoriFromServices(services) {
+    if (!services || services.length === 0) return '';
+
+    const serviceTypes = this.getAll();
+    const activeServiceNames = [];
+
+    services.forEach(service => {
+      const st = serviceTypes.find(t =>
+        t.slug === service.service_type_slug || t.id === service.service_type_id
+      );
+      if (st && !activeServiceNames.includes(st.name)) {
+        activeServiceNames.push(st.name);
+      }
+    });
+
+    return activeServiceNames.join(' + ');
+  }
+
+  /**
+   * Generate dynamic popup control info HTML for a customer
+   * Replaces hardcoded El-Kontroll/Brannvarsling popup content
+   * @param {Object} customer - Customer object
+   * @param {Object} controlStatus - Result from getControlStatus()
+   * @returns {string} HTML string for control info section
+   */
+  renderPopupControlInfo(customer, controlStatus) {
+    const serviceTypes = this.getAll();
+    const kategori = customer.kategori || '';
+
+    const formatDate = (dato) => {
+      if (!dato) return null;
+      const d = new Date(dato);
+      return formatDateInline(d);
+    };
+
+    // MVP-modus: vis kontrollinfo per servicetype
+    if (isMvpMode()) {
+      // If organization has multiple service types, show each one for all customers
+      if (serviceTypes.length >= 2) {
+        let html = '<div class="popup-control-info">';
+        serviceTypes.forEach(st => {
+          let nesteKontroll = null;
+          let sisteKontroll = null;
+          let intervall = null;
+
+          // Check customer service data first
+          const serviceData = (customer.services || []).find(s =>
+            s.service_type_slug === st.slug || s.service_type_id === st.id
+          );
+          if (serviceData) {
+            nesteKontroll = serviceData.neste_kontroll;
+            sisteKontroll = serviceData.siste_kontroll;
+          }
+
+          // Fallback to legacy columns based on slug
+          if (st.slug === 'el-kontroll') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_el_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_el_kontroll;
+            if (!intervall) intervall = customer.el_kontroll_intervall;
+          } else if (st.slug === 'brannvarsling') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_brann_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_brann_kontroll;
+            if (!intervall) intervall = customer.brann_kontroll_intervall;
+          }
+
+          // Final fallback to generic columns
+          if (!nesteKontroll) nesteKontroll = customer.neste_kontroll;
+          if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
+          if (!intervall) intervall = customer.kontroll_intervall_mnd || st.defaultInterval;
+
+          const intervallText = intervall ? ` (hver ${intervall}. mnd)` : '';
+
+          html += `
+            <div style="margin-bottom:8px;">
+              <p style="margin:0;">
+                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
+              </p>
+              <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}${intervallText}</p>
+              ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+            </div>`;
+        });
+        html += '</div>';
+        return html;
+      }
+
+      // Single service type - simple view
+      const sisteKontroll = customer.siste_kontroll || customer.siste_el_kontroll;
+      return `
+        <div class="popup-control-info">
+          <p class="popup-status ${controlStatus.class}">
+            <strong><span class="marker-svg-icon" style="display:inline-block;width:14px;height:14px;vertical-align:middle;color:#3B82F6;">${svgIcons['service']}</span> Neste kontroll:</strong>
+            <span class="control-days">${escapeHtml(controlStatus.label)}</span>
+          </p>
+          ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+        </div>`;
+    }
+
+    const isCombined = kategori.includes('+');
+
+    if (isCombined && serviceTypes.length >= 2) {
+      let html = '<div class="popup-controls">';
+      serviceTypes.forEach(st => {
+        const serviceData = (customer.services || []).find(s =>
+          s.service_type_slug === st.slug || s.service_type_id === st.id
+        );
+        let nesteKontroll = serviceData?.neste_kontroll;
+        let sisteKontroll = serviceData?.siste_kontroll;
+
+        if (!nesteKontroll && st.slug === 'el-kontroll') {
+          nesteKontroll = customer.neste_el_kontroll;
+          sisteKontroll = customer.siste_el_kontroll;
+        } else if (!nesteKontroll && st.slug === 'brannvarsling') {
+          nesteKontroll = customer.neste_brann_kontroll;
+          sisteKontroll = customer.siste_brann_kontroll;
+        }
+
+        html += `
+          <p><strong><i class="fas ${st.icon}" style="color: ${st.color};"></i> ${st.name}:</strong></p>
+          <p style="margin-left: 20px;">Neste: ${nesteKontroll ? escapeHtml(nesteKontroll) : 'Ikke satt'}</p>
+          ${sisteKontroll ? `<p style="margin-left: 20px; font-size: 11px; color: var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+        `;
+      });
+      html += '</div>';
+      return html;
+    }
+
+    const matchedSt = serviceTypes.find(st =>
+      kategori === st.name || kategori.toLowerCase().includes(st.slug.toLowerCase())
+    ) || serviceTypes[0];
+
+    if (!matchedSt) {
+      return `
+        <div class="popup-control-info">
+          <p class="popup-status ${controlStatus.class}">
+            <strong>Neste kontroll:</strong>
+            <span class="control-days">${escapeHtml(controlStatus.label)}</span>
+          </p>
+        </div>`;
+    }
+
+    const serviceData = (customer.services || []).find(s =>
+      s.service_type_slug === matchedSt.slug || s.service_type_id === matchedSt.id
+    );
+    let sisteKontroll = serviceData?.siste_kontroll;
+
+    if (!sisteKontroll) {
+      if (matchedSt.slug === 'el-kontroll') {
+        sisteKontroll = customer.siste_el_kontroll;
+      } else if (matchedSt.slug === 'brannvarsling') {
+        sisteKontroll = customer.siste_brann_kontroll;
+      } else {
+        sisteKontroll = customer.siste_kontroll;
+      }
+    }
+
+    return `
+      <div class="popup-control-info">
+        <p class="popup-status ${controlStatus.class}">
+          <strong><i class="fas ${matchedSt.icon}" style="color: ${matchedSt.color};"></i> Neste kontroll:</strong>
+          <span class="control-days">${escapeHtml(controlStatus.label)}</span>
+        </p>
+        ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+      </div>`;
+  }
+
+  /**
+   * Parse custom_data field which may be string or object
+   * @param {string|Object} customData - Customer custom_data field
+   * @returns {Object} Parsed custom data object
+   */
+  parseCustomData(customData) {
+    if (!customData) return {};
+    if (typeof customData === 'object') return customData;
+    try { return JSON.parse(customData); } catch { return {}; }
+  }
+
+  /**
+   * Get appropriate label for subtype based on service type
+   * @param {Object} serviceType - Service type object
+   * @returns {string} Human-readable label
+   */
+  getSubtypeLabel(serviceType) {
+    // Use industry-specific labels for known service types
+    if (serviceType.slug === 'el-kontroll') return 'El-type';
+    if (serviceType.slug === 'brannvarsling') return 'Driftstype';
+    // Generic label based on service type name
+    return `${serviceType.name} type`;
+  }
+
+  /**
+   * Get appropriate label for equipment based on service type
+   * @param {Object} serviceType - Service type object
+   * @returns {string} Human-readable label
+   */
+  getEquipmentLabel(serviceType) {
+    if (serviceType.slug === 'brannvarsling') return 'Brannsystem';
+    // Generic label
+    return `${serviceType.name} utstyr`;
+  }
+
+  /**
+   * Get subtype value for a customer and service type
+   * Checks services array, legacy fields, and custom_data
+   * @param {Object} customer - Customer object
+   * @param {Object} serviceType - Service type object
+   * @returns {string|null} Subtype value or null
+   */
+  getCustomerSubtypeValue(customer, serviceType) {
+    // Check in services array first (new normalized structure)
+    const service = (customer.services || []).find(s =>
+      s.service_type_id === serviceType.id || s.service_type_slug === serviceType.slug
+    );
+    if (service?.subtype_name) return service.subtype_name;
+
+    // Fallback to legacy fields for backward compatibility
+    if (serviceType.slug === 'el-kontroll' && customer.el_type) return customer.el_type;
+    if (serviceType.slug === 'brannvarsling' && customer.brann_driftstype) return customer.brann_driftstype;
+
+    // Check custom_data for other industries
+    const customData = this.parseCustomData(customer.custom_data);
+    return customData[`${serviceType.slug}_subtype`] || null;
+  }
+
+  /**
+   * Get equipment value for a customer and service type
+   * Checks services array, legacy fields, and custom_data
+   * @param {Object} customer - Customer object
+   * @param {Object} serviceType - Service type object
+   * @returns {string|null} Equipment value or null
+   */
+  getCustomerEquipmentValue(customer, serviceType) {
+    // Check in services array first
+    const service = (customer.services || []).find(s =>
+      s.service_type_id === serviceType.id || s.service_type_slug === serviceType.slug
+    );
+    if (service?.equipment_name) return service.equipment_name;
+
+    // Fallback to legacy fields - use normalized value for brannvarsling
+    if (serviceType.slug === 'brannvarsling' && customer.brann_system) {
+      return normalizeBrannsystem(customer.brann_system);
+    }
+
+    // Check custom_data
+    const customData = this.parseCustomData(customer.custom_data);
+    return customData[`${serviceType.slug}_equipment`] || null;
+  }
+
+  /**
+   * Render dynamic industry-specific fields for popup display
+   * Replaces hardcoded el_type, brann_driftstype, brann_system fields
+   * @param {Object} customer - Customer object
+   * @returns {string} HTML string for industry fields
+   */
+  renderPopupIndustryFields(customer) {
+    const serviceTypes = this.getAll();
+    const kategori = customer.kategori || '';
+    let html = '';
+
+    // Find which service types apply to this customer
+    let applicableServiceTypes = serviceTypes.filter(st =>
+      kategori.includes(st.name) || kategori === st.name
+    );
+
+    // If no specific match, try partial matching
+    if (applicableServiceTypes.length === 0 && serviceTypes.length > 0) {
+      const partialMatch = serviceTypes.find(st =>
+        kategori.toLowerCase().includes(st.slug) ||
+        st.name.toLowerCase().includes(kategori.toLowerCase())
+      );
+      if (partialMatch) applicableServiceTypes.push(partialMatch);
+    }
+
+    for (const st of applicableServiceTypes) {
+      // Render subtype field if service type has subtypes
+      if (st.subtypes && st.subtypes.length > 0) {
+        const subtypeValue = this.getCustomerSubtypeValue(customer, st);
+        if (subtypeValue) {
+          const subtypeLabel = this.getSubtypeLabel(st);
+          html += `<p><strong>${escapeHtml(subtypeLabel)}:</strong> ${escapeHtml(subtypeValue)}</p>`;
+        }
+      }
+
+      // Render equipment field if service type has equipment types
+      if (st.equipmentTypes && st.equipmentTypes.length > 0) {
+        const equipmentValue = this.getCustomerEquipmentValue(customer, st);
+        if (equipmentValue) {
+          const equipmentLabel = this.getEquipmentLabel(st);
+          html += `<p><strong>${escapeHtml(equipmentLabel)}:</strong> ${escapeHtml(equipmentValue)}</p>`;
+        }
+      }
+    }
+
+    return html;
+  }
+}
+
+// Global service type registry instance
+const serviceTypeRegistry = new ServiceTypeRegistry();
+
+// Update control section headers dynamically based on service types
+function updateControlSectionHeaders() {
+  const elService = serviceTypeRegistry.getBySlug('el-kontroll');
+  const brannService = serviceTypeRegistry.getBySlug('brannvarsling');
+
+  const elHeader = document.querySelector('#elKontrollSection .control-section-header');
+  if (elHeader && elService) {
+    elHeader.innerHTML = `<i class="fas ${escapeHtml(elService.icon)}" style="color: ${escapeHtml(elService.color)}"></i> ${escapeHtml(elService.name)}`;
+  }
+
+  const brannHeader = document.querySelector('#brannvarslingSection .control-section-header');
+  if (brannHeader && brannService) {
+    brannHeader.innerHTML = `<i class="fas ${escapeHtml(brannService.icon)}" style="color: ${escapeHtml(brannService.color)}"></i> ${escapeHtml(brannService.name)}`;
+  }
+}
+

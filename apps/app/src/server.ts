@@ -52,7 +52,7 @@ import webhooksRoutes from './routes/webhooks';
 import docsRoutes from './routes/docs';
 import cronRoutes from './routes/cron';
 import cron from 'node-cron';
-import { sendAlert } from './services/alerts';
+import { sendAlert, alertRateLimitExceeded } from './services/alerts';
 import integrationWebhooksRoutes from './routes/integration-webhooks';
 import exportRoutes, { initExportRoutes } from './routes/export';
 import featuresRoutes, { initFeaturesRoutes } from './routes/features';
@@ -142,10 +142,13 @@ app.use(
         defaultSrc: ["'self'"],
         scriptSrc: [
           "'self'",
+          "'unsafe-inline'",
           'https://unpkg.com',
           'https://cdnjs.cloudflare.com',
+          'https://cdn.jsdelivr.net',
           'https://api.mapbox.com',
         ],
+        scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: [
           "'self'",
           "'unsafe-inline'",
@@ -165,6 +168,10 @@ app.use(
           'https://*.tiles.mapbox.com',
           'https://events.mapbox.com',
           'https://unpkg.com',
+          'https://cdnjs.cloudflare.com',
+          'https://fonts.googleapis.com',
+          'https://fonts.gstatic.com',
+          'https://cdn.jsdelivr.net',
           ...(process.env.NODE_ENV !== 'production'
             ? ['wss://localhost:*', 'ws://localhost:*']
             : ['wss://app.skyplanner.no', 'wss://skyplanner.no']),
@@ -284,6 +291,10 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true, // Only count failed attempts
   skip: (req) => isDevelopment && isLocalhost(req), // Skip localhost in dev
+  handler: (req, res) => {
+    alertRateLimitExceeded(req.ip || 'unknown', req.path, 10).catch(() => {});
+    res.status(429).json({ error: { code: 'TOO_MANY_REQUESTS', message: 'For mange innloggingsforsøk' } });
+  },
 });
 
 // Rate limiter for sensitive actions (password reset, 2FA)
@@ -294,6 +305,10 @@ const sensitiveActionLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => isDevelopment && isLocalhost(req),
+  handler: (req, res) => {
+    alertRateLimitExceeded(req.ip || 'unknown', req.path, 5).catch(() => {});
+    res.status(429).json({ error: { code: 'TOO_MANY_REQUESTS', message: 'For mange forsøk. Prøv igjen senere.' } });
+  },
 });
 
 // Apply rate limiters
@@ -335,14 +350,20 @@ app.use('/api/avtaler', requireTenantAuth, requireActiveSubscription, checkSubsc
 app.use('/api/team-members', requireTenantAuth, requireActiveSubscription, checkSubscriptionWarning, teamMembersRoutes);
 app.use('/api/onboarding', requireTenantAuth, onboardingRoutes);
 
+// Super admin routes (no tenant auth - super admin can access all orgs)
+// MUST be before catch-all /api routes to avoid requireTenantAuth intercepting
+app.use('/api/super-admin', superAdminRoutes);
+
+// ===== UNAUTHENTICATED API ROUTES (must be before catch-all /api routes) =====
+app.use('/api', configRoutes);  // Routes include /config and /routes/* (config is intentionally unauthenticated)
+app.use('/api/industries', industriesRoutes);  // Public industry data for onboarding
+app.use('/api/email', emailRoutes);  // Auth handled per-route (cron endpoint uses Bearer token, not tenant auth)
+
 // ===== OTHER API ROUTES =====
-app.use('/api', kontaktloggRoutes);  // Routes include /kunder/:id/kontaktlogg and /kontaktlogg/:id
-app.use('/api', kontaktpersonerRoutes);  // Routes include /kunder/:id/kontaktpersoner and /kontaktpersoner/:id
-app.use('/api/tags', tagRoutes);  // Tag CRUD + /kunder/:id/tags
-app.use('/api/reports', reportRoutes);  // Reporting endpoints
-app.use('/api/email', emailRoutes);
-app.use('/api', configRoutes);  // Routes include /config and /routes/*
-app.use('/api/industries', industriesRoutes);
+app.use('/api', requireTenantAuth, requireActiveSubscription, kontaktloggRoutes);  // Routes include /kunder/:id/kontaktlogg and /kontaktlogg/:id
+app.use('/api', requireTenantAuth, requireActiveSubscription, kontaktpersonerRoutes);  // Routes include /kunder/:id/kontaktpersoner and /kontaktpersoner/:id
+app.use('/api/tags', requireTenantAuth, requireActiveSubscription, tagRoutes);  // Tag CRUD + /kunder/:id/tags
+app.use('/api/reports', requireTenantAuth, requireActiveSubscription, reportRoutes);  // Reporting endpoints
 app.use('/api/integrations', requireTenantAuth, requireActiveSubscription, integrationsRoutes);
 app.use('/api/features', requireTenantAuth, requireActiveSubscription, featuresRoutes);
 app.use('/api/service-types', requireTenantAuth, requireActiveSubscription, serviceTypesRoutes);
@@ -365,11 +386,8 @@ app.use('/api/import', requireTenantAuth, requireActiveSubscription, importRoute
 // Export routes (data export for GDPR compliance)
 app.use('/api/export', requireTenantAuth, requireActiveSubscription, exportRoutes);
 
-// Super admin routes (no tenant auth - super admin can access all orgs)
-app.use('/api/super-admin', superAdminRoutes);
-
 // API key management routes (admin only)
-app.use('/api/api-keys', apiKeysRoutes);
+app.use('/api/api-keys', requireTenantAuth, requireActiveSubscription, apiKeysRoutes);
 
 // Webhook management routes (supports both API key and JWT auth)
 app.use('/api/webhooks', webhooksRoutes);
@@ -399,7 +417,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Detailed health check (for monitoring systems)
+// Detailed health check (for monitoring systems) - no sensitive details without auth
 app.get('/api/health/detailed', async (_req, res) => {
   const startTime = Date.now();
   const checks: Record<string, { status: 'healthy' | 'unhealthy' | 'degraded'; latency_ms?: number; error?: string }> = {};
@@ -418,46 +436,18 @@ app.get('/api/health/detailed', async (_req, res) => {
   } catch (error) {
     checks.database = {
       status: 'unhealthy',
-      error: error instanceof Error ? error.message : 'Database connection failed',
+      error: 'Database connection failed',
     };
     overallStatus = 'unhealthy';
   }
 
-  // Memory check
-  const memUsage = process.memoryUsage();
-  const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-  const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
-  const memoryPercentage = (memUsage.heapUsed / memUsage.heapTotal) * 100;
-
-  if (memoryPercentage > 90) {
-    checks.memory = { status: 'unhealthy', error: `High memory usage: ${memoryPercentage.toFixed(1)}%` };
-    overallStatus = 'unhealthy';
-  } else if (memoryPercentage > 75) {
-    checks.memory = { status: 'degraded', error: `Elevated memory usage: ${memoryPercentage.toFixed(1)}%` };
-    if (overallStatus === 'healthy') overallStatus = 'degraded';
-  } else {
-    checks.memory = { status: 'healthy' };
-  }
-
-  // Uptime check
-  const uptimeSeconds = Math.floor(process.uptime());
-  checks.uptime = { status: 'healthy' };
-
   const totalLatency = Date.now() - startTime;
 
-  res.status(overallStatus === 'healthy' ? 200 : overallStatus === 'degraded' ? 200 : 503).json({
+  res.status(overallStatus === 'healthy' ? 200 : 503).json({
     success: overallStatus !== 'unhealthy',
     data: {
       status: overallStatus,
       timestamp: new Date().toISOString(),
-      version: '2.0.0',
-      environment: config.NODE_ENV,
-      uptime_seconds: uptimeSeconds,
-      memory: {
-        heap_used_mb: heapUsedMB,
-        heap_total_mb: heapTotalMB,
-        percentage: Math.round(memoryPercentage),
-      },
       checks,
       total_latency_ms: totalLatency,
     },
@@ -512,38 +502,56 @@ initializeApp()
 
       // Auto-backup: 3x daglig (kl 06:00, 14:00, 22:00)
       if (config.DATABASE_TYPE === 'supabase' && process.env.BACKUP_ENCRYPTION_KEY && config.NODE_ENV === 'production') {
-        cron.schedule('0 6,14,22 * * *', async () => {
-          logger.info('Starter automatisk backup...');
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            const { createBackup } = require('../../scripts/auto-backup.cjs');
-            const result = await createBackup();
+        // Verifiser at backup-scriptet kan lastes ved oppstart
+        let backupScriptAvailable = false;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          require('../scripts/auto-backup.cjs');
+          backupScriptAvailable = true;
+        } catch (err) {
+          logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Auto-backup script kunne ikke lastes — backup deaktivert');
+        }
 
-            if (result?.missingCriticalTables?.length > 0) {
+        if (backupScriptAvailable) {
+          cron.schedule('0 6,14,22 * * *', async () => {
+            logger.info('Starter automatisk backup...');
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { createBackup } = require('../scripts/auto-backup.cjs');
+              const result = await createBackup();
+
+              if (result?.missingCriticalTables?.length > 0) {
+                await sendAlert({
+                  title: 'Backup fullført med advarsler',
+                  message: `Backup fullført men kritiske tabeller mangler: ${result.missingCriticalTables.join(', ')}. ${result.totalRows} rader fra ${result.tables} tabeller.`,
+                  severity: 'warning',
+                  source: 'backup',
+                  metadata: result,
+                });
+              } else {
+                logger.info({ result }, 'Automatisk backup fullført');
+              }
+            } catch (error) {
+              logger.error({ error }, 'Automatisk backup feilet');
               await sendAlert({
-                title: 'Backup fullført med advarsler',
-                message: `Backup fullført men kritiske tabeller mangler: ${result.missingCriticalTables.join(', ')}. ${result.totalRows} rader fra ${result.tables} tabeller.`,
-                severity: 'warning',
+                title: 'Backup feilet!',
+                message: `Automatisk backup feilet: ${error instanceof Error ? error.message : 'Ukjent feil'}. Sjekk logger for detaljer.`,
+                severity: 'critical',
                 source: 'backup',
-                metadata: result,
+                metadata: { error: error instanceof Error ? error.message : String(error) },
+              }).catch(alertErr => {
+                logger.error({ alertErr }, 'Kunne ikke sende backup-feil-varsel');
               });
-            } else {
-              logger.info({ result }, 'Automatisk backup fullført');
             }
-          } catch (error) {
-            logger.error({ error }, 'Automatisk backup feilet');
-            await sendAlert({
-              title: 'Backup feilet!',
-              message: `Automatisk backup feilet: ${error instanceof Error ? error.message : 'Ukjent feil'}. Sjekk logger for detaljer.`,
-              severity: 'critical',
-              source: 'backup',
-              metadata: { error: error instanceof Error ? error.message : String(error) },
-            }).catch(alertErr => {
-              logger.error({ alertErr }, 'Kunne ikke sende backup-feil-varsel');
-            });
-          }
-        });
-        logger.info('Auto-backup aktivert (kl 06:00, 14:00, 22:00)');
+          });
+          logger.info('Auto-backup aktivert (kl 06:00, 14:00, 22:00)');
+        }
+      } else {
+        const reasons: string[] = [];
+        if (config.DATABASE_TYPE !== 'supabase') reasons.push(`DATABASE_TYPE=${config.DATABASE_TYPE} (trenger 'supabase')`);
+        if (!process.env.BACKUP_ENCRYPTION_KEY) reasons.push('BACKUP_ENCRYPTION_KEY mangler');
+        if (config.NODE_ENV !== 'production') reasons.push(`NODE_ENV=${config.NODE_ENV} (trenger 'production')`);
+        logger.warn({ reasons }, 'Auto-backup DEAKTIVERT — manglende konfigurasjon');
       }
     });
 

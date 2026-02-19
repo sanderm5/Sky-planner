@@ -125,6 +125,11 @@ export function requireActiveSubscription(
     return next(Errors.unauthorized('Ikke autentisert'));
   }
 
+  // Super admins impersonating bypass subscription checks
+  if (user.isImpersonating) {
+    return next();
+  }
+
   const result = checkSubscriptionStatus(
     user.subscriptionStatus as SubscriptionStatus | undefined,
     user.trialEndsAt,

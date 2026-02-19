@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import { createLogger } from './logger';
+import { getConfig } from '../config/env';
 import type {
   WebhookEndpoint,
   WebhookDelivery,
@@ -501,29 +502,75 @@ export class WebhookService {
   // ============ Signature Helpers ============
 
   /**
+   * Encrypt a webhook secret for storage (AES-256-GCM)
+   * Stored format: "enc:iv:authTag:encrypted"
+   */
+  private encryptSecret(secret: string): string {
+    const config = getConfig();
+    const key = crypto.scryptSync(config.INTEGRATION_ENCRYPTION_KEY, config.ENCRYPTION_SALT, 32);
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    let encrypted = cipher.update(secret, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag();
+    return `enc:${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+  }
+
+  /**
+   * Decrypt a webhook secret from storage
+   */
+  private decryptSecret(stored: string): string {
+    const config = getConfig();
+    const key = crypto.scryptSync(config.INTEGRATION_ENCRYPTION_KEY, config.ENCRYPTION_SALT, 32);
+    const parts = stored.split(':');
+    // Format: "enc:iv:authTag:encrypted"
+    const [, ivHex, authTagHex, encrypted] = parts;
+    const iv = Buffer.from(ivHex, 'hex');
+    const authTag = Buffer.from(authTagHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  }
+
+  /**
+   * Resolve the signing key from stored secret data.
+   * New format (enc:...): decrypt and use raw secret as HMAC key (standard)
+   * Legacy format (hex hash): use hash as HMAC key (backward compatible)
+   */
+  private resolveSigningKey(storedSecret: string): string {
+    if (storedSecret.startsWith('enc:')) {
+      return this.decryptSecret(storedSecret);
+    }
+    // Legacy: stored value is SHA256 hash, used directly as HMAC key
+    return storedSecret;
+  }
+
+  /**
    * Sign a payload with HMAC-SHA256
    */
-  private signPayload(payload: string, secretHash: string): string {
+  private signPayload(payload: string, storedSecret: string): string {
+    const signingKey = this.resolveSigningKey(storedSecret);
     return crypto
-      .createHmac(SIGNATURE_ALGORITHM, secretHash)
+      .createHmac(SIGNATURE_ALGORITHM, signingKey)
       .update(payload, 'utf8')
       .digest('hex');
   }
 
   /**
-   * Hash a secret for storage
+   * Encrypt a secret for storage (replaces old hashSecret)
    */
   private hashSecret(secret: string): string {
-    return crypto.createHash('sha256').update(secret).digest('hex');
+    return this.encryptSecret(secret);
   }
 
   /**
-   * Verify a webhook signature (for documentation/testing)
+   * Verify a webhook signature (standard: HMAC-SHA256 with raw secret)
    */
   static verifySignature(payload: string, signature: string, secret: string): boolean {
-    const secretHash = crypto.createHash('sha256').update(secret).digest('hex');
     const expectedSig = crypto
-      .createHmac(SIGNATURE_ALGORITHM, secretHash)
+      .createHmac(SIGNATURE_ALGORITHM, secret)
       .update(payload, 'utf8')
       .digest('hex');
 

@@ -5,7 +5,7 @@
 
 import { Router, Response } from 'express';
 import multer from 'multer';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { apiLogger, logAudit } from '../services/logger';
 import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
@@ -435,6 +435,14 @@ router.post(
       throw Errors.badRequest('kunde_ids må være en ikke-tom liste');
     }
 
+    if (kunde_ids.length > 500) {
+      throw Errors.badRequest('Maks 500 kunder per forespørsel');
+    }
+
+    if (!kunde_ids.every((id: unknown) => typeof id === 'number' && Number.isInteger(id) && id > 0)) {
+      throw Errors.badRequest('Alle kunde_ids må være gyldige heltall');
+    }
+
     if (!['el', 'brann', 'begge'].includes(type)) {
       throw Errors.badRequest('type må være "el", "brann", eller "begge"');
     }
@@ -584,12 +592,31 @@ router.post(
 
     try {
       // Parse Excel/CSV file
-      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer as unknown as ArrayBuffer);
+      const sheet = workbook.worksheets[0];
 
-      // Convert to JSON with headers
-      const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      if (!sheet || sheet.rowCount < 1) {
+        throw Errors.badRequest('Filen inneholder ingen data');
+      }
+
+      // Convert to JSON with headers from first row
+      const headerRow = sheet.getRow(1);
+      const excelHeaders: string[] = [];
+      headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        excelHeaders[colNumber - 1] = cell.value?.toString() || `Kolonne_${colNumber}`;
+      });
+
+      const rawData: Record<string, unknown>[] = [];
+      for (let i = 2; i <= sheet.rowCount; i++) {
+        const row = sheet.getRow(i);
+        const rowObj: Record<string, unknown> = {};
+        excelHeaders.forEach((header, idx) => {
+          const cell = row.getCell(idx + 1);
+          rowObj[header] = cell.value ?? '';
+        });
+        rawData.push(rowObj);
+      }
 
       if (rawData.length === 0) {
         throw Errors.badRequest('Filen inneholder ingen data');

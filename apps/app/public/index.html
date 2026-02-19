@@ -2,11 +2,11 @@
 <html lang="no">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#0f0f0f">
+  <meta name="theme-color" content="#0A0E16">
   <meta name="view-transition" content="same-origin">
   <title>Sky Planner | Kontrollsystem</title>
   <link rel="icon" type="image/svg+xml" href="/skyplanner-logo.svg">
@@ -15,7 +15,7 @@
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <!-- CRITICAL: Set dark background and SPA view transition styles -->
   <style>
-    html,body{background:#0f0f0f!important;overflow:hidden;height:100%;width:100%;}
+    html,body{background:#0A0E16!important;overflow:hidden;height:100%;width:100%;}
 
     /* === SHARED MAP (always visible, below app UI panels) === */
     #sharedMapContainer {
@@ -96,11 +96,11 @@
       bottom: 0 !important;
       z-index: 300; /* Above map markers (200) */
     }
-    /* Modals must be clickable */
-    #appView .modal {
+    /* Modals in portal must be clickable (outside appView stacking context) */
+    #modalPortal .modal {
       pointer-events: auto;
     }
-    #appView .modal.hidden {
+    #modalPortal .modal.hidden {
       pointer-events: none;
     }
     /* User bar must be clickable */
@@ -112,6 +112,18 @@
       pointer-events: auto;
     }
     /* Mobile route FAB must be clickable */
+    /* === CALENDAR SPLIT VIEW (overlays everything except modals) === */
+    #calendarSplitOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 400; /* Above sidebar (300), below modals */
+      display: flex;
+      pointer-events: none; /* Let map clicks through — only panel/divider are auto */
+    }
+    #calendarSplitOverlay.hidden {
+      display: none !important;
+    }
+
     #appView .mobile-route-fab {
       pointer-events: auto;
     }
@@ -145,7 +157,7 @@
       width: 180px;
       height: auto;
       margin-bottom: 40px;
-      filter: drop-shadow(0 10px 40px rgba(249, 115, 22, 0.3));
+      filter: drop-shadow(0 10px 40px rgba(94, 129, 172, 0.3));
     }
 
     .login-brand-title {
@@ -186,7 +198,7 @@
     .login-feature-icon {
       width: 44px;
       height: 44px;
-      background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
+      background: linear-gradient(135deg, #5E81AC 0%, #4A6D8C 100%);
       border-radius: 10px;
       display: flex;
       align-items: center;
@@ -233,13 +245,13 @@
 
     .login-contact-links a {
       font-size: 13px;
-      color: #F97316;
+      color: #5E81AC;
       text-decoration: none;
       transition: color 0.2s;
     }
 
     .login-contact-links a:hover {
-      color: #fb923c;
+      color: #7A9BBF;
     }
 
     .login-contact-divider {
@@ -259,7 +271,7 @@
     }
 
     .login-developer a:hover {
-      color: #F97316;
+      color: #5E81AC;
     }
 
     .login-side {
@@ -350,8 +362,8 @@
 
     .login-input-field:focus {
       outline: none;
-      border-color: #F97316;
-      box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15);
+      border-color: #5E81AC;
+      box-shadow: 0 0 0 3px rgba(94, 129, 172, 0.15);
     }
 
     .login-options-row {
@@ -371,7 +383,7 @@
     .login-checkbox-wrapper input {
       width: 18px;
       height: 18px;
-      accent-color: #F97316;
+      accent-color: #5E81AC;
       cursor: pointer;
     }
 
@@ -382,20 +394,20 @@
 
     .login-forgot-link {
       font-size: 14px;
-      color: #F97316;
+      color: #5E81AC;
       text-decoration: none;
       font-weight: 500;
       transition: color 0.2s;
     }
 
     .login-forgot-link:hover {
-      color: #FB923C;
+      color: #7A9BBF;
     }
 
     .login-btn {
       width: 100%;
       padding: 16px;
-      background: #F97316;
+      background: #5E81AC;
       color: #fff;
       border: none;
       border-radius: 10px;
@@ -411,7 +423,7 @@
     }
 
     .login-btn:hover {
-      background: #EA580C;
+      background: #4A6D8C;
       transform: translateY(-1px);
     }
 
@@ -478,7 +490,7 @@
     }
 
     .login-back-link a:hover {
-      color: #F97316;
+      color: #5E81AC;
     }
 
     .login-back-link svg {
@@ -604,9 +616,11 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+" crossorigin="anonymous" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" />
-  <link rel="stylesheet" href="style.css?v=20260215-dispatch" />
+  <link rel="stylesheet" href="polarnatt.css" />
+  <link rel="stylesheet" href="style.css?v=20260216-splitview4" />
 </head>
 <body>
+  <a href="#contentPanel" class="skip-to-content">Hopp til hovedinnhold</a>
   <!-- ========== IMPERSONATION BANNER (super-admin only) ========== -->
   <div id="impersonationBanner" class="impersonation-banner" style="display: none;">
     <div class="impersonation-content">
@@ -631,7 +645,7 @@
       <div class="login-content">
         <img src="/skyplanner-logo.svg" alt="Sky Planner" class="login-form-logo">
         <div class="login-header">
-          <h1>Velkommen tilbake</h1>
+          <h2>Velkommen tilbake</h2>
           <p>Logg inn for å fortsette til kontrollpanelet</p>
         </div>
 
@@ -681,7 +695,7 @@
     <!-- Brand content (centered on right side, over map) - Dynamically populated -->
     <div class="login-brand-content">
       <img src="/skyplanner-logo.svg" alt="Sky Planner" class="login-brand-logo" id="loginLogo">
-      <h1 class="login-brand-title" id="loginBrandTitle">Sky Planner</h1>
+      <p class="login-brand-title" id="loginBrandTitle">Sky Planner</p>
       <p class="login-brand-subtitle" id="loginBrandSubtitle">Kontroll. Oversikt. Alltid.</p>
 
       <div class="login-features" id="loginFeatures">
@@ -713,8 +727,8 @@
             <p class="year" id="headerYear"></p>
           </div>
         </div>
-        <button class="sidebar-toggle" id="sidebarToggle" title="Krympe/utvide sidebar">
-          <i class="fas fa-chevron-left"></i>
+        <button class="sidebar-toggle" id="sidebarToggle" aria-label="Vis/skjul sidebar" title="Krympe/utvide sidebar">
+          <i class="fas fa-chevron-left" aria-hidden="true"></i>
         </button>
       </div>
 
@@ -732,78 +746,69 @@
         <span id="ws-connection-indicator" class="ws-indicator ws-disconnected" title="Kobler til..."></span>
         <span class="user-name" id="userNameDisplay"></span>
         <div class="user-bar-actions">
-          <button class="theme-toggle-btn" id="themeToggleBtn" title="Bytt tema">
-            <i class="fas fa-sun theme-icon-light"></i>
-            <i class="fas fa-moon theme-icon-dark"></i>
+          <button class="theme-toggle-btn" id="themeToggleBtn" aria-label="Bytt tema" title="Bytt tema">
+            <i class="fas fa-sun theme-icon-light" aria-hidden="true"></i>
+            <i class="fas fa-moon theme-icon-dark" aria-hidden="true"></i>
           </button>
-          <button class="logout-btn" id="logoutBtnMain" title="Logg ut">
-            <i class="fas fa-sign-out-alt"></i>
+          <button class="logout-btn" id="logoutBtnMain" aria-label="Logg ut" title="Logg ut">
+            <i class="fas fa-sign-out-alt" aria-hidden="true"></i>
           </button>
         </div>
       </div>
 
       <!-- Vertical Tab Navigation -->
-      <nav class="tab-navigation">
-        <button class="tab-item active" data-tab="dashboard">
-          <i class="fas fa-th-large"></i>
+      <nav class="tab-navigation" role="tablist" aria-label="Hovednavigasjon">
+        <button class="tab-item active" data-tab="dashboard" id="tab-btn-dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">
+          <i class="fas fa-th-large" aria-hidden="true"></i>
           <span>Dashboard</span>
         </button>
-        <button class="tab-item" data-tab="customers">
-          <i class="fas fa-users"></i>
+        <button class="tab-item" data-tab="customers" id="tab-btn-customers" role="tab" aria-selected="false" aria-controls="tab-customers">
+          <i class="fas fa-users" aria-hidden="true"></i>
           <span>Kunder</span>
         </button>
-        <button class="tab-item" data-tab="overdue">
-          <i class="fas fa-exclamation-triangle"></i>
+        <button class="tab-item" data-tab="overdue" id="tab-btn-overdue" role="tab" aria-selected="false" aria-controls="tab-overdue">
+          <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
           <span>Forfalte</span>
           <span class="tab-badge" id="overdueBadge" style="display: none;">0</span>
         </button>
-        <button class="tab-item" data-tab="warnings">
-          <i class="fas fa-bell"></i>
+        <button class="tab-item" data-tab="warnings" id="tab-btn-warnings" role="tab" aria-selected="false" aria-controls="tab-warnings">
+          <i class="fas fa-bell" aria-hidden="true"></i>
           <span>Kommende kontroller</span>
           <span class="tab-badge" id="upcomingBadge" style="display: none;">0</span>
         </button>
-        <button class="tab-item" data-tab="todays-work" id="todaysWorkTab" style="display: none;">
-          <i class="fas fa-briefcase"></i>
+        <button class="tab-item" data-tab="todays-work" id="todaysWorkTab" role="tab" aria-selected="false" aria-controls="tab-todays-work" style="display: none;">
+          <i class="fas fa-briefcase" aria-hidden="true"></i>
           <span>Dagens arbeid</span>
           <span class="tab-badge" id="todaysWorkBadge" style="display: none;">0/0</span>
         </button>
-        <button class="tab-item" data-tab="avhuking">
-          <i class="fas fa-clipboard-check"></i>
-          <span>Avhuking</span>
-          <span class="tab-badge avhuking-badge" id="avhukingBadge" style="display: none;">0</span>
-        </button>
-        <button class="tab-item" data-tab="routes">
-          <i class="fas fa-map"></i>
-          <span>Ruter</span>
-        </button>
-        <button class="tab-item" data-tab="calendar">
-          <i class="fas fa-calendar"></i>
+        <button class="tab-item" data-tab="calendar" id="tab-btn-calendar" role="tab" aria-selected="false" aria-controls="tab-calendar">
+          <i class="fas fa-calendar" aria-hidden="true"></i>
           <span>Kalender</span>
         </button>
-        <button class="tab-item" data-tab="weekly-plan">
-          <i class="fas fa-clipboard-list"></i>
+        <button class="tab-item" data-tab="weekly-plan" id="tab-btn-weekly-plan" role="tab" aria-selected="false" aria-controls="tab-weekly-plan">
+          <i class="fas fa-clipboard-list" aria-hidden="true"></i>
           <span>Ukeplan</span>
         </button>
-        <button class="tab-item" data-tab="planner">
-          <i class="fas fa-route"></i>
+        <button class="tab-item" data-tab="planner" id="tab-btn-planner" role="tab" aria-selected="false" aria-controls="tab-planner">
+          <i class="fas fa-route" aria-hidden="true"></i>
           <span>Ruteplanlegger</span>
         </button>
-        <button class="tab-item" data-tab="statistikk">
-          <i class="fas fa-chart-line"></i>
+        <button class="tab-item" data-tab="statistikk" id="tab-btn-statistikk" role="tab" aria-selected="false" aria-controls="tab-statistikk">
+          <i class="fas fa-chart-line" aria-hidden="true"></i>
           <span>Statistikk</span>
         </button>
-        <button class="tab-item" data-tab="missingdata">
-          <i class="fas fa-exclamation-circle"></i>
+        <button class="tab-item" data-tab="missingdata" id="tab-btn-missingdata" role="tab" aria-selected="false" aria-controls="tab-missingdata">
+          <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
           <span>Mangler data</span>
           <span class="tab-badge missing-badge" id="missingDataBadge" style="display: none;">0</span>
         </button>
-        <button class="tab-item" data-tab="chat" id="chatTab">
-          <i class="fas fa-comments"></i>
+        <button class="tab-item" data-tab="chat" id="chatTab" role="tab" aria-selected="false" aria-controls="tab-chat">
+          <i class="fas fa-comments" aria-hidden="true"></i>
           <span>Meldinger</span>
           <span class="tab-badge chat-badge" id="chatUnreadBadge" style="display: none;">0</span>
         </button>
-        <button class="tab-item admin-only" data-tab="admin" id="adminTab" style="display: none;">
-          <i class="fas fa-shield-alt"></i>
+        <button class="tab-item admin-only" data-tab="admin" id="adminTab" role="tab" aria-selected="false" aria-controls="tab-admin" style="display: none;">
+          <i class="fas fa-shield-alt" aria-hidden="true"></i>
           <span>Admin</span>
         </button>
       </nav>
@@ -845,14 +850,14 @@
     <div class="content-panel" id="contentPanel" style="display: flex; flex-direction: column; height: 100vh;">
       <div class="content-panel-header">
         <span class="panel-title" id="panelTitle">Dashboard</span>
-        <button class="content-panel-close" id="contentPanelClose" title="Lukk panel">
-          <i class="fas fa-times"></i>
+        <button class="content-panel-close" id="contentPanelClose" aria-label="Lukk panel" title="Lukk panel">
+          <i class="fas fa-times" aria-hidden="true"></i>
         </button>
       </div>
       <!-- Tab Content Container -->
       <div class="tab-content" style="flex: 1; overflow-y: auto; min-height: 0;">
         <!-- Tab: Dashboard -->
-        <div class="tab-pane active" id="tab-dashboard">
+        <div class="tab-pane active" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-btn-dashboard">
           <div class="dashboard-container">
             <!-- Quick Stats Row -->
             <div class="dashboard-stats">
@@ -888,35 +893,35 @@
 
             <!-- Action Cards Row -->
             <div class="dashboard-actions">
-              <div class="action-card" data-action="showOverdueTab">
-                <div class="action-icon overdue"><i class="fas fa-exclamation-triangle"></i></div>
+              <div class="action-card" data-action="showOverdueTab" role="button" tabindex="0">
+                <div class="action-icon overdue"><i class="fas fa-exclamation-triangle" aria-hidden="true"></i></div>
                 <div class="action-content">
-                  <h4>Forfalte kontroller</h4>
+                  <h3>Forfalte kontroller</h3>
                   <p><span id="dashOverdueCount">0</span> kunder trenger kontroll</p>
                 </div>
-                <i class="fas fa-chevron-right"></i>
+                <i class="fas fa-chevron-right" aria-hidden="true"></i>
               </div>
-              <div class="action-card" data-action="showRoutesTab">
-                <div class="action-icon route"><i class="fas fa-route"></i></div>
+              <div class="action-card" data-action="showRoutesTab" role="button" tabindex="0">
+                <div class="action-icon route"><i class="fas fa-route" aria-hidden="true"></i></div>
                 <div class="action-content">
-                  <h4>Planlegg rute</h4>
+                  <h3>Planlegg rute</h3>
                   <p>Optimaliser dagens servicetur</p>
                 </div>
-                <i class="fas fa-chevron-right"></i>
+                <i class="fas fa-chevron-right" aria-hidden="true"></i>
               </div>
-              <div class="action-card" data-action="showCalendarTab">
-                <div class="action-icon calendar"><i class="fas fa-calendar-check"></i></div>
+              <div class="action-card" data-action="showCalendarTab" role="button" tabindex="0">
+                <div class="action-icon calendar"><i class="fas fa-calendar-check" aria-hidden="true"></i></div>
                 <div class="action-content">
-                  <h4>Kalender</h4>
+                  <h3>Kalender</h3>
                   <p>Se avtaler og planlegg fremover</p>
                 </div>
-                <i class="fas fa-chevron-right"></i>
+                <i class="fas fa-chevron-right" aria-hidden="true"></i>
               </div>
             </div>
 
             <!-- Category Overview -->
             <div class="dashboard-categories">
-              <h4><i class="fas fa-pie-chart"></i> Kategori-fordeling</h4>
+              <h3><i class="fas fa-pie-chart" aria-hidden="true"></i> Kategori-fordeling</h3>
               <div class="category-overview" id="dashCategoryOverview">
                 <!-- Filled dynamically -->
               </div>
@@ -924,7 +929,7 @@
 
             <!-- Area Quick Links -->
             <div class="dashboard-areas">
-              <h4><i class="fas fa-map-marker-alt"></i> Områder</h4>
+              <h3><i class="fas fa-map-marker-alt" aria-hidden="true"></i> Områder</h3>
               <div class="area-list" id="dashAreaList">
                 <!-- Filled dynamically -->
               </div>
@@ -934,7 +939,7 @@
         </div>
 
         <!-- Tab: Customers -->
-        <div class="tab-pane" id="tab-customers">
+        <div class="tab-pane" id="tab-customers" role="tabpanel" aria-labelledby="tab-btn-customers">
           <div class="tab-header">
             <h2>Kunder</h2>
             <div class="tab-header-actions">
@@ -971,7 +976,7 @@
             <div class="customer-search">
               <div class="search-input-wrapper">
                 <i class="fas fa-search"></i>
-                <input type="text" id="customerSearchInput" placeholder="Søk etter kunde...">
+                <input type="text" id="customerSearchInput" placeholder="Søk etter kunde..." aria-label="Søk etter kunde">
               </div>
             </div>
 
@@ -997,7 +1002,7 @@
         </div>
 
         <!-- Tab: Overdue -->
-        <div class="tab-pane" id="tab-overdue">
+        <div class="tab-pane" id="tab-overdue" role="tabpanel" aria-labelledby="tab-btn-overdue">
           <div class="tab-header">
             <h2>Forfalte kontroller</h2>
             <span class="overdue-count-header" id="overdueCountHeader"></span>
@@ -1006,11 +1011,12 @@
             <div class="filter-group">
               <label for="overdueSortSelect">Sorter etter:</label>
               <select id="overdueSortSelect">
+                <option value="proximity">Nærhet (ta flere samtidig)</option>
                 <option value="days">Ferskeste først (minst dager)</option>
                 <option value="days-desc">Eldste først (flest dager)</option>
                 <option value="name">Navn A-Å</option>
                 <option value="category">Kategori</option>
-                <option value="area">Område</option>
+                <option value="area">Område (poststed)</option>
               </select>
             </div>
             <div class="overdue-actions">
@@ -1022,22 +1028,43 @@
               </button>
             </div>
           </div>
+          <div class="proximity-settings" id="overdueProximitySettings">
+            <div class="proximity-settings-row">
+              <label for="overdueProximityRadius"><i class="fas fa-sliders-h"></i> Grupperingsradius:</label>
+              <input type="range" id="overdueProximityRadius" min="3" max="50" step="1" value="15">
+              <span class="proximity-radius-value" id="overdueProximityRadiusValue">15 km</span>
+            </div>
+          </div>
           <div class="overdue-container" id="overdueContainer">
             <!-- Forfalte kunder lastes her -->
           </div>
         </div>
 
         <!-- Tab: Warnings -->
-        <div class="tab-pane" id="tab-warnings">
+        <div class="tab-pane" id="tab-warnings" role="tabpanel" aria-labelledby="tab-btn-warnings">
           <div class="tab-header">
             <h2>Kommende kontroller</h2>
           </div>
 
           <div class="warning-actions">
+            <div class="filter-group">
+              <label for="warningSortSelect">Sorter etter:</label>
+              <select id="warningSortSelect">
+                <option value="proximity">Nærhet (ta flere samtidig)</option>
+                <option value="category">Kategori</option>
+              </select>
+            </div>
             <button id="selectWarningsBtn" class="btn btn-secondary btn-small">
               <i class="fas fa-check"></i>
               Velg alle
             </button>
+          </div>
+          <div class="proximity-settings" id="warningProximitySettings">
+            <div class="proximity-settings-row">
+              <label for="warningProximityRadius"><i class="fas fa-sliders-h"></i> Grupperingsradius:</label>
+              <input type="range" id="warningProximityRadius" min="3" max="50" step="1" value="15">
+              <span class="proximity-radius-value" id="warningProximityRadiusValue">15 km</span>
+            </div>
           </div>
 
           <div id="warningsContainer" class="warnings-container">
@@ -1046,7 +1073,7 @@
         </div>
 
         <!-- Tab: Today's Work -->
-        <div class="tab-pane" id="tab-todays-work">
+        <div class="tab-pane" id="tab-todays-work" role="tabpanel" aria-labelledby="todaysWorkTab">
           <div class="tab-header">
             <h2>Dagens arbeid</h2>
             <div class="todays-work-date-nav">
@@ -1095,63 +1122,8 @@
           </div>
         </div>
 
-        <!-- Tab: Avhuking -->
-        <div class="tab-pane" id="tab-avhuking">
-          <div class="tab-header">
-            <h2>Avhuking</h2>
-            <span class="avhuking-count-header" id="avhukingCountHeader">0 valgt</span>
-          </div>
-
-          <div class="avhuking-info">
-            <p><i class="fas fa-info-circle"></i> Klikk "Legg til avhuking" på kartet for å legge til kunder her.</p>
-          </div>
-
-          <div class="avhuking-options" id="avhukingOptions" style="display: none;">
-            <div class="avhuking-option-group">
-              <label class="avhuking-option-label" for="avhukingDate">Dato for besøk</label>
-              <input type="date" id="avhukingDate" class="avhuking-date-input">
-            </div>
-            <div class="avhuking-option-group">
-              <label class="avhuking-option-label">Oppdater kontrolldatoer</label>
-              <div class="avhuking-kontroll-types" id="avhukingKontrollTypes">
-                <!-- Genereres dynamisk fra serviceTypeRegistry -->
-              </div>
-              <p class="avhuking-kontroll-hint">Neste kontroll beregnes automatisk ut fra kundens intervall</p>
-            </div>
-          </div>
-
-          <div class="avhuking-list" id="avhukingList">
-            <!-- Valgte kunder vises her -->
-            <div class="avhuking-empty">
-              <i class="fas fa-clipboard-list"></i>
-              <p>Ingen kunder valgt</p>
-              <span>Klikk "Legg til avhuking" på en kunde i kartet</span>
-            </div>
-          </div>
-
-          <div class="avhuking-actions" id="avhukingActions" style="display: none;">
-            <button id="clearAvhukingBtn" class="btn btn-secondary btn-small" disabled>
-              <i class="fas fa-times"></i> Tøm liste
-            </button>
-            <button id="completeAvhukingBtn" class="btn btn-success" disabled>
-              <i class="fas fa-check"></i> Marker alle som besøkt
-            </button>
-          </div>
-        </div>
-
-        <!-- Tab: Routes -->
-        <div class="tab-pane" id="tab-routes">
-          <div class="tab-header">
-            <h2>Lagrede ruter</h2>
-          </div>
-
-          <div id="savedRoutesList" class="saved-routes-list">
-            <!-- Ruter lastes her -->
-          </div>
-        </div>
-
         <!-- Tab: Calendar -->
-        <div class="tab-pane" id="tab-calendar">
+        <div class="tab-pane" id="tab-calendar" role="tabpanel" aria-labelledby="tab-btn-calendar">
           <div class="tab-header">
             <h2>Kalender</h2>
           </div>
@@ -1162,12 +1134,12 @@
         </div>
 
         <!-- Tab: Weekly Plan / Ukeplan -->
-        <div class="tab-pane" id="tab-weekly-plan">
+        <div class="tab-pane" id="tab-weekly-plan" role="tabpanel" aria-labelledby="tab-btn-weekly-plan">
           <div id="weeklyPlanContainer"></div>
         </div>
 
         <!-- Tab: Planner / Ruteplanlegger -->
-        <div class="tab-pane" id="tab-planner">
+        <div class="tab-pane" id="tab-planner" role="tabpanel" aria-labelledby="tab-btn-planner">
           <div class="tab-header">
             <h2><i class="fas fa-route"></i> Ruteplanlegger</h2>
             <p class="tab-description">Finn effektive ruteklynger basert på geografisk nærhet og kontrollbehov</p>
@@ -1212,7 +1184,7 @@
         </div>
 
         <!-- Tab: Statistikk -->
-        <div class="tab-pane" id="tab-statistikk">
+        <div class="tab-pane" id="tab-statistikk" role="tabpanel" aria-labelledby="tab-btn-statistikk">
           <div class="tab-header">
             <h2>Statistikk & Trender</h2>
           </div>
@@ -1294,7 +1266,7 @@
         </div>
 
         <!-- Tab: Missing Data -->
-        <div class="tab-pane" id="tab-missingdata">
+        <div class="tab-pane" id="tab-missingdata" role="tabpanel" aria-labelledby="tab-btn-missingdata">
           <div class="tab-header">
             <h2>Mangler data</h2>
           </div>
@@ -1357,7 +1329,7 @@
         </div>
 
         <!-- Tab: Admin (kun synlig for admin) -->
-        <div class="tab-pane" id="tab-admin">
+        <div class="tab-pane" id="tab-admin" role="tabpanel" aria-labelledby="adminTab">
           <div class="tab-header">
             <h2><i class="fas fa-shield-alt"></i> Admin</h2>
           </div>
@@ -1426,12 +1398,12 @@
               <table class="login-log-table">
                 <thead>
                   <tr>
-                    <th>Tidspunkt</th>
-                    <th>Bruker</th>
-                    <th>E-post</th>
-                    <th>Status</th>
-                    <th>IP</th>
-                    <th>Enhet</th>
+                    <th scope="col">Tidspunkt</th>
+                    <th scope="col">Bruker</th>
+                    <th scope="col">E-post</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">IP</th>
+                    <th scope="col">Enhet</th>
                   </tr>
                 </thead>
                 <tbody id="loginLogBody">
@@ -1536,19 +1508,19 @@
             <div class="admin-subsection">
               <h3><i class="fas fa-building"></i> Alle organisasjoner</h3>
               <div class="org-search-container">
-                <input type="text" id="orgSearchInput" placeholder="Søk organisasjoner..." class="search-input">
+                <input type="text" id="orgSearchInput" placeholder="Søk organisasjoner..." class="search-input" aria-label="Søk organisasjoner">
               </div>
               <div class="org-list-container" id="orgListContainer">
                 <table class="org-table">
                   <thead>
                     <tr>
-                      <th>Navn</th>
-                      <th>Plan</th>
-                      <th>Status</th>
-                      <th>Kunder</th>
-                      <th>Brukere</th>
-                      <th>Opprettet</th>
-                      <th></th>
+                      <th scope="col">Navn</th>
+                      <th scope="col">Plan</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Kunder</th>
+                      <th scope="col">Brukere</th>
+                      <th scope="col">Opprettet</th>
+                      <th scope="col"><span class="visually-hidden">Handlinger</span></th>
                     </tr>
                   </thead>
                   <tbody id="orgListBody">
@@ -1610,11 +1582,11 @@
                   <table class="org-table">
                     <thead>
                       <tr>
-                        <th>Navn</th>
-                        <th>Adresse</th>
-                        <th>Telefon</th>
-                        <th>E-post</th>
-                        <th></th>
+                        <th scope="col">Navn</th>
+                        <th scope="col">Adresse</th>
+                        <th scope="col">Telefon</th>
+                        <th scope="col">E-post</th>
+                        <th scope="col"><span class="visually-hidden">Handlinger</span></th>
                       </tr>
                     </thead>
                     <tbody id="orgCustomersBody">
@@ -1630,10 +1602,10 @@
                   <table class="org-table">
                     <thead>
                       <tr>
-                        <th>Navn</th>
-                        <th>E-post</th>
-                        <th>Sist innlogget</th>
-                        <th>Opprettet</th>
+                        <th scope="col">Navn</th>
+                        <th scope="col">E-post</th>
+                        <th scope="col">Sist innlogget</th>
+                        <th scope="col">Opprettet</th>
                       </tr>
                     </thead>
                     <tbody id="orgUsersBody">
@@ -1647,7 +1619,7 @@
         </div>
 
         <!-- Tab: Chat / Meldinger -->
-        <div class="tab-pane" id="tab-chat">
+        <div class="tab-pane" id="tab-chat" role="tabpanel" aria-labelledby="chatTab">
           <div class="chat-container">
             <!-- Chat conversation list view -->
             <div class="chat-conversation-list" id="chatConversationList">
@@ -1677,7 +1649,7 @@
                 <span id="chatTypingText"></span>
               </div>
               <div class="chat-input-area">
-                <input type="text" id="chatInput" placeholder="Skriv en melding..." maxlength="2000" autocomplete="off">
+                <input type="text" id="chatInput" placeholder="Skriv en melding..." maxlength="2000" autocomplete="off" aria-label="Skriv en melding">
                 <button class="btn btn-primary btn-icon" id="chatSendBtn" title="Send">
                   <i class="fas fa-paper-plane"></i>
                 </button>
@@ -1721,7 +1693,7 @@
             <!-- Search Field -->
             <div class="search-container">
               <i class="fas fa-search search-icon"></i>
-              <input type="text" id="searchInput" placeholder="Søk..." class="search-input">
+              <input type="text" id="searchInput" placeholder="Søk..." class="search-input" aria-label="Søk på kartet">
             </div>
             <div id="filterResultCount" class="filter-result-count" style="display:none;"></div>
 
@@ -1832,12 +1804,6 @@
       </div>
 
 
-      <div id="routeInfo" class="route-info hidden">
-        <h3>Planlagt rute</h3>
-        <div id="routeDetails"></div>
-        <button id="closeRouteInfo" class="btn btn-secondary">Lukk</button>
-      </div>
-
       <!-- Mobile floating action button for route planning -->
       <div id="mobileRouteBtn" class="mobile-route-fab hidden">
         <button id="mobileRouteFabBtn" class="fab-button">
@@ -1848,12 +1814,37 @@
     </main>
   </div>
 
+
+  <!-- Map Legend -->
+  <div class="map-legend" id="mapLegend">
+    <button class="legend-toggle" id="legendToggle" title="Vis/skjul forklaring">
+      <i class="fas fa-info-circle"></i>
+    </button>
+    <div class="legend-content">
+      <h4>Kategorier</h4>
+      <div class="legend-items" id="legendItems">
+        <!-- Fylles dynamisk -->
+      </div>
+      <div class="legend-status">
+        <h5>Kontrollstatus</h5>
+        <div class="legend-item"><span class="legend-color status-forfalt"></span> Forfalt</div>
+        <div class="legend-item"><span class="legend-color status-snart"></span> Snart (30 dager)</div>
+        <div class="legend-item"><span class="legend-color status-ok"></span> OK (31-90 dager)</div>
+        <div class="legend-item"><span class="legend-color status-god"></span> God (90+ dager)</div>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- End of appView -->
+
+  <!-- ========== MODAL PORTAL (outside appView stacking context for correct z-index) ========== -->
+  <div id="modalPortal">
   <!-- Modal for ny/rediger kunde -->
-  <div id="customerModal" class="modal hidden">
+  <div id="customerModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="modalTitle">Ny kunde</h2>
-        <button class="modal-close" id="closeCustomerModal">&times;</button>
+        <button class="modal-close" id="closeCustomerModal" aria-label="Lukk">&times;</button>
       </div>
       <form id="customerForm">
         <input type="hidden" id="customerId">
@@ -2107,7 +2098,7 @@
               <option value="Besøk">Besøk</option>
               <option value="Annet">Annet</option>
             </select>
-            <input type="text" id="kontaktNotat" placeholder="Notat om kontakten...">
+            <input type="text" id="kontaktNotat" placeholder="Notat om kontakten..." aria-label="Notat om kontakten">
             <button type="button" id="addKontaktBtn" class="btn btn-small btn-primary">
               <i class="fas fa-plus"></i> Legg til
             </button>
@@ -2126,7 +2117,7 @@
             <!-- Fylles med JavaScript -->
           </div>
           <div class="kontaktpersoner-add">
-            <input type="text" id="kontaktpersonNavn" placeholder="Navn *">
+            <input type="text" id="kontaktpersonNavn" placeholder="Navn *" aria-label="Kontaktperson navn">
             <select id="kontaktpersonRolle">
               <option value="">Rolle...</option>
               <option value="teknisk">Teknisk</option>
@@ -2134,8 +2125,8 @@
               <option value="daglig">Daglig leder</option>
               <option value="annet">Annet</option>
             </select>
-            <input type="tel" id="kontaktpersonTelefon" placeholder="Telefon">
-            <input type="email" id="kontaktpersonEpost" placeholder="E-post">
+            <input type="tel" id="kontaktpersonTelefon" placeholder="Telefon" aria-label="Kontaktperson telefon">
+            <input type="email" id="kontaktpersonEpost" placeholder="E-post" aria-label="Kontaktperson e-post">
             <div class="kontaktperson-add-actions">
               <label class="kontaktperson-primaer-label">
                 <input type="checkbox" id="kontaktpersonPrimaer">
@@ -2173,11 +2164,11 @@
   </div>
 
   <!-- OpenRouteService API-nøkkel modal -->
-  <div id="apiKeyModal" class="modal hidden">
+  <div id="apiKeyModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="apiKeyModalTitle">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>OpenRouteService API-nøkkel</h2>
-        <button class="modal-close" id="closeApiKeyModal">&times;</button>
+        <h2 id="apiKeyModalTitle">OpenRouteService API-nøkkel</h2>
+        <button class="modal-close" id="closeApiKeyModal" aria-label="Lukk">&times;</button>
       </div>
       <p>For ruteplanlegging trenger du en gratis API-nøkkel fra OpenRouteService.</p>
       <ol>
@@ -2195,51 +2186,19 @@
     </div>
   </div>
 
-  <!-- Lagre rute modal -->
-  <div id="saveRouteModal" class="modal hidden">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>Lagre rute</h2>
-        <button class="modal-close" id="closeSaveRouteModal">&times;</button>
-      </div>
-      <div class="form-group">
-        <label for="ruteNavn">Navn på rute *</label>
-        <input type="text" id="ruteNavn" placeholder="F.eks. Lofoten-tur">
-      </div>
-      <div class="form-group">
-        <label for="ruteBeskrivelse">Beskrivelse</label>
-        <textarea id="ruteBeskrivelse" rows="2" placeholder="Valgfri beskrivelse..."></textarea>
-      </div>
-      <div class="form-group">
-        <label for="ruteDato">Planlagt dato</label>
-        <input type="date" id="ruteDato">
-      </div>
-      <div class="form-group" id="ruteAssignGroup" style="display: none;">
-        <label for="ruteAssignTo">Tildel til tekniker</label>
-        <select id="ruteAssignTo">
-          <option value="">Ikke tildelt</option>
-        </select>
-      </div>
-      <div class="form-actions">
-        <button id="cancelSaveRoute" class="btn btn-secondary">Avbryt</button>
-        <button id="saveRouteSubmit" class="btn btn-primary">Lagre</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Avtale modal -->
-  <div id="avtaleModal" class="modal hidden">
+  <div id="avtaleModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="avtaleModalTitle">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="avtaleModalTitle">Ny avtale</h2>
-        <button class="modal-close" id="closeAvtaleModal">&times;</button>
+        <button class="modal-close" id="closeAvtaleModal" aria-label="Lukk">&times;</button>
       </div>
       <form id="avtaleForm">
         <input type="hidden" id="avtaleId">
         <div class="form-group">
           <label for="avtaleKundeSearch">Kunde *</label>
           <div class="kunde-search-wrapper">
-            <input type="text" id="avtaleKundeSearch" placeholder="Søk etter kunde..." autocomplete="off">
+            <input type="text" id="avtaleKundeSearch" placeholder="Søk etter kunde..." autocomplete="off" aria-label="Søk etter kunde for avtale">
             <input type="hidden" id="avtaleKunde" required>
             <div class="kunde-search-results" id="avtaleKundeResults"></div>
           </div>
@@ -2293,11 +2252,11 @@
   </div>
 
   <!-- Team Member Modal -->
-  <div id="teamMemberModal" class="modal hidden">
+  <div id="teamMemberModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="teamMemberModalTitle">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="teamMemberModalTitle">Nytt teammedlem</h2>
-        <button class="modal-close" id="closeTeamMemberModal">&times;</button>
+        <button class="modal-close" id="closeTeamMemberModal" aria-label="Lukk">&times;</button>
       </div>
       <form id="teamMemberForm">
         <input type="hidden" id="teamMemberId">
@@ -2335,11 +2294,11 @@
   </div>
 
   <!-- Field Modal -->
-  <div id="fieldModal" class="modal hidden">
+  <div id="fieldModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fieldModalTitle">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="fieldModalTitle">Nytt felt</h2>
-        <button class="modal-close" id="closeFieldModal">&times;</button>
+        <button class="modal-close" id="closeFieldModal" aria-label="Lukk">&times;</button>
       </div>
       <form id="fieldForm">
         <input type="hidden" id="fieldId">
@@ -2407,11 +2366,11 @@
   </div>
 
   <!-- Category List Modal -->
-  <div id="categoryListModal" class="modal hidden">
+  <div id="categoryListModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="categoryListModalTitle">
     <div class="modal-content">
       <div class="modal-header">
-        <h2><i class="fas fa-tags"></i> Kategorier</h2>
-        <button class="modal-close" onclick="document.getElementById('categoryListModal').classList.add('hidden')">&times;</button>
+        <h2 id="categoryListModalTitle"><i class="fas fa-tags" aria-hidden="true"></i> Kategorier</h2>
+        <button class="modal-close" aria-label="Lukk" onclick="document.getElementById('categoryListModal').classList.add('hidden')">&times;</button>
       </div>
       <div class="modal-body">
         <div id="categoryListItems">
@@ -2425,11 +2384,11 @@
   </div>
 
   <!-- Category Modal -->
-  <div id="categoryModal" class="modal hidden">
+  <div id="categoryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="categoryModalTitle">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="categoryModalTitle">Ny kategori</h2>
-        <button class="modal-close" id="closeCategoryModal" onclick="document.getElementById('categoryModal').classList.add('hidden')">&times;</button>
+        <button class="modal-close" id="closeCategoryModal" aria-label="Lukk" onclick="document.getElementById('categoryModal').classList.add('hidden')">&times;</button>
       </div>
       <form id="categoryForm" onsubmit="saveCategory(event)">
         <input type="hidden" id="categoryId">
@@ -2443,8 +2402,8 @@
           <div class="form-group">
             <label for="categoryColor">Farge</label>
             <div class="color-picker-row">
-              <div class="color-preview" id="categoryColorPreview" style="background: #F97316;"></div>
-              <input type="color" id="categoryColor" value="#F97316" oninput="updateCategoryColorPreview(this.value)">
+              <div class="color-preview" id="categoryColorPreview" style="background: #5E81AC;"></div>
+              <input type="color" id="categoryColor" value="#5E81AC" oninput="updateCategoryColorPreview(this.value)">
             </div>
           </div>
           <div class="form-group">
@@ -2483,45 +2442,51 @@
   </div>
 
   <!-- Import Modal -->
-  <div id="importModal" class="modal hidden">
+  <div id="importModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
     <div class="modal-content modal-large">
       <div class="modal-header">
-        <h2><i class="fas fa-file-import"></i> Importer kunder</h2>
-        <button class="modal-close" id="closeImportModal">&times;</button>
+        <h2 id="importModalTitle"><i class="fas fa-file-import" aria-hidden="true"></i> Importer kunder</h2>
+        <button class="modal-close" id="closeImportModal" aria-label="Lukk">&times;</button>
       </div>
       <div class="modal-body" id="importModalContent">
         <!-- Import wizard content rendered here -->
       </div>
     </div>
   </div>
-
-  <!-- Map Legend -->
-  <div class="map-legend" id="mapLegend">
-    <button class="legend-toggle" id="legendToggle" title="Vis/skjul forklaring">
-      <i class="fas fa-info-circle"></i>
-    </button>
-    <div class="legend-content">
-      <h4>Kategorier</h4>
-      <div class="legend-items" id="legendItems">
-        <!-- Fylles dynamisk -->
-      </div>
-      <div class="legend-status">
-        <h5>Kontrollstatus</h5>
-        <div class="legend-item"><span class="legend-color status-forfalt"></span> Forfalt</div>
-        <div class="legend-item"><span class="legend-color status-snart"></span> Snart (30 dager)</div>
-        <div class="legend-item"><span class="legend-color status-ok"></span> OK (31-90 dager)</div>
-        <div class="legend-item"><span class="legend-color status-god"></span> God (90+ dager)</div>
-      </div>
-    </div>
   </div>
 
-  </div><!-- End of appView -->
+
+  <!-- ========== SPLIT VIEW: Calendar + Map side-by-side ========== -->
+  <div id="calendarSplitOverlay" class="calendar-split-overlay hidden">
+    <div class="calendar-split-panel" id="calendarSplitPanel">
+      <div class="calendar-split-header">
+        <h3 id="calendarSplitTitle">Uke</h3>
+        <div class="calendar-split-nav">
+          <button class="btn btn-small btn-secondary" id="splitPrevWeek"><i class="fas fa-chevron-left"></i></button>
+          <button class="btn btn-small btn-secondary" id="splitNextWeek"><i class="fas fa-chevron-right"></i></button>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:4px;">
+          <button class="btn btn-small btn-primary" id="addAvtaleSplit"><i class="fas fa-plus"></i> Ny avtale</button>
+          <button class="btn btn-small btn-secondary" id="closeSplitView" title="Lukk delt visning"><i class="fas fa-times"></i></button>
+        </div>
+      </div>
+      <div class="calendar-split-content" id="calendarSplitContent">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+    <div class="calendar-split-divider" id="calendarSplitDivider">
+      <div class="split-divider-handle"></div>
+    </div>
+    <div class="calendar-split-map" id="calendarSplitMap">
+      <!-- Map visible through this transparent area -->
+    </div>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
   <script src="offline-storage.js?v=1"></script>
   <script src="sync-manager.js?v=1"></script>
-  <script src="app.js?v=20260215-dispatch"></script>
+  <script src="app.js?v=20260216-splitview4"></script>
   <script>
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {
