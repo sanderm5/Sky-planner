@@ -4,7 +4,7 @@
  * Handles messy files: merged cells, metadata rows, multi-sheet, empty columns
  */
 
-import ExcelJS from 'exceljs';
+import * as xlsx from 'xlsx';
 import { createHash } from 'crypto';
 import type { ColumnInfo } from '../../types/import';
 
@@ -57,46 +57,29 @@ const DEFAULT_OPTIONS: ParseOptions = {
 };
 
 /**
- * Read all rows from an ExcelJS worksheet as array-of-arrays.
- * Handles merged cells by propagating master cell values.
+ * Forward-fill merged cells in a worksheet
+ * The xlsx library reads merged cells only in the top-left cell, leaving others empty.
+ * This copies values to all cells in merged ranges.
  */
-function readSheetAsArrays(sheet: ExcelJS.Worksheet): unknown[][] {
-  const rows: unknown[][] = [];
-  const colCount = sheet.columnCount;
+function forwardFillMergedCells(sheet: xlsx.WorkSheet): void {
+  const merges = sheet['!merges'];
+  if (!merges || merges.length === 0) return;
 
-  sheet.eachRow({ includeEmpty: true }, (row) => {
-    const rowData: unknown[] = [];
-    for (let c = 1; c <= colCount; c++) {
-      const cell = row.getCell(c);
-      let value: unknown = cell.value;
+  for (const merge of merges) {
+    // Get the value from the top-left cell
+    const topLeftAddr = xlsx.utils.encode_cell({ r: merge.s.r, c: merge.s.c });
+    const topLeftCell = sheet[topLeftAddr];
+    if (!topLeftCell) continue;
 
-      // Handle merged cells — ExcelJS sets isMerged but value may be null
-      if (cell.isMerged && (value === null || value === undefined) && cell.master) {
-        value = cell.master.value;
+    // Fill all cells in the merge range
+    for (let r = merge.s.r; r <= merge.e.r; r++) {
+      for (let c = merge.s.c; c <= merge.e.c; c++) {
+        if (r === merge.s.r && c === merge.s.c) continue; // Skip source cell
+        const addr = xlsx.utils.encode_cell({ r, c });
+        sheet[addr] = { ...topLeftCell };
       }
-
-      // Normalize ExcelJS rich text and formula results
-      if (value && typeof value === 'object') {
-        if ('result' in (value as Record<string, unknown>)) {
-          value = (value as { result: unknown }).result;
-        } else if ('richText' in (value as Record<string, unknown>)) {
-          value = (value as { richText: Array<{ text: string }> }).richText
-            .map((rt) => rt.text)
-            .join('');
-        }
-      }
-
-      // Convert dates to ISO strings
-      if (value instanceof Date) {
-        value = value.toISOString().split('T')[0];
-      }
-
-      rowData.push(value ?? '');
     }
-    rows.push(rowData);
-  });
-
-  return rows;
+  }
 }
 
 /**
@@ -181,55 +164,70 @@ function detectHeaderRow(rawRows: unknown[][], maxScan: number = 20): number {
  * Evaluates each sheet based on data content and header quality.
  */
 function selectBestSheet(
-  workbook: ExcelJS.Workbook,
+  workbook: xlsx.WorkBook,
   preferredSheet?: string
 ): { sheetName: string; allSheets: SheetInfo[] } {
   const allSheets: SheetInfo[] = [];
-  const worksheets = workbook.worksheets;
 
   // If user specified a preferred sheet, use it if valid
-  if (preferredSheet) {
-    const found = worksheets.find((ws) => ws.name === preferredSheet);
-    if (found) {
-      for (const ws of worksheets) {
-        allSheets.push({
-          name: ws.name,
-          rowCount: ws.rowCount,
-          columnCount: ws.columnCount,
-          headerScore: 0,
-        });
-      }
-      return { sheetName: preferredSheet, allSheets };
+  if (preferredSheet && workbook.SheetNames.includes(preferredSheet)) {
+    // Still compute allSheets for info
+    for (const name of workbook.SheetNames) {
+      const sheet = workbook.Sheets[name];
+      const range = xlsx.utils.decode_range(sheet['!ref'] || 'A1');
+      allSheets.push({
+        name,
+        rowCount: range.e.r - range.s.r + 1,
+        columnCount: range.e.c - range.s.c + 1,
+        headerScore: 0,
+      });
     }
+    return { sheetName: preferredSheet, allSheets };
   }
 
-  let bestSheet = worksheets[0]?.name || '';
+  let bestSheet = workbook.SheetNames[0];
   let bestScore = -1;
 
-  for (const ws of worksheets) {
-    const rowCount = ws.rowCount;
-    const colCount = ws.columnCount;
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet['!ref']) {
+      allSheets.push({ name, rowCount: 0, columnCount: 0, headerScore: 0 });
+      continue;
+    }
 
+    // Handle merged cells before reading data
+    forwardFillMergedCells(sheet);
+
+    const range = xlsx.utils.decode_range(sheet['!ref']);
+    const rowCount = range.e.r - range.s.r + 1;
+    const colCount = range.e.c - range.s.c + 1;
+
+    // Skip tiny sheets (likely metadata/instructions)
     if (rowCount < 3 || colCount < 2) {
-      allSheets.push({ name: ws.name, rowCount, columnCount: colCount, headerScore: 0 });
+      allSheets.push({ name, rowCount, columnCount: colCount, headerScore: 0 });
       continue;
     }
 
     // Read first few rows to evaluate header quality
-    const rawData = readSheetAsArrays(ws);
-    const previewRows = rawData.slice(0, 21);
+    const rawData: unknown[][] = xlsx.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+      range: { s: { r: 0, c: 0 }, e: { r: Math.min(20, range.e.r), c: range.e.c } },
+    });
 
-    const headerIdx = detectHeaderRow(previewRows);
-    const headerScore = calculateHeaderScore(previewRows[headerIdx] || []);
+    const headerIdx = detectHeaderRow(rawData);
+    const headerScore = calculateHeaderScore(rawData[headerIdx] || []);
 
+    // Combined score: header quality + data volume
     const dataRows = rowCount - headerIdx - 1;
     const combinedScore = headerScore * 10 + dataRows + colCount;
 
-    allSheets.push({ name: ws.name, rowCount, columnCount: colCount, headerScore });
+    allSheets.push({ name, rowCount, columnCount: colCount, headerScore });
 
     if (combinedScore > bestScore) {
       bestScore = combinedScore;
-      bestSheet = ws.name;
+      bestSheet = name;
     }
   }
 
@@ -284,33 +282,45 @@ function removeEmptyColumns(
  * Parse an Excel file buffer and extract data
  * Handles messy files with merged cells, metadata rows, multiple sheets
  */
-export async function parseExcelBuffer(
+export function parseExcelBuffer(
   fileBuffer: Buffer,
   options: ParseOptions = {}
-): Promise<ParsedExcelData> {
+): ParsedExcelData {
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
   // Calculate file hash for duplicate detection
   const fileHash = createHash('sha256').update(fileBuffer).digest('hex');
 
   // Parse workbook
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(fileBuffer as unknown as ArrayBuffer);
+  const workbook = xlsx.read(fileBuffer, {
+    type: 'buffer',
+    cellDates: true,
+    cellNF: false,
+    cellText: false,
+  });
 
-  if (workbook.worksheets.length === 0) {
+  if (workbook.SheetNames.length === 0) {
     throw new Error('Excel-filen inneholder ingen ark');
   }
 
   // Select best sheet (handles multi-sheet files)
   const { sheetName, allSheets } = selectBestSheet(workbook, opts.preferredSheet);
 
-  const sheet = workbook.getWorksheet(sheetName);
+  const sheet = workbook.Sheets[sheetName];
   if (!sheet) {
     throw new Error('Excel-filen inneholder ingen ark');
   }
 
-  // Get raw data as array of arrays (handles merged cells automatically)
-  const rawData = readSheetAsArrays(sheet);
+  // Forward-fill merged cells (already done in selectBestSheet, but do again for safety)
+  forwardFillMergedCells(sheet);
+
+  // Get raw data as array of arrays
+  const rawData: unknown[][] = xlsx.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: '',
+    raw: false,
+    dateNF: 'YYYY-MM-DD',
+  });
 
   if (rawData.length < 1) {
     throw new Error('Excel-filen er tom');

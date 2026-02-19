@@ -69,7 +69,7 @@ router.get(
     if (format === 'json') {
       result = exportCustomersToJSON(customers);
     } else if (format === 'xlsx') {
-      result = await exportCustomersToXLSX(customers);
+      result = exportCustomersToXLSX(customers);
     } else if (format === 'vcf') {
       result = exportCustomersToVCF(customers);
     } else {
@@ -104,7 +104,7 @@ router.get(
     if (format === 'json') {
       result = exportRoutesToJSON(routes);
     } else if (format === 'xlsx') {
-      result = await exportRoutesToXLSX(routes);
+      result = exportRoutesToXLSX(routes);
     } else {
       result = exportRoutesToCSV(routes);
     }

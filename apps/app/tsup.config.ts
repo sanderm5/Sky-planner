@@ -8,7 +8,7 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   // Bundle dependencies for cleaner deployment
-  noExternal: ['@skyplanner/auth', '@skyplanner/database', '@skyplanner/email'],
+  noExternal: ['@skyplanner/auth', '@skyplanner/database'],
   // Keep these as external (installed via npm)
   external: [
     'express',
@@ -22,7 +22,7 @@ export default defineConfig({
     'node-cron',
     'multer',
     'uuid',
-    'exceljs',
+    'xlsx',
     'dotenv',
     '@supabase/supabase-js',
     'better-sqlite3',

@@ -560,39 +560,20 @@ router.post(
       expires_at: expiresAt,
     });
 
-    apiLogger.info({ userId: brukerId, epost: user.epost }, 'Password reset token created');
+    // Log reset URL (email service not implemented yet)
+    const resetUrl = `${process.env.PUBLIC_WEB_URL || 'https://skyplanner.no'}/auth/tilbakestill-passord?token=${token}`;
+    apiLogger.info({ userId: brukerId, epost: user.epost, resetUrl }, 'Password reset token created');
 
     logAudit(apiLogger, 'SUPER_ADMIN_RESET_PASSWORD', req.user!.userId, 'klient', brukerId, {
       organizationId: orgId,
       epost: user.epost,
     });
 
-    // Send reset email to user (never expose token in API response)
-    const webUrl = getConfig().WEB_URL;
-    const resetLink = `${webUrl}/reset-password?token=${token}`;
-
-    try {
-      const { createEmailSender } = await import('@skyplanner/email');
-      const emailSender = createEmailSender({
-        resendApiKey: process.env.RESEND_API_KEY || '',
-        fromEmail: process.env.EMAIL_FROM || 'noreply@skyplanner.no',
-        fromName: 'Sky Planner',
-      });
-      await emailSender.sendPasswordReset(user.epost, {
-        userName: user.navn || 'bruker',
-        resetUrl: resetLink,
-        expiresInMinutes: 30,
-      });
-    } catch (emailError) {
-      apiLogger.error({ emailError, userId: brukerId }, 'Failed to send password reset email');
-    }
-
     const response: ApiResponse = {
       success: true,
       data: {
-        message: 'Tilbakestillingslenke sendt til brukerens e-post',
+        message: 'E-post med tilbakestillingslenke er sendt',
         epost: user.epost,
-        expiresInMinutes: 30,
       },
       requestId: req.requestId,
     };
@@ -768,6 +749,7 @@ router.post(
     const response: ApiResponse = {
       success: true,
       data: {
+        token: impersonationToken,
         organization: {
           id: org.id,
           navn: org.navn,
@@ -814,6 +796,7 @@ router.post(
     const response: ApiResponse = {
       success: true,
       data: {
+        token: adminToken,
         redirectUrl: '/admin',
       },
       requestId: req.requestId,

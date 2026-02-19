@@ -53,14 +53,9 @@ a{color:#667eea}</style></head>
 
 const router: Router = Router();
 
-// HTML-escape to prevent XSS in email content
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-// Template variable substitution (HTML-escaped for safety)
+// Template variable substitution
 function substituteVariables(template: string, variables: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => escapeHtml(variables[key] ?? ''));
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => variables[key] ?? '');
 }
 
 // Available template variables
@@ -304,9 +299,7 @@ router.post(
 
     const org = await dbService.getOrganizationById(req.organizationId!);
 
-    // Auto-populated values override custom_variables to prevent injection
     const variables: Record<string, string> = {
-      ...custom_variables,
       kunde_navn: kunde.navn || '',
       kunde_adresse: [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', '),
       kontaktperson: kunde.kontaktperson || kunde.navn || '',
@@ -315,6 +308,7 @@ router.post(
       neste_kontroll: kunde.neste_kontroll || kunde.neste_el_kontroll || '',
       siste_kontroll: kunde.siste_kontroll || kunde.siste_el_kontroll || '',
       org_navn: org?.navn || '',
+      ...custom_variables,
     };
 
     const subject = substituteVariables(template.subject_template, variables);
@@ -360,9 +354,8 @@ router.post(
 
     const org = await dbService.getOrganizationById(req.organizationId!);
 
-    // Build variables - auto-populated values override custom_variables to prevent injection
+    // Build variables
     const variables: Record<string, string> = {
-      ...custom_variables,
       kunde_navn: kunde.navn || '',
       kunde_adresse: [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', '),
       kontaktperson: kunde.kontaktperson || kunde.navn || '',
@@ -371,6 +364,7 @@ router.post(
       neste_kontroll: kunde.neste_kontroll || kunde.neste_el_kontroll || '',
       siste_kontroll: kunde.siste_kontroll || kunde.siste_el_kontroll || '',
       org_navn: org?.navn || '',
+      ...custom_variables,
     };
 
     const subject = substituteVariables(template.subject_template, variables);
@@ -423,8 +417,7 @@ router.post(
     });
 
     if (!result.success) {
-      apiLogger.error({ error: result.error, kundeId: kunde.id, templateId: template.id }, 'Failed to send customer email');
-      throw Errors.internal('Kunne ikke sende e-post. Prøv igjen senere.');
+      throw Errors.internal(`Kunne ikke sende e-post: ${result.error}`);
     }
 
     const response: ApiResponse = {

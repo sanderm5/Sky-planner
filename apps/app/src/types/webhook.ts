@@ -249,7 +249,7 @@ export function validateEventTypes(events: string[]): WebhookEventType[] {
 export function isValidWebhookUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'https:';
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
   } catch {
     return false;
   }

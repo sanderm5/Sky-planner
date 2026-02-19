@@ -10,7 +10,7 @@
 | Hva | Hvor |
 |-----|------|
 | Backend API | `src/server.ts` |
-| Frontend kilde | `frontend/` (50 filer → bygges til `public/app.js`) |
+| Frontend | `public/app.js` + `public/style.css` |
 | Database | Supabase |
 | Port | 3000 |
 
@@ -103,22 +103,15 @@ apps/app/
 │   │   └── validation.ts
 │   └── docs/
 │       └── openapi.yaml    # OpenAPI-spesifikasjon
-├── frontend/               # Frontend kildekode (rediger her!)
-│   ├── utils/              # Hjelpefunksjoner (escapeHtml, logger, csrf, modal, theme, sorting)
-│   ├── constants/          # Konstanter (icons)
-│   ├── services/           # Tjenester (auth, api, feature-flags, subscription, websocket)
-│   ├── modules/            # Feature-moduler (37 filer: markers, weekplan, calendar, etc.)
-│   └── app-legacy.js       # Global state + DOMContentLoaded + setupEventListeners
-├── public/                 # Generert output (IKKE rediger manuelt!)
+├── public/                 # Frontend
 │   ├── index.html          # Hovedside
-│   ├── app.js              # Bygget fra frontend/ via build-frontend.mjs
+│   ├── app.js              # Frontend JavaScript
 │   ├── app.min.js          # Minifisert
 │   ├── style.css           # Dark theme CSS
 │   ├── style.min.css       # Minifisert
 │   ├── admin.html          # Admin-panel
 │   ├── admin.js
 │   └── admin.css
-├── build-frontend.mjs      # Bygger frontend/ → public/app.js (concatenation)
 ├── scripts/                # Hjelpescripts (migrering, import, etc.)
 ├── migrations/             # Database-migrasjoner
 └── supabase-service.js     # Legacy Supabase-abstraksjon
@@ -130,18 +123,10 @@ apps/app/
 
 ```bash
 cd apps/app
-pnpm dev              # Utviklingsmodus med tsx watch
-pnpm start            # Produksjon
-pnpm build            # Kompiler TypeScript
-npm run build:frontend  # Bygg frontend (concat + terser + cleancss)
-npm run dev:frontend    # Watch-modus for frontend
+pnpm dev          # Utviklingsmodus med tsx watch
+pnpm start        # Produksjon
+pnpm build        # Kompiler TypeScript
 ```
-
-### Frontend build-system
-- Kildekode i `frontend/` → concateneres → `public/app.js` (alle filer deler global scope)
-- **Rediger ALLTID i `frontend/`**, ALDRI i `public/app.js` direkte
-- `build-frontend.mjs` definerer filrekkefølgen (dependency order)
-- Etter endringer: kjør `npm run build:frontend` for å bygge
 
 ---
 
