@@ -35,7 +35,7 @@ import ruterRoutes, { initRuterRoutes } from './routes/ruter';
 import avtalerRoutes, { initAvtalerRoutes } from './routes/avtaler';
 import kontaktloggRoutes, { initKontaktloggRoutes } from './routes/kontaktlogg';
 import kontaktpersonerRoutes, { initKontaktpersonerRoutes } from './routes/kontaktpersoner';
-import tagRoutes, { initTagRoutes } from './routes/tags';
+import subcategoriesRoutes, { initSubcategoriesRoutes } from './routes/subcategories';
 import reportRoutes, { initReportRoutes } from './routes/reports';
 import emailRoutes, { initEmailRoutes } from './routes/email';
 import configRoutes, { initConfigRoutes } from './routes/config';
@@ -81,7 +81,7 @@ async function initializeApp() {
   initAvtalerRoutes(db as Parameters<typeof initAvtalerRoutes>[0]);
   initKontaktloggRoutes(db as Parameters<typeof initKontaktloggRoutes>[0]);
   initKontaktpersonerRoutes(db as Parameters<typeof initKontaktpersonerRoutes>[0]);
-  initTagRoutes(db as Parameters<typeof initTagRoutes>[0]);
+  initSubcategoriesRoutes(db as Parameters<typeof initSubcategoriesRoutes>[0]);
   initReportRoutes(db as Parameters<typeof initReportRoutes>[0]);
   initEmailRoutes(db as Parameters<typeof initEmailRoutes>[0]);
   initConfigRoutes(db as Parameters<typeof initConfigRoutes>[0]);
@@ -362,7 +362,7 @@ app.use('/api/email', emailRoutes);  // Auth handled per-route (cron endpoint us
 // ===== OTHER API ROUTES =====
 app.use('/api', requireTenantAuth, requireActiveSubscription, kontaktloggRoutes);  // Routes include /kunder/:id/kontaktlogg and /kontaktlogg/:id
 app.use('/api', requireTenantAuth, requireActiveSubscription, kontaktpersonerRoutes);  // Routes include /kunder/:id/kontaktpersoner and /kontaktpersoner/:id
-app.use('/api/tags', requireTenantAuth, requireActiveSubscription, tagRoutes);  // Tag CRUD + /kunder/:id/tags
+app.use('/api/subcategories', requireTenantAuth, requireActiveSubscription, subcategoriesRoutes);  // Subcategory CRUD + kunde assignments
 app.use('/api/reports', requireTenantAuth, requireActiveSubscription, reportRoutes);  // Reporting endpoints
 app.use('/api/integrations', requireTenantAuth, requireActiveSubscription, integrationsRoutes);
 app.use('/api/features', requireTenantAuth, requireActiveSubscription, featuresRoutes);

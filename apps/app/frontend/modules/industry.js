@@ -15,8 +15,6 @@ function applyIndustryChanges() {
 
   // Update filter panel categories (right side panel)
   renderFilterPanelCategories();
-  renderDriftskategoriFilter();
-
   // Apply MVP mode UI changes (hide industry-specific elements)
   applyMvpModeUI();
 
@@ -99,29 +97,11 @@ function attachKategoriTabHandlers() {
 
 // Update all dropdowns that depend on service types
 function updateServiceTypeDropdowns() {
-  // Customer modal category dropdown
-  const kategoriSelect = document.getElementById('kategori');
-  if (kategoriSelect) {
-    const currentValue = kategoriSelect.value;
-    const serviceTypes = serviceTypeRegistry.getAll();
-    let options = '';
-
-    serviceTypes.forEach(st => {
-      options += `<option value="${st.name}">${st.name}</option>`;
-    });
-
-    // Add combined option if there are multiple service types
-    if (serviceTypes.length >= 2) {
-      const combinedName = serviceTypes.map(st => st.name).join(' + ');
-      options += `<option value="${combinedName}">Begge (${combinedName})</option>`;
-    }
-
-    kategoriSelect.innerHTML = options;
-
-    // Try to restore previous value
-    if (currentValue) {
-      kategoriSelect.value = currentValue;
-    }
+  // Customer modal category checkboxes
+  const kategoriContainer = document.getElementById('kategoriCheckboxes');
+  if (kategoriContainer) {
+    const currentValue = serviceTypeRegistry.getSelectedCategories();
+    kategoriContainer.innerHTML = serviceTypeRegistry.renderCategoryCheckboxes(currentValue);
   }
 }
 
@@ -417,8 +397,8 @@ function renderLoginFeatures() {
 
   // Default features if no service types configured
   const defaultFeatures = [
-    { icon: 'fas fa-bolt', name: 'El-kontroll', description: 'Periodisk kontroll for næring og bolig' },
-    { icon: 'fas fa-fire', name: 'Brannvarsling', description: 'Service og kontroll av anlegg' }
+    { icon: 'fas fa-clipboard-check', name: 'Kontroll', description: 'Periodisk oppfølging av kunder' },
+    { icon: 'fas fa-route', name: 'Ruteplanlegging', description: 'Planlegg og optimaliser ruter' }
   ];
 
   // Use service types or defaults
@@ -530,7 +510,6 @@ async function reloadConfigWithAuth() {
 
       updateControlSectionHeaders();
       renderFilterPanelCategories();
-      renderDriftskategoriFilter();
       applyMvpModeUI();
       applyBranding();
       applyDateModeToInputs();

@@ -48,17 +48,23 @@ export function formatDate(date: Date): string {
 }
 
 /**
- * Adds months to a date, handling month overflow correctly
- * e.g., Jan 31 + 1 month = Feb 28 (not Mar 3)
+ * Adds an interval to a date.
+ * Positive values = months, negative values = days (e.g. -7 = 1 week)
+ * Handles month overflow correctly: Jan 31 + 1 month = Feb 28 (not Mar 3)
  */
-export function addMonthsToDate(dateStr: string, months: number): string {
+export function addMonthsToDate(dateStr: string, interval: number): string {
   const date = new Date(dateStr);
-  const day = date.getDate();
-  date.setMonth(date.getMonth() + months);
 
-  // If the day changed (month overflow), set to last day of previous month
-  if (date.getDate() !== day) {
-    date.setDate(0); // Sets to last day of previous month
+  if (interval < 0) {
+    // Negative = days
+    date.setDate(date.getDate() + Math.abs(interval));
+  } else {
+    // Positive = months
+    const day = date.getDate();
+    date.setMonth(date.getMonth() + interval);
+    if (date.getDate() !== day) {
+      date.setDate(0);
+    }
   }
 
   return formatDate(date);

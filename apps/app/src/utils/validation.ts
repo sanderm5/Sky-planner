@@ -125,15 +125,15 @@ export function validateKunde(kunde: CreateKundeRequest): ValidationError[] | nu
     });
   }
 
-  // Interval validation
-  const validElIntervals = [12, 24, 36, 60];
+  // Interval validation (positive = months, negative = days e.g. -7 = weekly)
   if (
     kunde.el_kontroll_intervall !== undefined &&
-    !validElIntervals.includes(kunde.el_kontroll_intervall)
+    typeof kunde.el_kontroll_intervall === 'number' &&
+    kunde.el_kontroll_intervall === 0
   ) {
     errors.push({
       field: 'el_kontroll_intervall',
-      message: 'El-kontroll intervall må være 12, 24, 36, eller 60 måneder',
+      message: 'Intervall kan ikke være 0',
     });
   }
 

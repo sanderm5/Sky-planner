@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import bcrypt from 'bcryptjs';
 import * as db from '@skyplanner/database';
-import { requireApiAuth, isAuthError } from '../../../../middleware/auth';
+import { requireAdminApiAuth, isAuthError } from '../../../../middleware/auth';
 
 // Initialize Supabase client
 db.getSupabaseClient({
@@ -9,9 +9,9 @@ db.getSupabaseClient({
   supabaseKey: import.meta.env.SUPABASE_SERVICE_KEY || import.meta.env.SUPABASE_ANON_KEY,
 });
 
-// PUT - Update user
+// PUT - Update user (admin only)
 export const PUT: APIRoute = async ({ request, params }) => {
-  const authResult = await requireApiAuth(request);
+  const authResult = await requireAdminApiAuth(request);
   if (isAuthError(authResult)) return authResult;
 
   const { organization, user: currentUser } = authResult;
@@ -35,7 +35,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
     }
 
     const body = await request.json();
-    const { navn, epost, passord, telefon, aktiv } = body;
+    const { navn, epost, passord, telefon, aktiv, rolle } = body;
 
     // Build update object
     const updateData: Record<string, unknown> = {};
@@ -101,6 +101,30 @@ export const PUT: APIRoute = async ({ request, params }) => {
       updateData.aktiv = aktiv;
     }
 
+    if (rolle !== undefined) {
+      const validRoles = ['admin', 'redigerer', 'leser'];
+      if (!validRoles.includes(rolle)) {
+        return new Response(
+          JSON.stringify({ error: 'Ugyldig rolle. Gyldige roller: admin, redigerer, leser' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Prevent demoting yourself if you're the last admin
+      if (userId === currentUser.id && rolle !== 'admin' && targetUser.rolle === 'admin') {
+        const orgUsers = await db.getKlienterByOrganization(organization.id);
+        const adminCount = orgUsers.filter(u => u.aktiv && u.rolle === 'admin').length;
+        if (adminCount <= 1) {
+          return new Response(
+            JSON.stringify({ error: 'Kan ikke endre rolle. Du er den eneste administratoren.' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+
+      updateData.rolle = rolle;
+    }
+
     if (passord !== undefined) {
       if (passord.length < 8) {
         return new Response(
@@ -131,6 +155,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
           telefon: updatedUser.telefon,
           aktiv: updatedUser.aktiv,
           opprettet: updatedUser.opprettet,
+          rolle: updatedUser.rolle || 'leser',
         },
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -144,9 +169,9 @@ export const PUT: APIRoute = async ({ request, params }) => {
   }
 };
 
-// DELETE - Deactivate user (soft delete)
+// DELETE - Deactivate user (admin only, soft delete)
 export const DELETE: APIRoute = async ({ request, params }) => {
-  const authResult = await requireApiAuth(request);
+  const authResult = await requireAdminApiAuth(request);
   if (isAuthError(authResult)) return authResult;
 
   const { organization, user: currentUser } = authResult;

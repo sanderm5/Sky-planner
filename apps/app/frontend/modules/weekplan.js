@@ -882,6 +882,7 @@ function showWpContextMenu(avtaleId, avtaleName, x, y) {
           await loadAvtaler();
           refreshTeamFocus();
           renderWeeklyPlan();
+          applyFilters(); // Oppdater kart-markører
         } else {
           const err = await response.json().catch(() => ({}));
           showToast(err.error?.message || 'Kunne ikke slette avtale', 'error');

@@ -15,6 +15,40 @@ function initializeDatabase() {
   });
 }
 
+/**
+ * Check if a token's JTI has been blacklisted (logged out)
+ * Queries the token_blacklist table in Supabase directly
+ */
+async function isTokenBlacklisted(jti: string): Promise<boolean> {
+  if (!jti) return false;
+
+  try {
+    const supabase = db.getSupabaseClient();
+    const { data, error } = await supabase
+      .from('token_blacklist')
+      .select('id')
+      .eq('jti', jti)
+      .limit(1);
+
+    if (error) {
+      // If table doesn't exist yet, treat as not blacklisted (fail-open)
+      // This avoids blocking all logins when the table hasn't been created
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        console.warn('token_blacklist table does not exist yet — skipping check');
+        return false;
+      }
+      console.error('Token blacklist check failed:', error.message);
+      // Fail-closed for other errors: treat as blacklisted if we can't verify
+      return true;
+    }
+
+    return (data?.length ?? 0) > 0;
+  } catch {
+    // Fail-closed: if we can't check, assume blacklisted for security
+    return true;
+  }
+}
+
 export interface AuthResult {
   user: {
     id: number;
@@ -37,6 +71,7 @@ export interface AuthResult {
     logo_url?: string;
     primary_color?: string;
     app_mode?: string;
+    dato_modus?: string;
   };
   payload: JWTPayload;
 }
@@ -69,6 +104,11 @@ export async function requireAuth(
   }
 
   const payload = result.payload;
+
+  // Check if token has been blacklisted (logged out)
+  if (payload.jti && await isTokenBlacklisted(payload.jti)) {
+    return Astro.redirect('/auth/login?error=session_expired');
+  }
 
   if (!payload.organizationId) {
     return Astro.redirect('/auth/login?error=no_organization');
@@ -115,6 +155,7 @@ export async function requireAuth(
       logo_url: organization.logo_url,
       primary_color: organization.primary_color,
       app_mode: organization.app_mode,
+      dato_modus: (organization as any).dato_modus,
     },
     payload,
   };
@@ -157,6 +198,14 @@ export async function requireApiAuth(
   }
 
   const payload = result.payload;
+
+  // Check if token has been blacklisted (logged out)
+  if (payload.jti && await isTokenBlacklisted(payload.jti)) {
+    return new Response(
+      JSON.stringify({ error: 'Sesjonen er ugyldiggjort' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
 
   if (!payload.organizationId) {
     return new Response(
@@ -212,9 +261,32 @@ export async function requireApiAuth(
       logo_url: organization.logo_url,
       primary_color: organization.primary_color,
       app_mode: organization.app_mode,
+      dato_modus: (organization as any).dato_modus,
     },
     payload,
   };
+}
+
+/**
+ * API route auth that requires admin role.
+ * Returns AuthResult on success, or error Response on failure.
+ */
+export async function requireAdminApiAuth(
+  request: Request
+): Promise<AuthResult | Response> {
+  const authResult = await requireApiAuth(request);
+  if (isAuthError(authResult)) return authResult;
+
+  // Check klient rolle
+  const klient = await db.getKlientById(authResult.user.id);
+  if (!klient || klient.rolle !== 'admin') {
+    return new Response(
+      JSON.stringify({ error: 'Krever admin-tilgang' }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  return authResult;
 }
 
 /**

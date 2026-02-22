@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import bcrypt from 'bcryptjs';
 import * as db from '@skyplanner/database';
 import { validatePassword } from '@skyplanner/auth';
-import { requireApiAuth, isAuthError } from '../../../../middleware/auth';
+import { requireApiAuth, requireAdminApiAuth, isAuthError } from '../../../../middleware/auth';
 
 // Initialize Supabase client
 db.getSupabaseClient({
@@ -28,6 +28,7 @@ export const GET: APIRoute = async ({ request }) => {
       telefon: user.telefon,
       aktiv: user.aktiv,
       opprettet: user.opprettet,
+      rolle: user.rolle || 'leser',
     }));
 
     return new Response(
@@ -48,16 +49,16 @@ export const GET: APIRoute = async ({ request }) => {
   }
 };
 
-// POST - Create new user
+// POST - Create new user (admin only)
 export const POST: APIRoute = async ({ request }) => {
-  const authResult = await requireApiAuth(request);
+  const authResult = await requireAdminApiAuth(request);
   if (isAuthError(authResult)) return authResult;
 
   const { organization } = authResult;
 
   try {
     const body = await request.json();
-    const { navn, epost, passord, telefon } = body;
+    const { navn, epost, passord, telefon, rolle } = body;
 
     // Validation
     if (!navn || !epost || !passord) {
@@ -122,6 +123,10 @@ export const POST: APIRoute = async ({ request }) => {
     // Hash password
     const passordHash = await bcrypt.hash(passord, 12);
 
+    // Validate rolle if provided (defaults to 'leser' in DB)
+    const validRoles = ['admin', 'redigerer', 'leser'];
+    const userRolle = rolle && validRoles.includes(rolle) ? rolle : undefined;
+
     // Create user
     const newUser = await db.createKlient({
       navn,
@@ -130,6 +135,7 @@ export const POST: APIRoute = async ({ request }) => {
       telefon: telefon || null,
       aktiv: true,
       organization_id: organization.id,
+      ...(userRolle && { rolle: userRolle }),
     });
 
     return new Response(
@@ -142,6 +148,7 @@ export const POST: APIRoute = async ({ request }) => {
           telefon: newUser.telefon,
           aktiv: newUser.aktiv,
           opprettet: newUser.opprettet,
+          rolle: newUser.rolle || 'leser',
         },
       }),
       { status: 201, headers: { 'Content-Type': 'application/json' } }

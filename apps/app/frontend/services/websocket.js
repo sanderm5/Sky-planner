@@ -151,10 +151,22 @@ function handleRealtimeUpdate(message) {
     case 'avtale_deleted':
     case 'avtale_series_deleted':
     case 'avtaler_bulk_created':
-      // Calendar changed - reload if calendar is visible
+      // Calendar changed - reload data and re-render
       Logger.log(`Avtale ${type.replace('avtale_', '').replace('avtaler_', '')}`);
       if (typeof loadAvtaler === 'function') {
-        loadAvtaler();
+        loadAvtaler().then(() => {
+          if (typeof renderCalendar === 'function') renderCalendar();
+        });
+      }
+      break;
+
+    case 'rute_created':
+    case 'rute_updated':
+    case 'rute_deleted':
+      // Rute-endringer kan oppdatere kundedata (f.eks. kontrolldatoer ved rute-fullføring)
+      Logger.log(`Rute ${type.replace('rute_', '')}`);
+      if (typeof loadCustomers === 'function') {
+        loadCustomers();
       }
       break;
 

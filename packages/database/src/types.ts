@@ -28,6 +28,9 @@ export interface Organization {
   // App mode: 'mvp' = enkel versjon, 'full' = komplett (TRE Allservice)
   app_mode?: AppMode;
 
+  // Date display mode
+  dato_modus?: 'full_date' | 'month_year';
+
   // Stripe integration
   stripe_customer_id?: string;
   stripe_subscription_id?: string;
@@ -66,6 +69,7 @@ export interface Klient {
   aktiv: boolean;
   organization_id?: number;
   opprettet?: string;
+  rolle?: 'admin' | 'redigerer' | 'leser';
 }
 
 export interface Bruker {

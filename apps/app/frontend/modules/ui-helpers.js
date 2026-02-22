@@ -48,6 +48,7 @@ async function loadConfig() {
 
     // Initialize service type registry from config
     serviceTypeRegistry.loadFromConfig(appConfig);
+    allSubcategoryGroups = appConfig.subcategoryGroups || [];
 
     // Check localStorage for saved industry (for login page display before auth)
     const savedIndustrySlug = localStorage.getItem('industrySlug');
@@ -65,8 +66,6 @@ async function loadConfig() {
 
     // Render dynamic filter panel categories
     renderFilterPanelCategories();
-    renderDriftskategoriFilter();
-
     // Apply MVP mode UI changes (hide industry-specific elements)
     applyMvpModeUI();
 

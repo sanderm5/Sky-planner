@@ -560,6 +560,11 @@ export interface AppConfig {
     description?: string;
   }>;
   mapboxAccessToken?: string;
+  subcategoryGroups?: Array<{
+    id: number;
+    navn: string;
+    subcategories: Array<{ id: number; navn: string }>;
+  }>;
 }
 
 export interface EnvConfig {
@@ -614,6 +619,7 @@ export interface EnvConfig {
 
   // Tripletex
   TRIPLETEX_ENV: 'test' | 'production';
+  TRIPLETEX_CONSUMER_TOKEN: string;
 
   // Mapbox
   MAPBOX_ACCESS_TOKEN?: string;

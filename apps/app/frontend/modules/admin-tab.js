@@ -19,9 +19,10 @@ async function loadAdminData() {
   loginLogOffset = 0;
   await loadLoginLog(false);
 
-  // Render admin fields and categories
+  // Render admin fields, categories, and subcategories
   renderAdminFields();
   renderAdminCategories();
+  renderAdminSubcategories();
 
   // Check and load super admin data if applicable
   await checkSuperAdminStatus();
@@ -567,11 +568,7 @@ function renderCategoryStats() {
 
   renderBarStats('categoryStats', categories, {
     total: customers.length,
-    getBarClass: (cat) => {
-      if (cat === 'El-Kontroll') return 'el-kontroll';
-      if (cat === 'Brannvarsling') return 'brannvarsling';
-      return 'combined';
-    }
+    getBarClass: (cat) => serviceTypeRegistry.getCategoryClass(cat)
   });
 }
 

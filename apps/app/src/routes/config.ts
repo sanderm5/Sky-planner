@@ -19,6 +19,8 @@ interface ConfigDbService {
   getEnabledFeatureKeys?(organizationId: number): Promise<string[]>;
   getEnabledFeaturesWithConfig?(organizationId: number): Promise<{ key: string; config: Record<string, unknown> }[]>;
   getOrganizationServiceTypes?(organizationId: number): Promise<OrganizationServiceType[]>;
+  getSubcatGroupsByOrganization?(organizationId: number): Promise<{ id: number; organization_id: number; navn: string; sort_order: number; created_at: string }[]>;
+  getSubcategoriesByGroupIds?(groupIds: number[]): Promise<{ id: number; group_id: number; navn: string; sort_order: number; created_at: string }[]>;
 }
 
 let dbService: ConfigDbService;
@@ -84,7 +86,7 @@ router.get(
       }
     }
 
-    // Fetch organization service types (dynamic categories)
+    // Fetch organization service types
     let serviceTypes: Array<{ id: number; name: string; slug: string; icon: string; color: string; defaultInterval: number; description?: string }> = [];
     if (organization && dbService.getOrganizationServiceTypes) {
       try {
@@ -100,6 +102,23 @@ router.get(
         }));
       } catch {
         // Table may not exist yet - continue without service types
+      }
+    }
+
+    // Fetch subcategory groups (organization-level, not per service type)
+    let subcategoryGroups: Array<{ id: number; navn: string; subcategories: Array<{ id: number; navn: string }> }> = [];
+    if (organization && dbService.getSubcatGroupsByOrganization && dbService.getSubcategoriesByGroupIds) {
+      try {
+        const groups = await dbService.getSubcatGroupsByOrganization(organization.id);
+        const groupIds = groups.map(g => g.id);
+        const subcats = groupIds.length > 0 ? await dbService.getSubcategoriesByGroupIds(groupIds) : [];
+        subcategoryGroups = groups.map(g => ({
+          id: g.id,
+          navn: g.navn,
+          subcategories: subcats.filter(s => s.group_id === g.id).map(s => ({ id: s.id, navn: s.navn })),
+        }));
+      } catch {
+        // Table may not exist yet
       }
     }
 
@@ -138,6 +157,7 @@ router.get(
       appMode: organization?.app_mode ?? 'mvp',
       datoModus: (organization?.dato_modus ?? 'full_date') as 'full_date' | 'month_year',
       serviceTypes: serviceTypes.length > 0 ? serviceTypes : undefined,
+      subcategoryGroups: subcategoryGroups.length > 0 ? subcategoryGroups : undefined,
     };
 
     const response: ApiResponse<typeof appConfig> = {

@@ -8,7 +8,7 @@ import { apiLogger, logAudit } from '../services/logger';
 import { requireSuperAdmin } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { getDatabase } from '../services/database';
-import { validateKunde } from '../utils/validation';
+import { validateKunde, validateSearchInput } from '../utils/validation';
 import { geocodeCustomerData } from '../services/geocoding';
 import { getCookieConfig, buildSetCookieHeader } from '@skyplanner/auth';
 import { getConfig } from '../config/env';
@@ -244,7 +244,8 @@ router.get(
     // Get pagination params
     const limit = Math.min(Number.parseInt(req.query.limit as string) || 100, 500);
     const offset = Number.parseInt(req.query.offset as string) || 0;
-    const search = req.query.search as string | undefined;
+    const rawSearch = req.query.search as string | undefined;
+    const search = rawSearch ? validateSearchInput(rawSearch) ?? undefined : undefined;
 
     const result = await db.getAllKunderPaginated(orgId, { limit, offset, search });
 

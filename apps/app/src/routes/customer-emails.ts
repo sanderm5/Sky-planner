@@ -6,7 +6,7 @@
 
 import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { requireFeature } from '../middleware/features';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import type { AuthenticatedRequest, Kunde, ApiResponse } from '../types';
@@ -154,6 +154,7 @@ router.get(
  */
 router.post(
   '/templates',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { name, subject_template, body_template, category } = req.body;
 
@@ -204,6 +205,7 @@ router.post(
  */
 router.put(
   '/templates/:id',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -246,6 +248,7 @@ router.put(
  */
 router.delete(
   '/templates/:id',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -337,6 +340,7 @@ router.post(
  */
 router.post(
   '/send',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { template_id, kunde_id, custom_variables } = req.body;
 

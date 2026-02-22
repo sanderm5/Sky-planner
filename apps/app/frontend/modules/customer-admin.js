@@ -72,38 +72,42 @@ function renderCustomerAdmin() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    if (c.kategori === 'El-Kontroll' || c.kategori === 'El-Kontroll + Brannvarsling') {
-      if (c.neste_el_kontroll) {
-        const nextDate = new Date(c.neste_el_kontroll);
+    // Show control badges per service type (dynamic from registry)
+    const adminServiceTypes = serviceTypeRegistry.getAll();
+    adminServiceTypes.forEach(st => {
+      // Check services array first, then legacy columns by slug
+      const serviceData = (c.services || []).find(s => s.service_type_slug === st.slug || s.service_type_id === st.id);
+      let nesteKontroll = serviceData?.neste_kontroll;
+      if (!nesteKontroll && st.slug === 'el-kontroll') nesteKontroll = c.neste_el_kontroll;
+      if (!nesteKontroll && st.slug === 'brannvarsling') nesteKontroll = c.neste_brann_kontroll;
+      if (nesteKontroll) {
+        const nextDate = new Date(nesteKontroll);
         const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
         const statusClass = daysUntil < 0 ? 'overdue' : daysUntil <= 30 ? 'warning' : 'ok';
-        nextControlInfo += `<span class="control-badge ${statusClass}">El: ${escapeHtml(formatDateShort(c.neste_el_kontroll))}</span>`;
+        const shortName = st.name.length > 10 ? st.name.substring(0, 8) + '..' : st.name;
+        nextControlInfo += `<span class="control-badge ${statusClass}">${escapeHtml(shortName)}: ${escapeHtml(formatDateShort(nesteKontroll))}</span>`;
       }
-    }
-    if (c.kategori === 'Brannvarsling' || c.kategori === 'El-Kontroll + Brannvarsling') {
-      if (c.neste_brann_kontroll) {
-        const nextDate = new Date(c.neste_brann_kontroll);
-        const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
-        const statusClass = daysUntil < 0 ? 'overdue' : daysUntil <= 30 ? 'warning' : 'ok';
-        nextControlInfo += `<span class="control-badge ${statusClass}">Brann: ${escapeHtml(formatDateShort(c.neste_brann_kontroll))}</span>`;
-      }
+    });
+    // Fallback: generic neste_kontroll for customers without per-service-type dates
+    if (!nextControlInfo && c.neste_kontroll) {
+      const nextDate = new Date(c.neste_kontroll);
+      const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
+      const statusClass = daysUntil < 0 ? 'overdue' : daysUntil <= 30 ? 'warning' : 'ok';
+      nextControlInfo = `<span class="control-badge ${statusClass}">${escapeHtml(formatDateShort(c.neste_kontroll))}</span>`;
     }
 
-    // Build service info badges (el_type, brannsystem, driftstype) - use normalized values
+    // Build service info badges from subcategory assignments
     let serviceInfo = '';
-    if (c.el_type) {
-      serviceInfo += `<span class="service-badge type-badge">${escapeHtml(c.el_type)}</span>`;
-    }
-    if (c.brann_system) {
-      const normalizedSystem = normalizeBrannsystem(c.brann_system);
-      if (normalizedSystem) {
-        serviceInfo += `<span class="service-badge system-badge">${escapeHtml(normalizedSystem)}</span>`;
-      }
-    }
-    if (c.brann_driftstype) {
-      const normalizedDrift = normalizeDriftstype(c.brann_driftstype);
-      if (normalizedDrift) {
-        serviceInfo += `<span class="service-badge drift-badge">${escapeHtml(normalizedDrift)}</span>`;
+    const assignments = kundeSubcatMap[c.id] || [];
+    if (assignments.length > 0) {
+      for (const a of assignments) {
+        for (const group of allSubcategoryGroups) {
+          if (group.id !== a.group_id) continue;
+          const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
+          if (sub) {
+            serviceInfo += `<span class="service-badge">${escapeHtml(sub.navn)}</span>`;
+          }
+        }
       }
     }
 

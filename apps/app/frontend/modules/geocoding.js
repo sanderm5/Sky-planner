@@ -53,13 +53,22 @@ function debounce(func, wait) {
   };
 }
 
+// AbortController for canceling in-flight address searches
+let addressSearchController = null;
+
 // Search addresses using Kartverket API
 async function searchAddresses(query) {
   if (!query || query.length < 3) return [];
 
+  // Cancel any in-flight request to prevent stale results
+  if (addressSearchController) {
+    addressSearchController.abort();
+  }
+  addressSearchController = new AbortController();
+
   try {
     const url = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(query)}&fuzzy=true&treffPerSide=5`;
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: addressSearchController.signal });
     const data = await response.json();
 
     if (data.adresser && data.adresser.length > 0) {
@@ -74,6 +83,7 @@ async function searchAddresses(query) {
     }
     return [];
   } catch (error) {
+    if (error.name === 'AbortError') return [];
     console.error('Adressesøk feilet:', error);
     return [];
   }
@@ -191,6 +201,23 @@ function updatePostnummerStatus(status) {
 let addressSuggestions = [];
 let selectedSuggestionIndex = -1;
 
+// Reset autocomplete state (call when opening/closing customer modal)
+function resetAddressAutocomplete() {
+  addressSuggestions = [];
+  selectedSuggestionIndex = -1;
+  if (addressSearchController) {
+    addressSearchController.abort();
+    addressSearchController = null;
+  }
+  const container = document.getElementById('addressSuggestions');
+  if (container) {
+    container.innerHTML = '';
+    container.classList.remove('visible');
+  }
+  const adresseInput = document.getElementById('adresse');
+  if (adresseInput) adresseInput.setAttribute('aria-expanded', 'false');
+}
+
 // Setup address autocomplete functionality
 function setupAddressAutocomplete() {
   const adresseInput = document.getElementById('adresse');
@@ -285,14 +312,19 @@ function setupAddressAutocomplete() {
       updatePostnummerStatus('');
 
       if (value.length === 4) {
+        const valueAtRequest = value;
         updatePostnummerStatus('loading');
         const result = await lookupPostnummer(value);
 
-        if (result) {
-          poststedInput.value = result;
-          poststedInput.classList.add('auto-filled');
+        // Only update if postnummer hasn't changed while we were fetching
+        if (postnummerInput.value === valueAtRequest && result) {
+          // Only auto-fill poststed if user hasn't manually typed something
+          if (!poststedInput.value || poststedInput.classList.contains('auto-filled')) {
+            poststedInput.value = result;
+            poststedInput.classList.add('auto-filled');
+          }
           updatePostnummerStatus('valid');
-        } else {
+        } else if (postnummerInput.value === valueAtRequest && !result) {
           updatePostnummerStatus('invalid');
         }
       }

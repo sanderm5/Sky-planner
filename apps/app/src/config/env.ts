@@ -213,6 +213,7 @@ export function validateEnvironment(): EnvConfig {
 
     // Tripletex environment (test uses api.tripletex.io, production uses tripletex.no)
     TRIPLETEX_ENV: (getEnvString('TRIPLETEX_ENV', 'production') as 'test' | 'production'),
+    TRIPLETEX_CONSUMER_TOKEN: getEnvString('TRIPLETEX_CONSUMER_TOKEN'),
 
     // Mapbox
     MAPBOX_ACCESS_TOKEN: getEnvString('MAPBOX_ACCESS_TOKEN'),

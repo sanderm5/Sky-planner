@@ -8,6 +8,15 @@ const APP_API_URL = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'http
 
 export const ALL: APIRoute = async ({ request, params }) => {
   const path = params.path || '';
+
+  // Path traversal protection: reject paths containing '..' or null bytes
+  if (path.includes('..') || path.includes('\0')) {
+    return new Response(
+      JSON.stringify({ success: false, error: { code: 'BAD_REQUEST', message: 'Ugyldig path' } }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const targetUrl = `${APP_API_URL}/api/${path}`;
 
   // Get the original URL's query string
@@ -40,9 +49,19 @@ export const ALL: APIRoute = async ({ request, params }) => {
     }
 
     // Forward client IP for accurate rate limiting
-    const forwardedFor = request.headers.get('x-forwarded-for');
-    if (forwardedFor) {
-      headers.set('x-forwarded-for', forwardedFor);
+    // Use x-real-ip (set by Vercel) to avoid spoofed x-forwarded-for from clients
+    const realIP = request.headers.get('x-real-ip');
+    if (realIP) {
+      headers.set('x-forwarded-for', realIP);
+    } else {
+      // Fallback: use x-forwarded-for but only the first IP (closest to Vercel)
+      const forwardedFor = request.headers.get('x-forwarded-for');
+      if (forwardedFor) {
+        const firstIP = forwardedFor.split(',')[0]?.trim();
+        if (firstIP) {
+          headers.set('x-forwarded-for', firstIP);
+        }
+      }
     }
 
     // Build request options

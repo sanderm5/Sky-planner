@@ -35,7 +35,7 @@ function renderFilterPanelCategories() {
     const isActive = selectedCategory === combinedName;
     html += `
       <button class="category-btn ${isActive ? 'active' : ''}" data-category="${combinedName}">
-        ${icons} Begge
+        ${icons} ${serviceTypes.length > 2 ? 'Alle' : 'Begge'}
       </button>
     `;
   }
@@ -164,265 +164,10 @@ async function assignCustomerCategory(customerId, categoryName) {
   }
 }
 
-/**
- * Render driftskategori filter buttons dynamically based on selected category
- */
-/**
- * Normalize driftstype values for consistency
- */
-function normalizeDriftstype(driftstype) {
-  if (!driftstype) return null;
-  const d = driftstype.trim();
-
-  // Normalize common variations
-  if (d.toLowerCase() === 'gartn' || d.toLowerCase() === 'gartneri') return 'Gartneri';
-  if (d.toLowerCase() === 'sau / geit' || d.toLowerCase() === 'sau/geit') return 'Sau/Geit';
-  if (d.toLowerCase() === 'storfe/sau' || d.toLowerCase() === 'storfe+sau') return 'Storfe/Sau';
-  if (d.toLowerCase() === 'fjørfe' || d.toLowerCase() === 'fjærfeoppdrett') return 'Fjørfe';
-  if (d.toLowerCase() === 'svin' || d.toLowerCase() === 'gris') return 'Gris';
-  if (d.toLowerCase() === 'ingen' || d.startsWith('Utf:')) return null; // Skip invalid
-
-  return d;
-}
-
-function renderDriftskategoriFilter() {
-  const container = document.getElementById('driftFilterButtons');
-  if (!container) return;
-
-  // MVP-modus: Skjul avanserte filtre
-  const filterContainer = container.parentElement;
-  if (isMvpMode()) {
-    if (filterContainer) filterContainer.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-
-  // Get unique driftstype values from actual customer data
-  const counts = {};
-  customers.forEach(c => {
-    if (c.brann_driftstype && c.brann_driftstype.trim()) {
-      const normalized = normalizeDriftstype(c.brann_driftstype);
-      if (normalized) {
-        counts[normalized] = (counts[normalized] || 0) + 1;
-      }
-    }
-  });
-
-  // Sort by count (most common first)
-  const driftstyper = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, count]) => ({ name, count }));
-
-  // Hide filter container if no driftstype values
-  if (filterContainer) {
-    filterContainer.style.display = driftstyper.length > 0 ? 'block' : 'none';
-  }
-
-  if (driftstyper.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  // Start with "Alle" button
-  let html = `
-    <button class="category-btn drift-btn ${selectedDriftskategori === 'all' ? 'active' : ''}" data-drift="all">
-      <i class="fas fa-list"></i> Alle
-    </button>
-  `;
-
-  // Add button for each driftstype
-  driftstyper.forEach(({ name, count }) => {
-    const isActive = selectedDriftskategori === name;
-    html += `
-      <button class="category-btn drift-btn ${isActive ? 'active' : ''}" data-drift="${escapeHtml(name)}">${escapeHtml(name)} (${count})</button>
-    `;
-  });
-
-  container.innerHTML = html;
-  attachDriftFilterHandlers();
-}
-
-/**
- * Normalize brannsystem value to main category
- * ES 801, ES 601, "2 x Elotec" etc. → "Elotec"
- * "Icas" → "ICAS"
- * "Elotec + ICAS" etc. → "Begge"
- */
-function normalizeBrannsystem(system) {
-  if (!system) return null;
-  const s = system.trim().toLowerCase();
-
-  // Skip header/invalid values
-  if (s === 'type') return null;
-
-  // Check for "both" systems
-  if (s.includes('elotec') && s.includes('icas')) return 'Begge';
-  if (s.includes('es 801') && s.includes('icas')) return 'Begge';
-
-  // Elotec variants (including ES 801, ES 601 which are Elotec models)
-  if (s.includes('elotec') || s.startsWith('es 8') || s.startsWith('es 6') || s === '2 x elotec') return 'Elotec';
-
-  // ICAS variants
-  if (s.includes('icas')) return 'ICAS';
-
-  // Other systems
-  return 'Annet';
-}
-
-/**
- * Render brannsystem filter buttons
- */
-function renderBrannsystemFilter() {
-  const container = document.getElementById('brannsystemFilterButtons');
-  if (!container) return;
-
-  // MVP-modus: Skjul avanserte filtre
-  const filterContainer = container.parentElement;
-  if (isMvpMode()) {
-    if (filterContainer) filterContainer.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-
-  // Count customers per normalized brannsystem category
-  const counts = { 'Elotec': 0, 'ICAS': 0, 'Begge': 0, 'Annet': 0 };
-  customers.forEach(c => {
-    if (c.brann_system && c.brann_system.trim()) {
-      const normalized = normalizeBrannsystem(c.brann_system);
-      if (normalized) counts[normalized]++;
-    }
-  });
-
-  // Only show categories with customers
-  const categories = Object.entries(counts).filter(([_, count]) => count > 0);
-
-  // Hide filter container if no brannsystem values
-  if (filterContainer) {
-    filterContainer.style.display = categories.length > 0 ? 'block' : 'none';
-  }
-
-  if (categories.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  // Start with "Alle" button
-  let html = `
-    <button class="category-btn brannsystem-btn ${selectedBrannsystem === 'all' ? 'active' : ''}" data-brannsystem="all">
-      <i class="fas fa-list"></i> Alle
-    </button>
-  `;
-
-  // Add button for each category
-  categories.forEach(([category, count]) => {
-    const isActive = selectedBrannsystem === category;
-    html += `
-      <button class="category-btn brannsystem-btn ${isActive ? 'active' : ''}" data-brannsystem="${escapeHtml(category)}">${escapeHtml(category)} (${count})</button>
-    `;
-  });
-
-  container.innerHTML = html;
-  attachBrannsystemFilterHandlers();
-}
-
-/**
- * Attach click handlers to brannsystem filter buttons
- */
-function attachBrannsystemFilterHandlers() {
-  const container = document.getElementById('brannsystemFilterButtons');
-  if (!container) return;
-
-  container.querySelectorAll('.brannsystem-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Remove active from all
-      container.querySelectorAll('.brannsystem-btn').forEach(b => b.classList.remove('active'));
-      // Add active to clicked
-      btn.classList.add('active');
-      // Update selected brannsystem
-      selectedBrannsystem = btn.dataset.brannsystem;
-      // Save to localStorage
-      localStorage.setItem('selectedBrannsystem', selectedBrannsystem);
-      // Apply filter
-      applyFilters();
-    });
-  });
-}
-
-/**
- * Render kundetype (el_type) filter buttons
- */
-function renderElTypeFilter() {
-  const container = document.getElementById('elTypeFilterButtons');
-  if (!container) return;
-
-  // MVP-modus: Skjul avanserte filtre
-  const filterContainer = container.parentElement;
-  if (isMvpMode()) {
-    if (filterContainer) filterContainer.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-
-  // Count customers per el_type
-  const counts = {};
-  customers.forEach(c => {
-    if (c.el_type && c.el_type.trim()) {
-      const type = c.el_type.trim();
-      counts[type] = (counts[type] || 0) + 1;
-    }
-  });
-
-  // Sort by count
-  const types = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, count]) => ({ name, count }));
-
-  // Hide filter container if no values
-  if (filterContainer) {
-    filterContainer.style.display = types.length > 0 ? 'block' : 'none';
-  }
-
-  if (types.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  // Start with "Alle" button
-  let html = `
-    <button class="category-btn eltype-btn ${selectedElType === 'all' ? 'active' : ''}" data-eltype="all">
-      <i class="fas fa-list"></i> Alle
-    </button>
-  `;
-
-  // Add button for each type
-  types.forEach(({ name, count }) => {
-    const isActive = selectedElType === name;
-    html += `
-      <button class="category-btn eltype-btn ${isActive ? 'active' : ''}" data-eltype="${escapeHtml(name)}">${escapeHtml(name)} (${count})</button>
-    `;
-  });
-
-  container.innerHTML = html;
-  attachElTypeFilterHandlers();
-}
-
-/**
- * Attach click handlers to el_type filter buttons
- */
-function attachElTypeFilterHandlers() {
-  const container = document.getElementById('elTypeFilterButtons');
-  if (!container) return;
-
-  container.querySelectorAll('.eltype-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      container.querySelectorAll('.eltype-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedElType = btn.dataset.eltype;
-      localStorage.setItem('selectedElType', selectedElType);
-      applyFilters();
-    });
-  });
-}
+// Legacy filter functions (normalizeDriftstype, renderDriftskategoriFilter,
+// normalizeBrannsystem, renderBrannsystemFilter, renderElTypeFilter, etc.)
+// removed — migrated to subcategory system (migration 044).
+// All filtering now handled by renderSubcategoryFilter() below.
 
 /**
  * Attach click handlers to category filter buttons
@@ -440,40 +185,339 @@ function attachCategoryFilterHandlers() {
       // Update selected category
       selectedCategory = btn.dataset.category;
 
-      // Reset driftskategori when category changes (cascading behavior)
-      selectedDriftskategori = 'all';
-      localStorage.setItem('selectedDriftskategori', 'all');
-
-      // Re-render driftskategori filter with new subtypes based on selected category
-      renderDriftskategoriFilter();
-
       // Apply filter
       applyFilters();
     });
   });
 }
 
-/**
- * Attach click handlers to drift filter buttons
- */
-function attachDriftFilterHandlers() {
-  const container = document.getElementById('driftFilterButtons');
-  if (!container) return;
+// ========================================
+// SUBCATEGORY FILTER
+// ========================================
 
-  container.querySelectorAll('.drift-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Remove active from all
-      container.querySelectorAll('.drift-btn').forEach(b => b.classList.remove('active'));
-      // Add active to clicked
-      btn.classList.add('active');
-      // Update selected driftskategori
-      selectedDriftskategori = btn.dataset.drift;
-      // Save to localStorage
-      localStorage.setItem('selectedDriftskategori', selectedDriftskategori);
-      // Apply filter
-      applyFilters();
+/**
+ * Render subcategory filter buttons grouped by service type and subcategory group
+ */
+/**
+ * Render subcategory section: filter buttons + inline management.
+ * Always visible when organization has service types.
+ */
+let subcatAdminMode = false;
+let collapsedSubcatGroups = {};
+
+function renderSubcategoryFilter() {
+  const contentEl = document.getElementById('subcategoryFilterContent');
+  const filterContainer = document.getElementById('subcategoryFilter');
+  if (!contentEl || !filterContainer) return;
+
+  const groups = allSubcategoryGroups || [];
+
+  if (groups.length === 0) {
+    // Still show filter container with add-group input for admins
+    filterContainer.style.display = 'block';
+    contentEl.innerHTML = `<div class="subcat-add-row subcat-add-group-row">
+      <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
+      <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+    </div>`;
+    attachSubcategoryHandlers();
+    return;
+  }
+
+  filterContainer.style.display = 'block';
+
+  // Sync admin toggle button state
+  const toggleBtn = document.getElementById('subcatAdminToggle');
+  if (toggleBtn) toggleBtn.classList.toggle('active', subcatAdminMode);
+
+  // Count customers per subcategory
+  const subcatCounts = {};
+  Object.values(kundeSubcatMap).forEach(assignments => {
+    assignments.forEach(a => {
+      const key = `${a.group_id}_${a.subcategory_id}`;
+      subcatCounts[key] = (subcatCounts[key] || 0) + 1;
     });
   });
+
+  let html = '';
+
+  groups.forEach(group => {
+    const subs = group.subcategories || [];
+    const activeSubcatId = selectedSubcategories[group.id];
+    const isCollapsed = collapsedSubcatGroups[group.id];
+    const activeSub = activeSubcatId ? subs.find(s => s.id === activeSubcatId) : null;
+
+    // Group heading (clickable for collapse)
+    html += `<div class="subcat-group ${isCollapsed ? 'subcat-group-collapsed' : ''}">
+      <div class="subcat-group-header">
+        <span class="subcat-group-name" data-toggle-group="${group.id}">
+          <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'} subcat-chevron"></i>
+          ${escapeHtml(group.navn)}
+          ${isCollapsed && activeSub ? `<span class="subcat-active-indicator">${escapeHtml(activeSub.navn)}</span>` : ''}
+        </span>
+        <span class="subcat-admin-only">
+          <button class="category-manage-btn" data-action="editGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
+          <button class="category-manage-btn subcat-delete-btn" data-action="deleteGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+        </span>
+      </div>`;
+
+    // Filter buttons (hidden when collapsed)
+    html += `<div class="subcat-group-body">`;
+    if (subs.length > 0) {
+      html += `<div class="category-filter-buttons subcat-filter-buttons">`;
+      html += `<button class="category-btn subcat-btn ${!activeSubcatId ? 'active' : ''}" data-group-id="${group.id}" data-subcat-id="all">Alle</button>`;
+      subs.forEach(sub => {
+        const count = subcatCounts[`${group.id}_${sub.id}`] || 0;
+        const isActive = activeSubcatId === sub.id;
+        html += `<span class="subcat-btn-wrapper">
+          <button class="category-btn subcat-btn ${isActive ? 'active' : ''}" data-group-id="${group.id}" data-subcat-id="${sub.id}">
+            ${escapeHtml(sub.navn)} <span class="subcat-count">${count}</span>
+          </button>
+          <span class="subcat-admin-only subcat-item-actions">
+            <button class="category-manage-btn" data-action="editSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
+            <button class="category-manage-btn subcat-delete-btn" data-action="deleteSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+          </span>
+        </span>`;
+      });
+      html += `</div>`;
+    }
+
+    // Add subcategory input (admin only)
+    html += `<div class="subcat-add-row subcat-admin-only">
+      <input type="text" class="subcat-add-input" placeholder="Ny underkategori..." maxlength="100" data-add-subcat-input data-group-id="${group.id}">
+      <button class="subcat-add-btn" data-action="addSubcat" data-group-id="${group.id}" title="Legg til"><i class="fas fa-plus"></i></button>
+    </div>`;
+
+    html += `</div>`; // close subcat-group-body
+    html += `</div>`; // close subcat-group
+  });
+
+  // Add group input (admin only)
+  html += `<div class="subcat-add-row subcat-add-group-row subcat-admin-only">
+    <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
+    <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+  </div>`;
+
+  contentEl.innerHTML = html;
+  contentEl.classList.toggle('subcat-admin-active', subcatAdminMode);
+  attachSubcategoryHandlers();
+}
+
+/**
+ * Attach click handlers for subcategory filter buttons and CRUD actions
+ */
+function attachSubcategoryHandlers() {
+  const contentEl = document.getElementById('subcategoryFilterContent');
+  if (!contentEl) return;
+
+  // Admin toggle button (outside contentEl — attach once globally)
+  const adminToggle = document.getElementById('subcatAdminToggle');
+  if (adminToggle && !adminToggle.dataset.handlerAttached) {
+    adminToggle.dataset.handlerAttached = 'true';
+    adminToggle.addEventListener('click', () => {
+      subcatAdminMode = !subcatAdminMode;
+      adminToggle.classList.toggle('active', subcatAdminMode);
+      contentEl.classList.toggle('subcat-admin-active', subcatAdminMode);
+    });
+  }
+
+  // All handlers via delegation (only attach once)
+  if (contentEl.dataset.subcatHandlersAttached) return;
+  contentEl.dataset.subcatHandlersAttached = 'true';
+
+  contentEl.addEventListener('click', async (e) => {
+    // Collapse/expand group toggle
+    const groupToggle = e.target.closest('[data-toggle-group]');
+    if (groupToggle) {
+      const groupId = parseInt(groupToggle.dataset.toggleGroup, 10);
+      collapsedSubcatGroups[groupId] = !collapsedSubcatGroups[groupId];
+      renderSubcategoryFilter();
+      return;
+    }
+
+    // Filter button clicks
+    const filterBtn = e.target.closest('.subcat-btn');
+    if (filterBtn) {
+      const groupId = parseInt(filterBtn.dataset.groupId, 10);
+      const subcatId = filterBtn.dataset.subcatId;
+      if (subcatId === 'all') {
+        delete selectedSubcategories[groupId];
+      } else {
+        selectedSubcategories[groupId] = parseInt(subcatId, 10);
+      }
+      renderSubcategoryFilter();
+      applyFilters();
+      return;
+    }
+
+    // CRUD action buttons
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+
+    const action = btn.dataset.action;
+
+    if (action === 'addGroup') {
+      const input = contentEl.querySelector('input[data-add-group-input]');
+      const navn = input?.value?.trim();
+      if (!navn) { input?.focus(); return; }
+      btn.disabled = true;
+      try {
+        const res = await apiFetch('/api/subcategories/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ navn })
+        });
+        if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Feil'); }
+        const json = await res.json();
+        subcatRegistryAddGroup(json.data || { id: Date.now(), navn });
+        showToast('Gruppe opprettet', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+      finally { btn.disabled = false; }
+    }
+
+    else if (action === 'addSubcat') {
+      const groupId = parseInt(btn.dataset.groupId, 10);
+      const input = contentEl.querySelector(`input[data-add-subcat-input][data-group-id="${groupId}"]`);
+      const navn = input?.value?.trim();
+      if (!navn) { input?.focus(); return; }
+      btn.disabled = true;
+      try {
+        const res = await apiFetch('/api/subcategories/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_id: groupId, navn })
+        });
+        if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Feil'); }
+        const json = await res.json();
+        subcatRegistryAddItem(groupId, json.data || { id: Date.now(), navn });
+        showToast('Underkategori opprettet', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+      finally { btn.disabled = false; }
+    }
+
+    else if (action === 'editGroup') {
+      const groupId = parseInt(btn.dataset.groupId, 10);
+      const currentName = btn.dataset.groupNavn;
+      const newName = prompt('Nytt navn for gruppen:', currentName);
+      if (!newName || newName.trim() === currentName) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/groups/${groupId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ navn: newName.trim() })
+        });
+        if (!res.ok) throw new Error('Kunne ikke oppdatere');
+        subcatRegistryEditGroup(groupId, newName.trim());
+        showToast('Gruppe oppdatert', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    else if (action === 'deleteGroup') {
+      const groupId = parseInt(btn.dataset.groupId, 10);
+      const navn = btn.dataset.groupNavn;
+      const confirmed = await showConfirm(`Slett gruppen "${navn}"? Alle underkategorier slettes også.`, 'Slette gruppe');
+      if (!confirmed) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/groups/${groupId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Kunne ikke slette');
+        subcatRegistryDeleteGroup(groupId);
+        delete selectedSubcategories[groupId];
+        showToast('Gruppe slettet', 'success');
+        renderSubcategoryFilter();
+        applyFilters();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    else if (action === 'editSubcat') {
+      const subcatId = parseInt(btn.dataset.subcatId, 10);
+      const currentName = btn.dataset.subcatNavn;
+      const newName = prompt('Nytt navn:', currentName);
+      if (!newName || newName.trim() === currentName) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/items/${subcatId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ navn: newName.trim() })
+        });
+        if (!res.ok) throw new Error('Kunne ikke oppdatere');
+        subcatRegistryEditItem(subcatId, newName.trim());
+        showToast('Underkategori oppdatert', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    else if (action === 'deleteSubcat') {
+      const subcatId = parseInt(btn.dataset.subcatId, 10);
+      const navn = btn.dataset.subcatNavn;
+      const confirmed = await showConfirm(`Slett "${navn}"?`, 'Slette underkategori');
+      if (!confirmed) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/items/${subcatId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Kunne ikke slette');
+        subcatRegistryDeleteItem(subcatId);
+        showToast('Underkategori slettet', 'success');
+        renderSubcategoryFilter();
+        applyFilters();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
+
+  // Enter key to submit inline inputs
+  contentEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const input = e.target;
+    if (input.dataset.addGroupInput !== undefined) {
+      contentEl.querySelector('button[data-action="addGroup"]')?.click();
+      e.preventDefault();
+    } else if (input.dataset.addSubcatInput !== undefined) {
+      const groupId = input.dataset.groupId;
+      contentEl.querySelector(`button[data-action="addSubcat"][data-group-id="${groupId}"]`)?.click();
+      e.preventDefault();
+    }
+  });
+}
+
+/**
+ * Local registry helpers — update allSubcategoryGroups in-place
+ * instead of reloading the full /api/config (which runs 6+ DB queries).
+ */
+function subcatRegistryAddGroup(group) {
+  allSubcategoryGroups.push({ id: group.id, navn: group.navn, subcategories: [] });
+}
+
+function subcatRegistryAddItem(groupId, item) {
+  const group = allSubcategoryGroups.find(g => g.id === groupId);
+  if (group) {
+    if (!group.subcategories) group.subcategories = [];
+    group.subcategories.push({ id: item.id, navn: item.navn });
+  }
+}
+
+function subcatRegistryEditGroup(groupId, newName) {
+  const group = allSubcategoryGroups.find(g => g.id === groupId);
+  if (group) group.navn = newName;
+}
+
+function subcatRegistryDeleteGroup(groupId) {
+  const idx = allSubcategoryGroups.findIndex(g => g.id === groupId);
+  if (idx !== -1) allSubcategoryGroups.splice(idx, 1);
+}
+
+function subcatRegistryEditItem(subcatId, newName) {
+  for (const group of allSubcategoryGroups) {
+    const item = (group.subcategories || []).find(s => s.id === subcatId);
+    if (item) { item.navn = newName; return; }
+  }
+}
+
+function subcatRegistryDeleteItem(subcatId) {
+  for (const group of allSubcategoryGroups) {
+    if (!group.subcategories) continue;
+    const idx = group.subcategories.findIndex(s => s.id === subcatId);
+    if (idx !== -1) { group.subcategories.splice(idx, 1); return; }
+  }
 }
 
 // ========================================

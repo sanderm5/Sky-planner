@@ -605,14 +605,14 @@ function getFeatureConfig(key) {
 }
 
 // Backwards-compatible helpers (used by existing code)
-// These check enabledFeatures first, then fall back to legacy app_mode
+// These use the explicit app_mode set per organization in the database
 function isFullMode() {
-  // If features are loaded, check for industry-specific features
-  if (appConfig.enabledFeatures && appConfig.enabledFeatures.length > 0) {
-    return hasFeature('lifecycle_colors') || hasFeature('context_menu');
+  // Primary check: explicit app mode set per organization
+  if (appConfig.appMode) {
+    return appConfig.appMode === 'full';
   }
   // Legacy fallback
-  return appConfig.appMode === 'full' || localStorage.getItem('appMode') === 'full';
+  return localStorage.getItem('appMode') === 'full';
 }
 
 function isMvpMode() {
@@ -661,6 +661,33 @@ function applyMvpModeUI() {
 // AUTHENTICATION
 // Logout, impersonation, session verification
 // ========================================
+
+/**
+ * Check if current user has write permissions (redigerer or admin).
+ * Returns false for leser role.
+ */
+function canEdit() {
+  const role = localStorage.getItem('userRole') || 'leser';
+  return role === 'admin' || role === 'redigerer';
+}
+
+/**
+ * Check if current user is admin.
+ */
+function isAdmin() {
+  const role = localStorage.getItem('userRole') || 'leser';
+  return role === 'admin';
+}
+
+/**
+ * Apply role-based UI classes to body.
+ * Adds 'role-leser' when user is a reader (hides write UI via CSS).
+ */
+function applyRoleUI() {
+  const role = localStorage.getItem('userRole') || 'leser';
+  document.body.classList.remove('role-leser', 'role-redigerer', 'role-admin');
+  document.body.classList.add(`role-${role}`);
+}
 
 // Handle logout (for SPA - shows login view without redirect)
 function handleLogout() {
@@ -766,7 +793,7 @@ async function checkExistingAuth() {
           localStorage.setItem('userName', user.navn || 'Bruker');
           localStorage.setItem('userEmail', user.epost || '');
           localStorage.setItem('userType', user.type || 'klient');
-          localStorage.setItem('userRole', user.type === 'bruker' ? 'admin' : 'klient');
+          localStorage.setItem('userRole', user.rolle || (user.type === 'bruker' ? 'admin' : 'leser'));
           // Store super admin flag
           if (user.isSuperAdmin) {
             localStorage.setItem('isSuperAdmin', 'true');
@@ -800,6 +827,9 @@ async function checkExistingAuth() {
           await reloadConfigWithAuth();
         }
 
+        // Apply role-based UI restrictions
+        applyRoleUI();
+
         Logger.log('SSO session verified successfully');
         return true;
       }
@@ -819,9 +849,10 @@ async function checkExistingAuth() {
         const data = await response.json();
         if (data.klient) {
           localStorage.setItem('userName', data.klient.navn || 'Bruker');
-          localStorage.setItem('userRole', data.klient.rolle || 'klient');
+          localStorage.setItem('userRole', data.klient.rolle || 'leser');
           localStorage.setItem('userType', data.klient.type || 'klient');
         }
+        applyRoleUI();
         return true;
       }
     } catch (error) {
@@ -1373,10 +1404,22 @@ function handleRealtimeUpdate(message) {
     case 'avtale_deleted':
     case 'avtale_series_deleted':
     case 'avtaler_bulk_created':
-      // Calendar changed - reload if calendar is visible
+      // Calendar changed - reload data and re-render
       Logger.log(`Avtale ${type.replace('avtale_', '').replace('avtaler_', '')}`);
       if (typeof loadAvtaler === 'function') {
-        loadAvtaler();
+        loadAvtaler().then(() => {
+          if (typeof renderCalendar === 'function') renderCalendar();
+        });
+      }
+      break;
+
+    case 'rute_created':
+    case 'rute_updated':
+    case 'rute_deleted':
+      // Rute-endringer kan oppdatere kundedata (f.eks. kontrolldatoer ved rute-fullføring)
+      Logger.log(`Rute ${type.replace('rute_', '')}`);
+      if (typeof loadCustomers === 'function') {
+        loadCustomers();
       }
       break;
 
@@ -1688,17 +1731,26 @@ class ServiceTypeRegistry {
   /**
    * Format interval as label
    */
-  formatInterval(months) {
-    const interval = this.intervals.find(i => i.months === months);
+  formatInterval(value) {
+    const interval = this.intervals.find(i => i.months === value);
     if (interval?.label) return interval.label;
-    if (months < 12) return `${months} mnd`;
-    if (months === 12) return '1 år';
-    if (months % 12 === 0) return `${months / 12} år`;
-    return `${months} mnd`;
+    // Negative values = days (for weekly intervals)
+    if (value < 0) {
+      const days = Math.abs(value);
+      if (days === 7) return '1 uke';
+      if (days % 7 === 0) return `${days / 7} uker`;
+      return `${days} dager`;
+    }
+    if (value < 12) return `${value} mnd`;
+    if (value === 12) return '1 år';
+    if (value % 12 === 0) return `${value / 12} år`;
+    return `${value} mnd`;
   }
 
   /**
    * Get available intervals for dropdowns
+   * Negative values = days (e.g. -7 = weekly, -14 = biweekly)
+   * Positive values = months
    */
   getIntervalOptions() {
     if (this.intervals.length > 0) {
@@ -1710,10 +1762,14 @@ class ServiceTypeRegistry {
     }
     // Fallback to common intervals
     return [
+      { value: -7, label: '1 uke', isDefault: false },
+      { value: -14, label: '2 uker', isDefault: false },
+      { value: 1, label: '1 mnd', isDefault: false },
+      { value: 3, label: '3 mnd', isDefault: false },
       { value: 6, label: '6 mnd', isDefault: false },
-      { value: 12, label: '1 år', isDefault: false },
+      { value: 12, label: '1 år', isDefault: true },
       { value: 24, label: '2 år', isDefault: false },
-      { value: 36, label: '3 år', isDefault: true },
+      { value: 36, label: '3 år', isDefault: false },
       { value: 60, label: '5 år', isDefault: false }
     ];
   }
@@ -1733,12 +1789,13 @@ class ServiceTypeRegistry {
       </button>`;
     });
 
-    // Add "Begge" tab for combined categories (backward compatibility)
+    // Add combined tab for all categories
     if (serviceTypes.length >= 2) {
       const combinedName = serviceTypes.map(st => st.name).join(' + ');
+      const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';
       const isActive = activeCategory === combinedName || activeCategory === 'El-Kontroll + Brannvarsling';
       html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${combinedName}">
-        ${serviceTypes.map(st => this.getIcon(st)).join('')} Begge
+        ${serviceTypes.map(st => this.getIcon(st)).join('')} ${combinedLabel}
       </button>`;
     }
 
@@ -1746,25 +1803,32 @@ class ServiceTypeRegistry {
   }
 
   /**
-   * Generate category select options HTML
+   * Generate category checkbox HTML (multi-select)
    */
-  renderCategoryOptions(selectedValue = '') {
+  renderCategoryCheckboxes(selectedValue = '') {
     const serviceTypes = this.getAll();
+    const selectedNames = selectedValue.split(' + ').map(s => s.trim()).filter(Boolean);
     let html = '';
 
     serviceTypes.forEach(st => {
-      const selected = selectedValue === st.name || selectedValue === st.slug ? 'selected' : '';
-      html += `<option value="${escapeHtml(st.name)}" ${selected}>${escapeHtml(st.name)}</option>`;
+      const checked = selectedNames.includes(st.name) || selectedNames.includes(st.slug) ? 'checked' : '';
+      html += `
+        <label class="kategori-checkbox-label">
+          <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
+          <i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
+          ${escapeHtml(st.name)}
+        </label>`;
     });
 
-    // Combined option for backward compatibility
-    if (serviceTypes.length >= 2) {
-      const combinedName = serviceTypes.map(st => st.name).join(' + ');
-      const selected = selectedValue === combinedName ? 'selected' : '';
-      html += `<option value="${escapeHtml(combinedName)}" ${selected}>Begge (${escapeHtml(combinedName)})</option>`;
-    }
-
     return html;
+  }
+
+  /**
+   * Get selected categories from checkboxes as " + " joined string
+   */
+  getSelectedCategories() {
+    const checkboxes = document.querySelectorAll('#kategoriCheckboxes input[name="kategori"]:checked');
+    return Array.from(checkboxes).map(cb => cb.value).join(' + ');
   }
 
   /**
@@ -1779,7 +1843,6 @@ class ServiceTypeRegistry {
       const selected = selectedValue === sub.name || selectedValue === sub.slug ? 'selected' : '';
       html += `<option value="${escapeHtml(sub.name)}" ${selected}>${escapeHtml(sub.name)}</option>`;
     });
-
     return html;
   }
 
@@ -1788,26 +1851,6 @@ class ServiceTypeRegistry {
    */
   renderEquipmentOptions(serviceTypeSlug, selectedValue = '') {
     const st = this.getBySlug(serviceTypeSlug);
-
-    // Fallback for brannvarsling equipment types - grouped by brand
-    if (serviceTypeSlug === 'brannvarsling' && (!st || !st.equipmentTypes || st.equipmentTypes.length === 0)) {
-      const isSelected = (val) => selectedValue === val ? 'selected' : '';
-      let html = '<option value="">Ikke valgt</option>';
-      html += `<optgroup label="Elotec">`;
-      html += `<option value="Elotec" ${isSelected('Elotec')}>Elotec</option>`;
-      html += `<option value="ES 801" ${isSelected('ES 801')}>ES 801</option>`;
-      html += `<option value="ES 601" ${isSelected('ES 601')}>ES 601</option>`;
-      html += `<option value="2 x Elotec" ${isSelected('2 x Elotec')}>2 x Elotec</option>`;
-      html += `</optgroup>`;
-      html += `<optgroup label="ICAS">`;
-      html += `<option value="ICAS" ${isSelected('ICAS')}>ICAS</option>`;
-      html += `</optgroup>`;
-      html += `<optgroup label="Begge">`;
-      html += `<option value="Elotec + ICAS" ${isSelected('Elotec + ICAS')}>Elotec + ICAS</option>`;
-      html += `</optgroup>`;
-      return html;
-    }
-
     if (!st || !st.equipmentTypes || st.equipmentTypes.length === 0) return '';
 
     let html = '<option value="">Ikke valgt</option>';
@@ -1815,7 +1858,6 @@ class ServiceTypeRegistry {
       const selected = selectedValue === eq.name || selectedValue === eq.slug ? 'selected' : '';
       html += `<option value="${escapeHtml(eq.name)}" ${selected}>${escapeHtml(eq.name)}</option>`;
     });
-
     return html;
   }
 
@@ -1841,23 +1883,23 @@ class ServiceTypeRegistry {
     if (categoryFilter === 'all' || categoryFilter === 'alle') return true;
 
     const kategori = customer.kategori || '';
+    if (!kategori) return false;
+    const kundeKats = kategori.split(' + ').map(s => s.trim());
 
     // Direct match with service type slug or name
     const st = this.getBySlug(categoryFilter);
     if (st) {
-      // Exact match only - "Brannvarsling" should NOT match "El-Kontroll + Brannvarsling"
-      return kategori === st.name;
+      return kundeKats.includes(st.name);
     }
 
-    // Check for combined category (backward compatibility)
-    if (categoryFilter.includes('-') || categoryFilter.includes('+')) {
-      const serviceTypes = this.getAll();
-      const allMatched = serviceTypes.every(st => kategori.includes(st.name));
-      return allMatched && kategori.includes('+');
+    // Combined filter (e.g. "El-Kontroll + Brannvarsling") — customer must have ALL
+    const filterKats = categoryFilter.split(' + ').map(s => s.trim());
+    if (filterKats.length > 1) {
+      return filterKats.every(fk => kundeKats.includes(fk));
     }
 
-    // Legacy direct string match - exact match only
-    return kategori === categoryFilter;
+    // Direct name match
+    return kundeKats.includes(categoryFilter);
   }
 
   /**
@@ -2028,37 +2070,22 @@ class ServiceTypeRegistry {
     return getIconHtml(defaultSt);
   }
 
-  /**
-   * Generate driftskategori options (brann-related subtypes)
-   */
-  renderDriftsOptions(selectedValue = '') {
-    const brannService = this.getBySlug('brannvarsling');
-    if (!brannService || !brannService.subtypes || brannService.subtypes.length === 0) {
-      // Fallback to default options - includes all common driftstyper
-      const defaults = ['Storfe', 'Sau', 'Storfe/Sau', 'Geit', 'Gris', 'Svin', 'Gartneri', 'Korn', 'Fjærfeoppdrett', 'Sau/Geit'];
-      let html = '<option value="">Ingen / Ikke valgt</option>';
-      defaults.forEach(d => {
-        const selected = selectedValue === d ? 'selected' : '';
-        html += `<option value="${d}" ${selected}>${d}</option>`;
-      });
-      return html;
-    }
-
-    let html = '<option value="">Ingen / Ikke valgt</option>';
-    brannService.subtypes.forEach(subtype => {
-      const selected = subtype.name === selectedValue ? 'selected' : '';
-      html += `<option value="${subtype.name}" ${selected}>${subtype.name}</option>`;
-    });
-    return html;
-  }
+  // renderDriftsOptions() removed — migrated to subcategory system (migration 044)
 
   /**
    * Render dynamic service sections for customer modal
    * @param {Object} customer - Customer object with optional services array
+   * @param {Array<string>} selectedNames - Optional filter: only render sections for these category names
    * @returns {string} HTML for all service sections
    */
-  renderServiceSections(customer = {}) {
-    const serviceTypes = this.getAll();
+  renderServiceSections(customer = {}, selectedNames = null) {
+    let serviceTypes = this.getAll();
+    if (serviceTypes.length === 0) return '';
+
+    // Filter to only selected categories if specified
+    if (selectedNames && selectedNames.length > 0) {
+      serviceTypes = serviceTypes.filter(st => selectedNames.includes(st.name));
+    }
     if (serviceTypes.length === 0) return '';
 
     const services = customer.services || [];
@@ -2066,9 +2093,35 @@ class ServiceTypeRegistry {
 
     serviceTypes.forEach(st => {
       // Find existing service data for this type
-      const serviceData = services.find(s =>
+      let serviceData = services.find(s =>
         s.service_type_slug === st.slug || s.service_type_id === st.id
       ) || {};
+
+      // Fallback to legacy columns if no dynamic service data
+      if (!serviceData.siste_kontroll && !serviceData.neste_kontroll) {
+        if (st.slug === 'el-kontroll' && (customer.siste_el_kontroll || customer.neste_el_kontroll)) {
+          serviceData = {
+            ...serviceData,
+            siste_kontroll: customer.siste_el_kontroll || '',
+            neste_kontroll: customer.neste_el_kontroll || '',
+            intervall_months: customer.el_kontroll_intervall || st.defaultInterval
+          };
+        } else if (st.slug === 'brannvarsling' && (customer.siste_brann_kontroll || customer.neste_brann_kontroll)) {
+          serviceData = {
+            ...serviceData,
+            siste_kontroll: customer.siste_brann_kontroll || '',
+            neste_kontroll: customer.neste_brann_kontroll || '',
+            intervall_months: customer.brann_kontroll_intervall || st.defaultInterval
+          };
+        } else if (customer.siste_kontroll || customer.neste_kontroll) {
+          serviceData = {
+            ...serviceData,
+            siste_kontroll: customer.siste_kontroll || '',
+            neste_kontroll: customer.neste_kontroll || '',
+            intervall_months: customer.kontroll_intervall_mnd || st.defaultInterval
+          };
+        }
+      }
 
       const hasSubtypes = st.subtypes && st.subtypes.length > 0;
       const hasEquipment = st.equipmentTypes && st.equipmentTypes.length > 0;
@@ -2206,10 +2259,49 @@ class ServiceTypeRegistry {
 
     // MVP-modus: vis kontrollinfo per servicetype
     if (isMvpMode()) {
-      // If organization has multiple service types, show each one for all customers
+      // Filter service types based on customer's kategori
       if (serviceTypes.length >= 2) {
+        const kundeKats = kategori ? kategori.split(' + ').map(s => s.trim()) : [];
+        const relevantTypes = kundeKats.length > 0
+          ? serviceTypes.filter(st => kundeKats.includes(st.name))
+          : serviceTypes;
+        const typesToShow = relevantTypes.length > 0 ? relevantTypes : serviceTypes;
+
+        // If only one type matches, use simple single-type view
+        if (typesToShow.length === 1) {
+          const st = typesToShow[0];
+          let nesteKontroll = null;
+          let sisteKontroll = null;
+
+          const serviceData = (customer.services || []).find(s =>
+            s.service_type_slug === st.slug || s.service_type_id === st.id
+          );
+          if (serviceData) {
+            nesteKontroll = serviceData.neste_kontroll;
+            sisteKontroll = serviceData.siste_kontroll;
+          }
+          if (st.slug === 'el-kontroll') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_el_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_el_kontroll;
+          } else if (st.slug === 'brannvarsling') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_brann_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_brann_kontroll;
+          }
+          if (!nesteKontroll) nesteKontroll = customer.neste_kontroll;
+          if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
+
+          return `
+            <div class="popup-control-info">
+              <p class="popup-status ${controlStatus.class}">
+                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+                <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
+              </p>
+              ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+            </div>`;
+        }
+
         let html = '<div class="popup-control-info">';
-        serviceTypes.forEach(st => {
+        typesToShow.forEach(st => {
           let nesteKontroll = null;
           let sisteKontroll = null;
           let intervall = null;
@@ -2239,14 +2331,12 @@ class ServiceTypeRegistry {
           if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
           if (!intervall) intervall = customer.kontroll_intervall_mnd || st.defaultInterval;
 
-          const intervallText = intervall ? ` (hver ${intervall}. mnd)` : '';
-
           html += `
             <div style="margin-bottom:8px;">
               <p style="margin:0;">
                 <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
               </p>
-              <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}${intervallText}</p>
+              <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</p>
               ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
             </div>`;
         });
@@ -2269,8 +2359,13 @@ class ServiceTypeRegistry {
     const isCombined = kategori.includes('+');
 
     if (isCombined && serviceTypes.length >= 2) {
+      // Filter service types to only those in the customer's kategori
+      const kundeKats = kategori.split(' + ').map(s => s.trim());
+      const relevantTypes = serviceTypes.filter(st => kundeKats.includes(st.name));
+      const typesToShow = relevantTypes.length > 0 ? relevantTypes : serviceTypes;
+
       let html = '<div class="popup-controls">';
-      serviceTypes.forEach(st => {
+      typesToShow.forEach(st => {
         const serviceData = (customer.services || []).find(s =>
           s.service_type_slug === st.slug || s.service_type_id === st.id
         );
@@ -2377,92 +2472,26 @@ class ServiceTypeRegistry {
    * @returns {string|null} Subtype value or null
    */
   getCustomerSubtypeValue(customer, serviceType) {
-    // Check in services array first (new normalized structure)
     const service = (customer.services || []).find(s =>
       s.service_type_id === serviceType.id || s.service_type_slug === serviceType.slug
     );
     if (service?.subtype_name) return service.subtype_name;
 
-    // Fallback to legacy fields for backward compatibility
-    if (serviceType.slug === 'el-kontroll' && customer.el_type) return customer.el_type;
-    if (serviceType.slug === 'brannvarsling' && customer.brann_driftstype) return customer.brann_driftstype;
-
-    // Check custom_data for other industries
     const customData = this.parseCustomData(customer.custom_data);
     return customData[`${serviceType.slug}_subtype`] || null;
   }
 
-  /**
-   * Get equipment value for a customer and service type
-   * Checks services array, legacy fields, and custom_data
-   * @param {Object} customer - Customer object
-   * @param {Object} serviceType - Service type object
-   * @returns {string|null} Equipment value or null
-   */
   getCustomerEquipmentValue(customer, serviceType) {
-    // Check in services array first
     const service = (customer.services || []).find(s =>
       s.service_type_id === serviceType.id || s.service_type_slug === serviceType.slug
     );
     if (service?.equipment_name) return service.equipment_name;
 
-    // Fallback to legacy fields - use normalized value for brannvarsling
-    if (serviceType.slug === 'brannvarsling' && customer.brann_system) {
-      return normalizeBrannsystem(customer.brann_system);
-    }
-
-    // Check custom_data
     const customData = this.parseCustomData(customer.custom_data);
     return customData[`${serviceType.slug}_equipment`] || null;
   }
 
-  /**
-   * Render dynamic industry-specific fields for popup display
-   * Replaces hardcoded el_type, brann_driftstype, brann_system fields
-   * @param {Object} customer - Customer object
-   * @returns {string} HTML string for industry fields
-   */
-  renderPopupIndustryFields(customer) {
-    const serviceTypes = this.getAll();
-    const kategori = customer.kategori || '';
-    let html = '';
-
-    // Find which service types apply to this customer
-    let applicableServiceTypes = serviceTypes.filter(st =>
-      kategori.includes(st.name) || kategori === st.name
-    );
-
-    // If no specific match, try partial matching
-    if (applicableServiceTypes.length === 0 && serviceTypes.length > 0) {
-      const partialMatch = serviceTypes.find(st =>
-        kategori.toLowerCase().includes(st.slug) ||
-        st.name.toLowerCase().includes(kategori.toLowerCase())
-      );
-      if (partialMatch) applicableServiceTypes.push(partialMatch);
-    }
-
-    for (const st of applicableServiceTypes) {
-      // Render subtype field if service type has subtypes
-      if (st.subtypes && st.subtypes.length > 0) {
-        const subtypeValue = this.getCustomerSubtypeValue(customer, st);
-        if (subtypeValue) {
-          const subtypeLabel = this.getSubtypeLabel(st);
-          html += `<p><strong>${escapeHtml(subtypeLabel)}:</strong> ${escapeHtml(subtypeValue)}</p>`;
-        }
-      }
-
-      // Render equipment field if service type has equipment types
-      if (st.equipmentTypes && st.equipmentTypes.length > 0) {
-        const equipmentValue = this.getCustomerEquipmentValue(customer, st);
-        if (equipmentValue) {
-          const equipmentLabel = this.getEquipmentLabel(st);
-          html += `<p><strong>${escapeHtml(equipmentLabel)}:</strong> ${escapeHtml(equipmentValue)}</p>`;
-        }
-      }
-    }
-
-    return html;
-  }
+  // renderPopupIndustryFields() removed — replaced by renderPopupSubcategories() in map-core.js
 }
 
 // Global service type registry instance
@@ -8696,6 +8725,197 @@ async function confirmDeleteCategory(id) {
 }
 
 // ========================================
+// ADMIN: SUBCATEGORIES MANAGEMENT
+// ========================================
+
+/**
+ * Render subcategory management section in admin tab.
+ * Shows groups + subcategories (standalone, not per service type).
+ */
+async function renderAdminSubcategories() {
+  const content = document.getElementById('subcategoriesAdminContent');
+  const empty = document.getElementById('subcategoriesAdminEmpty');
+  if (!content) return;
+
+  const groups = allSubcategoryGroups || [];
+
+  content.style.display = 'block';
+  if (empty) empty.style.display = groups.length === 0 ? 'block' : 'none';
+
+  content.innerHTML = groups.map(group => `
+    <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border, #444); padding-left: 10px;">
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+        <i class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
+        <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
+        <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
+        <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeHtml(group.navn).replace(/'/g, "\\'")}')" title="Gi nytt navn">
+          <i class="fas fa-pen" style="font-size: 10px;"></i>
+        </button>
+        <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeHtml(group.navn).replace(/'/g, "\\'")}')" title="Slett gruppe">
+          <i class="fas fa-trash" style="font-size: 10px;"></i>
+        </button>
+      </div>
+
+      ${(group.subcategories || []).map(sub => `
+        <div style="display: flex; align-items: center; gap: 6px; margin-left: 16px; padding: 2px 0;">
+          <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
+          <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
+          <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeHtml(sub.navn).replace(/'/g, "\\'")}')" title="Gi nytt navn">
+            <i class="fas fa-pen" style="font-size: 10px;"></i>
+          </button>
+          <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeHtml(sub.navn).replace(/'/g, "\\'")}')" title="Slett">
+            <i class="fas fa-trash" style="font-size: 10px;"></i>
+          </button>
+        </div>
+      `).join('')}
+
+      <div style="display: flex; gap: 6px; margin-left: 16px; margin-top: 4px;">
+        <input type="text" class="form-control" placeholder="Ny underkategori..." maxlength="100"
+          style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
+          data-add-subcat-for-group="${group.id}"
+          onkeydown="if(event.key==='Enter'){addSubcatItem(${group.id}, this); event.preventDefault();}">
+        <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatItem(${group.id}, this.previousElementSibling)">
+          <i class="fas fa-plus"></i>
+        </button>
+      </div>
+    </div>
+  `).join('') + `
+    <div style="display: flex; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--color-border, #333);">
+      <input type="text" class="form-control" placeholder="Ny gruppe..." maxlength="100"
+        style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
+        id="adminAddGroupInput"
+        onkeydown="if(event.key==='Enter'){addSubcatGroup(this); event.preventDefault();}">
+      <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatGroup(document.getElementById('adminAddGroupInput'))">
+        <i class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
+      </button>
+    </div>
+  `;
+}
+
+async function addSubcatGroup(inputEl) {
+  const navn = inputEl.value.trim();
+  if (!navn) { inputEl.focus(); return; }
+
+  try {
+    const res = await apiFetch('/api/subcategories/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navn })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'Kunne ikke opprette gruppe');
+    }
+    const json = await res.json();
+    subcatRegistryAddGroup(json.data || { id: Date.now(), navn });
+    showToast('Gruppe opprettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function addSubcatItem(groupId, inputEl) {
+  const navn = inputEl.value.trim();
+  if (!navn) { inputEl.focus(); return; }
+
+  try {
+    const res = await apiFetch('/api/subcategories/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: groupId, navn })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'Kunne ikke opprette underkategori');
+    }
+    const json = await res.json();
+    subcatRegistryAddItem(groupId, json.data || { id: Date.now(), navn });
+    showToast('Underkategori opprettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function editSubcatGroup(groupId, currentName) {
+  const newName = prompt('Nytt navn for gruppen:', currentName);
+  if (!newName || newName.trim() === currentName) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/groups/${groupId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navn: newName.trim() })
+    });
+    if (!res.ok) throw new Error('Kunne ikke oppdatere gruppe');
+    subcatRegistryEditGroup(groupId, newName.trim());
+    showToast('Gruppe oppdatert', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function deleteSubcatGroup(groupId, groupName) {
+  const confirmed = await showConfirm(`Slett gruppen "${groupName}"? Alle underkategorier i gruppen slettes også.`, 'Slette gruppe');
+  if (!confirmed) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/groups/${groupId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Kunne ikke slette gruppe');
+    subcatRegistryDeleteGroup(groupId);
+    showToast('Gruppe slettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function editSubcatItem(subcatId, currentName) {
+  const newName = prompt('Nytt navn:', currentName);
+  if (!newName || newName.trim() === currentName) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/items/${subcatId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navn: newName.trim() })
+    });
+    if (!res.ok) throw new Error('Kunne ikke oppdatere underkategori');
+    subcatRegistryEditItem(subcatId, newName.trim());
+    showToast('Underkategori oppdatert', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function deleteSubcatItem(subcatId, subcatName) {
+  const confirmed = await showConfirm(`Slett underkategorien "${subcatName}"?`, 'Slette underkategori');
+  if (!confirmed) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/items/${subcatId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Kunne ikke slette underkategori');
+    subcatRegistryDeleteItem(subcatId);
+    showToast('Underkategori slettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// reloadAppConfig removed — subcategory CRUD now updates serviceTypeRegistry in-place
+// via subcatRegistry* helpers in filter-panel.js (shared global scope)
+
+// ========================================
 // ADMIN: DRAG AND DROP SORTING
 // ========================================
 
@@ -8816,9 +9036,10 @@ async function loadAdminData() {
   loginLogOffset = 0;
   await loadLoginLog(false);
 
-  // Render admin fields and categories
+  // Render admin fields, categories, and subcategories
   renderAdminFields();
   renderAdminCategories();
+  renderAdminSubcategories();
 
   // Check and load super admin data if applicable
   await checkSuperAdminStatus();
@@ -9364,11 +9585,7 @@ function renderCategoryStats() {
 
   renderBarStats('categoryStats', categories, {
     total: customers.length,
-    getBarClass: (cat) => {
-      if (cat === 'El-Kontroll') return 'el-kontroll';
-      if (cat === 'Brannvarsling') return 'brannvarsling';
-      return 'combined';
-    }
+    getBarClass: (cat) => serviceTypeRegistry.getCategoryClass(cat)
   });
 }
 
@@ -11690,13 +11907,22 @@ function debounce(func, wait) {
   };
 }
 
+// AbortController for canceling in-flight address searches
+let addressSearchController = null;
+
 // Search addresses using Kartverket API
 async function searchAddresses(query) {
   if (!query || query.length < 3) return [];
 
+  // Cancel any in-flight request to prevent stale results
+  if (addressSearchController) {
+    addressSearchController.abort();
+  }
+  addressSearchController = new AbortController();
+
   try {
     const url = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(query)}&fuzzy=true&treffPerSide=5`;
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: addressSearchController.signal });
     const data = await response.json();
 
     if (data.adresser && data.adresser.length > 0) {
@@ -11711,6 +11937,7 @@ async function searchAddresses(query) {
     }
     return [];
   } catch (error) {
+    if (error.name === 'AbortError') return [];
     console.error('Adressesøk feilet:', error);
     return [];
   }
@@ -11828,6 +12055,23 @@ function updatePostnummerStatus(status) {
 let addressSuggestions = [];
 let selectedSuggestionIndex = -1;
 
+// Reset autocomplete state (call when opening/closing customer modal)
+function resetAddressAutocomplete() {
+  addressSuggestions = [];
+  selectedSuggestionIndex = -1;
+  if (addressSearchController) {
+    addressSearchController.abort();
+    addressSearchController = null;
+  }
+  const container = document.getElementById('addressSuggestions');
+  if (container) {
+    container.innerHTML = '';
+    container.classList.remove('visible');
+  }
+  const adresseInput = document.getElementById('adresse');
+  if (adresseInput) adresseInput.setAttribute('aria-expanded', 'false');
+}
+
 // Setup address autocomplete functionality
 function setupAddressAutocomplete() {
   const adresseInput = document.getElementById('adresse');
@@ -11922,14 +12166,19 @@ function setupAddressAutocomplete() {
       updatePostnummerStatus('');
 
       if (value.length === 4) {
+        const valueAtRequest = value;
         updatePostnummerStatus('loading');
         const result = await lookupPostnummer(value);
 
-        if (result) {
-          poststedInput.value = result;
-          poststedInput.classList.add('auto-filled');
+        // Only update if postnummer hasn't changed while we were fetching
+        if (postnummerInput.value === valueAtRequest && result) {
+          // Only auto-fill poststed if user hasn't manually typed something
+          if (!poststedInput.value || poststedInput.classList.contains('auto-filled')) {
+            poststedInput.value = result;
+            poststedInput.classList.add('auto-filled');
+          }
           updatePostnummerStatus('valid');
-        } else {
+        } else if (postnummerInput.value === valueAtRequest && !result) {
           updatePostnummerStatus('invalid');
         }
       }
@@ -12979,7 +13228,7 @@ function renderWarnings() {
 
     Object.values(byCategory).forEach(sortByNavn);
 
-    const categoryOrder = ['El-Kontroll', 'Brannvarsling'];
+    const categoryOrder = serviceTypeRegistry.getAll().map(st => st.name);
     const sortedCats = Object.keys(byCategory).sort((a, b) => {
       const indexA = categoryOrder.indexOf(a);
       const indexB = categoryOrder.indexOf(b);
@@ -13889,6 +14138,7 @@ function showWpContextMenu(avtaleId, avtaleName, x, y) {
           await loadAvtaler();
           refreshTeamFocus();
           renderWeeklyPlan();
+          applyFilters(); // Oppdater kart-markører
         } else {
           const err = await response.json().catch(() => ({}));
           showToast(err.error?.message || 'Kunne ikke slette avtale', 'error');
@@ -15302,7 +15552,7 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     }
     document.getElementById('avtaleDato').value = avtale.dato;
     document.getElementById('avtaleKlokkeslett').value = avtale.klokkeslett || '';
-    document.getElementById('avtaleType').value = avtale.type || 'El-Kontroll';
+    document.getElementById('avtaleType').value = avtale.type || serviceTypeRegistry.getDefaultServiceType().name;
     document.getElementById('avtaleBeskrivelse').value = avtale.beskrivelse || '';
     gjentakelseSelect.value = avtale.gjentakelse_regel || '';
     document.getElementById('avtaleGjentakelseSlutt').value = avtale.gjentakelse_slutt || '';
@@ -15469,6 +15719,7 @@ async function saveAvtale(e) {
     if (response.ok) {
       await loadAvtaler();
       renderCalendar();
+      applyFilters(); // Oppdater kart-markører med ny avtale-status
       closeAvtaleModal();
     } else {
       const error = await response.json();
@@ -15495,6 +15746,7 @@ async function deleteAvtale() {
     if (response.ok) {
       await loadAvtaler();
       renderCalendar();
+      applyFilters(); // Oppdater kart-markører
       closeAvtaleModal();
     }
   } catch (error) {
@@ -15520,6 +15772,7 @@ async function deleteAvtaleSeries() {
       showMessage(`${result.data.deletedCount} avtaler slettet`, 'success');
       await loadAvtaler();
       renderCalendar();
+      applyFilters(); // Oppdater kart-markører
       closeAvtaleModal();
     }
   } catch (error) {
@@ -16221,6 +16474,7 @@ async function saveCustomerEmailSettings(kundeId) {
     });
   } catch (error) {
     console.error('Feil ved lagring av e-post-innstillinger:', error);
+    showMessage('Kunne ikke lagre e-post-innstillinger. Prøv igjen.', 'error');
   }
 }
 
@@ -16229,174 +16483,246 @@ async function saveCustomerEmailSettings(kundeId) {
 let currentKontaktloggKundeId = null;
 
 // ========================================
-// KUNDE TAGS
+// SUBCATEGORY MANAGEMENT
 // ========================================
 
-let allTags = [];
-
-async function loadAllTags() {
+// Load all subcategory assignments for the organization (bulk, for filtering)
+async function loadAllSubcategoryAssignments() {
   try {
-    const response = await apiFetch('/api/tags');
+    const response = await apiFetch('/api/subcategories/kunde-assignments');
     if (response.ok) {
       const result = await response.json();
-      allTags = result.data || [];
+      const assignments = result.data || [];
+      kundeSubcatMap = {};
+      assignments.forEach(a => {
+        if (!kundeSubcatMap[a.kunde_id]) kundeSubcatMap[a.kunde_id] = [];
+        kundeSubcatMap[a.kunde_id].push({ group_id: a.group_id, subcategory_id: a.subcategory_id });
+      });
     }
   } catch (error) {
-    console.error('Error loading tags:', error);
+    console.error('Error loading subcategory assignments:', error);
   }
+  renderSubcategoryFilter();
 }
 
-async function loadKundeTags(kundeId) {
-  const listEl = document.getElementById('kundeTagsList');
-  const selectEl = document.getElementById('kundeTagSelect');
-  document.getElementById('kundeTagsSection').style.display = 'block';
-
-  // Load all tags if not loaded
-  if (allTags.length === 0) await loadAllTags();
-
+// Load subcategories for a specific customer (for edit form)
+async function loadKundeSubcategories(kundeId) {
   try {
-    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags`);
+    const response = await apiFetch(`/api/subcategories/kunde/${kundeId}`);
     if (!response.ok) return;
     const result = await response.json();
-    const kundeTags = result.data || [];
-
-    // Render assigned tags
-    listEl.innerHTML = kundeTags.length === 0
-      ? '<span class="tags-empty">Ingen tags</span>'
-      : kundeTags.map(tag => `
-          <span class="tag-badge" style="background:${escapeHtml(tag.farge)}20;color:${escapeHtml(tag.farge)};border:1px solid ${escapeHtml(tag.farge)}40">
-            ${escapeHtml(tag.navn)}
-            <button class="tag-remove" data-action="removeKundeTag" data-kunde-id="${kundeId}" data-tag-id="${tag.id}" title="Fjern">&times;</button>
-          </span>
-        `).join('');
-
-    // Populate select with unassigned tags
-    const assignedIds = new Set(kundeTags.map(t => t.id));
-    const available = allTags.filter(t => !assignedIds.has(t.id));
-    selectEl.innerHTML = '<option value="">Velg tag...</option>' +
-      available.map(t => `<option value="${t.id}">${escapeHtml(t.navn)}</option>`).join('');
+    const assignments = result.data || [];
+    // Update local cache and re-render dropdowns with actual data
+    kundeSubcatMap[kundeId] = assignments.map(a => ({ group_id: a.group_id, subcategory_id: a.subcategory_id }));
+    const customer = customers.find(c => c.id === kundeId);
+    renderSubcategoryDropdowns(customer || { id: kundeId });
   } catch (error) {
-    console.error('Error loading kunde tags:', error);
+    console.error('Error loading kunde subcategories:', error);
   }
 }
 
-async function addTagToKunde(kundeId, tagId) {
-  try {
-    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags/${tagId}`, { method: 'POST' });
-    if (response.ok) {
-      await loadKundeTags(kundeId);
-    }
-  } catch (error) {
-    console.error('Error adding tag:', error);
-  }
-}
-
-async function removeTagFromKunde(kundeId, tagId) {
-  try {
-    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags/${tagId}`, { method: 'DELETE' });
-    if (response.ok) {
-      await loadKundeTags(kundeId);
-    }
-  } catch (error) {
-    console.error('Error removing tag:', error);
-  }
-}
-
-function openTagManager() {
-  const existingModal = document.getElementById('tagManagerModal');
+// Subcategory manager modal — manage subcategory groups and items per service type
+function openSubcategoryManager() {
+  const existingModal = document.getElementById('subcatManagerModal');
   if (existingModal) existingModal.remove();
 
   const modal = document.createElement('div');
-  modal.id = 'tagManagerModal';
+  modal.id = 'subcatManagerModal';
   modal.className = 'modal';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width:400px">
+    <div class="modal-content" style="max-width:560px">
       <div class="modal-header">
-        <h2>Administrer tags</h2>
-        <button class="modal-close" id="closeTagManager">&times;</button>
+        <h2>Administrer underkategorier</h2>
+        <button class="modal-close" id="closeSubcatManager">&times;</button>
       </div>
-      <div class="tag-manager-list" id="tagManagerList"></div>
-      <div class="tag-manager-add">
-        <input type="text" id="newTagName" placeholder="Ny tag..." maxlength="50">
-        <select id="newTagColor">
-          <option value="#3b82f6" style="color:#3b82f6">Blå</option>
-          <option value="#ef4444" style="color:#ef4444">Rød</option>
-          <option value="#22c55e" style="color:#22c55e">Grønn</option>
-          <option value="#f59e0b" style="color:#f59e0b">Gul</option>
-          <option value="#8b5cf6" style="color:#8b5cf6">Lilla</option>
-          <option value="#ec4899" style="color:#ec4899">Rosa</option>
-          <option value="#06b6d4" style="color:#06b6d4">Turkis</option>
-          <option value="#64748b" style="color:#64748b">Grå</option>
-        </select>
-        <button class="btn btn-primary btn-small" id="createTagBtn">Opprett</button>
-      </div>
+      <div id="subcatManagerBody" style="max-height:60vh;overflow-y:auto;padding:12px;"></div>
     </div>
   `;
   document.body.appendChild(modal);
 
-  renderTagManagerList();
+  renderSubcatManagerBody();
 
-  document.getElementById('closeTagManager').addEventListener('click', () => modal.remove());
+  document.getElementById('closeSubcatManager').addEventListener('click', () => modal.remove());
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-  document.getElementById('createTagBtn').addEventListener('click', createNewTag);
-  document.getElementById('newTagName').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); createNewTag(); }
-  });
 }
 
-function renderTagManagerList() {
-  const listEl = document.getElementById('tagManagerList');
-  if (!listEl) return;
-  listEl.innerHTML = allTags.length === 0
-    ? '<p style="padding:8px;color:var(--color-text-muted)">Ingen tags opprettet</p>'
-    : allTags.map(tag => `
-        <div class="tag-manager-item">
-          <span class="tag-badge" style="background:${escapeHtml(tag.farge)}20;color:${escapeHtml(tag.farge)};border:1px solid ${escapeHtml(tag.farge)}40">
-            ${escapeHtml(tag.navn)}
-          </span>
-          <button class="btn btn-small btn-danger tag-delete-btn" data-tag-id="${tag.id}">
+async function renderSubcatManagerBody() {
+  const bodyEl = document.getElementById('subcatManagerBody');
+  if (!bodyEl) return;
+
+  const groups = allSubcategoryGroups || [];
+
+  let html = '';
+
+  if (groups.length === 0) {
+    html += `<p style="padding:8px 0;color:var(--color-text-muted);font-size:13px;">
+      Ingen underkategori-grupper opprettet enda.
+    </p>`;
+  }
+
+  for (const group of groups) {
+    const subs = group.subcategories || [];
+    html += `
+      <div class="subcat-group-item" data-group-id="${group.id}" style="margin-bottom:12px;border:1px solid var(--color-border);border-radius:6px;padding:10px;">
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 0;">
+          <i class="fas fa-folder" style="color:var(--color-text-muted);font-size:12px;"></i>
+          <strong style="font-size:13px;">${escapeHtml(group.navn)}</strong>
+          <span style="font-size:11px;color:var(--color-text-muted)">(${subs.length})</span>
+          <button class="btn-icon-tiny btn-icon-danger" data-action="deleteGroup" data-group-id="${group.id}" title="Slett gruppe">
             <i class="fas fa-trash"></i>
           </button>
         </div>
-      `).join('');
+        <div style="margin-left:12px;">
+          ${subs.map(sub => `
+            <div style="display:flex;align-items:center;gap:4px;padding:2px 0;font-size:13px;">
+              <span>${escapeHtml(sub.navn)}</span>
+              <button class="btn-icon-tiny btn-icon-danger" data-action="deleteSubcat" data-subcat-id="${sub.id}" title="Slett">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          `).join('')}
+          <div style="display:flex;gap:4px;margin-top:4px;">
+            <input type="text" class="subcat-inline-input" placeholder="Ny underkategori..." maxlength="100" data-group-id="${group.id}" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
+            <button class="btn btn-small btn-primary subcat-inline-add" data-group-id="${group.id}" style="padding:4px 8px;">
+              <i class="fas fa-plus"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
-  // Attach delete handlers
-  listEl.querySelectorAll('.tag-delete-btn').forEach(btn => {
+  // Add new group form
+  html += `
+    <div style="margin-top:8px;">
+      <div style="display:flex;gap:4px;">
+        <input type="text" class="new-group-input" placeholder="Ny gruppe..." maxlength="100" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
+        <button class="btn btn-small btn-secondary new-group-add" style="padding:4px 8px;">
+          <i class="fas fa-plus"></i> Gruppe
+        </button>
+      </div>
+    </div>
+  `;
+
+  bodyEl.innerHTML = html;
+  attachSubcatManagerHandlers();
+}
+
+function attachSubcatManagerHandlers() {
+  const bodyEl = document.getElementById('subcatManagerBody');
+  if (!bodyEl) return;
+
+  // Delete group
+  bodyEl.querySelectorAll('[data-action="deleteGroup"]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const tagId = btn.dataset.tagId;
-      const response = await apiFetch(`/api/tags/${tagId}`, { method: 'DELETE' });
+      const groupId = btn.dataset.groupId;
+      if (!confirm('Slett denne gruppen og alle underkategorier?')) return;
+      const response = await apiFetch(`/api/subcategories/groups/${groupId}`, { method: 'DELETE' });
       if (response.ok) {
-        await loadAllTags();
-        renderTagManagerList();
-        // Reload current customer tags if open
-        const kundeId = document.getElementById('customerId')?.value;
-        if (kundeId) loadKundeTags(Number.parseInt(kundeId));
+        await reloadServiceTypesAndRefresh();
+        renderSubcatManagerBody();
+      }
+    });
+  });
+
+  // Delete subcategory
+  bodyEl.querySelectorAll('[data-action="deleteSubcat"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const subcatId = btn.dataset.subcatId;
+      const response = await apiFetch(`/api/subcategories/items/${subcatId}`, { method: 'DELETE' });
+      if (response.ok) {
+        await reloadServiceTypesAndRefresh();
+        renderSubcatManagerBody();
+      }
+    });
+  });
+
+  // Add subcategory inline
+  bodyEl.querySelectorAll('.subcat-inline-add').forEach(btn => {
+    btn.addEventListener('click', () => addSubcategoryInline(Number(btn.dataset.groupId)));
+  });
+  bodyEl.querySelectorAll('.subcat-inline-input').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addSubcategoryInline(Number(input.dataset.groupId));
+      }
+    });
+  });
+
+  // Add new group
+  bodyEl.querySelectorAll('.new-group-add').forEach(btn => {
+    btn.addEventListener('click', () => addGroupInline());
+  });
+  bodyEl.querySelectorAll('.new-group-input').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addGroupInline();
       }
     });
   });
 }
 
-async function createNewTag() {
-  const nameInput = document.getElementById('newTagName');
-  const colorSelect = document.getElementById('newTagColor');
-  const navn = nameInput.value.trim();
+async function addSubcategoryInline(groupId) {
+  const input = document.querySelector(`.subcat-inline-input[data-group-id="${groupId}"]`);
+  const navn = input?.value?.trim();
   if (!navn) return;
 
   try {
-    const response = await apiFetch('/api/tags', {
+    const response = await apiFetch('/api/subcategories/items', {
       method: 'POST',
-      body: JSON.stringify({ navn, farge: colorSelect.value }),
+      body: JSON.stringify({ group_id: groupId, navn }),
     });
     if (response.ok) {
-      nameInput.value = '';
-      await loadAllTags();
-      renderTagManagerList();
+      input.value = '';
+      await reloadServiceTypesAndRefresh();
+      renderSubcatManagerBody();
     } else {
       const err = await response.json();
-      showMessage(err.error || 'Kunne ikke opprette tag', 'error');
+      showMessage(err.error?.message || 'Kunne ikke opprette underkategori', 'error');
     }
   } catch (error) {
-    console.error('Error creating tag:', error);
+    console.error('Error creating subcategory:', error);
+  }
+}
+
+async function addGroupInline() {
+  const input = document.querySelector('.new-group-input');
+  const navn = input?.value?.trim();
+  if (!navn) return;
+
+  try {
+    const response = await apiFetch('/api/subcategories/groups', {
+      method: 'POST',
+      body: JSON.stringify({ navn }),
+    });
+    if (response.ok) {
+      input.value = '';
+      await reloadServiceTypesAndRefresh();
+      renderSubcatManagerBody();
+    } else {
+      const err = await response.json();
+      showMessage(err.error?.message || 'Kunne ikke opprette gruppe', 'error');
+    }
+  } catch (error) {
+    console.error('Error creating group:', error);
+  }
+}
+
+// Create a new service type inline (from subcategory manager)
+// Reload service types from server and update registry
+async function reloadServiceTypesAndRefresh() {
+  try {
+    const response = await apiFetch('/api/config');
+    if (response.ok) {
+      const result = await response.json();
+      // Always reload — handles adding first type and removing last type
+      serviceTypeRegistry.loadFromConfig(result.data);
+      allSubcategoryGroups = result.data.subcategoryGroups || [];
+    }
+  } catch (error) {
+    console.error('Error reloading service types:', error);
   }
 }
 
@@ -16947,7 +17273,7 @@ function renderFilterPanelCategories() {
     const isActive = selectedCategory === combinedName;
     html += `
       <button class="category-btn ${isActive ? 'active' : ''}" data-category="${combinedName}">
-        ${icons} Begge
+        ${icons} ${serviceTypes.length > 2 ? 'Alle' : 'Begge'}
       </button>
     `;
   }
@@ -17076,265 +17402,10 @@ async function assignCustomerCategory(customerId, categoryName) {
   }
 }
 
-/**
- * Render driftskategori filter buttons dynamically based on selected category
- */
-/**
- * Normalize driftstype values for consistency
- */
-function normalizeDriftstype(driftstype) {
-  if (!driftstype) return null;
-  const d = driftstype.trim();
-
-  // Normalize common variations
-  if (d.toLowerCase() === 'gartn' || d.toLowerCase() === 'gartneri') return 'Gartneri';
-  if (d.toLowerCase() === 'sau / geit' || d.toLowerCase() === 'sau/geit') return 'Sau/Geit';
-  if (d.toLowerCase() === 'storfe/sau' || d.toLowerCase() === 'storfe+sau') return 'Storfe/Sau';
-  if (d.toLowerCase() === 'fjørfe' || d.toLowerCase() === 'fjærfeoppdrett') return 'Fjørfe';
-  if (d.toLowerCase() === 'svin' || d.toLowerCase() === 'gris') return 'Gris';
-  if (d.toLowerCase() === 'ingen' || d.startsWith('Utf:')) return null; // Skip invalid
-
-  return d;
-}
-
-function renderDriftskategoriFilter() {
-  const container = document.getElementById('driftFilterButtons');
-  if (!container) return;
-
-  // MVP-modus: Skjul avanserte filtre
-  const filterContainer = container.parentElement;
-  if (isMvpMode()) {
-    if (filterContainer) filterContainer.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-
-  // Get unique driftstype values from actual customer data
-  const counts = {};
-  customers.forEach(c => {
-    if (c.brann_driftstype && c.brann_driftstype.trim()) {
-      const normalized = normalizeDriftstype(c.brann_driftstype);
-      if (normalized) {
-        counts[normalized] = (counts[normalized] || 0) + 1;
-      }
-    }
-  });
-
-  // Sort by count (most common first)
-  const driftstyper = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, count]) => ({ name, count }));
-
-  // Hide filter container if no driftstype values
-  if (filterContainer) {
-    filterContainer.style.display = driftstyper.length > 0 ? 'block' : 'none';
-  }
-
-  if (driftstyper.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  // Start with "Alle" button
-  let html = `
-    <button class="category-btn drift-btn ${selectedDriftskategori === 'all' ? 'active' : ''}" data-drift="all">
-      <i class="fas fa-list"></i> Alle
-    </button>
-  `;
-
-  // Add button for each driftstype
-  driftstyper.forEach(({ name, count }) => {
-    const isActive = selectedDriftskategori === name;
-    html += `
-      <button class="category-btn drift-btn ${isActive ? 'active' : ''}" data-drift="${escapeHtml(name)}">${escapeHtml(name)} (${count})</button>
-    `;
-  });
-
-  container.innerHTML = html;
-  attachDriftFilterHandlers();
-}
-
-/**
- * Normalize brannsystem value to main category
- * ES 801, ES 601, "2 x Elotec" etc. → "Elotec"
- * "Icas" → "ICAS"
- * "Elotec + ICAS" etc. → "Begge"
- */
-function normalizeBrannsystem(system) {
-  if (!system) return null;
-  const s = system.trim().toLowerCase();
-
-  // Skip header/invalid values
-  if (s === 'type') return null;
-
-  // Check for "both" systems
-  if (s.includes('elotec') && s.includes('icas')) return 'Begge';
-  if (s.includes('es 801') && s.includes('icas')) return 'Begge';
-
-  // Elotec variants (including ES 801, ES 601 which are Elotec models)
-  if (s.includes('elotec') || s.startsWith('es 8') || s.startsWith('es 6') || s === '2 x elotec') return 'Elotec';
-
-  // ICAS variants
-  if (s.includes('icas')) return 'ICAS';
-
-  // Other systems
-  return 'Annet';
-}
-
-/**
- * Render brannsystem filter buttons
- */
-function renderBrannsystemFilter() {
-  const container = document.getElementById('brannsystemFilterButtons');
-  if (!container) return;
-
-  // MVP-modus: Skjul avanserte filtre
-  const filterContainer = container.parentElement;
-  if (isMvpMode()) {
-    if (filterContainer) filterContainer.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-
-  // Count customers per normalized brannsystem category
-  const counts = { 'Elotec': 0, 'ICAS': 0, 'Begge': 0, 'Annet': 0 };
-  customers.forEach(c => {
-    if (c.brann_system && c.brann_system.trim()) {
-      const normalized = normalizeBrannsystem(c.brann_system);
-      if (normalized) counts[normalized]++;
-    }
-  });
-
-  // Only show categories with customers
-  const categories = Object.entries(counts).filter(([_, count]) => count > 0);
-
-  // Hide filter container if no brannsystem values
-  if (filterContainer) {
-    filterContainer.style.display = categories.length > 0 ? 'block' : 'none';
-  }
-
-  if (categories.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  // Start with "Alle" button
-  let html = `
-    <button class="category-btn brannsystem-btn ${selectedBrannsystem === 'all' ? 'active' : ''}" data-brannsystem="all">
-      <i class="fas fa-list"></i> Alle
-    </button>
-  `;
-
-  // Add button for each category
-  categories.forEach(([category, count]) => {
-    const isActive = selectedBrannsystem === category;
-    html += `
-      <button class="category-btn brannsystem-btn ${isActive ? 'active' : ''}" data-brannsystem="${escapeHtml(category)}">${escapeHtml(category)} (${count})</button>
-    `;
-  });
-
-  container.innerHTML = html;
-  attachBrannsystemFilterHandlers();
-}
-
-/**
- * Attach click handlers to brannsystem filter buttons
- */
-function attachBrannsystemFilterHandlers() {
-  const container = document.getElementById('brannsystemFilterButtons');
-  if (!container) return;
-
-  container.querySelectorAll('.brannsystem-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Remove active from all
-      container.querySelectorAll('.brannsystem-btn').forEach(b => b.classList.remove('active'));
-      // Add active to clicked
-      btn.classList.add('active');
-      // Update selected brannsystem
-      selectedBrannsystem = btn.dataset.brannsystem;
-      // Save to localStorage
-      localStorage.setItem('selectedBrannsystem', selectedBrannsystem);
-      // Apply filter
-      applyFilters();
-    });
-  });
-}
-
-/**
- * Render kundetype (el_type) filter buttons
- */
-function renderElTypeFilter() {
-  const container = document.getElementById('elTypeFilterButtons');
-  if (!container) return;
-
-  // MVP-modus: Skjul avanserte filtre
-  const filterContainer = container.parentElement;
-  if (isMvpMode()) {
-    if (filterContainer) filterContainer.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-
-  // Count customers per el_type
-  const counts = {};
-  customers.forEach(c => {
-    if (c.el_type && c.el_type.trim()) {
-      const type = c.el_type.trim();
-      counts[type] = (counts[type] || 0) + 1;
-    }
-  });
-
-  // Sort by count
-  const types = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, count]) => ({ name, count }));
-
-  // Hide filter container if no values
-  if (filterContainer) {
-    filterContainer.style.display = types.length > 0 ? 'block' : 'none';
-  }
-
-  if (types.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  // Start with "Alle" button
-  let html = `
-    <button class="category-btn eltype-btn ${selectedElType === 'all' ? 'active' : ''}" data-eltype="all">
-      <i class="fas fa-list"></i> Alle
-    </button>
-  `;
-
-  // Add button for each type
-  types.forEach(({ name, count }) => {
-    const isActive = selectedElType === name;
-    html += `
-      <button class="category-btn eltype-btn ${isActive ? 'active' : ''}" data-eltype="${escapeHtml(name)}">${escapeHtml(name)} (${count})</button>
-    `;
-  });
-
-  container.innerHTML = html;
-  attachElTypeFilterHandlers();
-}
-
-/**
- * Attach click handlers to el_type filter buttons
- */
-function attachElTypeFilterHandlers() {
-  const container = document.getElementById('elTypeFilterButtons');
-  if (!container) return;
-
-  container.querySelectorAll('.eltype-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      container.querySelectorAll('.eltype-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedElType = btn.dataset.eltype;
-      localStorage.setItem('selectedElType', selectedElType);
-      applyFilters();
-    });
-  });
-}
+// Legacy filter functions (normalizeDriftstype, renderDriftskategoriFilter,
+// normalizeBrannsystem, renderBrannsystemFilter, renderElTypeFilter, etc.)
+// removed — migrated to subcategory system (migration 044).
+// All filtering now handled by renderSubcategoryFilter() below.
 
 /**
  * Attach click handlers to category filter buttons
@@ -17352,40 +17423,339 @@ function attachCategoryFilterHandlers() {
       // Update selected category
       selectedCategory = btn.dataset.category;
 
-      // Reset driftskategori when category changes (cascading behavior)
-      selectedDriftskategori = 'all';
-      localStorage.setItem('selectedDriftskategori', 'all');
-
-      // Re-render driftskategori filter with new subtypes based on selected category
-      renderDriftskategoriFilter();
-
       // Apply filter
       applyFilters();
     });
   });
 }
 
-/**
- * Attach click handlers to drift filter buttons
- */
-function attachDriftFilterHandlers() {
-  const container = document.getElementById('driftFilterButtons');
-  if (!container) return;
+// ========================================
+// SUBCATEGORY FILTER
+// ========================================
 
-  container.querySelectorAll('.drift-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Remove active from all
-      container.querySelectorAll('.drift-btn').forEach(b => b.classList.remove('active'));
-      // Add active to clicked
-      btn.classList.add('active');
-      // Update selected driftskategori
-      selectedDriftskategori = btn.dataset.drift;
-      // Save to localStorage
-      localStorage.setItem('selectedDriftskategori', selectedDriftskategori);
-      // Apply filter
-      applyFilters();
+/**
+ * Render subcategory filter buttons grouped by service type and subcategory group
+ */
+/**
+ * Render subcategory section: filter buttons + inline management.
+ * Always visible when organization has service types.
+ */
+let subcatAdminMode = false;
+let collapsedSubcatGroups = {};
+
+function renderSubcategoryFilter() {
+  const contentEl = document.getElementById('subcategoryFilterContent');
+  const filterContainer = document.getElementById('subcategoryFilter');
+  if (!contentEl || !filterContainer) return;
+
+  const groups = allSubcategoryGroups || [];
+
+  if (groups.length === 0) {
+    // Still show filter container with add-group input for admins
+    filterContainer.style.display = 'block';
+    contentEl.innerHTML = `<div class="subcat-add-row subcat-add-group-row">
+      <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
+      <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+    </div>`;
+    attachSubcategoryHandlers();
+    return;
+  }
+
+  filterContainer.style.display = 'block';
+
+  // Sync admin toggle button state
+  const toggleBtn = document.getElementById('subcatAdminToggle');
+  if (toggleBtn) toggleBtn.classList.toggle('active', subcatAdminMode);
+
+  // Count customers per subcategory
+  const subcatCounts = {};
+  Object.values(kundeSubcatMap).forEach(assignments => {
+    assignments.forEach(a => {
+      const key = `${a.group_id}_${a.subcategory_id}`;
+      subcatCounts[key] = (subcatCounts[key] || 0) + 1;
     });
   });
+
+  let html = '';
+
+  groups.forEach(group => {
+    const subs = group.subcategories || [];
+    const activeSubcatId = selectedSubcategories[group.id];
+    const isCollapsed = collapsedSubcatGroups[group.id];
+    const activeSub = activeSubcatId ? subs.find(s => s.id === activeSubcatId) : null;
+
+    // Group heading (clickable for collapse)
+    html += `<div class="subcat-group ${isCollapsed ? 'subcat-group-collapsed' : ''}">
+      <div class="subcat-group-header">
+        <span class="subcat-group-name" data-toggle-group="${group.id}">
+          <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'} subcat-chevron"></i>
+          ${escapeHtml(group.navn)}
+          ${isCollapsed && activeSub ? `<span class="subcat-active-indicator">${escapeHtml(activeSub.navn)}</span>` : ''}
+        </span>
+        <span class="subcat-admin-only">
+          <button class="category-manage-btn" data-action="editGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
+          <button class="category-manage-btn subcat-delete-btn" data-action="deleteGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+        </span>
+      </div>`;
+
+    // Filter buttons (hidden when collapsed)
+    html += `<div class="subcat-group-body">`;
+    if (subs.length > 0) {
+      html += `<div class="category-filter-buttons subcat-filter-buttons">`;
+      html += `<button class="category-btn subcat-btn ${!activeSubcatId ? 'active' : ''}" data-group-id="${group.id}" data-subcat-id="all">Alle</button>`;
+      subs.forEach(sub => {
+        const count = subcatCounts[`${group.id}_${sub.id}`] || 0;
+        const isActive = activeSubcatId === sub.id;
+        html += `<span class="subcat-btn-wrapper">
+          <button class="category-btn subcat-btn ${isActive ? 'active' : ''}" data-group-id="${group.id}" data-subcat-id="${sub.id}">
+            ${escapeHtml(sub.navn)} <span class="subcat-count">${count}</span>
+          </button>
+          <span class="subcat-admin-only subcat-item-actions">
+            <button class="category-manage-btn" data-action="editSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
+            <button class="category-manage-btn subcat-delete-btn" data-action="deleteSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+          </span>
+        </span>`;
+      });
+      html += `</div>`;
+    }
+
+    // Add subcategory input (admin only)
+    html += `<div class="subcat-add-row subcat-admin-only">
+      <input type="text" class="subcat-add-input" placeholder="Ny underkategori..." maxlength="100" data-add-subcat-input data-group-id="${group.id}">
+      <button class="subcat-add-btn" data-action="addSubcat" data-group-id="${group.id}" title="Legg til"><i class="fas fa-plus"></i></button>
+    </div>`;
+
+    html += `</div>`; // close subcat-group-body
+    html += `</div>`; // close subcat-group
+  });
+
+  // Add group input (admin only)
+  html += `<div class="subcat-add-row subcat-add-group-row subcat-admin-only">
+    <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
+    <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+  </div>`;
+
+  contentEl.innerHTML = html;
+  contentEl.classList.toggle('subcat-admin-active', subcatAdminMode);
+  attachSubcategoryHandlers();
+}
+
+/**
+ * Attach click handlers for subcategory filter buttons and CRUD actions
+ */
+function attachSubcategoryHandlers() {
+  const contentEl = document.getElementById('subcategoryFilterContent');
+  if (!contentEl) return;
+
+  // Admin toggle button (outside contentEl — attach once globally)
+  const adminToggle = document.getElementById('subcatAdminToggle');
+  if (adminToggle && !adminToggle.dataset.handlerAttached) {
+    adminToggle.dataset.handlerAttached = 'true';
+    adminToggle.addEventListener('click', () => {
+      subcatAdminMode = !subcatAdminMode;
+      adminToggle.classList.toggle('active', subcatAdminMode);
+      contentEl.classList.toggle('subcat-admin-active', subcatAdminMode);
+    });
+  }
+
+  // All handlers via delegation (only attach once)
+  if (contentEl.dataset.subcatHandlersAttached) return;
+  contentEl.dataset.subcatHandlersAttached = 'true';
+
+  contentEl.addEventListener('click', async (e) => {
+    // Collapse/expand group toggle
+    const groupToggle = e.target.closest('[data-toggle-group]');
+    if (groupToggle) {
+      const groupId = parseInt(groupToggle.dataset.toggleGroup, 10);
+      collapsedSubcatGroups[groupId] = !collapsedSubcatGroups[groupId];
+      renderSubcategoryFilter();
+      return;
+    }
+
+    // Filter button clicks
+    const filterBtn = e.target.closest('.subcat-btn');
+    if (filterBtn) {
+      const groupId = parseInt(filterBtn.dataset.groupId, 10);
+      const subcatId = filterBtn.dataset.subcatId;
+      if (subcatId === 'all') {
+        delete selectedSubcategories[groupId];
+      } else {
+        selectedSubcategories[groupId] = parseInt(subcatId, 10);
+      }
+      renderSubcategoryFilter();
+      applyFilters();
+      return;
+    }
+
+    // CRUD action buttons
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+
+    const action = btn.dataset.action;
+
+    if (action === 'addGroup') {
+      const input = contentEl.querySelector('input[data-add-group-input]');
+      const navn = input?.value?.trim();
+      if (!navn) { input?.focus(); return; }
+      btn.disabled = true;
+      try {
+        const res = await apiFetch('/api/subcategories/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ navn })
+        });
+        if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Feil'); }
+        const json = await res.json();
+        subcatRegistryAddGroup(json.data || { id: Date.now(), navn });
+        showToast('Gruppe opprettet', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+      finally { btn.disabled = false; }
+    }
+
+    else if (action === 'addSubcat') {
+      const groupId = parseInt(btn.dataset.groupId, 10);
+      const input = contentEl.querySelector(`input[data-add-subcat-input][data-group-id="${groupId}"]`);
+      const navn = input?.value?.trim();
+      if (!navn) { input?.focus(); return; }
+      btn.disabled = true;
+      try {
+        const res = await apiFetch('/api/subcategories/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_id: groupId, navn })
+        });
+        if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Feil'); }
+        const json = await res.json();
+        subcatRegistryAddItem(groupId, json.data || { id: Date.now(), navn });
+        showToast('Underkategori opprettet', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+      finally { btn.disabled = false; }
+    }
+
+    else if (action === 'editGroup') {
+      const groupId = parseInt(btn.dataset.groupId, 10);
+      const currentName = btn.dataset.groupNavn;
+      const newName = prompt('Nytt navn for gruppen:', currentName);
+      if (!newName || newName.trim() === currentName) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/groups/${groupId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ navn: newName.trim() })
+        });
+        if (!res.ok) throw new Error('Kunne ikke oppdatere');
+        subcatRegistryEditGroup(groupId, newName.trim());
+        showToast('Gruppe oppdatert', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    else if (action === 'deleteGroup') {
+      const groupId = parseInt(btn.dataset.groupId, 10);
+      const navn = btn.dataset.groupNavn;
+      const confirmed = await showConfirm(`Slett gruppen "${navn}"? Alle underkategorier slettes også.`, 'Slette gruppe');
+      if (!confirmed) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/groups/${groupId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Kunne ikke slette');
+        subcatRegistryDeleteGroup(groupId);
+        delete selectedSubcategories[groupId];
+        showToast('Gruppe slettet', 'success');
+        renderSubcategoryFilter();
+        applyFilters();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    else if (action === 'editSubcat') {
+      const subcatId = parseInt(btn.dataset.subcatId, 10);
+      const currentName = btn.dataset.subcatNavn;
+      const newName = prompt('Nytt navn:', currentName);
+      if (!newName || newName.trim() === currentName) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/items/${subcatId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ navn: newName.trim() })
+        });
+        if (!res.ok) throw new Error('Kunne ikke oppdatere');
+        subcatRegistryEditItem(subcatId, newName.trim());
+        showToast('Underkategori oppdatert', 'success');
+        renderSubcategoryFilter();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    else if (action === 'deleteSubcat') {
+      const subcatId = parseInt(btn.dataset.subcatId, 10);
+      const navn = btn.dataset.subcatNavn;
+      const confirmed = await showConfirm(`Slett "${navn}"?`, 'Slette underkategori');
+      if (!confirmed) return;
+      try {
+        const res = await apiFetch(`/api/subcategories/items/${subcatId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Kunne ikke slette');
+        subcatRegistryDeleteItem(subcatId);
+        showToast('Underkategori slettet', 'success');
+        renderSubcategoryFilter();
+        applyFilters();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
+
+  // Enter key to submit inline inputs
+  contentEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const input = e.target;
+    if (input.dataset.addGroupInput !== undefined) {
+      contentEl.querySelector('button[data-action="addGroup"]')?.click();
+      e.preventDefault();
+    } else if (input.dataset.addSubcatInput !== undefined) {
+      const groupId = input.dataset.groupId;
+      contentEl.querySelector(`button[data-action="addSubcat"][data-group-id="${groupId}"]`)?.click();
+      e.preventDefault();
+    }
+  });
+}
+
+/**
+ * Local registry helpers — update allSubcategoryGroups in-place
+ * instead of reloading the full /api/config (which runs 6+ DB queries).
+ */
+function subcatRegistryAddGroup(group) {
+  allSubcategoryGroups.push({ id: group.id, navn: group.navn, subcategories: [] });
+}
+
+function subcatRegistryAddItem(groupId, item) {
+  const group = allSubcategoryGroups.find(g => g.id === groupId);
+  if (group) {
+    if (!group.subcategories) group.subcategories = [];
+    group.subcategories.push({ id: item.id, navn: item.navn });
+  }
+}
+
+function subcatRegistryEditGroup(groupId, newName) {
+  const group = allSubcategoryGroups.find(g => g.id === groupId);
+  if (group) group.navn = newName;
+}
+
+function subcatRegistryDeleteGroup(groupId) {
+  const idx = allSubcategoryGroups.findIndex(g => g.id === groupId);
+  if (idx !== -1) allSubcategoryGroups.splice(idx, 1);
+}
+
+function subcatRegistryEditItem(subcatId, newName) {
+  for (const group of allSubcategoryGroups) {
+    const item = (group.subcategories || []).find(s => s.id === subcatId);
+    if (item) { item.navn = newName; return; }
+  }
+}
+
+function subcatRegistryDeleteItem(subcatId) {
+  for (const group of allSubcategoryGroups) {
+    if (!group.subcategories) continue;
+    const idx = group.subcategories.findIndex(s => s.id === subcatId);
+    if (idx !== -1) { group.subcategories.splice(idx, 1); return; }
+  }
 }
 
 // ========================================
@@ -17705,7 +18075,7 @@ function renderDashboardCategories(categoryStats) {
     html += `
       <div class="category-stat">
         ${icons}
-        <span class="cat-name">Begge</span>
+        <span class="cat-name">${serviceTypes.length > 2 ? 'Alle' : 'Begge'}</span>
         <span class="cat-count">${combinedCount}</span>
       </div>
     `;
@@ -17800,6 +18170,7 @@ function refreshMapTiles() {
   Logger.log('Refreshing map tiles with updated Mapbox token');
   map.removeLayer(currentTileLayer);
   currentTileLayer = L.tileLayer(getMapTileUrl(), {
+    minZoom: 3,
     maxZoom: 19,
     tileSize: 512,
     zoomOffset: -1,
@@ -17830,6 +18201,7 @@ function toggleNightMode() {
       // Switch to Mapbox Satellite Streets (satellite with all roads and labels)
       map.removeLayer(currentTileLayer);
       currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
+        minZoom: 3,
         maxZoom: 19,
         tileSize: 512,
         zoomOffset: -1,
@@ -17846,6 +18218,7 @@ function toggleNightMode() {
       // Switch to Mapbox Navigation Night (dark with visible roads)
       map.removeLayer(currentTileLayer);
       currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
+        minZoom: 3,
         maxZoom: 19,
         tileSize: 512,
         zoomOffset: -1,
@@ -17878,6 +18251,7 @@ function initSharedMap() {
     map = L.map('map', {
       zoomControl: false,
       attributionControl: false,
+      minZoom: 3,
       dragging: false,
       scrollWheelZoom: false,
       doubleClickZoom: false,
@@ -17890,6 +18264,7 @@ function initSharedMap() {
     Logger.log('Map tile URL:', tileUrl);
 
     currentTileLayer = L.tileLayer(tileUrl, {
+      minZoom: 3,
       maxZoom: 19,
       tileSize: 512,
       zoomOffset: -1,
@@ -18028,7 +18403,7 @@ function initMap() {
     spiderfyOnEveryZoom: false,
     spiderfyDistanceMultiplier: 2.5,
     showCoverageOnHover: false,
-    zoomToBoundsOnClick: true, // Zoom to bounds instead of spiderfying immediately
+    zoomToBoundsOnClick: false, // Disabled - popup has "Zoom inn" button instead
     // Animate cluster split
     animate: true,
     animateAddingMarkers: false,
@@ -18092,49 +18467,44 @@ function initMap() {
 
     // Create popup content with options
     const areaNames = new Set();
-    const typeCounts = {};  // el_type: Landbruk, Næring, etc.
-    const driftCounts = {}; // brann_driftstype: Storfe, Sau, etc.
-    const systemCounts = {}; // brann_system: Elotec, ICAS, etc.
+    const subcatCounts = {}; // { "groupName: subcatName": count }
 
     customerIds.forEach(id => {
       const customer = customers.find(c => c.id === id);
       if (customer) {
         if (customer.poststed) areaNames.add(customer.poststed);
 
-        // Count el_type (Landbruk, Næring, Bolig, etc.)
-        if (customer.el_type) typeCounts[customer.el_type] = (typeCounts[customer.el_type] || 0) + 1;
-
-        // Count driftstype
-        const drift = normalizeDriftstype(customer.brann_driftstype);
-        if (drift) driftCounts[drift] = (driftCounts[drift] || 0) + 1;
-
-        // Count brannsystem
-        const system = normalizeBrannsystem(customer.brann_system);
-        if (system) systemCounts[system] = (systemCounts[system] || 0) + 1;
+        // Count subcategory assignments
+        const assignments = kundeSubcatMap[id] || [];
+        for (const a of assignments) {
+          for (const group of allSubcategoryGroups) {
+            if (group.id !== a.group_id) continue;
+            const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
+            if (sub) {
+              const key = `${group.navn}|${sub.navn}`;
+              subcatCounts[key] = (subcatCounts[key] || 0) + 1;
+            }
+          }
+        }
       }
     });
 
-    // Build category summary HTML
+    // Build category summary HTML from subcategory counts
     let categoryHtml = '';
-    const typeEntries = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
-    const driftEntries = Object.entries(driftCounts).sort((a, b) => b[1] - a[1]);
-    const systemEntries = Object.entries(systemCounts).sort((a, b) => b[1] - a[1]);
+    const grouped = {};
+    for (const [key, count] of Object.entries(subcatCounts)) {
+      const [groupName, subcatName] = key.split('|');
+      if (!grouped[groupName]) grouped[groupName] = [];
+      grouped[groupName].push([subcatName, count]);
+    }
 
-    if (typeEntries.length > 0 || driftEntries.length > 0 || systemEntries.length > 0) {
+    const groupEntries = Object.entries(grouped);
+    if (groupEntries.length > 0) {
       categoryHtml = '<div class="cluster-categories">';
-      if (typeEntries.length > 0) {
-        categoryHtml += '<div class="cluster-category-group"><strong>Type:</strong> ';
-        categoryHtml += typeEntries.map(([name, count]) => `<span class="cluster-tag type-tag clickable" data-action="filterByElType" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
-        categoryHtml += '</div>';
-      }
-      if (systemEntries.length > 0) {
-        categoryHtml += '<div class="cluster-category-group"><strong>System:</strong> ';
-        categoryHtml += systemEntries.map(([name, count]) => `<span class="cluster-tag system-tag clickable" data-action="filterByBrannsystem" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
-        categoryHtml += '</div>';
-      }
-      if (driftEntries.length > 0) {
-        categoryHtml += '<div class="cluster-category-group"><strong>Drift:</strong> ';
-        categoryHtml += driftEntries.map(([name, count]) => `<span class="cluster-tag drift-tag clickable" data-action="filterByDrift" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
+      for (const [groupName, items] of groupEntries) {
+        items.sort((a, b) => b[1] - a[1]);
+        categoryHtml += `<div class="cluster-category-group"><strong>${escapeHtml(groupName)}:</strong> `;
+        categoryHtml += items.map(([name, count]) => `<span class="cluster-tag">${escapeHtml(name)} (${count})</span>`).join(' ');
         categoryHtml += '</div>';
       }
       categoryHtml += '</div>';
@@ -18326,6 +18696,30 @@ function createClusterIcon(cluster) {
   });
 }
 
+/**
+ * Render subcategory assignments for a customer in the popup.
+ * Uses kundeSubcatMap (global) and serviceTypeRegistry to resolve names.
+ */
+function renderPopupSubcategories(customer) {
+  const assignments = kundeSubcatMap[customer.id];
+  if (!assignments || assignments.length === 0) return '';
+
+  const labels = [];
+
+  for (const a of assignments) {
+    for (const group of allSubcategoryGroups) {
+      if (group.id !== a.group_id) continue;
+      const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
+      if (sub) {
+        labels.push(`<strong>${escapeHtml(group.navn)}:</strong> ${escapeHtml(sub.navn)}`);
+      }
+    }
+  }
+
+  if (labels.length === 0) return '';
+  return labels.map(l => `<p>${l}</p>`).join('');
+}
+
 // Generate popup content lazily (performance optimization - only called when popup opens)
 function generatePopupContent(customer) {
   const isSelected = selectedCustomers.has(customer.id);
@@ -18335,26 +18729,16 @@ function generatePopupContent(customer) {
   // Generate dynamic popup control info based on selected industry
   const kontrollInfoHtml = serviceTypeRegistry.renderPopupControlInfo(customer, controlStatus);
 
-  // Generate dynamic industry-specific fields
-  const industryFieldsHtml = serviceTypeRegistry.renderPopupIndustryFields(customer);
-
   // Generate custom organization fields from Excel import
   const customFieldsHtml = renderPopupCustomFields(customer);
 
-  // Fallback: show el_type, brann_system, brann_driftstype directly if not rendered by service type registry
-  let directFieldsHtml = '';
-  if (!industryFieldsHtml) {
-    if (customer.el_type) directFieldsHtml += `<p><strong>Type:</strong> ${escapeHtml(customer.el_type)}</p>`;
-    if (customer.brann_system) directFieldsHtml += `<p><strong>Brannsystem:</strong> ${escapeHtml(customer.brann_system)}</p>`;
-    if (customer.brann_driftstype) directFieldsHtml += `<p><strong>Driftstype:</strong> ${escapeHtml(customer.brann_driftstype)}</p>`;
-  }
-  // Show org.nr. from dedicated field or fallback to notater tag
+  // Show org.nr., kundenr, prosjektnr, estimert tid
+  let extraFieldsHtml = '';
   const orgNr = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]);
-  if (orgNr) directFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
-  // Show Tripletex kundenummer and prosjektnummer if present
-  if (customer.kundenummer) directFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
-  if (customer.prosjektnummer) directFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
-  if (customer.estimert_tid) directFieldsHtml += `<p><strong>Est. tid:</strong> ${customer.estimert_tid} min</p>`;
+  if (orgNr) extraFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
+  if (customer.kundenummer) extraFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
+  if (customer.prosjektnummer) extraFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
+  if (customer.estimert_tid) extraFieldsHtml += `<p><strong>Est. tid:</strong> ${customer.estimert_tid} min</p>`;
 
   // Show notater if present (strip internal tags for cleaner display)
   let notatHtml = '';
@@ -18377,12 +18761,15 @@ function generatePopupContent(customer) {
       </div>`
     : '';
 
+  // Generate subcategory assignments display
+  const subcatHtml = renderPopupSubcategories(customer);
+
   return `
     ${presenceBanner}
     <h3>${escapeHtml(customer.navn)}</h3>
-    <p><strong>Kategori:</strong> ${escapeHtml(customer.kategori || 'Annen')}</p>
-    ${industryFieldsHtml}
-    ${directFieldsHtml}
+    ${customer.kategori ? `<p><strong>Kategori:</strong> ${escapeHtml(customer.kategori)}</p>` : ''}
+    ${subcatHtml}
+    ${extraFieldsHtml}
     ${customFieldsHtml}
     <p>${escapeHtml(customer.adresse)}</p>
     <p>${escapeHtml(customer.postnummer || '')} ${escapeHtml(customer.poststed || '')}</p>
@@ -18467,8 +18854,11 @@ async function handleSpaLogin(e) {
       if (data.expiresAt) accessTokenExpiresAt = data.expiresAt;
       localStorage.setItem('userName', data.klient?.navn || data.bruker?.navn || 'Bruker');
       localStorage.setItem('userEmail', email || data.klient?.epost || data.bruker?.epost || '');
-      localStorage.setItem('userRole', data.klient?.rolle || data.bruker?.rolle || 'bruker');
+      localStorage.setItem('userRole', data.klient?.rolle || data.bruker?.rolle || 'leser');
       localStorage.setItem('userType', data.klient?.type || 'klient');
+
+      // Apply role-based UI restrictions
+      applyRoleUI();
 
       // Multi-tenancy: Store organization context
       if (data.klient?.organizationId) {
@@ -19026,8 +19416,6 @@ function applyIndustryChanges() {
 
   // Update filter panel categories (right side panel)
   renderFilterPanelCategories();
-  renderDriftskategoriFilter();
-
   // Apply MVP mode UI changes (hide industry-specific elements)
   applyMvpModeUI();
 
@@ -19110,29 +19498,11 @@ function attachKategoriTabHandlers() {
 
 // Update all dropdowns that depend on service types
 function updateServiceTypeDropdowns() {
-  // Customer modal category dropdown
-  const kategoriSelect = document.getElementById('kategori');
-  if (kategoriSelect) {
-    const currentValue = kategoriSelect.value;
-    const serviceTypes = serviceTypeRegistry.getAll();
-    let options = '';
-
-    serviceTypes.forEach(st => {
-      options += `<option value="${st.name}">${st.name}</option>`;
-    });
-
-    // Add combined option if there are multiple service types
-    if (serviceTypes.length >= 2) {
-      const combinedName = serviceTypes.map(st => st.name).join(' + ');
-      options += `<option value="${combinedName}">Begge (${combinedName})</option>`;
-    }
-
-    kategoriSelect.innerHTML = options;
-
-    // Try to restore previous value
-    if (currentValue) {
-      kategoriSelect.value = currentValue;
-    }
+  // Customer modal category checkboxes
+  const kategoriContainer = document.getElementById('kategoriCheckboxes');
+  if (kategoriContainer) {
+    const currentValue = serviceTypeRegistry.getSelectedCategories();
+    kategoriContainer.innerHTML = serviceTypeRegistry.renderCategoryCheckboxes(currentValue);
   }
 }
 
@@ -19428,8 +19798,8 @@ function renderLoginFeatures() {
 
   // Default features if no service types configured
   const defaultFeatures = [
-    { icon: 'fas fa-bolt', name: 'El-kontroll', description: 'Periodisk kontroll for næring og bolig' },
-    { icon: 'fas fa-fire', name: 'Brannvarsling', description: 'Service og kontroll av anlegg' }
+    { icon: 'fas fa-clipboard-check', name: 'Kontroll', description: 'Periodisk oppfølging av kunder' },
+    { icon: 'fas fa-route', name: 'Ruteplanlegging', description: 'Planlegg og optimaliser ruter' }
   ];
 
   // Use service types or defaults
@@ -19541,7 +19911,6 @@ async function reloadConfigWithAuth() {
 
       updateControlSectionHeaders();
       renderFilterPanelCategories();
-      renderDriftskategoriFilter();
       applyMvpModeUI();
       applyBranding();
       applyDateModeToInputs();
@@ -20464,6 +20833,7 @@ async function loadConfig() {
 
     // Initialize service type registry from config
     serviceTypeRegistry.loadFromConfig(appConfig);
+    allSubcategoryGroups = appConfig.subcategoryGroups || [];
 
     // Check localStorage for saved industry (for login page display before auth)
     const savedIndustrySlug = localStorage.getItem('industrySlug');
@@ -20481,8 +20851,6 @@ async function loadConfig() {
 
     // Render dynamic filter panel categories
     renderFilterPanelCategories();
-    renderDriftskategoriFilter();
-
     // Apply MVP mode UI changes (hide industry-specific elements)
     applyMvpModeUI();
 
@@ -20524,9 +20892,6 @@ async function loadCustomers() {
     const result = await response.json();
     customers = result.data || result; // Handle both { data: [...] } and direct array
     Logger.log('loadCustomers() fetched', customers.length, 'customers');
-    renderElTypeFilter(); // Update kundetype filter with customer data
-    renderDriftskategoriFilter(); // Update driftskategori filter with customer data
-    renderBrannsystemFilter(); // Update brannsystem filter with customer data
     applyFilters();
     renderMarkers(customers);
     renderCustomerAdmin();
@@ -20535,9 +20900,12 @@ async function loadCustomers() {
     updateDashboard(); // Update dashboard stats
     updateGettingStartedBanner(); // Show/hide getting started banner
 
-    // Load avtaler and show plan badges on map (team member assignment indicators)
+    // Load avtaler and subcategory assignments in parallel
     if (!weekPlanState.weekStart) initWeekPlanState(new Date());
-    await loadAvtaler();
+    await Promise.all([
+      loadAvtaler(),
+      loadAllSubcategoryAssignments()
+    ]);
   } catch (error) {
     console.error('Feil ved lasting av kunder:', error);
   }
@@ -20726,26 +21094,28 @@ async function applyFilters() {
   let filtered = [...customers];
   const searchQuery = searchInput?.value?.toLowerCase() || '';
 
-  // Category filter - exact match
+  // Category filter - matches if customer has the selected category (supports multi-category customers)
   if (selectedCategory !== 'all') {
     const beforeCount = filtered.length;
-    filtered = filtered.filter(c => c.kategori === selectedCategory);
+    const filterKats = selectedCategory.split(' + ').map(s => s.trim());
+    filtered = filtered.filter(c => {
+      if (!c.kategori) return false;
+      const kundeKategorier = c.kategori.split(' + ').map(s => s.trim());
+      // Customer must have ALL selected filter categories
+      return filterKats.every(fk => kundeKategorier.includes(fk));
+    });
     Logger.log(`applyFilters: "${selectedCategory}" - ${beforeCount} -> ${filtered.length} kunder`);
   }
 
-  // Driftskategori filter (uses normalized values)
-  if (selectedDriftskategori !== 'all') {
-    filtered = filtered.filter(c => normalizeDriftstype(c.brann_driftstype) === selectedDriftskategori);
-  }
-
-  // Brannsystem filter (uses normalized categories: Elotec, ICAS, Begge, Annet)
-  if (selectedBrannsystem !== 'all') {
-    filtered = filtered.filter(c => normalizeBrannsystem(c.brann_system) === selectedBrannsystem);
-  }
-
-  // Kundetype filter (el_type: Landbruk, Næring, Bolig, etc.)
-  if (selectedElType !== 'all') {
-    filtered = filtered.filter(c => c.el_type === selectedElType);
+  // Subcategory filter (AND logic between groups: customer must match all selected groups)
+  const activeSubcatFilters = Object.entries(selectedSubcategories).filter(([_, v]) => v);
+  if (activeSubcatFilters.length > 0) {
+    filtered = filtered.filter(c => {
+      const assignments = kundeSubcatMap[c.id] || [];
+      return activeSubcatFilters.every(([groupId, subcatId]) => {
+        return assignments.some(a => a.group_id === Number(groupId) && a.subcategory_id === Number(subcatId));
+      });
+    });
   }
 
   // Dynamic field filters
@@ -20849,50 +21219,51 @@ async function applyFilters() {
 
 // Update category filter button counts (exact match - matches filter behavior)
 function updateCategoryFilterCounts() {
-  const elCount = customers.filter(c => c.kategori === 'El-Kontroll').length;
-  const brannCount = customers.filter(c => c.kategori === 'Brannvarsling').length;
-  const beggeCount = customers.filter(c => c.kategori === 'El-Kontroll + Brannvarsling').length;
+  const serviceTypes = serviceTypeRegistry.getAll();
 
-  // Update category-btn (left sidebar)
+  // "Alle" button (left sidebar + right sidebar tab)
   const allBtn = document.querySelector('[data-category="all"]');
-  const elBtn = document.querySelector('[data-category="El-Kontroll"]');
-  const brannBtn = document.querySelector('[data-category="Brannvarsling"]');
-  const beggeBtn = document.querySelector('[data-category="El-Kontroll + Brannvarsling"]');
-
   if (allBtn) allBtn.innerHTML = `<i class="fas fa-list"></i> Alle (${customers.length})`;
-  if (elBtn) elBtn.innerHTML = `<i class="fas fa-bolt"></i> El-Kontroll (${elCount})`;
-  if (brannBtn) brannBtn.innerHTML = `<i class="fas fa-fire"></i> Brannvarsling (${brannCount})`;
-  if (beggeBtn) beggeBtn.innerHTML = `<i class="fas fa-bolt"></i><i class="fas fa-fire"></i> Begge (${beggeCount})`;
-
-  // Update kategori-tabs (right sidebar) - preserve icons by using innerHTML
   const alleTab = document.querySelector('[data-kategori="alle"]');
-  const elTab = document.querySelector('[data-kategori="El-Kontroll"]');
-  const brannTab = document.querySelector('[data-kategori="Brannvarsling"]');
-  const beggeTab = document.querySelector('[data-kategori="El-Kontroll + Brannvarsling"]');
-
   if (alleTab) alleTab.innerHTML = `Alle (${customers.length})`;
-  if (elTab) elTab.innerHTML = `${serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('el-kontroll'))} El-Kontroll (${elCount})`;
-  if (brannTab) brannTab.innerHTML = `${serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('brannvarsling'))} Brannvarsling (${brannCount})`;
-  if (beggeTab) {
-    const elIcon = serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('el-kontroll'));
-    const brannIcon = serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('brannvarsling'));
-    beggeTab.innerHTML = `${elIcon}${brannIcon} Begge (${beggeCount})`;
-  }
 
-  // Update driftskategori filter counts
-  const driftCategories = ['Storfe', 'Sau', 'Geit', 'Gris', 'Gartneri', 'Storfe/Sau'];
-  driftCategories.forEach(drift => {
-    const btn = document.querySelector(`[data-drift="${drift}"]`);
-    if (btn) {
-      const count = customers.filter(c => c.brann_driftstype === drift).length;
-      btn.textContent = `${drift} (${count})`;
-    }
+  // Update each service type button/tab dynamically
+  serviceTypes.forEach(st => {
+    // Count customers that have this category (supports multi-category customers)
+    const count = customers.filter(c => {
+      if (!c.kategori) return false;
+      return c.kategori.split(' + ').map(s => s.trim()).includes(st.name);
+    }).length;
+    const icon = serviceTypeRegistry.getIcon(st);
+
+    // Left sidebar category buttons
+    const btn = document.querySelector(`[data-category="${st.name}"]`);
+    if (btn) btn.innerHTML = `${icon} ${escapeHtml(st.name)} (${count})`;
+
+    // Right sidebar kategori tabs
+    const tab = document.querySelector(`[data-kategori="${st.name}"]`);
+    if (tab) tab.innerHTML = `${icon} ${escapeHtml(st.name)} (${count})`;
   });
 
-  // Update "Alle" button for drift
-  const allDriftBtn = document.querySelector('[data-drift="all"]');
-  const driftCount = customers.filter(c => c.brann_driftstype).length;
-  if (allDriftBtn) allDriftBtn.innerHTML = `<i class="fas fa-list"></i> Alle (${driftCount})`;
+  // Combined category (when org has 2+ service types)
+  if (serviceTypes.length >= 2) {
+    const combinedName = serviceTypes.map(st => st.name).join(' + ');
+    // Count customers that have ALL categories
+    const beggeCount = customers.filter(c => {
+      if (!c.kategori) return false;
+      const kundeKats = c.kategori.split(' + ').map(s => s.trim());
+      return serviceTypes.every(st => kundeKats.includes(st.name));
+    }).length;
+    const combinedIcons = serviceTypes.map(st => serviceTypeRegistry.getIcon(st)).join('');
+
+    const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';
+    const beggeBtn = document.querySelector(`[data-category="${combinedName}"]`);
+    if (beggeBtn) beggeBtn.innerHTML = `${combinedIcons} ${combinedLabel} (${beggeCount})`;
+
+    const beggeTab = document.querySelector(`[data-kategori="${combinedName}"]`);
+    if (beggeTab) beggeTab.innerHTML = `${combinedIcons} ${combinedLabel} (${beggeCount})`;
+  }
+
 }
 
 // Check if customer needs control soon - includes lifecycle stages when feature is enabled
@@ -21835,27 +22206,78 @@ function closeAreaSelectMenu() {
 }
 
 
+// Render subcategory dropdowns (standalone, not tied to service types)
+function renderSubcategoryDropdowns(customer = null) {
+  const section = document.getElementById('subcategorySection');
+  const container = document.getElementById('subcategoryDropdowns');
+  if (!section || !container) return;
+
+  const groups = allSubcategoryGroups || [];
+  if (groups.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Get existing assignments for this customer
+  const kundeId = customer?.id;
+  const assignments = kundeId ? (kundeSubcatMap[kundeId] || []) : [];
+
+  let html = '';
+  groups.forEach(group => {
+    if (!group.subcategories || group.subcategories.length === 0) return;
+
+    const currentAssignment = assignments.find(a => a.group_id === group.id);
+    const selectedSubId = currentAssignment?.subcategory_id || '';
+
+    html += `
+      <div class="form-group">
+        <label for="subcat_group_${group.id}">${escapeHtml(group.navn)}</label>
+        <select id="subcat_group_${group.id}" data-group-id="${group.id}" class="subcat-dropdown">
+          <option value="">Ikke valgt</option>
+          ${group.subcategories.map(sub =>
+            `<option value="${sub.id}" ${sub.id === selectedSubId ? 'selected' : ''}>${escapeHtml(sub.navn)}</option>`
+          ).join('')}
+        </select>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+// Collect subcategory assignments from dropdowns
+function collectSubcategoryAssignments() {
+  const assignments = [];
+  document.querySelectorAll('.subcat-dropdown').forEach(select => {
+    const groupId = parseInt(select.dataset.groupId, 10);
+    const subcatId = parseInt(select.value, 10);
+    if (groupId && subcatId) {
+      assignments.push({ group_id: groupId, subcategory_id: subcatId });
+    }
+  });
+  return assignments;
+}
+
 // Populate dynamic dropdowns from ServiceTypeRegistry
 function populateDynamicDropdowns(customer = null) {
-  // Kategori dropdown
-  const kategoriSelect = document.getElementById('kategori');
-  if (kategoriSelect) {
-    kategoriSelect.innerHTML = serviceTypeRegistry.renderCategoryOptions(customer?.kategori || '');
+  // Kategori checkboxes (multi-select)
+  const kategoriContainer = document.getElementById('kategoriCheckboxes');
+  if (kategoriContainer) {
+    kategoriContainer.innerHTML = serviceTypeRegistry.renderCategoryCheckboxes(customer?.kategori || '');
+    // Attach change handlers for control section visibility
+    kategoriContainer.querySelectorAll('input[name="kategori"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const selected = serviceTypeRegistry.getSelectedCategories();
+        updateControlSectionsVisibility(selected);
+        renderSubcategoryDropdowns(customer);
+      });
+    });
   }
 
-  // El-type (subtypes for el-kontroll)
-  const elTypeSelect = document.getElementById('el_type');
-  if (elTypeSelect) {
-    elTypeSelect.innerHTML = serviceTypeRegistry.renderSubtypeOptions('el-kontroll', customer?.el_type || '');
-  }
+  // Render subcategory dropdowns for selected service type
+  renderSubcategoryDropdowns(customer);
 
-  // Brann system (equipment for brannvarsling)
-  const brannSystemSelect = document.getElementById('brann_system');
-  if (brannSystemSelect) {
-    brannSystemSelect.innerHTML = serviceTypeRegistry.renderEquipmentOptions('brannvarsling', customer?.brann_system || '');
-  }
-
-  // Intervaller
+  // Intervaller (populeres alltid, også i MVP-modus)
   const elIntervallSelect = document.getElementById('el_kontroll_intervall');
   if (elIntervallSelect) {
     elIntervallSelect.innerHTML = serviceTypeRegistry.renderIntervalOptions(customer?.el_kontroll_intervall || 36);
@@ -21866,11 +22288,6 @@ function populateDynamicDropdowns(customer = null) {
     brannIntervallSelect.innerHTML = serviceTypeRegistry.renderIntervalOptions(customer?.brann_kontroll_intervall || 12);
   }
 
-  // Driftskategori (brann-relatert subtype)
-  const driftsSelect = document.getElementById('driftskategori');
-  if (driftsSelect) {
-    driftsSelect.innerHTML = serviceTypeRegistry.renderDriftsOptions(customer?.brann_driftstype || '');
-  }
 }
 
 // Edit customer
@@ -21878,8 +22295,14 @@ function editCustomer(id) {
   const customer = customers.find(c => c.id === id);
   if (!customer) return;
 
+  // Sett referanse til kunden som redigeres (brukes av renderDynamicServiceSections)
+  _editingCustomer = customer;
+
   // Claim this customer (presence system)
   claimCustomer(id);
+
+  // Reset address autocomplete state from previous session
+  resetAddressAutocomplete();
 
   // Populate dynamic dropdowns first
   populateDynamicDropdowns(customer);
@@ -21942,8 +22365,8 @@ function editCustomer(id) {
   document.getElementById('kontaktloggSection').style.display = 'block';
   loadKontaktlogg(customer.id);
 
-  // Load tags for this customer
-  loadKundeTags(customer.id);
+  // Load subcategories for this customer
+  loadKundeSubcategories(customer.id);
 
   // Load kontaktpersoner for this customer
   loadKontaktpersoner(customer.id);
@@ -22044,15 +22467,16 @@ async function loadOrganizationCategories() {
       // Sync serviceTypeRegistry so sidebar/filter UI stays up to date
       if (appConfig) {
         appConfig.serviceTypes = organizationCategories.map(cat => ({
-          id: cat.id, name: cat.name, slug: cat.slug,
-          icon: cat.icon, color: cat.color,
-          defaultInterval: cat.default_interval_months,
+            id: cat.id, name: cat.name, slug: cat.slug,
+            icon: cat.icon, color: cat.color,
+            defaultInterval: cat.default_interval_months,
         }));
         serviceTypeRegistry.loadFromConfig(appConfig);
       }
 
       // Re-render category UI to reflect loaded categories
       renderFilterPanelCategories();
+      renderSubcategoryFilter();
       updateMapLegend();
 
       Logger.log('Loaded organization categories:', organizationCategories.length);
@@ -22227,9 +22651,15 @@ function collectCustomFieldValues() {
 
 
 // Add new customer
-function addCustomer() {
+async function addCustomer() {
+  // Nullstill referanse til redigert kunde
+  _editingCustomer = null;
+
   // Populate dynamic dropdowns first (with defaults)
   populateDynamicDropdowns(null);
+
+  // Reset address autocomplete state from previous session
+  resetAddressAutocomplete();
 
   document.getElementById('modalTitle').textContent = 'Ny kunde';
   customerForm.reset();
@@ -22250,11 +22680,13 @@ function addCustomer() {
   document.getElementById('neste_brann_kontroll').value = '';
   document.getElementById('brann_kontroll_intervall').value = 12;
 
+  // Tøm dynamiske service-seksjoner
+  const dynContainer = document.getElementById('dynamicServiceSections');
+  if (dynContainer) dynContainer.innerHTML = '';
+
   // Vis kontroll-seksjoner basert på valgt kategori (eller default)
-  const kategoriSelect = document.getElementById('kategori');
-  // MVP: ingen default kategori, Full mode: El-Kontroll som default
-  const defaultKategori = isMvpMode() ? '' : 'El-Kontroll';
-  const selectedKategori = kategoriSelect ? kategoriSelect.value : defaultKategori;
+  const selectedKategori = serviceTypeRegistry.getSelectedCategories() ||
+    (isMvpMode() ? '' : serviceTypeRegistry.getDefaultServiceType().name);
   updateControlSectionsVisibility(selectedKategori);
 
   // Reset email settings to defaults
@@ -22275,8 +22707,65 @@ function addCustomer() {
   document.getElementById('kontaktpersonerSection').style.display = 'none';
   document.getElementById('kontaktpersonerList').innerHTML = '';
 
+  // Render subcategory dropdowns for new customer
+  renderSubcategoryDropdowns(null);
+
   document.getElementById('deleteCustomerBtn').classList.add('hidden');
   openModal(customerModal);
+}
+
+// Referanse til kunden som redigeres (for å populere dynamiske seksjoner)
+let _editingCustomer = null;
+
+// Render dynamiske service-seksjoner basert på valgte kategorier
+function renderDynamicServiceSections(customer = null) {
+  const container = document.getElementById('dynamicServiceSections');
+  if (!container) return;
+
+  const selected = serviceTypeRegistry.getSelectedCategories();
+  const selectedNames = selected ? selected.split(' + ').map(s => s.trim()).filter(Boolean) : [];
+
+  if (selectedNames.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Lagre eksisterende verdier fra dynamiske seksjoner før re-render
+  const savedValues = {};
+  container.querySelectorAll('.service-section').forEach(section => {
+    const slug = section.dataset.serviceSlug;
+    if (!slug) return;
+    const sisteInput = document.getElementById(`service_${slug}_siste`);
+    const nesteInput = document.getElementById(`service_${slug}_neste`);
+    const intervallSelect = document.getElementById(`service_${slug}_intervall`);
+    const subtypeSelect = document.getElementById(`service_${slug}_subtype`);
+    const equipmentSelect = document.getElementById(`service_${slug}_equipment`);
+    savedValues[slug] = {
+      siste: sisteInput?.value || '',
+      neste: nesteInput?.value || '',
+      intervall: intervallSelect?.value || '',
+      subtype: subtypeSelect?.value || '',
+      equipment: equipmentSelect?.value || ''
+    };
+  });
+
+  // Render nye seksjoner kun for valgte kategorier
+  const customerData = customer || _editingCustomer || {};
+  container.innerHTML = serviceTypeRegistry.renderServiceSections(customerData, selectedNames);
+
+  // Gjenopprett lagrede verdier for seksjoner som fortsatt finnes
+  Object.entries(savedValues).forEach(([slug, vals]) => {
+    const sisteInput = document.getElementById(`service_${slug}_siste`);
+    const nesteInput = document.getElementById(`service_${slug}_neste`);
+    const intervallSelect = document.getElementById(`service_${slug}_intervall`);
+    const subtypeSelect = document.getElementById(`service_${slug}_subtype`);
+    const equipmentSelect = document.getElementById(`service_${slug}_equipment`);
+    if (sisteInput && vals.siste) sisteInput.value = vals.siste;
+    if (nesteInput && vals.neste) nesteInput.value = vals.neste;
+    if (intervallSelect && vals.intervall) intervallSelect.value = vals.intervall;
+    if (subtypeSelect && vals.subtype) subtypeSelect.value = vals.subtype;
+    if (equipmentSelect && vals.equipment) equipmentSelect.value = vals.equipment;
+  });
 }
 
 // Vis/skjul kontroll-seksjoner basert på kategori og app mode
@@ -22285,40 +22774,15 @@ function updateControlSectionsVisibility(kategori) {
   const brannSection = document.getElementById('brannvarslingSection');
   const mvpSection = document.getElementById('mvpKontrollSection');
   const driftskategoriGroup = document.getElementById('driftskategori')?.closest('.form-group');
-  const kategoriGroup = document.getElementById('kategori')?.closest('.form-group');
 
-  if (!elSection || !brannSection) return;
-
-  // MVP-modus: Vis enkel oppfølgings-seksjon, skjul avanserte seksjoner
-  if (isMvpMode()) {
-    elSection.style.display = 'none';
-    brannSection.style.display = 'none';
-    if (mvpSection) mvpSection.style.display = 'block';
-    if (driftskategoriGroup) driftskategoriGroup.style.display = 'none';
-    if (kategoriGroup) kategoriGroup.style.display = 'none';
-    return;
-  }
-
-  // Full mode (TRE Allservice): Skjul MVP-seksjon, vis avanserte basert på kategori
+  // Skjul alle legacy-seksjoner — vi bruker dynamiske seksjoner i stedet
+  if (elSection) elSection.style.display = 'none';
+  if (brannSection) brannSection.style.display = 'none';
   if (mvpSection) mvpSection.style.display = 'none';
-  if (driftskategoriGroup) driftskategoriGroup.style.display = 'block';
-  if (kategoriGroup) kategoriGroup.style.display = 'block';
+  if (driftskategoriGroup && isMvpMode()) driftskategoriGroup.style.display = 'none';
 
-  const kat = (kategori || '').toLowerCase();
-
-  if (kat.includes('el') && kat.includes('brann')) {
-    // Kombinert - vis begge
-    elSection.style.display = 'block';
-    brannSection.style.display = 'block';
-  } else if (kat.includes('brann')) {
-    // Kun brannvarsling
-    elSection.style.display = 'none';
-    brannSection.style.display = 'block';
-  } else {
-    // Kun el-kontroll (standard)
-    elSection.style.display = 'block';
-    brannSection.style.display = 'none';
-  }
+  // Render dynamiske dato-seksjoner per valgt kategori
+  renderDynamicServiceSections();
 }
 
 // Auto-geocode address
@@ -22398,11 +22862,19 @@ async function saveCustomer(e) {
     }
   }
 
-  // MVP: ingen kategori (null), Full mode: bruk dropdown-verdi eller El-Kontroll som default
-  let kategori = null;
-  if (!isMvpMode()) {
-    kategori = document.getElementById('kategori').value || 'El-Kontroll';
-  }
+  // Bruk kategori-checkboxes for alle (MVP + Full)
+  let kategori = serviceTypeRegistry.getSelectedCategories() || null;
+
+  // Finn valgte kategori-slugs for å nullstille datoer for avhukede kategorier
+  const selectedNames = (kategori || '').split(' + ').map(s => s.trim()).filter(Boolean);
+  const allServiceTypes = serviceTypeRegistry.getAll();
+  const selectedSlugs = selectedNames.map(name => {
+    const st = allServiceTypes.find(s => s.name === name);
+    return st?.slug;
+  }).filter(Boolean);
+
+  const hasEl = selectedSlugs.includes('el-kontroll');
+  const hasBrann = selectedSlugs.includes('brannvarsling');
 
   const data = {
     navn: document.getElementById('navn').value,
@@ -22420,20 +22892,16 @@ async function saveCustomer(e) {
     kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || 12,
     kategori: kategori,
     notater: (document.getElementById('notater').value || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').trim(),
-    // El-type specification
-    el_type: document.getElementById('el_type') ? document.getElementById('el_type').value : null,
-    // Separate El-Kontroll felt
-    siste_el_kontroll: normalizeDateValue(document.getElementById('siste_el_kontroll').value) || null,
-    neste_el_kontroll: normalizeDateValue(document.getElementById('neste_el_kontroll').value) || null,
-    el_kontroll_intervall: Number.parseInt(document.getElementById('el_kontroll_intervall').value) || 36,
-    // Brann-system specification
-    brann_system: document.getElementById('brann_system') ? document.getElementById('brann_system').value : null,
-    // Separate Brannvarsling felt
-    siste_brann_kontroll: normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || null,
-    neste_brann_kontroll: normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || null,
-    brann_kontroll_intervall: Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || 12,
-    // Driftskategori
-    brann_driftstype: document.getElementById('driftskategori').value || null,
+    // Separate El-Kontroll felt — null ut hvis el-kontroll ikke er valgt
+    siste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('siste_el_kontroll').value) || null) : null,
+    neste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('neste_el_kontroll').value) || null) : null,
+    el_kontroll_intervall: hasEl ? (Number.parseInt(document.getElementById('el_kontroll_intervall').value) || 36) : null,
+    // Separate Brannvarsling felt — null ut hvis brannvarsling ikke er valgt
+    siste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || null) : null,
+    neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || null) : null,
+    brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || 12) : null,
+    // Dynamiske tjeneste-datoer fra dynamiske seksjoner
+    services: serviceTypeRegistry.parseServiceFormData(),
     // Custom organization fields
     custom_data: JSON.stringify(collectCustomFieldValues())
   };
@@ -22462,6 +22930,19 @@ async function saveCustomer(e) {
     }
 
     const savedCustomerId = customerId || result.id;
+
+    // Save subcategory assignments
+    if (savedCustomerId) {
+      const subcatAssignments = collectSubcategoryAssignments();
+      try {
+        await apiFetch(`/api/subcategories/kunde/${savedCustomerId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ assignments: subcatAssignments })
+        });
+      } catch (err) {
+        console.error('Error saving subcategory assignments:', err);
+      }
+    }
 
     // Save email settings
     if (savedCustomerId) {
@@ -22735,38 +23216,42 @@ function renderCustomerAdmin() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    if (c.kategori === 'El-Kontroll' || c.kategori === 'El-Kontroll + Brannvarsling') {
-      if (c.neste_el_kontroll) {
-        const nextDate = new Date(c.neste_el_kontroll);
+    // Show control badges per service type (dynamic from registry)
+    const adminServiceTypes = serviceTypeRegistry.getAll();
+    adminServiceTypes.forEach(st => {
+      // Check services array first, then legacy columns by slug
+      const serviceData = (c.services || []).find(s => s.service_type_slug === st.slug || s.service_type_id === st.id);
+      let nesteKontroll = serviceData?.neste_kontroll;
+      if (!nesteKontroll && st.slug === 'el-kontroll') nesteKontroll = c.neste_el_kontroll;
+      if (!nesteKontroll && st.slug === 'brannvarsling') nesteKontroll = c.neste_brann_kontroll;
+      if (nesteKontroll) {
+        const nextDate = new Date(nesteKontroll);
         const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
         const statusClass = daysUntil < 0 ? 'overdue' : daysUntil <= 30 ? 'warning' : 'ok';
-        nextControlInfo += `<span class="control-badge ${statusClass}">El: ${escapeHtml(formatDateShort(c.neste_el_kontroll))}</span>`;
+        const shortName = st.name.length > 10 ? st.name.substring(0, 8) + '..' : st.name;
+        nextControlInfo += `<span class="control-badge ${statusClass}">${escapeHtml(shortName)}: ${escapeHtml(formatDateShort(nesteKontroll))}</span>`;
       }
-    }
-    if (c.kategori === 'Brannvarsling' || c.kategori === 'El-Kontroll + Brannvarsling') {
-      if (c.neste_brann_kontroll) {
-        const nextDate = new Date(c.neste_brann_kontroll);
-        const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
-        const statusClass = daysUntil < 0 ? 'overdue' : daysUntil <= 30 ? 'warning' : 'ok';
-        nextControlInfo += `<span class="control-badge ${statusClass}">Brann: ${escapeHtml(formatDateShort(c.neste_brann_kontroll))}</span>`;
-      }
+    });
+    // Fallback: generic neste_kontroll for customers without per-service-type dates
+    if (!nextControlInfo && c.neste_kontroll) {
+      const nextDate = new Date(c.neste_kontroll);
+      const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
+      const statusClass = daysUntil < 0 ? 'overdue' : daysUntil <= 30 ? 'warning' : 'ok';
+      nextControlInfo = `<span class="control-badge ${statusClass}">${escapeHtml(formatDateShort(c.neste_kontroll))}</span>`;
     }
 
-    // Build service info badges (el_type, brannsystem, driftstype) - use normalized values
+    // Build service info badges from subcategory assignments
     let serviceInfo = '';
-    if (c.el_type) {
-      serviceInfo += `<span class="service-badge type-badge">${escapeHtml(c.el_type)}</span>`;
-    }
-    if (c.brann_system) {
-      const normalizedSystem = normalizeBrannsystem(c.brann_system);
-      if (normalizedSystem) {
-        serviceInfo += `<span class="service-badge system-badge">${escapeHtml(normalizedSystem)}</span>`;
-      }
-    }
-    if (c.brann_driftstype) {
-      const normalizedDrift = normalizeDriftstype(c.brann_driftstype);
-      if (normalizedDrift) {
-        serviceInfo += `<span class="service-badge drift-badge">${escapeHtml(normalizedDrift)}</span>`;
+    const assignments = kundeSubcatMap[c.id] || [];
+    if (assignments.length > 0) {
+      for (const a of assignments) {
+        for (const group of allSubcategoryGroups) {
+          if (group.id !== a.group_id) continue;
+          const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
+          if (sub) {
+            serviceInfo += `<span class="service-badge">${escapeHtml(sub.navn)}</span>`;
+          }
+        }
       }
     }
 
@@ -22942,9 +23427,9 @@ let omrader = [];
 let currentFilter = 'alle';
 let showOnlyWarnings = false;
 let selectedCategory = 'all'; // 'all', 'El-Kontroll', 'Brannvarsling', 'El-Kontroll + Brannvarsling'
-let selectedDriftskategori = localStorage.getItem('selectedDriftskategori') || 'all'; // 'all', 'Storfe', 'Sau', 'Geit', 'Gris', 'Gartneri'
-let selectedBrannsystem = localStorage.getItem('selectedBrannsystem') || 'all'; // 'all', 'Elotec', 'ICAS', etc.
-let selectedElType = localStorage.getItem('selectedElType') || 'all'; // 'all', 'Landbruk', 'Næring', 'Bolig', etc.
+let selectedSubcategories = {}; // Filter state: { groupId: subcategoryId }
+let kundeSubcatMap = {}; // Bulk cache: { kundeId: [{ group_id, subcategory_id }] }
+let allSubcategoryGroups = []; // Organization-level subcategory groups from config
 let currentCalendarMonth = new Date().getMonth();
 let currentCalendarYear = new Date().getFullYear();
 let calendarViewMode = 'month'; // 'month' or 'week'
@@ -23252,10 +23737,7 @@ function setupEventListeners() {
   // Setup address autocomplete and postnummer lookup
   setupAddressAutocomplete();
 
-  // Kategori-endring oppdaterer synlige kontroll-seksjoner
-  document.getElementById('kategori')?.addEventListener('change', (e) => {
-    updateControlSectionsVisibility(e.target.value);
-  });
+  // Kategori-checkboxes: change-handlers settes i populateDynamicDropdowns()
   document.getElementById('saveApiKey')?.addEventListener('click', saveApiKey);
 
   // Warning actions
@@ -23492,21 +23974,8 @@ function setupEventListeners() {
     }
   });
 
-  // Tag event listeners
-  document.getElementById('addKundeTagBtn')?.addEventListener('click', () => {
-    const select = document.getElementById('kundeTagSelect');
-    const kundeId = document.getElementById('customerId')?.value;
-    if (select.value && kundeId) {
-      addTagToKunde(Number.parseInt(kundeId), Number.parseInt(select.value));
-    }
-  });
-  document.getElementById('manageTagsBtn')?.addEventListener('click', openTagManager);
-  document.getElementById('kundeTagsList')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-action="removeKundeTag"]');
-    if (btn) {
-      removeTagFromKunde(Number.parseInt(btn.dataset.kundeId), Number.parseInt(btn.dataset.tagId));
-    }
-  });
+  // Subcategory manager button
+  document.getElementById('manageSubcategoriesBtn')?.addEventListener('click', openSubcategoryManager);
 
   // Tab switching functionality
   const tabItems = document.querySelectorAll('.tab-item');
@@ -23637,6 +24106,63 @@ function setupEventListeners() {
         }
       }, { passive: true });
     }
+  }
+
+  // Content panel resize functionality (desktop only)
+  const contentPanelResize = document.getElementById('contentPanelResize');
+  if (contentPanelResize && contentPanel) {
+    let isResizing = false;
+
+    // Restore saved width
+    const savedWidth = localStorage.getItem('contentPanelWidth');
+    if (savedWidth && window.innerWidth > 768) {
+      contentPanel.style.width = savedWidth + 'px';
+    }
+
+    const startResize = (e) => {
+      if (window.innerWidth <= 768) return;
+      e.preventDefault();
+      isResizing = true;
+      contentPanelResize.classList.add('dragging');
+      contentPanel.classList.add('resizing');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    };
+
+    const doResize = (e) => {
+      if (!isResizing) return;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const panelLeft = contentPanel.getBoundingClientRect().left;
+      const newWidth = clientX - panelLeft;
+      const clampedWidth = Math.max(280, Math.min(700, newWidth));
+      contentPanel.style.width = clampedWidth + 'px';
+    };
+
+    const stopResize = () => {
+      if (!isResizing) return;
+      isResizing = false;
+      contentPanelResize.classList.remove('dragging');
+      contentPanel.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const currentWidth = parseInt(contentPanel.style.width);
+      if (currentWidth) {
+        localStorage.setItem('contentPanelWidth', currentWidth);
+      }
+    };
+
+    contentPanelResize.addEventListener('mousedown', startResize);
+    contentPanelResize.addEventListener('touchstart', startResize, { passive: false });
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('touchmove', doResize, { passive: false });
+    document.addEventListener('mouseup', stopResize);
+    document.addEventListener('touchend', stopResize);
+
+    // Double-click to reset width
+    contentPanelResize.addEventListener('dblclick', () => {
+      contentPanel.style.width = '';
+      localStorage.removeItem('contentPanelWidth');
+    });
   }
 
   tabItems.forEach(tab => {
@@ -23871,76 +24397,6 @@ function setupEventListeners() {
     });
   });
 
-  // Kundetype filter toggle (collapse/expand)
-  const elTypeFilterToggle = document.getElementById('elTypeFilterToggle');
-  const elTypeFilterButtons = document.getElementById('elTypeFilterButtons');
-  if (elTypeFilterToggle && elTypeFilterButtons) {
-    elTypeFilterToggle.addEventListener('click', () => {
-      const isHidden = elTypeFilterButtons.style.display === 'none';
-      elTypeFilterButtons.style.display = isHidden ? 'flex' : 'none';
-      const icon = elTypeFilterToggle.querySelector('.toggle-icon');
-      if (icon) {
-        icon.classList.toggle('fa-chevron-right', !isHidden);
-        icon.classList.toggle('fa-chevron-down', isHidden);
-      }
-    });
-  }
-
-  // Driftskategori filter toggle (collapse/expand)
-  const driftFilterToggle = document.getElementById('driftFilterToggle');
-  const driftFilterButtons = document.getElementById('driftFilterButtons');
-  if (driftFilterToggle && driftFilterButtons) {
-    driftFilterToggle.addEventListener('click', () => {
-      const isHidden = driftFilterButtons.style.display === 'none';
-      driftFilterButtons.style.display = isHidden ? 'flex' : 'none';
-      const icon = driftFilterToggle.querySelector('.toggle-icon');
-      if (icon) {
-        icon.classList.toggle('fa-chevron-right', !isHidden);
-        icon.classList.toggle('fa-chevron-down', isHidden);
-      }
-    });
-  }
-
-  // Brannsystem filter toggle (collapse/expand)
-  const brannsystemFilterToggle = document.getElementById('brannsystemFilterToggle');
-  const brannsystemFilterButtons = document.getElementById('brannsystemFilterButtons');
-  if (brannsystemFilterToggle && brannsystemFilterButtons) {
-    brannsystemFilterToggle.addEventListener('click', () => {
-      const isHidden = brannsystemFilterButtons.style.display === 'none';
-      brannsystemFilterButtons.style.display = isHidden ? 'flex' : 'none';
-      const icon = brannsystemFilterToggle.querySelector('.toggle-icon');
-      if (icon) {
-        icon.classList.toggle('fa-chevron-right', !isHidden);
-        icon.classList.toggle('fa-chevron-down', isHidden);
-      }
-    });
-  }
-
-  // Driftskategori filter buttons
-  document.querySelectorAll('.drift-btn[data-drift]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Update active state for drift buttons only
-      document.querySelectorAll('.drift-btn[data-drift]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      // Apply filter
-      selectedDriftskategori = btn.dataset.drift;
-      // Save to localStorage
-      localStorage.setItem('selectedDriftskategori', selectedDriftskategori);
-      applyFilters();
-    });
-  });
-
-  // Restore saved drift filter state on load
-  const savedDrift = localStorage.getItem('selectedDriftskategori');
-  if (savedDrift) {
-    const savedBtn = document.querySelector(`.drift-btn[data-drift="${savedDrift}"]`);
-    if (savedBtn) {
-      document.querySelectorAll('.drift-btn[data-drift]').forEach(b => b.classList.remove('active'));
-      savedBtn.classList.add('active');
-    }
-  }
-
   // Call once customers are loaded
   setTimeout(updateCustomerCount, 500);
 
@@ -23954,6 +24410,45 @@ function setupEventListeners() {
 
   // Also update at midnight to ensure day changes are reflected
   scheduleNextMidnightUpdate();
+
+  // Auto-calculate "neste kontroll" from "siste kontroll" + intervall
+  const kontrollGroups = [
+    { siste: 'siste_kontroll', neste: 'neste_kontroll', intervall: 'kontroll_intervall' },
+    { siste: 'siste_el_kontroll', neste: 'neste_el_kontroll', intervall: 'el_kontroll_intervall' },
+    { siste: 'siste_brann_kontroll', neste: 'neste_brann_kontroll', intervall: 'brann_kontroll_intervall' },
+  ];
+  document.addEventListener('change', (e) => {
+    const id = e.target.id;
+    for (const g of kontrollGroups) {
+      if (id === g.siste || id === g.intervall) {
+        const sisteEl = document.getElementById(g.siste);
+        const nesteEl = document.getElementById(g.neste);
+        const intervallEl = document.getElementById(g.intervall);
+        if (!sisteEl?.value || !intervallEl?.value) break;
+        // When changing siste: only auto-fill if neste is empty
+        // When changing intervall: always recalculate
+        if (id === g.siste && nesteEl?.value) break;
+
+        const siste = new Date(sisteEl.value);
+        if (isNaN(siste.getTime())) break;
+
+        const intervall = parseInt(intervallEl.value);
+        const neste = new Date(siste);
+        if (intervall < 0) {
+          neste.setDate(neste.getDate() + Math.abs(intervall));
+        } else {
+          neste.setMonth(neste.getMonth() + intervall);
+        }
+
+        if (nesteEl) {
+          nesteEl.value = appConfig?.datoModus === 'month_year'
+            ? neste.toISOString().substring(0, 7)
+            : neste.toISOString().substring(0, 10);
+        }
+        break;
+      }
+    }
+  });
 
   // Technician dispatch handler for weekly plan (admin only)
   document.addEventListener('change', (e) => {
@@ -24201,27 +24696,6 @@ function setupEventListeners() {
         break;
       case 'zoomToCluster':
         zoomToCluster(Number.parseFloat(actionEl.dataset.lat), Number.parseFloat(actionEl.dataset.lng));
-        break;
-      case 'filterByElType':
-        selectedElType = actionEl.dataset.value;
-        localStorage.setItem('selectedElType', selectedElType);
-        renderElTypeFilter();
-        applyFilters();
-        map.closePopup();
-        break;
-      case 'filterByBrannsystem':
-        selectedBrannsystem = actionEl.dataset.value;
-        localStorage.setItem('selectedBrannsystem', selectedBrannsystem);
-        renderBrannsystemFilter();
-        applyFilters();
-        map.closePopup();
-        break;
-      case 'filterByDrift':
-        selectedDriftskategori = actionEl.dataset.value;
-        localStorage.setItem('selectedDriftskategori', selectedDriftskategori);
-        renderDriftskategoriFilter();
-        applyFilters();
-        map.closePopup();
         break;
       case 'sendReminder':
       case 'sendEmail':

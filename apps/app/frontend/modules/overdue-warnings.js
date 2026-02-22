@@ -482,7 +482,7 @@ function renderWarnings() {
 
     Object.values(byCategory).forEach(sortByNavn);
 
-    const categoryOrder = ['El-Kontroll', 'Brannvarsling'];
+    const categoryOrder = serviceTypeRegistry.getAll().map(st => st.name);
     const sortedCats = Object.keys(byCategory).sort((a, b) => {
       const indexA = categoryOrder.indexOf(a);
       const indexB = categoryOrder.indexOf(b);

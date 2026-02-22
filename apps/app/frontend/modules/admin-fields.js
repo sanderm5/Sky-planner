@@ -544,6 +544,197 @@ async function confirmDeleteCategory(id) {
 }
 
 // ========================================
+// ADMIN: SUBCATEGORIES MANAGEMENT
+// ========================================
+
+/**
+ * Render subcategory management section in admin tab.
+ * Shows groups + subcategories (standalone, not per service type).
+ */
+async function renderAdminSubcategories() {
+  const content = document.getElementById('subcategoriesAdminContent');
+  const empty = document.getElementById('subcategoriesAdminEmpty');
+  if (!content) return;
+
+  const groups = allSubcategoryGroups || [];
+
+  content.style.display = 'block';
+  if (empty) empty.style.display = groups.length === 0 ? 'block' : 'none';
+
+  content.innerHTML = groups.map(group => `
+    <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border, #444); padding-left: 10px;">
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+        <i class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
+        <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
+        <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
+        <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeHtml(group.navn).replace(/'/g, "\\'")}')" title="Gi nytt navn">
+          <i class="fas fa-pen" style="font-size: 10px;"></i>
+        </button>
+        <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeHtml(group.navn).replace(/'/g, "\\'")}')" title="Slett gruppe">
+          <i class="fas fa-trash" style="font-size: 10px;"></i>
+        </button>
+      </div>
+
+      ${(group.subcategories || []).map(sub => `
+        <div style="display: flex; align-items: center; gap: 6px; margin-left: 16px; padding: 2px 0;">
+          <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
+          <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
+          <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeHtml(sub.navn).replace(/'/g, "\\'")}')" title="Gi nytt navn">
+            <i class="fas fa-pen" style="font-size: 10px;"></i>
+          </button>
+          <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeHtml(sub.navn).replace(/'/g, "\\'")}')" title="Slett">
+            <i class="fas fa-trash" style="font-size: 10px;"></i>
+          </button>
+        </div>
+      `).join('')}
+
+      <div style="display: flex; gap: 6px; margin-left: 16px; margin-top: 4px;">
+        <input type="text" class="form-control" placeholder="Ny underkategori..." maxlength="100"
+          style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
+          data-add-subcat-for-group="${group.id}"
+          onkeydown="if(event.key==='Enter'){addSubcatItem(${group.id}, this); event.preventDefault();}">
+        <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatItem(${group.id}, this.previousElementSibling)">
+          <i class="fas fa-plus"></i>
+        </button>
+      </div>
+    </div>
+  `).join('') + `
+    <div style="display: flex; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--color-border, #333);">
+      <input type="text" class="form-control" placeholder="Ny gruppe..." maxlength="100"
+        style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
+        id="adminAddGroupInput"
+        onkeydown="if(event.key==='Enter'){addSubcatGroup(this); event.preventDefault();}">
+      <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatGroup(document.getElementById('adminAddGroupInput'))">
+        <i class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
+      </button>
+    </div>
+  `;
+}
+
+async function addSubcatGroup(inputEl) {
+  const navn = inputEl.value.trim();
+  if (!navn) { inputEl.focus(); return; }
+
+  try {
+    const res = await apiFetch('/api/subcategories/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navn })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'Kunne ikke opprette gruppe');
+    }
+    const json = await res.json();
+    subcatRegistryAddGroup(json.data || { id: Date.now(), navn });
+    showToast('Gruppe opprettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function addSubcatItem(groupId, inputEl) {
+  const navn = inputEl.value.trim();
+  if (!navn) { inputEl.focus(); return; }
+
+  try {
+    const res = await apiFetch('/api/subcategories/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: groupId, navn })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'Kunne ikke opprette underkategori');
+    }
+    const json = await res.json();
+    subcatRegistryAddItem(groupId, json.data || { id: Date.now(), navn });
+    showToast('Underkategori opprettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function editSubcatGroup(groupId, currentName) {
+  const newName = prompt('Nytt navn for gruppen:', currentName);
+  if (!newName || newName.trim() === currentName) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/groups/${groupId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navn: newName.trim() })
+    });
+    if (!res.ok) throw new Error('Kunne ikke oppdatere gruppe');
+    subcatRegistryEditGroup(groupId, newName.trim());
+    showToast('Gruppe oppdatert', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function deleteSubcatGroup(groupId, groupName) {
+  const confirmed = await showConfirm(`Slett gruppen "${groupName}"? Alle underkategorier i gruppen slettes også.`, 'Slette gruppe');
+  if (!confirmed) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/groups/${groupId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Kunne ikke slette gruppe');
+    subcatRegistryDeleteGroup(groupId);
+    showToast('Gruppe slettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function editSubcatItem(subcatId, currentName) {
+  const newName = prompt('Nytt navn:', currentName);
+  if (!newName || newName.trim() === currentName) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/items/${subcatId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navn: newName.trim() })
+    });
+    if (!res.ok) throw new Error('Kunne ikke oppdatere underkategori');
+    subcatRegistryEditItem(subcatId, newName.trim());
+    showToast('Underkategori oppdatert', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function deleteSubcatItem(subcatId, subcatName) {
+  const confirmed = await showConfirm(`Slett underkategorien "${subcatName}"?`, 'Slette underkategori');
+  if (!confirmed) return;
+
+  try {
+    const res = await apiFetch(`/api/subcategories/items/${subcatId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Kunne ikke slette underkategori');
+    subcatRegistryDeleteItem(subcatId);
+    showToast('Underkategori slettet', 'success');
+    renderAdminSubcategories();
+    renderSubcategoryFilter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+// reloadAppConfig removed — subcategory CRUD now updates serviceTypeRegistry in-place
+// via subcatRegistry* helpers in filter-panel.js (shared global scope)
+
+// ========================================
 // ADMIN: DRAG AND DROP SORTING
 // ========================================
 

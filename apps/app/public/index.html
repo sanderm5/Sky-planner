@@ -1462,6 +1462,21 @@
             </div>
           </div>
 
+          <!-- Subcategories Management -->
+          <div class="admin-section" id="subcategoriesManagementSection">
+            <div class="section-header-with-actions">
+              <h3><i class="fas fa-layer-group"></i> Underkategorier</h3>
+            </div>
+            <p class="admin-section-description">Opprett grupper og underkategorier for filtrering og organisering.</p>
+            <div id="subcategoriesAdminContent">
+              <!-- Fylles dynamisk av renderAdminSubcategories() -->
+            </div>
+            <div id="subcategoriesAdminEmpty" style="display: none;">
+              <i class="fas fa-layer-group"></i>
+              <p>Ingen underkategori-grupper enna. Opprett en gruppe for a komme i gang.</p>
+            </div>
+          </div>
+
           <!-- Super Admin Section (kun synlig for super-admins) -->
           <div class="admin-section super-admin-section" id="superAdminSection" style="display: none;">
             <div class="super-admin-banner">
@@ -1671,6 +1686,8 @@
           </div>
         </div>
       </div>
+      <!-- Resize Handle -->
+      <div class="content-panel-resize" id="contentPanelResize" title="Dra for å endre bredde"></div>
     </div>
 
     <main class="map-container">
@@ -1728,42 +1745,20 @@
               </div>
             </div>
 
-            <!-- Kundetype Filter (Landbruk, Næring, Bolig, etc.) -->
-            <div class="category-filter" id="elTypeFilter">
-              <div class="category-filter-title clickable-header" id="elTypeFilterToggle">
-                <span>Kundetype</span>
-                <i class="fas fa-chevron-right toggle-icon"></i>
-              </div>
-              <div class="category-filter-buttons eltype-filter-buttons" id="elTypeFilterButtons" style="display: none;">
-                <!-- Populated dynamically by renderElTypeFilter() -->
-              </div>
-            </div>
-
-            <!-- Driftskategori Filter (Dynamic, Collapsible) -->
-            <div class="category-filter" id="driftskategoriFilter">
-              <div class="category-filter-title clickable-header" id="driftFilterToggle">
-                <span>Driftskategori</span>
-                <i class="fas fa-chevron-right toggle-icon"></i>
-              </div>
-              <div class="category-filter-buttons drift-filter-buttons" id="driftFilterButtons" style="display: none;">
-                <!-- Populated dynamically by renderDriftskategoriFilter() -->
-              </div>
-            </div>
-
-            <!-- Brannsystem Filter (Dynamic, Collapsible) -->
-            <div class="category-filter" id="brannsystemFilter">
-              <div class="category-filter-title clickable-header" id="brannsystemFilterToggle">
-                <span>Brannsystem</span>
-                <i class="fas fa-chevron-right toggle-icon"></i>
-              </div>
-              <div class="category-filter-buttons brannsystem-filter-buttons" id="brannsystemFilterButtons" style="display: none;">
-                <!-- Populated dynamically by renderBrannsystemFilter() -->
-              </div>
-            </div>
-
             <!-- Dynamic Organization Field Filters -->
             <div id="dynamicFieldFilters">
               <!-- Populated dynamically by renderDynamicFieldFilters() -->
+            </div>
+
+            <!-- Subcategory Filter + Management -->
+            <div class="category-filter" id="subcategoryFilter" style="display: none;">
+              <div class="category-filter-title">
+                <span>Underkategorier</span>
+                <button class="subcat-admin-toggle" id="subcatAdminToggle" title="Administrer"><i class="fas fa-cog"></i></button>
+              </div>
+              <div id="subcategoryFilterContent">
+                <!-- Populated dynamically by renderSubcategoryFilter() -->
+              </div>
             </div>
 
             <!-- Color Legend -->
@@ -1900,17 +1895,20 @@
         </div>
 
         <div class="form-group">
-          <label for="kategori">Kategori</label>
-          <select id="kategori">
+          <label>Kategori</label>
+          <div id="kategoriCheckboxes" class="kategori-checkbox-group">
             <!-- Populeres dynamisk av ServiceTypeRegistry -->
-          </select>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label for="driftskategori">Driftskategori</label>
-          <select id="driftskategori">
-            <!-- Populeres dynamisk av ServiceTypeRegistry -->
-          </select>
+        <!-- Underkategorier (rett etter kategori-valg) -->
+        <div id="subcategorySection">
+          <div class="control-section-header">
+            <i class="fas fa-layer-group"></i> Underkategorier
+          </div>
+          <div id="subcategoryDropdowns">
+            <!-- Fylles dynamisk: én dropdown per underkategori-gruppe -->
+          </div>
         </div>
 
         <!-- Dynamic Service Sections Container -->
@@ -1920,15 +1918,9 @@
         </div>
 
         <!-- Legacy El-Kontroll felt (for backward compatibility during migration) -->
-        <div class="control-section legacy-section" id="elKontrollSection">
+        <div class="control-section legacy-section" id="elKontrollSection" style="display: none;">
           <div class="control-section-header">
             <i class="fas fa-bolt"></i> El-Kontroll
-          </div>
-          <div class="form-group">
-            <label for="el_type">Type</label>
-            <select id="el_type">
-              <!-- Populeres dynamisk av ServiceTypeRegistry -->
-            </select>
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -1949,15 +1941,9 @@
         </div>
 
         <!-- Legacy Brannvarsling felt (for backward compatibility during migration) -->
-        <div class="control-section legacy-section" id="brannvarslingSection">
+        <div class="control-section legacy-section" id="brannvarslingSection" style="display: none;">
           <div class="control-section-header">
             <i class="fas fa-fire"></i> Brannvarsling
-          </div>
-          <div class="form-group">
-            <label for="brann_system">Brannsystem</label>
-            <select id="brann_system">
-              <!-- Populeres dynamisk av ServiceTypeRegistry -->
-            </select>
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -1994,11 +1980,15 @@
             <div class="form-group">
               <label for="kontroll_intervall">Intervall</label>
               <select id="kontroll_intervall">
+                <option value="-7">1 uke</option>
+                <option value="-14">2 uker</option>
                 <option value="1">1 mnd</option>
                 <option value="3">3 mnd</option>
                 <option value="6">6 mnd</option>
-                <option value="12" selected>12 mnd</option>
-                <option value="24">24 mnd</option>
+                <option value="12" selected>1 år</option>
+                <option value="24">2 år</option>
+                <option value="36">3 år</option>
+                <option value="60">5 år</option>
               </select>
             </div>
           </div>
@@ -2066,24 +2056,6 @@
           </div>
         </div>
 
-        <!-- Kunde-tags -->
-        <div class="tags-section" id="kundeTagsSection" style="display: none;">
-          <div class="control-section-header">
-            <i class="fas fa-tags"></i> Tags
-          </div>
-          <div class="kunde-tags-list" id="kundeTagsList"></div>
-          <div class="tags-add-row">
-            <select id="kundeTagSelect">
-              <option value="">Velg tag...</option>
-            </select>
-            <button type="button" class="btn btn-small btn-primary" id="addKundeTagBtn">
-              <i class="fas fa-plus"></i>
-            </button>
-            <button type="button" class="btn btn-small btn-secondary" id="manageTagsBtn" title="Administrer tags">
-              <i class="fas fa-cog"></i>
-            </button>
-          </div>
-        </div>
 
         <!-- Kontaktlogg -->
         <div class="kontaktlogg-section" id="kontaktloggSection" style="display: none;">
@@ -2409,12 +2381,12 @@
           <div class="form-group">
             <label for="categoryInterval">Intervall</label>
             <select id="categoryInterval">
-              <option value="6">6 maneder</option>
-              <option value="12" selected>1 ar (12 mnd)</option>
-              <option value="24">2 ar</option>
-              <option value="36">3 ar</option>
-              <option value="48">4 ar</option>
-              <option value="60">5 ar</option>
+              <option value="6">6 måneder</option>
+              <option value="12" selected>1 år (12 mnd)</option>
+              <option value="24">2 år</option>
+              <option value="36">3 år</option>
+              <option value="48">4 år</option>
+              <option value="60">5 år</option>
             </select>
           </div>
         </div>
@@ -2486,7 +2458,7 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
   <script src="offline-storage.js?v=1"></script>
   <script src="sync-manager.js?v=1"></script>
-  <script src="app.js?v=20260216-splitview4"></script>
+  <script src="app.js?v=20260219-taggroups"></script>
   <script>
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {

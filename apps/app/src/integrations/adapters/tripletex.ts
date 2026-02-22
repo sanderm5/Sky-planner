@@ -122,13 +122,14 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
   async authenticate(
     credentials: Partial<IntegrationCredentials>
   ): Promise<IntegrationCredentials> {
-    const consumerToken = credentials.apiKey;
-    const employeeToken = credentials.metadata?.employeeToken as string | undefined;
+    const consumerToken = getConfig().TRIPLETEX_CONSUMER_TOKEN?.trim();
+    const employeeToken = (credentials.metadata?.employeeToken as string | undefined)?.trim()
+      || credentials.apiKey?.trim(); // Fallback for bakoverkompatibilitet
 
     if (!consumerToken) {
       throw new AuthenticationError(
         this.config.id,
-        'Consumer Token (API-nøkkel) er påkrevd'
+        'TRIPLETEX_CONSUMER_TOKEN er ikke konfigurert på serveren'
       );
     }
 
@@ -205,7 +206,6 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
   ): Promise<IntegrationCredentials> {
     // Tripletex doesn't have refresh tokens - create a new session
     return this.authenticate({
-      apiKey: credentials.metadata?.consumerToken as string,
       metadata: {
         employeeToken: credentials.metadata?.employeeToken,
       },
@@ -461,6 +461,29 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
             this.adapterLogger.warn(
               { error: err instanceof Error ? err.message : err },
               'Could not fetch projects during sync (continuing without project numbers)'
+            );
+          }),
+        // Pre-create all customer categories as service types
+        this.fetchCustomerCategories(credentials)
+          .then(async (categories) => {
+            const { getDatabase } = await import('../../services/database');
+            const db = await getDatabase();
+            for (const cat of categories) {
+              try {
+                await db.findOrCreateServiceTypeByName(organizationId, cat.name, 'tripletex');
+              } catch {
+                // Ignore errors
+              }
+            }
+            this.adapterLogger.info(
+              { count: categories.length },
+              'Pre-created service types from all Tripletex customer categories'
+            );
+          })
+          .catch(err => {
+            this.adapterLogger.warn(
+              { error: err instanceof Error ? err.message : err },
+              'Could not fetch customer categories from Tripletex (continuing without)'
             );
           }),
       ]);
@@ -786,6 +809,34 @@ export class TripletexAdapter extends BaseDataSourceAdapter {
     );
 
     return response.value;
+  }
+
+  /**
+   * Fetch all customer categories from Tripletex.
+   * Tripletex API: GET /v2/customer/category
+   * Returns all defined categories, not just those assigned to customers.
+   */
+  async fetchCustomerCategories(
+    credentials: IntegrationCredentials
+  ): Promise<Array<{ id: number; name: string; number?: string; description?: string; type?: number }>> {
+    const response = await this.rateLimitedFetch<TripletexListResponse<{
+      id: number;
+      name: string;
+      number?: string;
+      description?: string;
+      type?: number;
+    }>>(
+      `${this.config.baseUrl}/customer/category?from=0&count=1000&fields=id,name,number,description,type`,
+      { method: 'GET' },
+      credentials
+    );
+
+    this.adapterLogger.debug(
+      { count: response.values.length },
+      'Fetched customer categories from Tripletex'
+    );
+
+    return response.values;
   }
 
   /**

@@ -906,7 +906,7 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     }
     document.getElementById('avtaleDato').value = avtale.dato;
     document.getElementById('avtaleKlokkeslett').value = avtale.klokkeslett || '';
-    document.getElementById('avtaleType').value = avtale.type || 'El-Kontroll';
+    document.getElementById('avtaleType').value = avtale.type || serviceTypeRegistry.getDefaultServiceType().name;
     document.getElementById('avtaleBeskrivelse').value = avtale.beskrivelse || '';
     gjentakelseSelect.value = avtale.gjentakelse_regel || '';
     document.getElementById('avtaleGjentakelseSlutt').value = avtale.gjentakelse_slutt || '';
@@ -1073,6 +1073,7 @@ async function saveAvtale(e) {
     if (response.ok) {
       await loadAvtaler();
       renderCalendar();
+      applyFilters(); // Oppdater kart-markører med ny avtale-status
       closeAvtaleModal();
     } else {
       const error = await response.json();
@@ -1099,6 +1100,7 @@ async function deleteAvtale() {
     if (response.ok) {
       await loadAvtaler();
       renderCalendar();
+      applyFilters(); // Oppdater kart-markører
       closeAvtaleModal();
     }
   } catch (error) {
@@ -1124,6 +1126,7 @@ async function deleteAvtaleSeries() {
       showMessage(`${result.data.deletedCount} avtaler slettet`, 'success');
       await loadAvtaler();
       renderCalendar();
+      applyFilters(); // Oppdater kart-markører
       closeAvtaleModal();
     }
   } catch (error) {

@@ -1,24 +1,75 @@
+// Render subcategory dropdowns (standalone, not tied to service types)
+function renderSubcategoryDropdowns(customer = null) {
+  const section = document.getElementById('subcategorySection');
+  const container = document.getElementById('subcategoryDropdowns');
+  if (!section || !container) return;
+
+  const groups = allSubcategoryGroups || [];
+  if (groups.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Get existing assignments for this customer
+  const kundeId = customer?.id;
+  const assignments = kundeId ? (kundeSubcatMap[kundeId] || []) : [];
+
+  let html = '';
+  groups.forEach(group => {
+    if (!group.subcategories || group.subcategories.length === 0) return;
+
+    const currentAssignment = assignments.find(a => a.group_id === group.id);
+    const selectedSubId = currentAssignment?.subcategory_id || '';
+
+    html += `
+      <div class="form-group">
+        <label for="subcat_group_${group.id}">${escapeHtml(group.navn)}</label>
+        <select id="subcat_group_${group.id}" data-group-id="${group.id}" class="subcat-dropdown">
+          <option value="">Ikke valgt</option>
+          ${group.subcategories.map(sub =>
+            `<option value="${sub.id}" ${sub.id === selectedSubId ? 'selected' : ''}>${escapeHtml(sub.navn)}</option>`
+          ).join('')}
+        </select>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+// Collect subcategory assignments from dropdowns
+function collectSubcategoryAssignments() {
+  const assignments = [];
+  document.querySelectorAll('.subcat-dropdown').forEach(select => {
+    const groupId = parseInt(select.dataset.groupId, 10);
+    const subcatId = parseInt(select.value, 10);
+    if (groupId && subcatId) {
+      assignments.push({ group_id: groupId, subcategory_id: subcatId });
+    }
+  });
+  return assignments;
+}
+
 // Populate dynamic dropdowns from ServiceTypeRegistry
 function populateDynamicDropdowns(customer = null) {
-  // Kategori dropdown
-  const kategoriSelect = document.getElementById('kategori');
-  if (kategoriSelect) {
-    kategoriSelect.innerHTML = serviceTypeRegistry.renderCategoryOptions(customer?.kategori || '');
+  // Kategori checkboxes (multi-select)
+  const kategoriContainer = document.getElementById('kategoriCheckboxes');
+  if (kategoriContainer) {
+    kategoriContainer.innerHTML = serviceTypeRegistry.renderCategoryCheckboxes(customer?.kategori || '');
+    // Attach change handlers for control section visibility
+    kategoriContainer.querySelectorAll('input[name="kategori"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const selected = serviceTypeRegistry.getSelectedCategories();
+        updateControlSectionsVisibility(selected);
+        renderSubcategoryDropdowns(customer);
+      });
+    });
   }
 
-  // El-type (subtypes for el-kontroll)
-  const elTypeSelect = document.getElementById('el_type');
-  if (elTypeSelect) {
-    elTypeSelect.innerHTML = serviceTypeRegistry.renderSubtypeOptions('el-kontroll', customer?.el_type || '');
-  }
+  // Render subcategory dropdowns for selected service type
+  renderSubcategoryDropdowns(customer);
 
-  // Brann system (equipment for brannvarsling)
-  const brannSystemSelect = document.getElementById('brann_system');
-  if (brannSystemSelect) {
-    brannSystemSelect.innerHTML = serviceTypeRegistry.renderEquipmentOptions('brannvarsling', customer?.brann_system || '');
-  }
-
-  // Intervaller
+  // Intervaller (populeres alltid, også i MVP-modus)
   const elIntervallSelect = document.getElementById('el_kontroll_intervall');
   if (elIntervallSelect) {
     elIntervallSelect.innerHTML = serviceTypeRegistry.renderIntervalOptions(customer?.el_kontroll_intervall || 36);
@@ -29,11 +80,6 @@ function populateDynamicDropdowns(customer = null) {
     brannIntervallSelect.innerHTML = serviceTypeRegistry.renderIntervalOptions(customer?.brann_kontroll_intervall || 12);
   }
 
-  // Driftskategori (brann-relatert subtype)
-  const driftsSelect = document.getElementById('driftskategori');
-  if (driftsSelect) {
-    driftsSelect.innerHTML = serviceTypeRegistry.renderDriftsOptions(customer?.brann_driftstype || '');
-  }
 }
 
 // Edit customer
@@ -41,8 +87,14 @@ function editCustomer(id) {
   const customer = customers.find(c => c.id === id);
   if (!customer) return;
 
+  // Sett referanse til kunden som redigeres (brukes av renderDynamicServiceSections)
+  _editingCustomer = customer;
+
   // Claim this customer (presence system)
   claimCustomer(id);
+
+  // Reset address autocomplete state from previous session
+  resetAddressAutocomplete();
 
   // Populate dynamic dropdowns first
   populateDynamicDropdowns(customer);
@@ -105,8 +157,8 @@ function editCustomer(id) {
   document.getElementById('kontaktloggSection').style.display = 'block';
   loadKontaktlogg(customer.id);
 
-  // Load tags for this customer
-  loadKundeTags(customer.id);
+  // Load subcategories for this customer
+  loadKundeSubcategories(customer.id);
 
   // Load kontaktpersoner for this customer
   loadKontaktpersoner(customer.id);
@@ -207,15 +259,16 @@ async function loadOrganizationCategories() {
       // Sync serviceTypeRegistry so sidebar/filter UI stays up to date
       if (appConfig) {
         appConfig.serviceTypes = organizationCategories.map(cat => ({
-          id: cat.id, name: cat.name, slug: cat.slug,
-          icon: cat.icon, color: cat.color,
-          defaultInterval: cat.default_interval_months,
+            id: cat.id, name: cat.name, slug: cat.slug,
+            icon: cat.icon, color: cat.color,
+            defaultInterval: cat.default_interval_months,
         }));
         serviceTypeRegistry.loadFromConfig(appConfig);
       }
 
       // Re-render category UI to reflect loaded categories
       renderFilterPanelCategories();
+      renderSubcategoryFilter();
       updateMapLegend();
 
       Logger.log('Loaded organization categories:', organizationCategories.length);
@@ -390,9 +443,15 @@ function collectCustomFieldValues() {
 
 
 // Add new customer
-function addCustomer() {
+async function addCustomer() {
+  // Nullstill referanse til redigert kunde
+  _editingCustomer = null;
+
   // Populate dynamic dropdowns first (with defaults)
   populateDynamicDropdowns(null);
+
+  // Reset address autocomplete state from previous session
+  resetAddressAutocomplete();
 
   document.getElementById('modalTitle').textContent = 'Ny kunde';
   customerForm.reset();
@@ -413,11 +472,13 @@ function addCustomer() {
   document.getElementById('neste_brann_kontroll').value = '';
   document.getElementById('brann_kontroll_intervall').value = 12;
 
+  // Tøm dynamiske service-seksjoner
+  const dynContainer = document.getElementById('dynamicServiceSections');
+  if (dynContainer) dynContainer.innerHTML = '';
+
   // Vis kontroll-seksjoner basert på valgt kategori (eller default)
-  const kategoriSelect = document.getElementById('kategori');
-  // MVP: ingen default kategori, Full mode: El-Kontroll som default
-  const defaultKategori = isMvpMode() ? '' : 'El-Kontroll';
-  const selectedKategori = kategoriSelect ? kategoriSelect.value : defaultKategori;
+  const selectedKategori = serviceTypeRegistry.getSelectedCategories() ||
+    (isMvpMode() ? '' : serviceTypeRegistry.getDefaultServiceType().name);
   updateControlSectionsVisibility(selectedKategori);
 
   // Reset email settings to defaults
@@ -438,8 +499,65 @@ function addCustomer() {
   document.getElementById('kontaktpersonerSection').style.display = 'none';
   document.getElementById('kontaktpersonerList').innerHTML = '';
 
+  // Render subcategory dropdowns for new customer
+  renderSubcategoryDropdowns(null);
+
   document.getElementById('deleteCustomerBtn').classList.add('hidden');
   openModal(customerModal);
+}
+
+// Referanse til kunden som redigeres (for å populere dynamiske seksjoner)
+let _editingCustomer = null;
+
+// Render dynamiske service-seksjoner basert på valgte kategorier
+function renderDynamicServiceSections(customer = null) {
+  const container = document.getElementById('dynamicServiceSections');
+  if (!container) return;
+
+  const selected = serviceTypeRegistry.getSelectedCategories();
+  const selectedNames = selected ? selected.split(' + ').map(s => s.trim()).filter(Boolean) : [];
+
+  if (selectedNames.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Lagre eksisterende verdier fra dynamiske seksjoner før re-render
+  const savedValues = {};
+  container.querySelectorAll('.service-section').forEach(section => {
+    const slug = section.dataset.serviceSlug;
+    if (!slug) return;
+    const sisteInput = document.getElementById(`service_${slug}_siste`);
+    const nesteInput = document.getElementById(`service_${slug}_neste`);
+    const intervallSelect = document.getElementById(`service_${slug}_intervall`);
+    const subtypeSelect = document.getElementById(`service_${slug}_subtype`);
+    const equipmentSelect = document.getElementById(`service_${slug}_equipment`);
+    savedValues[slug] = {
+      siste: sisteInput?.value || '',
+      neste: nesteInput?.value || '',
+      intervall: intervallSelect?.value || '',
+      subtype: subtypeSelect?.value || '',
+      equipment: equipmentSelect?.value || ''
+    };
+  });
+
+  // Render nye seksjoner kun for valgte kategorier
+  const customerData = customer || _editingCustomer || {};
+  container.innerHTML = serviceTypeRegistry.renderServiceSections(customerData, selectedNames);
+
+  // Gjenopprett lagrede verdier for seksjoner som fortsatt finnes
+  Object.entries(savedValues).forEach(([slug, vals]) => {
+    const sisteInput = document.getElementById(`service_${slug}_siste`);
+    const nesteInput = document.getElementById(`service_${slug}_neste`);
+    const intervallSelect = document.getElementById(`service_${slug}_intervall`);
+    const subtypeSelect = document.getElementById(`service_${slug}_subtype`);
+    const equipmentSelect = document.getElementById(`service_${slug}_equipment`);
+    if (sisteInput && vals.siste) sisteInput.value = vals.siste;
+    if (nesteInput && vals.neste) nesteInput.value = vals.neste;
+    if (intervallSelect && vals.intervall) intervallSelect.value = vals.intervall;
+    if (subtypeSelect && vals.subtype) subtypeSelect.value = vals.subtype;
+    if (equipmentSelect && vals.equipment) equipmentSelect.value = vals.equipment;
+  });
 }
 
 // Vis/skjul kontroll-seksjoner basert på kategori og app mode
@@ -448,40 +566,15 @@ function updateControlSectionsVisibility(kategori) {
   const brannSection = document.getElementById('brannvarslingSection');
   const mvpSection = document.getElementById('mvpKontrollSection');
   const driftskategoriGroup = document.getElementById('driftskategori')?.closest('.form-group');
-  const kategoriGroup = document.getElementById('kategori')?.closest('.form-group');
 
-  if (!elSection || !brannSection) return;
-
-  // MVP-modus: Vis enkel oppfølgings-seksjon, skjul avanserte seksjoner
-  if (isMvpMode()) {
-    elSection.style.display = 'none';
-    brannSection.style.display = 'none';
-    if (mvpSection) mvpSection.style.display = 'block';
-    if (driftskategoriGroup) driftskategoriGroup.style.display = 'none';
-    if (kategoriGroup) kategoriGroup.style.display = 'none';
-    return;
-  }
-
-  // Full mode (TRE Allservice): Skjul MVP-seksjon, vis avanserte basert på kategori
+  // Skjul alle legacy-seksjoner — vi bruker dynamiske seksjoner i stedet
+  if (elSection) elSection.style.display = 'none';
+  if (brannSection) brannSection.style.display = 'none';
   if (mvpSection) mvpSection.style.display = 'none';
-  if (driftskategoriGroup) driftskategoriGroup.style.display = 'block';
-  if (kategoriGroup) kategoriGroup.style.display = 'block';
+  if (driftskategoriGroup && isMvpMode()) driftskategoriGroup.style.display = 'none';
 
-  const kat = (kategori || '').toLowerCase();
-
-  if (kat.includes('el') && kat.includes('brann')) {
-    // Kombinert - vis begge
-    elSection.style.display = 'block';
-    brannSection.style.display = 'block';
-  } else if (kat.includes('brann')) {
-    // Kun brannvarsling
-    elSection.style.display = 'none';
-    brannSection.style.display = 'block';
-  } else {
-    // Kun el-kontroll (standard)
-    elSection.style.display = 'block';
-    brannSection.style.display = 'none';
-  }
+  // Render dynamiske dato-seksjoner per valgt kategori
+  renderDynamicServiceSections();
 }
 
 // Auto-geocode address
@@ -561,11 +654,19 @@ async function saveCustomer(e) {
     }
   }
 
-  // MVP: ingen kategori (null), Full mode: bruk dropdown-verdi eller El-Kontroll som default
-  let kategori = null;
-  if (!isMvpMode()) {
-    kategori = document.getElementById('kategori').value || 'El-Kontroll';
-  }
+  // Bruk kategori-checkboxes for alle (MVP + Full)
+  let kategori = serviceTypeRegistry.getSelectedCategories() || null;
+
+  // Finn valgte kategori-slugs for å nullstille datoer for avhukede kategorier
+  const selectedNames = (kategori || '').split(' + ').map(s => s.trim()).filter(Boolean);
+  const allServiceTypes = serviceTypeRegistry.getAll();
+  const selectedSlugs = selectedNames.map(name => {
+    const st = allServiceTypes.find(s => s.name === name);
+    return st?.slug;
+  }).filter(Boolean);
+
+  const hasEl = selectedSlugs.includes('el-kontroll');
+  const hasBrann = selectedSlugs.includes('brannvarsling');
 
   const data = {
     navn: document.getElementById('navn').value,
@@ -583,20 +684,16 @@ async function saveCustomer(e) {
     kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || 12,
     kategori: kategori,
     notater: (document.getElementById('notater').value || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').trim(),
-    // El-type specification
-    el_type: document.getElementById('el_type') ? document.getElementById('el_type').value : null,
-    // Separate El-Kontroll felt
-    siste_el_kontroll: normalizeDateValue(document.getElementById('siste_el_kontroll').value) || null,
-    neste_el_kontroll: normalizeDateValue(document.getElementById('neste_el_kontroll').value) || null,
-    el_kontroll_intervall: Number.parseInt(document.getElementById('el_kontroll_intervall').value) || 36,
-    // Brann-system specification
-    brann_system: document.getElementById('brann_system') ? document.getElementById('brann_system').value : null,
-    // Separate Brannvarsling felt
-    siste_brann_kontroll: normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || null,
-    neste_brann_kontroll: normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || null,
-    brann_kontroll_intervall: Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || 12,
-    // Driftskategori
-    brann_driftstype: document.getElementById('driftskategori').value || null,
+    // Separate El-Kontroll felt — null ut hvis el-kontroll ikke er valgt
+    siste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('siste_el_kontroll').value) || null) : null,
+    neste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('neste_el_kontroll').value) || null) : null,
+    el_kontroll_intervall: hasEl ? (Number.parseInt(document.getElementById('el_kontroll_intervall').value) || 36) : null,
+    // Separate Brannvarsling felt — null ut hvis brannvarsling ikke er valgt
+    siste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || null) : null,
+    neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || null) : null,
+    brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || 12) : null,
+    // Dynamiske tjeneste-datoer fra dynamiske seksjoner
+    services: serviceTypeRegistry.parseServiceFormData(),
     // Custom organization fields
     custom_data: JSON.stringify(collectCustomFieldValues())
   };
@@ -625,6 +722,19 @@ async function saveCustomer(e) {
     }
 
     const savedCustomerId = customerId || result.id;
+
+    // Save subcategory assignments
+    if (savedCustomerId) {
+      const subcatAssignments = collectSubcategoryAssignments();
+      try {
+        await apiFetch(`/api/subcategories/kunde/${savedCustomerId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ assignments: subcatAssignments })
+        });
+      } catch (err) {
+        console.error('Error saving subcategory assignments:', err);
+      }
+    }
 
     // Save email settings
     if (savedCustomerId) {

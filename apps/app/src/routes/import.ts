@@ -6,7 +6,7 @@
 import { Router, Response } from 'express';
 import multer from 'multer';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { getImportService, initImportService, type ImportDbService } from '../services/import';
 import type { AuthenticatedRequest, ApiResponse } from '../types';
@@ -67,7 +67,7 @@ export function initImportRoutes(databaseService: ImportDbService): Router {
  */
 router.post(
   '/upload',
-  requireTenantAuth,
+  requireRole('tekniker'),
   upload.single('file'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
@@ -227,7 +227,7 @@ router.get(
  */
 router.post(
   '/batches/:id/mapping',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -274,7 +274,7 @@ router.post(
  */
 router.post(
   '/batches/:id/suggest-mapping',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -305,7 +305,7 @@ router.post(
  */
 router.post(
   '/batches/:id/validate',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -342,7 +342,7 @@ router.post(
  */
 router.post(
   '/batches/:id/commit',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -391,7 +391,7 @@ router.post(
  */
 router.post(
   '/batches/:id/rollback',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -432,7 +432,7 @@ router.post(
  */
 router.delete(
   '/batches/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -514,7 +514,7 @@ router.get(
  */
 router.delete(
   '/templates/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const templateId = Number(req.params.id);
     if (isNaN(templateId)) {

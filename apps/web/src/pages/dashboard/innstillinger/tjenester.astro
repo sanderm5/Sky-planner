@@ -13,7 +13,17 @@ db.getSupabaseClient({
 const authResult = await requireAuth(Astro);
 if (isAuthError(authResult)) return authResult;
 
-const { user, organization } = authResult;
+const { user, organization, payload } = authResult;
+
+// Determine admin status
+let isAdmin = false;
+if (payload.type === 'bruker') {
+  isAdmin = true;
+} else {
+  const currentKlient = await db.getKlientById(user.id);
+  isAdmin = currentKlient?.rolle === 'admin';
+}
+
 // API base URL - always use proxy route (/api/app/...) for both dev and prod
 const apiBaseUrl = '';
 ---
@@ -36,6 +46,9 @@ const apiBaseUrl = '';
     </a>
     <a href="/dashboard/innstillinger/tjenester" class="px-4 py-2 rounded-xl bg-primary-500/10 text-primary-400 border border-primary-500/20 font-medium text-sm" aria-current="page">
       Tjenestekategorier
+    </a>
+    <a href="/dashboard/innstillinger/kategorier" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
+      Kategorier
     </a>
     <a href="/dashboard/innstillinger/integrasjoner" class="px-4 py-2 rounded-xl bg-dark-800/50 text-dark-300 border border-dark-700 hover:bg-dark-700/50 hover:text-white transition-colors font-medium text-sm">
       Integrasjoner
@@ -61,9 +74,11 @@ const apiBaseUrl = '';
         <h2 class="text-lg font-semibold text-white mb-1">Tjenestekategorier</h2>
         <p class="text-dark-400 text-sm">Definer hvilke typer tjenester din bedrift utfører. Disse brukes for filtrering, kartmarkører og kontrollintervaller.</p>
       </div>
-      <button id="btn-add" class="btn btn-primary text-sm">
-        <i class="fas fa-plus mr-1.5"></i> Legg til
-      </button>
+      {isAdmin && (
+        <button id="btn-add" class="btn btn-primary text-sm">
+          <i class="fas fa-plus mr-1.5"></i> Legg til
+        </button>
+      )}
     </div>
 
     <!-- Loading state -->
@@ -79,9 +94,11 @@ const apiBaseUrl = '';
       </div>
       <h3 class="text-white font-medium mb-2">Ingen tjenestekategorier</h3>
       <p class="text-dark-400 text-sm mb-4">Opprett din første tjenestekategori, eller importer fra en bransjemal.</p>
-      <button id="btn-add-empty" class="btn btn-primary text-sm">
-        <i class="fas fa-plus mr-1.5"></i> Legg til kategori
-      </button>
+      {isAdmin && (
+        <button id="btn-add-empty" class="btn btn-primary text-sm">
+          <i class="fas fa-plus mr-1.5"></i> Legg til kategori
+        </button>
+      )}
     </div>
 
     <!-- Service types table -->
@@ -181,7 +198,7 @@ const apiBaseUrl = '';
     </div>
   </div>
 
-<script define:vars={{ apiBaseUrl }}>
+<script define:vars={{ apiBaseUrl, isAdmin }}>
   const tokenKey = 'skyplanner_token';
   let serviceTypes = [];
   let editingId = null;
@@ -272,14 +289,14 @@ const apiBaseUrl = '';
         <td class="py-3">
           <span class="text-xs px-2 py-0.5 rounded-full ${st.source === 'tripletex' ? 'bg-blue-500/10 text-blue-400' : st.source === 'template' ? 'bg-green-500/10 text-green-400' : 'bg-dark-600/50 text-dark-300'}">${sourceLabel(st.source)}</span>
         </td>
-        <td class="py-3 pr-2 text-right">
+        ${isAdmin ? `<td class="py-3 pr-2 text-right">
           <button class="text-dark-400 hover:text-white p-1.5 transition-colors" data-action="edit" data-id="${st.id}" title="Rediger">
             <i class="fas fa-pen text-xs"></i>
           </button>
           <button class="text-dark-400 hover:text-red-400 p-1.5 transition-colors" data-action="delete" data-id="${st.id}" data-name="${escapeHtml(st.name)}" title="Slett">
             <i class="fas fa-trash text-xs"></i>
           </button>
-        </td>
+        </td>` : ''}
       </tr>
     `).join('');
   }

@@ -8,7 +8,7 @@
 
 import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { requireFeature } from '../middleware/features';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import type { AuthenticatedRequest, ApiResponse } from '../types';
@@ -106,6 +106,7 @@ router.get(
  */
 router.post(
   '/reports',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_id, report_type, notes, checklist_data } = req.body;
 
@@ -149,6 +150,7 @@ router.post(
  */
 router.put(
   '/reports/:id',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) throw Errors.badRequest('Ugyldig rapport-ID');
@@ -184,6 +186,7 @@ router.put(
  */
 router.post(
   '/reports/:id/advance',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) throw Errors.badRequest('Ugyldig rapport-ID');
@@ -243,6 +246,7 @@ router.post(
  */
 router.delete(
   '/reports/:id',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) throw Errors.badRequest('Ugyldig rapport-ID');

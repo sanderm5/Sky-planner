@@ -68,6 +68,17 @@ interface KundeDbService {
   ): Promise<number>;
   getOrganizationLimits(organizationId: number): Promise<{ max_kunder: number; current_count: number } | null>;
   getOrganizationById(id: number): Promise<Organization | null>;
+  saveCustomerServices(
+    kundeId: number,
+    services: Array<{
+      service_type_id: number;
+      service_type_slug?: string;
+      siste_kontroll?: string | null;
+      neste_kontroll?: string | null;
+      intervall_months?: number | null;
+    }>,
+    organizationId: number
+  ): Promise<void>;
 }
 
 let dbService: KundeDbService;
@@ -206,7 +217,7 @@ router.get(
  */
 router.post(
   '/',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     // Validate input
     const validationErrors = validateKunde(req.body);
@@ -233,6 +244,15 @@ router.post(
     const geocodedData = await geocodeCustomerData(kundeData);
 
     const kunde = await dbService.createKunde(geocodedData);
+
+    // Save dynamic service dates if provided
+    if (req.body.services && Array.isArray(req.body.services) && req.body.services.length > 0 && req.organizationId) {
+      try {
+        await dbService.saveCustomerServices(kunde.id, req.body.services, req.organizationId);
+      } catch (err) {
+        apiLogger.error({ err, kundeId: kunde.id }, 'Failed to save customer services');
+      }
+    }
 
     logAudit(apiLogger, 'CREATE', req.user!.userId, 'kunde', kunde.id, {
       navn: kunde.navn,
@@ -279,7 +299,7 @@ router.post(
  */
 router.put(
   '/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -308,6 +328,15 @@ router.put(
     const kunde = await dbService.updateKunde(id, kundeData, req.organizationId);
     if (!kunde) {
       throw Errors.notFound('Kunde');
+    }
+
+    // Save dynamic service dates if provided
+    if (req.body.services && Array.isArray(req.body.services) && req.organizationId) {
+      try {
+        await dbService.saveCustomerServices(id, req.body.services, req.organizationId);
+      } catch (err) {
+        apiLogger.error({ err, kundeId: id }, 'Failed to save customer services');
+      }
     }
 
     logAudit(apiLogger, 'UPDATE', req.user!.userId, 'kunde', id, {
@@ -427,7 +456,7 @@ router.delete(
  */
 router.post(
   '/bulk-complete',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_ids, type, dato } = req.body;
 
@@ -488,7 +517,7 @@ router.post(
  */
 router.post(
   '/mark-visited',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_ids, visited_date, service_type_slugs } = req.body;
 
@@ -542,10 +571,10 @@ function prepareKundeData(
   organizationId?: number,
   appMode: 'mvp' | 'full' = 'mvp'
 ): CreateKundeRequest & { organization_id?: number } {
-  // MVP mode: don't force category defaults
+  // MVP mode: preserve explicit null (unchecked all), don't force defaults
   const kategori = appMode === 'full'
     ? (body.kategori || 'El-Kontroll')
-    : (body.kategori || undefined);
+    : (body.kategori !== undefined ? (body.kategori || null) : undefined);
 
   let elIntervall = body.el_kontroll_intervall;
   let brannIntervall = body.brann_kontroll_intervall;
@@ -565,13 +594,16 @@ function prepareKundeData(
     }
   }
 
+  // Exclude services from kunder table data (saved separately via customer_services)
+  const { services: _services, ...bodyWithoutServices } = body as unknown as Record<string, unknown>;
+
   return {
-    ...body,
+    ...bodyWithoutServices,
     kategori,
     el_kontroll_intervall: elIntervall,
     brann_kontroll_intervall: brannIntervall,
     organization_id: organizationId,
-  };
+  } as CreateKundeRequest & { organization_id?: number };
 }
 
 // ============================================
@@ -584,6 +616,7 @@ function prepareKundeData(
  */
 router.post(
   '/import/parse',
+  requireRole('tekniker'),
   upload.single('file'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
@@ -714,6 +747,7 @@ router.post(
  */
 router.post(
   '/import/execute',
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { rows, columnMapping } = req.body as {
       rows: Array<Record<string, unknown>>;

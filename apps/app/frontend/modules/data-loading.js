@@ -7,9 +7,6 @@ async function loadCustomers() {
     const result = await response.json();
     customers = result.data || result; // Handle both { data: [...] } and direct array
     Logger.log('loadCustomers() fetched', customers.length, 'customers');
-    renderElTypeFilter(); // Update kundetype filter with customer data
-    renderDriftskategoriFilter(); // Update driftskategori filter with customer data
-    renderBrannsystemFilter(); // Update brannsystem filter with customer data
     applyFilters();
     renderMarkers(customers);
     renderCustomerAdmin();
@@ -18,9 +15,12 @@ async function loadCustomers() {
     updateDashboard(); // Update dashboard stats
     updateGettingStartedBanner(); // Show/hide getting started banner
 
-    // Load avtaler and show plan badges on map (team member assignment indicators)
+    // Load avtaler and subcategory assignments in parallel
     if (!weekPlanState.weekStart) initWeekPlanState(new Date());
-    await loadAvtaler();
+    await Promise.all([
+      loadAvtaler(),
+      loadAllSubcategoryAssignments()
+    ]);
   } catch (error) {
     console.error('Feil ved lasting av kunder:', error);
   }

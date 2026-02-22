@@ -33,6 +33,11 @@
   --sky-text-secondary: #8898AC;
   --sky-text-muted:     #5E7088;
 
+  /* === Mountains === */
+  --sky-mountain-far:   #1A2436;
+  --sky-mountain-mid:   #111822;
+  --sky-mountain-near:  #080C12;
+
   /* === Nordic accents === */
   --sky-frost:  #88C0D0;
   --sky-purple: #B48EAD;

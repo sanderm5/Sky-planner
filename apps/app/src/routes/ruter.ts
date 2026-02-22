@@ -5,7 +5,7 @@
 
 import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { requireFeature } from '../middleware/features';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { broadcast } from '../services/websocket';
@@ -99,7 +99,7 @@ router.get(
  */
 router.post(
   '/',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { navn, beskrivelse, planlagt_dato, kunde_ids, total_distanse, total_tid } = req.body;
 
@@ -154,7 +154,7 @@ router.post(
  */
 router.put(
   '/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -215,7 +215,7 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -250,7 +250,7 @@ router.delete(
  */
 router.post(
   '/:id/complete',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -299,7 +299,7 @@ router.post(
  */
 router.put(
   '/:id/assign',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -398,7 +398,7 @@ router.put(
  */
 router.post(
   '/:id/start-execution',
-  requireTenantAuth,
+  requireRole('tekniker'),
   requireFeature('field_work'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
@@ -447,7 +447,7 @@ router.post(
  */
 router.post(
   '/:id/visit-customer',
-  requireTenantAuth,
+  requireRole('tekniker'),
   requireFeature('field_work'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const ruteId = Number.parseInt(req.params.id);
@@ -542,7 +542,7 @@ router.get(
  */
 router.post(
   '/:id/end-execution',
-  requireTenantAuth,
+  requireRole('tekniker'),
   requireFeature('field_work'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);

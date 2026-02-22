@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import * as db from '@skyplanner/database';
-import { requireApiAuth, isAuthError } from '../../../../middleware/auth';
+import { requireApiAuth, requireAdminApiAuth, isAuthError } from '../../../../middleware/auth';
 import { createClient } from '@supabase/supabase-js';
 
 // Initialize Supabase client
@@ -35,9 +35,9 @@ export const GET: APIRoute = async ({ request }) => {
   );
 };
 
-// PUT - Update organization
+// PUT - Update organization (admin only)
 export const PUT: APIRoute = async ({ request }) => {
-  const authResult = await requireApiAuth(request);
+  const authResult = await requireAdminApiAuth(request);
   if (isAuthError(authResult)) return authResult;
 
   const { organization } = authResult;

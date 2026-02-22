@@ -6,7 +6,7 @@
 import { Router, Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import { apiLogger } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { requireFeature } from '../middleware/features';
 import { getDatabase } from '../services/database';
@@ -163,7 +163,7 @@ router.get(
  */
 router.post(
   '/:id/connect',
-  requireTenantAuth,
+  requireRole('admin'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const adapter = registry.get(id);
@@ -448,7 +448,7 @@ router.post(
  */
 router.delete(
   '/:id/disconnect',
-  requireTenantAuth,
+  requireRole('admin'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
 
@@ -541,7 +541,7 @@ router.get(
  */
 router.post(
   '/tripletex/webhooks/subscribe',
-  requireTenantAuth,
+  requireRole('admin'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const db = await getDatabase();
     const stored = await db.getIntegrationCredentials(req.organizationId!, 'tripletex');
@@ -750,7 +750,7 @@ router.post(
  */
 router.post(
   '/tripletex/push-customer',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_id } = req.body;
 

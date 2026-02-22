@@ -236,6 +236,7 @@ export const POST: APIRoute = async ({ request }) => {
           passord_hash: passwordHash,
           aktiv: true,
           organization_id: organization.id,
+          rolle: 'admin',
         });
       } catch (error) {
         // Rollback: slett organisasjonen hvis brukeropprettelse feilet
@@ -291,6 +292,7 @@ export const POST: APIRoute = async ({ request }) => {
         passord_hash: passwordHash,
         aktiv: true,
         organization_id: organization.id,
+        rolle: 'admin',
       });
     } catch (error) {
       // Rollback: slett organisasjonen hvis brukeropprettelse feilet

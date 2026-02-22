@@ -83,6 +83,21 @@ interface SupabaseService {
   } | null>;
   updateOnboardingStage(organizationId: number, stage: string, additionalData?: Record<string, unknown>): Promise<boolean>;
   completeOnboarding(organizationId: number): Promise<boolean>;
+
+  // Customer services (dynamic per-service-type dates)
+  getAllKunderWithServices(organizationId: number): Promise<Kunde[]>;
+  getKundeByIdWithServices(id: number, organizationId: number): Promise<Kunde | null>;
+  createOrUpdateCustomerServices(kundeId: number, servicesData: Array<{
+    service_type_id: number;
+    siste_kontroll?: string | null;
+    neste_kontroll?: string | null;
+    intervall_months?: number | null;
+    subtype_id?: number | null;
+    equipment_type_id?: number | null;
+    driftstype?: string | null;
+    notater?: string | null;
+  }>): Promise<unknown[]>;
+  deactivateCustomerServices(kundeId: number, activeServiceTypeIds: number[]): Promise<void>;
 }
 
 interface KlientRecord {
@@ -535,13 +550,27 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_org_field_options_field ON organization_field_options(field_id);
     `);
 
-    // Tags tables
+    // Tag groups table
     this.sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS tags (
+      CREATE TABLE IF NOT EXISTS tag_groups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         organization_id INTEGER NOT NULL,
         navn TEXT NOT NULL,
         farge TEXT NOT NULL DEFAULT '#3b82f6',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(organization_id, navn),
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Subcategory tables (replaces old tags/kunde_tags)
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS service_type_subcat_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id INTEGER NOT NULL,
+        navn TEXT NOT NULL,
+        sort_order INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(organization_id, navn),
         FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -549,12 +578,26 @@ class DatabaseService {
     `);
 
     this.sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS kunde_tags (
+      CREATE TABLE IF NOT EXISTS service_type_subcategories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL,
+        navn TEXT NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(group_id, navn),
+        FOREIGN KEY (group_id) REFERENCES service_type_subcat_groups(id) ON DELETE CASCADE
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS kunde_subcategories (
         kunde_id INTEGER NOT NULL,
-        tag_id INTEGER NOT NULL,
-        PRIMARY KEY (kunde_id, tag_id),
+        group_id INTEGER NOT NULL,
+        subcategory_id INTEGER NOT NULL,
+        PRIMARY KEY (kunde_id, group_id),
         FOREIGN KEY (kunde_id) REFERENCES kunder(id) ON DELETE CASCADE,
-        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+        FOREIGN KEY (group_id) REFERENCES service_type_subcat_groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (subcategory_id) REFERENCES service_type_subcategories(id) ON DELETE CASCADE
       )
     `);
 
@@ -750,7 +793,8 @@ class DatabaseService {
     this.validateTenantContext(organizationId, 'getAllKunder');
 
     if (this.type === 'supabase' && this.supabase) {
-      return this.supabase.getAllKunderByTenant(organizationId);
+      // Use WithServices variant to attach customer_services as services[] on each customer
+      return this.supabase.getAllKunderWithServices(organizationId);
     }
 
     if (!this.sqlite) throw new Error('Database not initialized');
@@ -818,7 +862,8 @@ class DatabaseService {
     this.validateTenantContext(organizationId, 'getKundeById');
 
     if (this.type === 'supabase' && this.supabase) {
-      return this.supabase.getKundeByIdAndTenant(id, organizationId);
+      // Use WithServices variant to attach customer_services as services[]
+      return this.supabase.getKundeByIdWithServices(id, organizationId);
     }
 
     if (!this.sqlite) throw new Error('Database not initialized');
@@ -946,6 +991,65 @@ class DatabaseService {
   }
 
   /**
+   * Save customer service dates (dynamic per-service-type dates).
+   * Creates/updates services and deactivates unchecked ones.
+   */
+  async saveCustomerServices(
+    kundeId: number,
+    services: Array<{
+      service_type_id: number;
+      service_type_slug?: string;
+      siste_kontroll?: string | null;
+      neste_kontroll?: string | null;
+      intervall_months?: number | null;
+    }>,
+    organizationId: number
+  ): Promise<void> {
+    if (this.type === 'supabase' && this.supabase) {
+      // Save/update provided services
+      if (services.length > 0) {
+        await this.supabase.createOrUpdateCustomerServices(kundeId, services);
+      }
+      // Deactivate services that are not in the active list
+      const activeIds = services.map(s => s.service_type_id).filter(Boolean);
+      await this.supabase.deactivateCustomerServices(kundeId, activeIds);
+      return;
+    }
+
+    // SQLite: simple insert/update
+    if (!this.sqlite) throw new Error('Database not initialized');
+
+    for (const s of services) {
+      const existing = this.sqlite.prepare(
+        'SELECT id FROM customer_services WHERE kunde_id = ? AND service_type_id = ?'
+      ).get(kundeId, s.service_type_id) as { id: number } | undefined;
+
+      if (existing) {
+        this.sqlite.prepare(`
+          UPDATE customer_services SET siste_kontroll = ?, neste_kontroll = ?, intervall_months = ?, aktiv = 1
+          WHERE id = ?
+        `).run(s.siste_kontroll || null, s.neste_kontroll || null, s.intervall_months || null, existing.id);
+      } else {
+        this.sqlite.prepare(`
+          INSERT INTO customer_services (kunde_id, service_type_id, siste_kontroll, neste_kontroll, intervall_months, aktiv)
+          VALUES (?, ?, ?, ?, ?, 1)
+        `).run(kundeId, s.service_type_id, s.siste_kontroll || null, s.neste_kontroll || null, s.intervall_months || null);
+      }
+    }
+
+    // Deactivate services not in the active list
+    const activeIds = services.map(s => s.service_type_id).filter(Boolean);
+    if (activeIds.length > 0) {
+      this.sqlite.prepare(`
+        UPDATE customer_services SET aktiv = 0
+        WHERE kunde_id = ? AND service_type_id NOT IN (${activeIds.map(() => '?').join(',')})
+      `).run(kundeId, ...activeIds);
+    } else {
+      this.sqlite.prepare('UPDATE customer_services SET aktiv = 0 WHERE kunde_id = ?').run(kundeId);
+    }
+  }
+
+  /**
    * Get customers by area within an organization.
    * SECURITY: organizationId is required to prevent cross-tenant data access.
    */
@@ -990,12 +1094,12 @@ class DatabaseService {
             (kategori IN ('El-Kontroll', 'El-Kontroll + Brannvarsling') AND
               (neste_el_kontroll <= date('now', '+' || ? || ' days')
               OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NOT NULL
-                  AND date(siste_el_kontroll, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') <= date('now', '+' || ? || ' days'))
+                  AND CASE WHEN COALESCE(el_kontroll_intervall, 36) < 0 THEN date(siste_el_kontroll, '+' || ABS(COALESCE(el_kontroll_intervall, 36)) || ' days') ELSE date(siste_el_kontroll, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') END <= date('now', '+' || ? || ' days'))
               OR (neste_el_kontroll IS NULL AND siste_el_kontroll IS NULL)))
             OR (kategori IN ('Brannvarsling', 'El-Kontroll + Brannvarsling') AND
               (neste_brann_kontroll <= date('now', '+' || ? || ' days')
               OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NOT NULL
-                  AND date(siste_brann_kontroll, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') <= date('now', '+' || ? || ' days'))
+                  AND CASE WHEN COALESCE(brann_kontroll_intervall, 12) < 0 THEN date(siste_brann_kontroll, '+' || ABS(COALESCE(brann_kontroll_intervall, 12)) || ' days') ELSE date(siste_brann_kontroll, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') END <= date('now', '+' || ? || ' days'))
               OR (neste_brann_kontroll IS NULL AND siste_brann_kontroll IS NULL)))
           )
         ORDER BY navn COLLATE NOCASE
@@ -1011,7 +1115,7 @@ class DatabaseService {
         AND (
           neste_kontroll <= date('now', '+' || ? || ' days')
           OR (neste_kontroll IS NULL AND siste_kontroll IS NOT NULL
-              AND date(siste_kontroll, '+' || COALESCE(kontroll_intervall_mnd, 12) || ' months') <= date('now', '+' || ? || ' days'))
+              AND CASE WHEN COALESCE(kontroll_intervall_mnd, 12) < 0 THEN date(siste_kontroll, '+' || ABS(COALESCE(kontroll_intervall_mnd, 12)) || ' days') ELSE date(siste_kontroll, '+' || COALESCE(kontroll_intervall_mnd, 12) || ' months') END <= date('now', '+' || ? || ' days'))
           OR (neste_kontroll IS NULL AND siste_kontroll IS NULL AND kontroll_intervall_mnd IS NOT NULL)
         )
       ORDER BY navn COLLATE NOCASE
@@ -2332,11 +2436,11 @@ class DatabaseService {
       UPDATE kunder SET
         last_visit_date = ?,
         siste_el_kontroll = CASE WHEN ? IN ('el', 'both') THEN ? ELSE siste_el_kontroll END,
-        neste_el_kontroll = CASE WHEN ? IN ('el', 'both') THEN date(?, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') ELSE neste_el_kontroll END,
+        neste_el_kontroll = CASE WHEN ? IN ('el', 'both') THEN CASE WHEN COALESCE(el_kontroll_intervall, 36) < 0 THEN date(?, '+' || ABS(COALESCE(el_kontroll_intervall, 36)) || ' days') ELSE date(?, '+' || COALESCE(el_kontroll_intervall, 36) || ' months') END ELSE neste_el_kontroll END,
         siste_brann_kontroll = CASE WHEN ? IN ('brann', 'both') THEN ? ELSE siste_brann_kontroll END,
-        neste_brann_kontroll = CASE WHEN ? IN ('brann', 'both') THEN date(?, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') ELSE neste_brann_kontroll END,
+        neste_brann_kontroll = CASE WHEN ? IN ('brann', 'both') THEN CASE WHEN COALESCE(brann_kontroll_intervall, 12) < 0 THEN date(?, '+' || ABS(COALESCE(brann_kontroll_intervall, 12)) || ' days') ELSE date(?, '+' || COALESCE(brann_kontroll_intervall, 12) || ' months') END ELSE neste_brann_kontroll END,
         siste_kontroll = ?,
-        neste_kontroll = date(?, '+' || COALESCE(kontroll_intervall_mnd, 12) || ' months')
+        neste_kontroll = CASE WHEN COALESCE(kontroll_intervall_mnd, 12) < 0 THEN date(?, '+' || ABS(COALESCE(kontroll_intervall_mnd, 12)) || ' days') ELSE date(?, '+' || COALESCE(kontroll_intervall_mnd, 12) || ' months') END
       WHERE id = ?
     `);
 
@@ -2344,11 +2448,11 @@ class DatabaseService {
       updateStmt.run(
         dato,
         kontrollType, dato,
+        kontrollType, dato, dato,
         kontrollType, dato,
-        kontrollType, dato,
-        kontrollType, dato,
+        kontrollType, dato, dato,
         dato,
-        dato,
+        dato, dato,
         kunde.id
       );
     }
@@ -6181,128 +6285,202 @@ class DatabaseService {
     };
   }
 
-  // ============ Tags ============
+  // ============ Subcategory Groups ============
 
-  async getTagsByOrganization(organizationId: number): Promise<{ id: number; organization_id: number; navn: string; farge: string; created_at: string }[]> {
+  async getSubcatGroupsByOrganization(organizationId: number): Promise<{ id: number; organization_id: number; navn: string; sort_order: number; created_at: string }[]> {
     if (this.type === 'supabase' && this.supabase) {
       const client = this.supabase.getClient();
       const { data, error } = await client
-        .from('tags')
+        .from('service_type_subcat_groups')
         .select('*')
         .eq('organization_id', organizationId)
+        .order('sort_order')
         .order('navn');
       if (error) throw error;
       return data || [];
     }
     if (!this.sqlite) throw new Error('Database not initialized');
-    return this.sqlite.prepare('SELECT * FROM tags WHERE organization_id = ? ORDER BY navn').all(organizationId) as any[];
+    return this.sqlite.prepare('SELECT * FROM service_type_subcat_groups WHERE organization_id = ? ORDER BY sort_order, navn').all(organizationId) as any[];
   }
 
-  async createTag(data: { organization_id: number; navn: string; farge: string }): Promise<any> {
-    if (this.type === 'supabase' && this.supabase) {
-      const client = this.supabase.getClient();
-      const { data: result, error } = await client
-        .from('tags')
-        .insert(data)
-        .select()
-        .single();
-      if (error) throw error;
-      return result;
-    }
-    if (!this.sqlite) throw new Error('Database not initialized');
-    const result = this.sqlite.prepare('INSERT INTO tags (organization_id, navn, farge) VALUES (?, ?, ?)').run(data.organization_id, data.navn, data.farge);
-    return this.sqlite.prepare('SELECT * FROM tags WHERE id = ?').get(result.lastInsertRowid);
-  }
-
-  async updateTag(id: number, organizationId: number, data: { navn?: string; farge?: string }): Promise<any | null> {
-    if (this.type === 'supabase' && this.supabase) {
-      const client = this.supabase.getClient();
-      const { data: result, error } = await client
-        .from('tags')
-        .update(data)
-        .eq('id', id)
-        .eq('organization_id', organizationId)
-        .select()
-        .single();
-      if (error) return null;
-      return result;
-    }
-    if (!this.sqlite) throw new Error('Database not initialized');
-    const fields = Object.keys(data).filter(k => (data as Record<string, unknown>)[k] !== undefined);
-    if (fields.length === 0) return null;
-    const setClause = fields.map(f => `${f} = ?`).join(', ');
-    const values = fields.map(f => (data as Record<string, unknown>)[f]);
-    const result = this.sqlite.prepare(`UPDATE tags SET ${setClause} WHERE id = ? AND organization_id = ?`).run(...values, id, organizationId);
-    if (result.changes === 0) return null;
-    return this.sqlite.prepare('SELECT * FROM tags WHERE id = ?').get(id);
-  }
-
-  async deleteTag(id: number, organizationId: number): Promise<boolean> {
-    if (this.type === 'supabase' && this.supabase) {
-      const client = this.supabase.getClient();
-      const { error } = await client
-        .from('tags')
-        .delete()
-        .eq('id', id)
-        .eq('organization_id', organizationId);
-      return !error;
-    }
-    if (!this.sqlite) throw new Error('Database not initialized');
-    const result = this.sqlite.prepare('DELETE FROM tags WHERE id = ? AND organization_id = ?').run(id, organizationId);
-    return result.changes > 0;
-  }
-
-  async getTagsForKunde(kundeId: number, organizationId: number): Promise<any[]> {
+  async createSubcatGroup(organizationId: number, navn: string, sortOrder?: number): Promise<any> {
     if (this.type === 'supabase' && this.supabase) {
       const client = this.supabase.getClient();
       const { data, error } = await client
-        .from('kunde_tags')
-        .select('tag_id, tags(id, organization_id, navn, farge, created_at)')
+        .from('service_type_subcat_groups')
+        .insert({ organization_id: organizationId, navn, sort_order: sortOrder ?? 0 })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('INSERT INTO service_type_subcat_groups (organization_id, navn, sort_order) VALUES (?, ?, ?)').run(organizationId, navn, sortOrder ?? 0);
+    return this.sqlite.prepare('SELECT * FROM service_type_subcat_groups WHERE id = ?').get(result.lastInsertRowid);
+  }
+
+  async updateSubcatGroup(groupId: number, navn: string): Promise<any | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data, error } = await client
+        .from('service_type_subcat_groups')
+        .update({ navn })
+        .eq('id', groupId)
+        .select()
+        .single();
+      if (error) return null;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('UPDATE service_type_subcat_groups SET navn = ? WHERE id = ?').run(navn, groupId);
+    if (result.changes === 0) return null;
+    return this.sqlite.prepare('SELECT * FROM service_type_subcat_groups WHERE id = ?').get(groupId);
+  }
+
+  async deleteSubcatGroup(groupId: number): Promise<boolean> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { error } = await client
+        .from('service_type_subcat_groups')
+        .delete()
+        .eq('id', groupId);
+      return !error;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('DELETE FROM service_type_subcat_groups WHERE id = ?').run(groupId);
+    return result.changes > 0;
+  }
+
+  // ============ Subcategories ============
+
+  async getSubcategoriesByGroupIds(groupIds: number[]): Promise<{ id: number; group_id: number; navn: string; sort_order: number; created_at: string }[]> {
+    if (groupIds.length === 0) return [];
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data, error } = await client
+        .from('service_type_subcategories')
+        .select('*')
+        .in('group_id', groupIds)
+        .order('sort_order')
+        .order('navn');
+      if (error) throw error;
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const placeholders = groupIds.map(() => '?').join(',');
+    return this.sqlite.prepare(`SELECT * FROM service_type_subcategories WHERE group_id IN (${placeholders}) ORDER BY sort_order, navn`).all(...groupIds) as any[];
+  }
+
+  async createSubcategory(groupId: number, navn: string, sortOrder?: number): Promise<any> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data, error } = await client
+        .from('service_type_subcategories')
+        .insert({ group_id: groupId, navn, sort_order: sortOrder ?? 0 })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('INSERT INTO service_type_subcategories (group_id, navn, sort_order) VALUES (?, ?, ?)').run(groupId, navn, sortOrder ?? 0);
+    return this.sqlite.prepare('SELECT * FROM service_type_subcategories WHERE id = ?').get(result.lastInsertRowid);
+  }
+
+  async updateSubcategory(id: number, navn: string): Promise<any | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data, error } = await client
+        .from('service_type_subcategories')
+        .update({ navn })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) return null;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('UPDATE service_type_subcategories SET navn = ? WHERE id = ?').run(navn, id);
+    if (result.changes === 0) return null;
+    return this.sqlite.prepare('SELECT * FROM service_type_subcategories WHERE id = ?').get(id);
+  }
+
+  async deleteSubcategory(id: number): Promise<boolean> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { error } = await client
+        .from('service_type_subcategories')
+        .delete()
+        .eq('id', id);
+      return !error;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('DELETE FROM service_type_subcategories WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  // ============ Kunde Subcategories ============
+
+  async getKundeSubcategories(kundeId: number): Promise<{ kunde_id: number; group_id: number; subcategory_id: number }[]> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data, error } = await client
+        .from('kunde_subcategories')
+        .select('*')
         .eq('kunde_id', kundeId);
       if (error) throw error;
-      return (data || []).map((row: any) => row.tags).filter(Boolean);
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return this.sqlite.prepare('SELECT * FROM kunde_subcategories WHERE kunde_id = ?').all(kundeId) as any[];
+  }
+
+  async setKundeSubcategories(kundeId: number, assignments: { group_id: number; subcategory_id: number }[]): Promise<boolean> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      // Delete existing assignments
+      await client.from('kunde_subcategories').delete().eq('kunde_id', kundeId);
+      // Insert new assignments
+      if (assignments.length > 0) {
+        const rows = assignments.map(a => ({ kunde_id: kundeId, group_id: a.group_id, subcategory_id: a.subcategory_id }));
+        const { error } = await client.from('kunde_subcategories').insert(rows);
+        if (error) throw error;
+      }
+      return true;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    this.sqlite.prepare('DELETE FROM kunde_subcategories WHERE kunde_id = ?').run(kundeId);
+    if (assignments.length > 0) {
+      const stmt = this.sqlite.prepare('INSERT INTO kunde_subcategories (kunde_id, group_id, subcategory_id) VALUES (?, ?, ?)');
+      for (const a of assignments) {
+        stmt.run(kundeId, a.group_id, a.subcategory_id);
+      }
+    }
+    return true;
+  }
+
+  async getAllKundeSubcategoryAssignments(organizationId: number): Promise<{ kunde_id: number; group_id: number; subcategory_id: number }[]> {
+    if (this.type === 'supabase' && this.supabase) {
+      const client = this.supabase.getClient();
+      const { data: kunder } = await client
+        .from('kunder')
+        .select('id')
+        .eq('organization_id', organizationId);
+      const kundeIds = (kunder || []).map((k: { id: number }) => k.id);
+      if (kundeIds.length === 0) return [];
+      const { data, error } = await client
+        .from('kunde_subcategories')
+        .select('kunde_id, group_id, subcategory_id')
+        .in('kunde_id', kundeIds);
+      if (error) throw error;
+      return (data || []) as { kunde_id: number; group_id: number; subcategory_id: number }[];
     }
     if (!this.sqlite) throw new Error('Database not initialized');
     return this.sqlite.prepare(`
-      SELECT t.* FROM tags t
-      INNER JOIN kunde_tags kt ON kt.tag_id = t.id
-      WHERE kt.kunde_id = ? AND t.organization_id = ?
-      ORDER BY t.navn
-    `).all(kundeId, organizationId) as any[];
-  }
-
-  async addTagToKunde(kundeId: number, tagId: number): Promise<boolean> {
-    if (this.type === 'supabase' && this.supabase) {
-      const client = this.supabase.getClient();
-      const { error } = await client
-        .from('kunde_tags')
-        .insert({ kunde_id: kundeId, tag_id: tagId });
-      // Ignore duplicate key errors (already tagged)
-      if (error && error.code === '23505') return true;
-      return !error;
-    }
-    if (!this.sqlite) throw new Error('Database not initialized');
-    try {
-      this.sqlite.prepare('INSERT OR IGNORE INTO kunde_tags (kunde_id, tag_id) VALUES (?, ?)').run(kundeId, tagId);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async removeTagFromKunde(kundeId: number, tagId: number): Promise<boolean> {
-    if (this.type === 'supabase' && this.supabase) {
-      const client = this.supabase.getClient();
-      const { error } = await client
-        .from('kunde_tags')
-        .delete()
-        .eq('kunde_id', kundeId)
-        .eq('tag_id', tagId);
-      return !error;
-    }
-    if (!this.sqlite) throw new Error('Database not initialized');
-    const result = this.sqlite.prepare('DELETE FROM kunde_tags WHERE kunde_id = ? AND tag_id = ?').run(kundeId, tagId);
-    return result.changes > 0;
+      SELECT ks.kunde_id, ks.group_id, ks.subcategory_id FROM kunde_subcategories ks
+      INNER JOIN kunder k ON k.id = ks.kunde_id
+      WHERE k.organization_id = ?
+    `).all(organizationId) as { kunde_id: number; group_id: number; subcategory_id: number }[];
   }
 
   // ============ Contact Persons (Kontaktpersoner) ============

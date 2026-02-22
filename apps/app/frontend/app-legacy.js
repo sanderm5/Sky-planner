@@ -13,9 +13,9 @@ let omrader = [];
 let currentFilter = 'alle';
 let showOnlyWarnings = false;
 let selectedCategory = 'all'; // 'all', 'El-Kontroll', 'Brannvarsling', 'El-Kontroll + Brannvarsling'
-let selectedDriftskategori = localStorage.getItem('selectedDriftskategori') || 'all'; // 'all', 'Storfe', 'Sau', 'Geit', 'Gris', 'Gartneri'
-let selectedBrannsystem = localStorage.getItem('selectedBrannsystem') || 'all'; // 'all', 'Elotec', 'ICAS', etc.
-let selectedElType = localStorage.getItem('selectedElType') || 'all'; // 'all', 'Landbruk', 'Næring', 'Bolig', etc.
+let selectedSubcategories = {}; // Filter state: { groupId: subcategoryId }
+let kundeSubcatMap = {}; // Bulk cache: { kundeId: [{ group_id, subcategory_id }] }
+let allSubcategoryGroups = []; // Organization-level subcategory groups from config
 let currentCalendarMonth = new Date().getMonth();
 let currentCalendarYear = new Date().getFullYear();
 let calendarViewMode = 'month'; // 'month' or 'week'
@@ -323,10 +323,7 @@ function setupEventListeners() {
   // Setup address autocomplete and postnummer lookup
   setupAddressAutocomplete();
 
-  // Kategori-endring oppdaterer synlige kontroll-seksjoner
-  document.getElementById('kategori')?.addEventListener('change', (e) => {
-    updateControlSectionsVisibility(e.target.value);
-  });
+  // Kategori-checkboxes: change-handlers settes i populateDynamicDropdowns()
   document.getElementById('saveApiKey')?.addEventListener('click', saveApiKey);
 
   // Warning actions
@@ -563,21 +560,8 @@ function setupEventListeners() {
     }
   });
 
-  // Tag event listeners
-  document.getElementById('addKundeTagBtn')?.addEventListener('click', () => {
-    const select = document.getElementById('kundeTagSelect');
-    const kundeId = document.getElementById('customerId')?.value;
-    if (select.value && kundeId) {
-      addTagToKunde(Number.parseInt(kundeId), Number.parseInt(select.value));
-    }
-  });
-  document.getElementById('manageTagsBtn')?.addEventListener('click', openTagManager);
-  document.getElementById('kundeTagsList')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-action="removeKundeTag"]');
-    if (btn) {
-      removeTagFromKunde(Number.parseInt(btn.dataset.kundeId), Number.parseInt(btn.dataset.tagId));
-    }
-  });
+  // Subcategory manager button
+  document.getElementById('manageSubcategoriesBtn')?.addEventListener('click', openSubcategoryManager);
 
   // Tab switching functionality
   const tabItems = document.querySelectorAll('.tab-item');
@@ -708,6 +692,63 @@ function setupEventListeners() {
         }
       }, { passive: true });
     }
+  }
+
+  // Content panel resize functionality (desktop only)
+  const contentPanelResize = document.getElementById('contentPanelResize');
+  if (contentPanelResize && contentPanel) {
+    let isResizing = false;
+
+    // Restore saved width
+    const savedWidth = localStorage.getItem('contentPanelWidth');
+    if (savedWidth && window.innerWidth > 768) {
+      contentPanel.style.width = savedWidth + 'px';
+    }
+
+    const startResize = (e) => {
+      if (window.innerWidth <= 768) return;
+      e.preventDefault();
+      isResizing = true;
+      contentPanelResize.classList.add('dragging');
+      contentPanel.classList.add('resizing');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    };
+
+    const doResize = (e) => {
+      if (!isResizing) return;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const panelLeft = contentPanel.getBoundingClientRect().left;
+      const newWidth = clientX - panelLeft;
+      const clampedWidth = Math.max(280, Math.min(700, newWidth));
+      contentPanel.style.width = clampedWidth + 'px';
+    };
+
+    const stopResize = () => {
+      if (!isResizing) return;
+      isResizing = false;
+      contentPanelResize.classList.remove('dragging');
+      contentPanel.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const currentWidth = parseInt(contentPanel.style.width);
+      if (currentWidth) {
+        localStorage.setItem('contentPanelWidth', currentWidth);
+      }
+    };
+
+    contentPanelResize.addEventListener('mousedown', startResize);
+    contentPanelResize.addEventListener('touchstart', startResize, { passive: false });
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('touchmove', doResize, { passive: false });
+    document.addEventListener('mouseup', stopResize);
+    document.addEventListener('touchend', stopResize);
+
+    // Double-click to reset width
+    contentPanelResize.addEventListener('dblclick', () => {
+      contentPanel.style.width = '';
+      localStorage.removeItem('contentPanelWidth');
+    });
   }
 
   tabItems.forEach(tab => {
@@ -942,76 +983,6 @@ function setupEventListeners() {
     });
   });
 
-  // Kundetype filter toggle (collapse/expand)
-  const elTypeFilterToggle = document.getElementById('elTypeFilterToggle');
-  const elTypeFilterButtons = document.getElementById('elTypeFilterButtons');
-  if (elTypeFilterToggle && elTypeFilterButtons) {
-    elTypeFilterToggle.addEventListener('click', () => {
-      const isHidden = elTypeFilterButtons.style.display === 'none';
-      elTypeFilterButtons.style.display = isHidden ? 'flex' : 'none';
-      const icon = elTypeFilterToggle.querySelector('.toggle-icon');
-      if (icon) {
-        icon.classList.toggle('fa-chevron-right', !isHidden);
-        icon.classList.toggle('fa-chevron-down', isHidden);
-      }
-    });
-  }
-
-  // Driftskategori filter toggle (collapse/expand)
-  const driftFilterToggle = document.getElementById('driftFilterToggle');
-  const driftFilterButtons = document.getElementById('driftFilterButtons');
-  if (driftFilterToggle && driftFilterButtons) {
-    driftFilterToggle.addEventListener('click', () => {
-      const isHidden = driftFilterButtons.style.display === 'none';
-      driftFilterButtons.style.display = isHidden ? 'flex' : 'none';
-      const icon = driftFilterToggle.querySelector('.toggle-icon');
-      if (icon) {
-        icon.classList.toggle('fa-chevron-right', !isHidden);
-        icon.classList.toggle('fa-chevron-down', isHidden);
-      }
-    });
-  }
-
-  // Brannsystem filter toggle (collapse/expand)
-  const brannsystemFilterToggle = document.getElementById('brannsystemFilterToggle');
-  const brannsystemFilterButtons = document.getElementById('brannsystemFilterButtons');
-  if (brannsystemFilterToggle && brannsystemFilterButtons) {
-    brannsystemFilterToggle.addEventListener('click', () => {
-      const isHidden = brannsystemFilterButtons.style.display === 'none';
-      brannsystemFilterButtons.style.display = isHidden ? 'flex' : 'none';
-      const icon = brannsystemFilterToggle.querySelector('.toggle-icon');
-      if (icon) {
-        icon.classList.toggle('fa-chevron-right', !isHidden);
-        icon.classList.toggle('fa-chevron-down', isHidden);
-      }
-    });
-  }
-
-  // Driftskategori filter buttons
-  document.querySelectorAll('.drift-btn[data-drift]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Update active state for drift buttons only
-      document.querySelectorAll('.drift-btn[data-drift]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      // Apply filter
-      selectedDriftskategori = btn.dataset.drift;
-      // Save to localStorage
-      localStorage.setItem('selectedDriftskategori', selectedDriftskategori);
-      applyFilters();
-    });
-  });
-
-  // Restore saved drift filter state on load
-  const savedDrift = localStorage.getItem('selectedDriftskategori');
-  if (savedDrift) {
-    const savedBtn = document.querySelector(`.drift-btn[data-drift="${savedDrift}"]`);
-    if (savedBtn) {
-      document.querySelectorAll('.drift-btn[data-drift]').forEach(b => b.classList.remove('active'));
-      savedBtn.classList.add('active');
-    }
-  }
-
   // Call once customers are loaded
   setTimeout(updateCustomerCount, 500);
 
@@ -1025,6 +996,45 @@ function setupEventListeners() {
 
   // Also update at midnight to ensure day changes are reflected
   scheduleNextMidnightUpdate();
+
+  // Auto-calculate "neste kontroll" from "siste kontroll" + intervall
+  const kontrollGroups = [
+    { siste: 'siste_kontroll', neste: 'neste_kontroll', intervall: 'kontroll_intervall' },
+    { siste: 'siste_el_kontroll', neste: 'neste_el_kontroll', intervall: 'el_kontroll_intervall' },
+    { siste: 'siste_brann_kontroll', neste: 'neste_brann_kontroll', intervall: 'brann_kontroll_intervall' },
+  ];
+  document.addEventListener('change', (e) => {
+    const id = e.target.id;
+    for (const g of kontrollGroups) {
+      if (id === g.siste || id === g.intervall) {
+        const sisteEl = document.getElementById(g.siste);
+        const nesteEl = document.getElementById(g.neste);
+        const intervallEl = document.getElementById(g.intervall);
+        if (!sisteEl?.value || !intervallEl?.value) break;
+        // When changing siste: only auto-fill if neste is empty
+        // When changing intervall: always recalculate
+        if (id === g.siste && nesteEl?.value) break;
+
+        const siste = new Date(sisteEl.value);
+        if (isNaN(siste.getTime())) break;
+
+        const intervall = parseInt(intervallEl.value);
+        const neste = new Date(siste);
+        if (intervall < 0) {
+          neste.setDate(neste.getDate() + Math.abs(intervall));
+        } else {
+          neste.setMonth(neste.getMonth() + intervall);
+        }
+
+        if (nesteEl) {
+          nesteEl.value = appConfig?.datoModus === 'month_year'
+            ? neste.toISOString().substring(0, 7)
+            : neste.toISOString().substring(0, 10);
+        }
+        break;
+      }
+    }
+  });
 
   // Technician dispatch handler for weekly plan (admin only)
   document.addEventListener('change', (e) => {
@@ -1272,27 +1282,6 @@ function setupEventListeners() {
         break;
       case 'zoomToCluster':
         zoomToCluster(Number.parseFloat(actionEl.dataset.lat), Number.parseFloat(actionEl.dataset.lng));
-        break;
-      case 'filterByElType':
-        selectedElType = actionEl.dataset.value;
-        localStorage.setItem('selectedElType', selectedElType);
-        renderElTypeFilter();
-        applyFilters();
-        map.closePopup();
-        break;
-      case 'filterByBrannsystem':
-        selectedBrannsystem = actionEl.dataset.value;
-        localStorage.setItem('selectedBrannsystem', selectedBrannsystem);
-        renderBrannsystemFilter();
-        applyFilters();
-        map.closePopup();
-        break;
-      case 'filterByDrift':
-        selectedDriftskategori = actionEl.dataset.value;
-        localStorage.setItem('selectedDriftskategori', selectedDriftskategori);
-        renderDriftskategoriFilter();
-        applyFilters();
-        map.closePopup();
         break;
       case 'sendReminder':
       case 'sendEmail':

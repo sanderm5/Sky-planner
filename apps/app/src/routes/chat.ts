@@ -126,12 +126,17 @@ router.post(
 
     const senderName = await getSenderName(req.user!.userId, req.user!.epost);
 
+    // Sanitize content server-side (defense-in-depth — frontend also escapes on render)
+    const sanitizedContent = content.trim()
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
     const message = await dbService.createChatMessage(
       conversationId,
       req.organizationId!,
       req.user!.userId,
       senderName,
-      content.trim()
+      sanitizedContent
     );
 
     // Determine conversation type and broadcast accordingly

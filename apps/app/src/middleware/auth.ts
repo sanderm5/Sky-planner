@@ -144,22 +144,9 @@ export function requireAdmin(
   res: Response,
   next: NextFunction
 ) {
-  requireAuth(req, res, (error) => {
-    if (error) {
-      return next(error);
-    }
-
-    if (req.user?.type !== 'bruker') {
-      authLogger.warn({
-        userId: req.user?.userId,
-        type: req.user?.type,
-        path: req.path,
-      }, 'Non-admin attempted admin action');
-      return next(Errors.forbidden('Krever admin-tilgang'));
-    }
-
-    next();
-  });
+  // Delegate to requireRole('admin') which handles both bruker and klient users
+  const roleMiddleware = requireRole('admin');
+  roleMiddleware(req, res, next);
 }
 
 /**
@@ -174,9 +161,19 @@ const ROLE_HIERARCHY: Record<string, number> = {
 };
 
 /**
- * Requires a specific role (or higher) for bruker users.
- * Klient users (org owners) always have admin-level access.
- * Usage: requireRole('kontor') — allows admin, tekniker, and kontor
+ * Maps klient roles to the equivalent bruker role hierarchy level.
+ * klient.rolle: admin | redigerer | leser
+ */
+const KLIENT_ROLE_MAP: Record<string, string> = {
+  admin: 'admin',
+  redigerer: 'tekniker',
+  leser: 'leser',
+};
+
+/**
+ * Requires a specific role (or higher) for both bruker and klient users.
+ * Klient roles (admin/redigerer/leser) are mapped to the bruker hierarchy.
+ * Usage: requireRole('kontor') — allows admin, tekniker/redigerer, and kontor
  */
 export function requireRole(minimumRole: string) {
   const minimumLevel = ROLE_HIERARCHY[minimumRole] || 0;
@@ -185,15 +182,29 @@ export function requireRole(minimumRole: string) {
     requireTenantAuth(req, res, async (error) => {
       if (error) return next(error);
 
-      // Klient users (org owners) always have full access
-      if (req.user?.type === 'klient') {
-        return next();
-      }
-
-      // For bruker users, check their rolle
       try {
         const { getDatabase } = await import('../services/database');
         const db = await getDatabase();
+
+        // Klient users — check their rolle column
+        if (req.user?.type === 'klient') {
+          const klient = await db.getKlientById(req.user.userId);
+          const klientRolle = klient?.rolle || 'leser';
+          const mappedRole = KLIENT_ROLE_MAP[klientRolle] || 'leser';
+          const userLevel = ROLE_HIERARCHY[mappedRole] || 0;
+
+          if (userLevel >= minimumLevel) return next();
+
+          authLogger.warn({
+            userId: req.user?.userId,
+            rolle: klientRolle,
+            required: minimumRole,
+            path: req.path,
+          }, 'Insufficient klient role for action');
+          return next(Errors.forbidden(`Krever ${minimumRole}-tilgang eller høyere`));
+        }
+
+        // Bruker users — check their rolle from brukere table
         const bruker = await db.getBrukerById(req.user!.userId);
 
         if (!bruker) {

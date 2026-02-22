@@ -9,26 +9,28 @@ async function applyFilters() {
   let filtered = [...customers];
   const searchQuery = searchInput?.value?.toLowerCase() || '';
 
-  // Category filter - exact match
+  // Category filter - matches if customer has the selected category (supports multi-category customers)
   if (selectedCategory !== 'all') {
     const beforeCount = filtered.length;
-    filtered = filtered.filter(c => c.kategori === selectedCategory);
+    const filterKats = selectedCategory.split(' + ').map(s => s.trim());
+    filtered = filtered.filter(c => {
+      if (!c.kategori) return false;
+      const kundeKategorier = c.kategori.split(' + ').map(s => s.trim());
+      // Customer must have ALL selected filter categories
+      return filterKats.every(fk => kundeKategorier.includes(fk));
+    });
     Logger.log(`applyFilters: "${selectedCategory}" - ${beforeCount} -> ${filtered.length} kunder`);
   }
 
-  // Driftskategori filter (uses normalized values)
-  if (selectedDriftskategori !== 'all') {
-    filtered = filtered.filter(c => normalizeDriftstype(c.brann_driftstype) === selectedDriftskategori);
-  }
-
-  // Brannsystem filter (uses normalized categories: Elotec, ICAS, Begge, Annet)
-  if (selectedBrannsystem !== 'all') {
-    filtered = filtered.filter(c => normalizeBrannsystem(c.brann_system) === selectedBrannsystem);
-  }
-
-  // Kundetype filter (el_type: Landbruk, Næring, Bolig, etc.)
-  if (selectedElType !== 'all') {
-    filtered = filtered.filter(c => c.el_type === selectedElType);
+  // Subcategory filter (AND logic between groups: customer must match all selected groups)
+  const activeSubcatFilters = Object.entries(selectedSubcategories).filter(([_, v]) => v);
+  if (activeSubcatFilters.length > 0) {
+    filtered = filtered.filter(c => {
+      const assignments = kundeSubcatMap[c.id] || [];
+      return activeSubcatFilters.every(([groupId, subcatId]) => {
+        return assignments.some(a => a.group_id === Number(groupId) && a.subcategory_id === Number(subcatId));
+      });
+    });
   }
 
   // Dynamic field filters
@@ -132,50 +134,51 @@ async function applyFilters() {
 
 // Update category filter button counts (exact match - matches filter behavior)
 function updateCategoryFilterCounts() {
-  const elCount = customers.filter(c => c.kategori === 'El-Kontroll').length;
-  const brannCount = customers.filter(c => c.kategori === 'Brannvarsling').length;
-  const beggeCount = customers.filter(c => c.kategori === 'El-Kontroll + Brannvarsling').length;
+  const serviceTypes = serviceTypeRegistry.getAll();
 
-  // Update category-btn (left sidebar)
+  // "Alle" button (left sidebar + right sidebar tab)
   const allBtn = document.querySelector('[data-category="all"]');
-  const elBtn = document.querySelector('[data-category="El-Kontroll"]');
-  const brannBtn = document.querySelector('[data-category="Brannvarsling"]');
-  const beggeBtn = document.querySelector('[data-category="El-Kontroll + Brannvarsling"]');
-
   if (allBtn) allBtn.innerHTML = `<i class="fas fa-list"></i> Alle (${customers.length})`;
-  if (elBtn) elBtn.innerHTML = `<i class="fas fa-bolt"></i> El-Kontroll (${elCount})`;
-  if (brannBtn) brannBtn.innerHTML = `<i class="fas fa-fire"></i> Brannvarsling (${brannCount})`;
-  if (beggeBtn) beggeBtn.innerHTML = `<i class="fas fa-bolt"></i><i class="fas fa-fire"></i> Begge (${beggeCount})`;
-
-  // Update kategori-tabs (right sidebar) - preserve icons by using innerHTML
   const alleTab = document.querySelector('[data-kategori="alle"]');
-  const elTab = document.querySelector('[data-kategori="El-Kontroll"]');
-  const brannTab = document.querySelector('[data-kategori="Brannvarsling"]');
-  const beggeTab = document.querySelector('[data-kategori="El-Kontroll + Brannvarsling"]');
-
   if (alleTab) alleTab.innerHTML = `Alle (${customers.length})`;
-  if (elTab) elTab.innerHTML = `${serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('el-kontroll'))} El-Kontroll (${elCount})`;
-  if (brannTab) brannTab.innerHTML = `${serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('brannvarsling'))} Brannvarsling (${brannCount})`;
-  if (beggeTab) {
-    const elIcon = serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('el-kontroll'));
-    const brannIcon = serviceTypeRegistry.getIcon(serviceTypeRegistry.getBySlug('brannvarsling'));
-    beggeTab.innerHTML = `${elIcon}${brannIcon} Begge (${beggeCount})`;
-  }
 
-  // Update driftskategori filter counts
-  const driftCategories = ['Storfe', 'Sau', 'Geit', 'Gris', 'Gartneri', 'Storfe/Sau'];
-  driftCategories.forEach(drift => {
-    const btn = document.querySelector(`[data-drift="${drift}"]`);
-    if (btn) {
-      const count = customers.filter(c => c.brann_driftstype === drift).length;
-      btn.textContent = `${drift} (${count})`;
-    }
+  // Update each service type button/tab dynamically
+  serviceTypes.forEach(st => {
+    // Count customers that have this category (supports multi-category customers)
+    const count = customers.filter(c => {
+      if (!c.kategori) return false;
+      return c.kategori.split(' + ').map(s => s.trim()).includes(st.name);
+    }).length;
+    const icon = serviceTypeRegistry.getIcon(st);
+
+    // Left sidebar category buttons
+    const btn = document.querySelector(`[data-category="${st.name}"]`);
+    if (btn) btn.innerHTML = `${icon} ${escapeHtml(st.name)} (${count})`;
+
+    // Right sidebar kategori tabs
+    const tab = document.querySelector(`[data-kategori="${st.name}"]`);
+    if (tab) tab.innerHTML = `${icon} ${escapeHtml(st.name)} (${count})`;
   });
 
-  // Update "Alle" button for drift
-  const allDriftBtn = document.querySelector('[data-drift="all"]');
-  const driftCount = customers.filter(c => c.brann_driftstype).length;
-  if (allDriftBtn) allDriftBtn.innerHTML = `<i class="fas fa-list"></i> Alle (${driftCount})`;
+  // Combined category (when org has 2+ service types)
+  if (serviceTypes.length >= 2) {
+    const combinedName = serviceTypes.map(st => st.name).join(' + ');
+    // Count customers that have ALL categories
+    const beggeCount = customers.filter(c => {
+      if (!c.kategori) return false;
+      const kundeKats = c.kategori.split(' + ').map(s => s.trim());
+      return serviceTypes.every(st => kundeKats.includes(st.name));
+    }).length;
+    const combinedIcons = serviceTypes.map(st => serviceTypeRegistry.getIcon(st)).join('');
+
+    const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';
+    const beggeBtn = document.querySelector(`[data-category="${combinedName}"]`);
+    if (beggeBtn) beggeBtn.innerHTML = `${combinedIcons} ${combinedLabel} (${beggeCount})`;
+
+    const beggeTab = document.querySelector(`[data-kategori="${combinedName}"]`);
+    if (beggeTab) beggeTab.innerHTML = `${combinedIcons} ${combinedLabel} (${beggeCount})`;
+  }
+
 }
 
 // Check if customer needs control soon - includes lifecycle stages when feature is enabled

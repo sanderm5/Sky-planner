@@ -38,8 +38,11 @@ async function handleSpaLogin(e) {
       if (data.expiresAt) accessTokenExpiresAt = data.expiresAt;
       localStorage.setItem('userName', data.klient?.navn || data.bruker?.navn || 'Bruker');
       localStorage.setItem('userEmail', email || data.klient?.epost || data.bruker?.epost || '');
-      localStorage.setItem('userRole', data.klient?.rolle || data.bruker?.rolle || 'bruker');
+      localStorage.setItem('userRole', data.klient?.rolle || data.bruker?.rolle || 'leser');
       localStorage.setItem('userType', data.klient?.type || 'klient');
+
+      // Apply role-based UI restrictions
+      applyRoleUI();
 
       // Multi-tenancy: Store organization context
       if (data.klient?.organizationId) {

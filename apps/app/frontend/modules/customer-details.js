@@ -425,6 +425,7 @@ async function saveCustomerEmailSettings(kundeId) {
     });
   } catch (error) {
     console.error('Feil ved lagring av e-post-innstillinger:', error);
+    showMessage('Kunne ikke lagre e-post-innstillinger. Prøv igjen.', 'error');
   }
 }
 
@@ -433,174 +434,246 @@ async function saveCustomerEmailSettings(kundeId) {
 let currentKontaktloggKundeId = null;
 
 // ========================================
-// KUNDE TAGS
+// SUBCATEGORY MANAGEMENT
 // ========================================
 
-let allTags = [];
-
-async function loadAllTags() {
+// Load all subcategory assignments for the organization (bulk, for filtering)
+async function loadAllSubcategoryAssignments() {
   try {
-    const response = await apiFetch('/api/tags');
+    const response = await apiFetch('/api/subcategories/kunde-assignments');
     if (response.ok) {
       const result = await response.json();
-      allTags = result.data || [];
+      const assignments = result.data || [];
+      kundeSubcatMap = {};
+      assignments.forEach(a => {
+        if (!kundeSubcatMap[a.kunde_id]) kundeSubcatMap[a.kunde_id] = [];
+        kundeSubcatMap[a.kunde_id].push({ group_id: a.group_id, subcategory_id: a.subcategory_id });
+      });
     }
   } catch (error) {
-    console.error('Error loading tags:', error);
+    console.error('Error loading subcategory assignments:', error);
   }
+  renderSubcategoryFilter();
 }
 
-async function loadKundeTags(kundeId) {
-  const listEl = document.getElementById('kundeTagsList');
-  const selectEl = document.getElementById('kundeTagSelect');
-  document.getElementById('kundeTagsSection').style.display = 'block';
-
-  // Load all tags if not loaded
-  if (allTags.length === 0) await loadAllTags();
-
+// Load subcategories for a specific customer (for edit form)
+async function loadKundeSubcategories(kundeId) {
   try {
-    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags`);
+    const response = await apiFetch(`/api/subcategories/kunde/${kundeId}`);
     if (!response.ok) return;
     const result = await response.json();
-    const kundeTags = result.data || [];
-
-    // Render assigned tags
-    listEl.innerHTML = kundeTags.length === 0
-      ? '<span class="tags-empty">Ingen tags</span>'
-      : kundeTags.map(tag => `
-          <span class="tag-badge" style="background:${escapeHtml(tag.farge)}20;color:${escapeHtml(tag.farge)};border:1px solid ${escapeHtml(tag.farge)}40">
-            ${escapeHtml(tag.navn)}
-            <button class="tag-remove" data-action="removeKundeTag" data-kunde-id="${kundeId}" data-tag-id="${tag.id}" title="Fjern">&times;</button>
-          </span>
-        `).join('');
-
-    // Populate select with unassigned tags
-    const assignedIds = new Set(kundeTags.map(t => t.id));
-    const available = allTags.filter(t => !assignedIds.has(t.id));
-    selectEl.innerHTML = '<option value="">Velg tag...</option>' +
-      available.map(t => `<option value="${t.id}">${escapeHtml(t.navn)}</option>`).join('');
+    const assignments = result.data || [];
+    // Update local cache and re-render dropdowns with actual data
+    kundeSubcatMap[kundeId] = assignments.map(a => ({ group_id: a.group_id, subcategory_id: a.subcategory_id }));
+    const customer = customers.find(c => c.id === kundeId);
+    renderSubcategoryDropdowns(customer || { id: kundeId });
   } catch (error) {
-    console.error('Error loading kunde tags:', error);
+    console.error('Error loading kunde subcategories:', error);
   }
 }
 
-async function addTagToKunde(kundeId, tagId) {
-  try {
-    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags/${tagId}`, { method: 'POST' });
-    if (response.ok) {
-      await loadKundeTags(kundeId);
-    }
-  } catch (error) {
-    console.error('Error adding tag:', error);
-  }
-}
-
-async function removeTagFromKunde(kundeId, tagId) {
-  try {
-    const response = await apiFetch(`/api/tags/kunder/${kundeId}/tags/${tagId}`, { method: 'DELETE' });
-    if (response.ok) {
-      await loadKundeTags(kundeId);
-    }
-  } catch (error) {
-    console.error('Error removing tag:', error);
-  }
-}
-
-function openTagManager() {
-  const existingModal = document.getElementById('tagManagerModal');
+// Subcategory manager modal — manage subcategory groups and items per service type
+function openSubcategoryManager() {
+  const existingModal = document.getElementById('subcatManagerModal');
   if (existingModal) existingModal.remove();
 
   const modal = document.createElement('div');
-  modal.id = 'tagManagerModal';
+  modal.id = 'subcatManagerModal';
   modal.className = 'modal';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width:400px">
+    <div class="modal-content" style="max-width:560px">
       <div class="modal-header">
-        <h2>Administrer tags</h2>
-        <button class="modal-close" id="closeTagManager">&times;</button>
+        <h2>Administrer underkategorier</h2>
+        <button class="modal-close" id="closeSubcatManager">&times;</button>
       </div>
-      <div class="tag-manager-list" id="tagManagerList"></div>
-      <div class="tag-manager-add">
-        <input type="text" id="newTagName" placeholder="Ny tag..." maxlength="50">
-        <select id="newTagColor">
-          <option value="#3b82f6" style="color:#3b82f6">Blå</option>
-          <option value="#ef4444" style="color:#ef4444">Rød</option>
-          <option value="#22c55e" style="color:#22c55e">Grønn</option>
-          <option value="#f59e0b" style="color:#f59e0b">Gul</option>
-          <option value="#8b5cf6" style="color:#8b5cf6">Lilla</option>
-          <option value="#ec4899" style="color:#ec4899">Rosa</option>
-          <option value="#06b6d4" style="color:#06b6d4">Turkis</option>
-          <option value="#64748b" style="color:#64748b">Grå</option>
-        </select>
-        <button class="btn btn-primary btn-small" id="createTagBtn">Opprett</button>
-      </div>
+      <div id="subcatManagerBody" style="max-height:60vh;overflow-y:auto;padding:12px;"></div>
     </div>
   `;
   document.body.appendChild(modal);
 
-  renderTagManagerList();
+  renderSubcatManagerBody();
 
-  document.getElementById('closeTagManager').addEventListener('click', () => modal.remove());
+  document.getElementById('closeSubcatManager').addEventListener('click', () => modal.remove());
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-  document.getElementById('createTagBtn').addEventListener('click', createNewTag);
-  document.getElementById('newTagName').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); createNewTag(); }
-  });
 }
 
-function renderTagManagerList() {
-  const listEl = document.getElementById('tagManagerList');
-  if (!listEl) return;
-  listEl.innerHTML = allTags.length === 0
-    ? '<p style="padding:8px;color:var(--color-text-muted)">Ingen tags opprettet</p>'
-    : allTags.map(tag => `
-        <div class="tag-manager-item">
-          <span class="tag-badge" style="background:${escapeHtml(tag.farge)}20;color:${escapeHtml(tag.farge)};border:1px solid ${escapeHtml(tag.farge)}40">
-            ${escapeHtml(tag.navn)}
-          </span>
-          <button class="btn btn-small btn-danger tag-delete-btn" data-tag-id="${tag.id}">
+async function renderSubcatManagerBody() {
+  const bodyEl = document.getElementById('subcatManagerBody');
+  if (!bodyEl) return;
+
+  const groups = allSubcategoryGroups || [];
+
+  let html = '';
+
+  if (groups.length === 0) {
+    html += `<p style="padding:8px 0;color:var(--color-text-muted);font-size:13px;">
+      Ingen underkategori-grupper opprettet enda.
+    </p>`;
+  }
+
+  for (const group of groups) {
+    const subs = group.subcategories || [];
+    html += `
+      <div class="subcat-group-item" data-group-id="${group.id}" style="margin-bottom:12px;border:1px solid var(--color-border);border-radius:6px;padding:10px;">
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 0;">
+          <i class="fas fa-folder" style="color:var(--color-text-muted);font-size:12px;"></i>
+          <strong style="font-size:13px;">${escapeHtml(group.navn)}</strong>
+          <span style="font-size:11px;color:var(--color-text-muted)">(${subs.length})</span>
+          <button class="btn-icon-tiny btn-icon-danger" data-action="deleteGroup" data-group-id="${group.id}" title="Slett gruppe">
             <i class="fas fa-trash"></i>
           </button>
         </div>
-      `).join('');
+        <div style="margin-left:12px;">
+          ${subs.map(sub => `
+            <div style="display:flex;align-items:center;gap:4px;padding:2px 0;font-size:13px;">
+              <span>${escapeHtml(sub.navn)}</span>
+              <button class="btn-icon-tiny btn-icon-danger" data-action="deleteSubcat" data-subcat-id="${sub.id}" title="Slett">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          `).join('')}
+          <div style="display:flex;gap:4px;margin-top:4px;">
+            <input type="text" class="subcat-inline-input" placeholder="Ny underkategori..." maxlength="100" data-group-id="${group.id}" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
+            <button class="btn btn-small btn-primary subcat-inline-add" data-group-id="${group.id}" style="padding:4px 8px;">
+              <i class="fas fa-plus"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
-  // Attach delete handlers
-  listEl.querySelectorAll('.tag-delete-btn').forEach(btn => {
+  // Add new group form
+  html += `
+    <div style="margin-top:8px;">
+      <div style="display:flex;gap:4px;">
+        <input type="text" class="new-group-input" placeholder="Ny gruppe..." maxlength="100" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
+        <button class="btn btn-small btn-secondary new-group-add" style="padding:4px 8px;">
+          <i class="fas fa-plus"></i> Gruppe
+        </button>
+      </div>
+    </div>
+  `;
+
+  bodyEl.innerHTML = html;
+  attachSubcatManagerHandlers();
+}
+
+function attachSubcatManagerHandlers() {
+  const bodyEl = document.getElementById('subcatManagerBody');
+  if (!bodyEl) return;
+
+  // Delete group
+  bodyEl.querySelectorAll('[data-action="deleteGroup"]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const tagId = btn.dataset.tagId;
-      const response = await apiFetch(`/api/tags/${tagId}`, { method: 'DELETE' });
+      const groupId = btn.dataset.groupId;
+      if (!confirm('Slett denne gruppen og alle underkategorier?')) return;
+      const response = await apiFetch(`/api/subcategories/groups/${groupId}`, { method: 'DELETE' });
       if (response.ok) {
-        await loadAllTags();
-        renderTagManagerList();
-        // Reload current customer tags if open
-        const kundeId = document.getElementById('customerId')?.value;
-        if (kundeId) loadKundeTags(Number.parseInt(kundeId));
+        await reloadServiceTypesAndRefresh();
+        renderSubcatManagerBody();
+      }
+    });
+  });
+
+  // Delete subcategory
+  bodyEl.querySelectorAll('[data-action="deleteSubcat"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const subcatId = btn.dataset.subcatId;
+      const response = await apiFetch(`/api/subcategories/items/${subcatId}`, { method: 'DELETE' });
+      if (response.ok) {
+        await reloadServiceTypesAndRefresh();
+        renderSubcatManagerBody();
+      }
+    });
+  });
+
+  // Add subcategory inline
+  bodyEl.querySelectorAll('.subcat-inline-add').forEach(btn => {
+    btn.addEventListener('click', () => addSubcategoryInline(Number(btn.dataset.groupId)));
+  });
+  bodyEl.querySelectorAll('.subcat-inline-input').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addSubcategoryInline(Number(input.dataset.groupId));
+      }
+    });
+  });
+
+  // Add new group
+  bodyEl.querySelectorAll('.new-group-add').forEach(btn => {
+    btn.addEventListener('click', () => addGroupInline());
+  });
+  bodyEl.querySelectorAll('.new-group-input').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addGroupInline();
       }
     });
   });
 }
 
-async function createNewTag() {
-  const nameInput = document.getElementById('newTagName');
-  const colorSelect = document.getElementById('newTagColor');
-  const navn = nameInput.value.trim();
+async function addSubcategoryInline(groupId) {
+  const input = document.querySelector(`.subcat-inline-input[data-group-id="${groupId}"]`);
+  const navn = input?.value?.trim();
   if (!navn) return;
 
   try {
-    const response = await apiFetch('/api/tags', {
+    const response = await apiFetch('/api/subcategories/items', {
       method: 'POST',
-      body: JSON.stringify({ navn, farge: colorSelect.value }),
+      body: JSON.stringify({ group_id: groupId, navn }),
     });
     if (response.ok) {
-      nameInput.value = '';
-      await loadAllTags();
-      renderTagManagerList();
+      input.value = '';
+      await reloadServiceTypesAndRefresh();
+      renderSubcatManagerBody();
     } else {
       const err = await response.json();
-      showMessage(err.error || 'Kunne ikke opprette tag', 'error');
+      showMessage(err.error?.message || 'Kunne ikke opprette underkategori', 'error');
     }
   } catch (error) {
-    console.error('Error creating tag:', error);
+    console.error('Error creating subcategory:', error);
+  }
+}
+
+async function addGroupInline() {
+  const input = document.querySelector('.new-group-input');
+  const navn = input?.value?.trim();
+  if (!navn) return;
+
+  try {
+    const response = await apiFetch('/api/subcategories/groups', {
+      method: 'POST',
+      body: JSON.stringify({ navn }),
+    });
+    if (response.ok) {
+      input.value = '';
+      await reloadServiceTypesAndRefresh();
+      renderSubcatManagerBody();
+    } else {
+      const err = await response.json();
+      showMessage(err.error?.message || 'Kunne ikke opprette gruppe', 'error');
+    }
+  } catch (error) {
+    console.error('Error creating group:', error);
+  }
+}
+
+// Create a new service type inline (from subcategory manager)
+// Reload service types from server and update registry
+async function reloadServiceTypesAndRefresh() {
+  try {
+    const response = await apiFetch('/api/config');
+    if (response.ok) {
+      const result = await response.json();
+      // Always reload — handles adding first type and removing last type
+      serviceTypeRegistry.loadFromConfig(result.data);
+      allSubcategoryGroups = result.data.subcategoryGroups || [];
+    }
+  } catch (error) {
+    console.error('Error reloading service types:', error);
   }
 }
 

@@ -7,7 +7,10 @@ import { Router, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { requireTenantAuth } from '../middleware/auth';
+import { createLogger } from '../services/logger';
 import type { AuthenticatedRequest, ApiResponse } from '../types';
+
+const apiLogger = createLogger('industries');
 
 const router: Router = Router();
 
@@ -122,7 +125,8 @@ router.get(
       .order('sort_order');
 
     if (error) {
-      throw Errors.internal('Kunne ikke hente bransjer: ' + error.message);
+      apiLogger.error({ error: error.message }, 'Failed to fetch industries');
+      throw Errors.internal('Kunne ikke hente bransjer');
     }
 
     const response: ApiResponse = {

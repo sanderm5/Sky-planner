@@ -6,7 +6,7 @@
 import { Router, Request, Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { getConfig } from '../config/env';
 import type { AuthenticatedRequest, EmailInnstilling, EmailVarsel, ApiResponse, Kunde } from '../types';
@@ -206,7 +206,7 @@ router.get(
  */
 router.put(
   '/innstillinger/:kundeId',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const kundeId = Number.parseInt(req.params.kundeId);
     if (Number.isNaN(kundeId)) {
@@ -245,7 +245,7 @@ router.put(
  */
 router.post(
   '/test',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');
@@ -285,7 +285,7 @@ router.post(
  */
 router.post(
   '/send-varsler',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');
@@ -311,7 +311,7 @@ router.post(
  */
 router.post(
   '/send-reminder',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');
@@ -369,7 +369,7 @@ router.post(
  */
 router.post(
   '/test-reminder',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');

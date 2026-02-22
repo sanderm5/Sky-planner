@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import * as db from '@skyplanner/database';
-import { requireApiAuth, isAuthError } from '../../../../middleware/auth';
+import { requireApiAuth, requireAdminApiAuth, isAuthError } from '../../../../middleware/auth';
 
 // Initialize Supabase client
 db.getSupabaseClient({
@@ -117,9 +117,9 @@ function validateSvgContent(content: string): { valid: boolean; error?: string }
   return { valid: true };
 }
 
-// POST - Upload logo to Supabase Storage
+// POST - Upload logo to Supabase Storage (admin only)
 export const POST: APIRoute = async ({ request }) => {
-  const authResult = await requireApiAuth(request);
+  const authResult = await requireAdminApiAuth(request);
   if (isAuthError(authResult)) return authResult;
 
   const { organization } = authResult;
@@ -230,9 +230,9 @@ export const POST: APIRoute = async ({ request }) => {
   }
 };
 
-// DELETE - Remove logo from Supabase Storage
+// DELETE - Remove logo from Supabase Storage (admin only)
 export const DELETE: APIRoute = async ({ request }) => {
-  const authResult = await requireApiAuth(request);
+  const authResult = await requireAdminApiAuth(request);
   if (isAuthError(authResult)) return authResult;
 
   const { organization } = authResult;

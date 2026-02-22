@@ -21,14 +21,14 @@ function getFeatureConfig(key) {
 }
 
 // Backwards-compatible helpers (used by existing code)
-// These check enabledFeatures first, then fall back to legacy app_mode
+// These use the explicit app_mode set per organization in the database
 function isFullMode() {
-  // If features are loaded, check for industry-specific features
-  if (appConfig.enabledFeatures && appConfig.enabledFeatures.length > 0) {
-    return hasFeature('lifecycle_colors') || hasFeature('context_menu');
+  // Primary check: explicit app mode set per organization
+  if (appConfig.appMode) {
+    return appConfig.appMode === 'full';
   }
   // Legacy fallback
-  return appConfig.appMode === 'full' || localStorage.getItem('appMode') === 'full';
+  return localStorage.getItem('appMode') === 'full';
 }
 
 function isMvpMode() {

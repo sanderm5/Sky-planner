@@ -44,7 +44,7 @@ apps/app/
 │   │   ├── features.ts     # Feature flags
 │   │   ├── industries.ts   # Bransjer
 │   │   ├── service-types.ts # Tjenestetyper
-│   │   ├── tags.ts         # Kunde-tags
+│   │   ├── tags.ts         # Kunde-tags og tag-grupper (CRUD)
 │   │   ├── reports.ts      # Rapporter
 │   │   ├── kontaktlogg.ts  # Kontaktlogg
 │   │   ├── kontaktpersoner.ts # Kontaktpersoner
@@ -223,6 +223,22 @@ npm run dev:frontend    # Watch-modus for frontend
 | PUT | `/api/v1/customers/:id` | Oppdater kunde |
 | DELETE | `/api/v1/customers/:id` | Slett kunde |
 
+### Tags og tag-grupper
+| Metode | Endpoint | Beskrivelse |
+|--------|----------|-------------|
+| GET | `/api/tags` | Liste alle tags for organisasjonen |
+| POST | `/api/tags` | Opprett tag (valgfri `group_id`) |
+| PUT | `/api/tags/:id` | Oppdater tag |
+| DELETE | `/api/tags/:id` | Slett tag |
+| GET | `/api/tags/groups` | Liste alle tag-grupper |
+| POST | `/api/tags/groups` | Opprett tag-gruppe (navn, farge) |
+| PUT | `/api/tags/groups/:id` | Oppdater tag-gruppe |
+| DELETE | `/api/tags/groups/:id` | Slett tag-gruppe (tags blir ugruppert) |
+| GET | `/api/tags/kunde-tags` | Alle kunde-tag-tilordninger for org |
+| GET | `/api/tags/kunder/:id/tags` | Tags for en spesifikk kunde |
+| POST | `/api/tags/kunder/:id/tags/:tagId` | Legg tag på kunde |
+| DELETE | `/api/tags/kunder/:id/tags/:tagId` | Fjern tag fra kunde |
+
 ### Andre
 | Metode | Endpoint | Beskrivelse |
 |--------|----------|-------------|
@@ -253,6 +269,10 @@ npm run dev:frontend    # Watch-modus for frontend
 - `organizations` - Organisasjoner (multi-tenant)
 - `brukere` - Brukere/ansatte per organisasjon
 - `klient` - Klient/eier-brukere (auth)
+- `tags` - Kunde-tags/kategorier (per org, valgfri `group_id`)
+- `tag_groups` - Tag-grupper (hierarki: gruppe → tags, med farge og sortering)
+- `kunde_tags` - Kobling mellom kunder og tags
+- `organization_service_types` - Org-spesifikke tjenestekategorier
 
 ---
 
@@ -355,3 +375,7 @@ npm run dev:frontend    # Watch-modus for frontend
 | 036_chat | Chat-system |
 | 037_rute_kalender_sync | Rute-kalender-synkronisering |
 | 038_account_lockout | Kontolåsing ved feil innlogging |
+| 039_database_performance_cleanup | Database-ytelse opprydding |
+| 040_rls_performance_optimization | RLS ytelsesoptimalisering |
+| 041_rls_security_fixes | RLS sikkerhetsforbedringer |
+| 042_tag_groups | Tag-grupper (hierarkisk kategori-system) |

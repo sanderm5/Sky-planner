@@ -19,6 +19,7 @@ export interface Organization {
     industry_template_id?: number;
     onboarding_completed?: boolean;
     app_mode?: AppMode;
+    dato_modus?: 'full_date' | 'month_year';
     stripe_customer_id?: string;
     stripe_subscription_id?: string;
     subscription_status?: 'active' | 'trialing' | 'past_due' | 'canceled' | 'incomplete';
@@ -50,6 +51,7 @@ export interface Klient {
     aktiv: boolean;
     organization_id?: number;
     opprettet?: string;
+    rolle?: 'admin' | 'redigerer' | 'leser';
 }
 export interface Bruker {
     id: number;

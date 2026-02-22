@@ -167,17 +167,26 @@ class ServiceTypeRegistry {
   /**
    * Format interval as label
    */
-  formatInterval(months) {
-    const interval = this.intervals.find(i => i.months === months);
+  formatInterval(value) {
+    const interval = this.intervals.find(i => i.months === value);
     if (interval?.label) return interval.label;
-    if (months < 12) return `${months} mnd`;
-    if (months === 12) return '1 år';
-    if (months % 12 === 0) return `${months / 12} år`;
-    return `${months} mnd`;
+    // Negative values = days (for weekly intervals)
+    if (value < 0) {
+      const days = Math.abs(value);
+      if (days === 7) return '1 uke';
+      if (days % 7 === 0) return `${days / 7} uker`;
+      return `${days} dager`;
+    }
+    if (value < 12) return `${value} mnd`;
+    if (value === 12) return '1 år';
+    if (value % 12 === 0) return `${value / 12} år`;
+    return `${value} mnd`;
   }
 
   /**
    * Get available intervals for dropdowns
+   * Negative values = days (e.g. -7 = weekly, -14 = biweekly)
+   * Positive values = months
    */
   getIntervalOptions() {
     if (this.intervals.length > 0) {
@@ -189,10 +198,14 @@ class ServiceTypeRegistry {
     }
     // Fallback to common intervals
     return [
+      { value: -7, label: '1 uke', isDefault: false },
+      { value: -14, label: '2 uker', isDefault: false },
+      { value: 1, label: '1 mnd', isDefault: false },
+      { value: 3, label: '3 mnd', isDefault: false },
       { value: 6, label: '6 mnd', isDefault: false },
-      { value: 12, label: '1 år', isDefault: false },
+      { value: 12, label: '1 år', isDefault: true },
       { value: 24, label: '2 år', isDefault: false },
-      { value: 36, label: '3 år', isDefault: true },
+      { value: 36, label: '3 år', isDefault: false },
       { value: 60, label: '5 år', isDefault: false }
     ];
   }
@@ -212,12 +225,13 @@ class ServiceTypeRegistry {
       </button>`;
     });
 
-    // Add "Begge" tab for combined categories (backward compatibility)
+    // Add combined tab for all categories
     if (serviceTypes.length >= 2) {
       const combinedName = serviceTypes.map(st => st.name).join(' + ');
+      const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';
       const isActive = activeCategory === combinedName || activeCategory === 'El-Kontroll + Brannvarsling';
       html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${combinedName}">
-        ${serviceTypes.map(st => this.getIcon(st)).join('')} Begge
+        ${serviceTypes.map(st => this.getIcon(st)).join('')} ${combinedLabel}
       </button>`;
     }
 
@@ -225,25 +239,32 @@ class ServiceTypeRegistry {
   }
 
   /**
-   * Generate category select options HTML
+   * Generate category checkbox HTML (multi-select)
    */
-  renderCategoryOptions(selectedValue = '') {
+  renderCategoryCheckboxes(selectedValue = '') {
     const serviceTypes = this.getAll();
+    const selectedNames = selectedValue.split(' + ').map(s => s.trim()).filter(Boolean);
     let html = '';
 
     serviceTypes.forEach(st => {
-      const selected = selectedValue === st.name || selectedValue === st.slug ? 'selected' : '';
-      html += `<option value="${escapeHtml(st.name)}" ${selected}>${escapeHtml(st.name)}</option>`;
+      const checked = selectedNames.includes(st.name) || selectedNames.includes(st.slug) ? 'checked' : '';
+      html += `
+        <label class="kategori-checkbox-label">
+          <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
+          <i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
+          ${escapeHtml(st.name)}
+        </label>`;
     });
 
-    // Combined option for backward compatibility
-    if (serviceTypes.length >= 2) {
-      const combinedName = serviceTypes.map(st => st.name).join(' + ');
-      const selected = selectedValue === combinedName ? 'selected' : '';
-      html += `<option value="${escapeHtml(combinedName)}" ${selected}>Begge (${escapeHtml(combinedName)})</option>`;
-    }
-
     return html;
+  }
+
+  /**
+   * Get selected categories from checkboxes as " + " joined string
+   */
+  getSelectedCategories() {
+    const checkboxes = document.querySelectorAll('#kategoriCheckboxes input[name="kategori"]:checked');
+    return Array.from(checkboxes).map(cb => cb.value).join(' + ');
   }
 
   /**
@@ -258,7 +279,6 @@ class ServiceTypeRegistry {
       const selected = selectedValue === sub.name || selectedValue === sub.slug ? 'selected' : '';
       html += `<option value="${escapeHtml(sub.name)}" ${selected}>${escapeHtml(sub.name)}</option>`;
     });
-
     return html;
   }
 
@@ -267,26 +287,6 @@ class ServiceTypeRegistry {
    */
   renderEquipmentOptions(serviceTypeSlug, selectedValue = '') {
     const st = this.getBySlug(serviceTypeSlug);
-
-    // Fallback for brannvarsling equipment types - grouped by brand
-    if (serviceTypeSlug === 'brannvarsling' && (!st || !st.equipmentTypes || st.equipmentTypes.length === 0)) {
-      const isSelected = (val) => selectedValue === val ? 'selected' : '';
-      let html = '<option value="">Ikke valgt</option>';
-      html += `<optgroup label="Elotec">`;
-      html += `<option value="Elotec" ${isSelected('Elotec')}>Elotec</option>`;
-      html += `<option value="ES 801" ${isSelected('ES 801')}>ES 801</option>`;
-      html += `<option value="ES 601" ${isSelected('ES 601')}>ES 601</option>`;
-      html += `<option value="2 x Elotec" ${isSelected('2 x Elotec')}>2 x Elotec</option>`;
-      html += `</optgroup>`;
-      html += `<optgroup label="ICAS">`;
-      html += `<option value="ICAS" ${isSelected('ICAS')}>ICAS</option>`;
-      html += `</optgroup>`;
-      html += `<optgroup label="Begge">`;
-      html += `<option value="Elotec + ICAS" ${isSelected('Elotec + ICAS')}>Elotec + ICAS</option>`;
-      html += `</optgroup>`;
-      return html;
-    }
-
     if (!st || !st.equipmentTypes || st.equipmentTypes.length === 0) return '';
 
     let html = '<option value="">Ikke valgt</option>';
@@ -294,7 +294,6 @@ class ServiceTypeRegistry {
       const selected = selectedValue === eq.name || selectedValue === eq.slug ? 'selected' : '';
       html += `<option value="${escapeHtml(eq.name)}" ${selected}>${escapeHtml(eq.name)}</option>`;
     });
-
     return html;
   }
 
@@ -320,23 +319,23 @@ class ServiceTypeRegistry {
     if (categoryFilter === 'all' || categoryFilter === 'alle') return true;
 
     const kategori = customer.kategori || '';
+    if (!kategori) return false;
+    const kundeKats = kategori.split(' + ').map(s => s.trim());
 
     // Direct match with service type slug or name
     const st = this.getBySlug(categoryFilter);
     if (st) {
-      // Exact match only - "Brannvarsling" should NOT match "El-Kontroll + Brannvarsling"
-      return kategori === st.name;
+      return kundeKats.includes(st.name);
     }
 
-    // Check for combined category (backward compatibility)
-    if (categoryFilter.includes('-') || categoryFilter.includes('+')) {
-      const serviceTypes = this.getAll();
-      const allMatched = serviceTypes.every(st => kategori.includes(st.name));
-      return allMatched && kategori.includes('+');
+    // Combined filter (e.g. "El-Kontroll + Brannvarsling") — customer must have ALL
+    const filterKats = categoryFilter.split(' + ').map(s => s.trim());
+    if (filterKats.length > 1) {
+      return filterKats.every(fk => kundeKats.includes(fk));
     }
 
-    // Legacy direct string match - exact match only
-    return kategori === categoryFilter;
+    // Direct name match
+    return kundeKats.includes(categoryFilter);
   }
 
   /**
@@ -507,37 +506,22 @@ class ServiceTypeRegistry {
     return getIconHtml(defaultSt);
   }
 
-  /**
-   * Generate driftskategori options (brann-related subtypes)
-   */
-  renderDriftsOptions(selectedValue = '') {
-    const brannService = this.getBySlug('brannvarsling');
-    if (!brannService || !brannService.subtypes || brannService.subtypes.length === 0) {
-      // Fallback to default options - includes all common driftstyper
-      const defaults = ['Storfe', 'Sau', 'Storfe/Sau', 'Geit', 'Gris', 'Svin', 'Gartneri', 'Korn', 'Fjærfeoppdrett', 'Sau/Geit'];
-      let html = '<option value="">Ingen / Ikke valgt</option>';
-      defaults.forEach(d => {
-        const selected = selectedValue === d ? 'selected' : '';
-        html += `<option value="${d}" ${selected}>${d}</option>`;
-      });
-      return html;
-    }
-
-    let html = '<option value="">Ingen / Ikke valgt</option>';
-    brannService.subtypes.forEach(subtype => {
-      const selected = subtype.name === selectedValue ? 'selected' : '';
-      html += `<option value="${subtype.name}" ${selected}>${subtype.name}</option>`;
-    });
-    return html;
-  }
+  // renderDriftsOptions() removed — migrated to subcategory system (migration 044)
 
   /**
    * Render dynamic service sections for customer modal
    * @param {Object} customer - Customer object with optional services array
+   * @param {Array<string>} selectedNames - Optional filter: only render sections for these category names
    * @returns {string} HTML for all service sections
    */
-  renderServiceSections(customer = {}) {
-    const serviceTypes = this.getAll();
+  renderServiceSections(customer = {}, selectedNames = null) {
+    let serviceTypes = this.getAll();
+    if (serviceTypes.length === 0) return '';
+
+    // Filter to only selected categories if specified
+    if (selectedNames && selectedNames.length > 0) {
+      serviceTypes = serviceTypes.filter(st => selectedNames.includes(st.name));
+    }
     if (serviceTypes.length === 0) return '';
 
     const services = customer.services || [];
@@ -545,9 +529,35 @@ class ServiceTypeRegistry {
 
     serviceTypes.forEach(st => {
       // Find existing service data for this type
-      const serviceData = services.find(s =>
+      let serviceData = services.find(s =>
         s.service_type_slug === st.slug || s.service_type_id === st.id
       ) || {};
+
+      // Fallback to legacy columns if no dynamic service data
+      if (!serviceData.siste_kontroll && !serviceData.neste_kontroll) {
+        if (st.slug === 'el-kontroll' && (customer.siste_el_kontroll || customer.neste_el_kontroll)) {
+          serviceData = {
+            ...serviceData,
+            siste_kontroll: customer.siste_el_kontroll || '',
+            neste_kontroll: customer.neste_el_kontroll || '',
+            intervall_months: customer.el_kontroll_intervall || st.defaultInterval
+          };
+        } else if (st.slug === 'brannvarsling' && (customer.siste_brann_kontroll || customer.neste_brann_kontroll)) {
+          serviceData = {
+            ...serviceData,
+            siste_kontroll: customer.siste_brann_kontroll || '',
+            neste_kontroll: customer.neste_brann_kontroll || '',
+            intervall_months: customer.brann_kontroll_intervall || st.defaultInterval
+          };
+        } else if (customer.siste_kontroll || customer.neste_kontroll) {
+          serviceData = {
+            ...serviceData,
+            siste_kontroll: customer.siste_kontroll || '',
+            neste_kontroll: customer.neste_kontroll || '',
+            intervall_months: customer.kontroll_intervall_mnd || st.defaultInterval
+          };
+        }
+      }
 
       const hasSubtypes = st.subtypes && st.subtypes.length > 0;
       const hasEquipment = st.equipmentTypes && st.equipmentTypes.length > 0;
@@ -685,10 +695,49 @@ class ServiceTypeRegistry {
 
     // MVP-modus: vis kontrollinfo per servicetype
     if (isMvpMode()) {
-      // If organization has multiple service types, show each one for all customers
+      // Filter service types based on customer's kategori
       if (serviceTypes.length >= 2) {
+        const kundeKats = kategori ? kategori.split(' + ').map(s => s.trim()) : [];
+        const relevantTypes = kundeKats.length > 0
+          ? serviceTypes.filter(st => kundeKats.includes(st.name))
+          : serviceTypes;
+        const typesToShow = relevantTypes.length > 0 ? relevantTypes : serviceTypes;
+
+        // If only one type matches, use simple single-type view
+        if (typesToShow.length === 1) {
+          const st = typesToShow[0];
+          let nesteKontroll = null;
+          let sisteKontroll = null;
+
+          const serviceData = (customer.services || []).find(s =>
+            s.service_type_slug === st.slug || s.service_type_id === st.id
+          );
+          if (serviceData) {
+            nesteKontroll = serviceData.neste_kontroll;
+            sisteKontroll = serviceData.siste_kontroll;
+          }
+          if (st.slug === 'el-kontroll') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_el_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_el_kontroll;
+          } else if (st.slug === 'brannvarsling') {
+            if (!nesteKontroll) nesteKontroll = customer.neste_brann_kontroll;
+            if (!sisteKontroll) sisteKontroll = customer.siste_brann_kontroll;
+          }
+          if (!nesteKontroll) nesteKontroll = customer.neste_kontroll;
+          if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
+
+          return `
+            <div class="popup-control-info">
+              <p class="popup-status ${controlStatus.class}">
+                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+                <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
+              </p>
+              ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
+            </div>`;
+        }
+
         let html = '<div class="popup-control-info">';
-        serviceTypes.forEach(st => {
+        typesToShow.forEach(st => {
           let nesteKontroll = null;
           let sisteKontroll = null;
           let intervall = null;
@@ -718,14 +767,12 @@ class ServiceTypeRegistry {
           if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
           if (!intervall) intervall = customer.kontroll_intervall_mnd || st.defaultInterval;
 
-          const intervallText = intervall ? ` (hver ${intervall}. mnd)` : '';
-
           html += `
             <div style="margin-bottom:8px;">
               <p style="margin:0;">
                 <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
               </p>
-              <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}${intervallText}</p>
+              <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</p>
               ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
             </div>`;
         });
@@ -748,8 +795,13 @@ class ServiceTypeRegistry {
     const isCombined = kategori.includes('+');
 
     if (isCombined && serviceTypes.length >= 2) {
+      // Filter service types to only those in the customer's kategori
+      const kundeKats = kategori.split(' + ').map(s => s.trim());
+      const relevantTypes = serviceTypes.filter(st => kundeKats.includes(st.name));
+      const typesToShow = relevantTypes.length > 0 ? relevantTypes : serviceTypes;
+
       let html = '<div class="popup-controls">';
-      serviceTypes.forEach(st => {
+      typesToShow.forEach(st => {
         const serviceData = (customer.services || []).find(s =>
           s.service_type_slug === st.slug || s.service_type_id === st.id
         );
@@ -856,92 +908,26 @@ class ServiceTypeRegistry {
    * @returns {string|null} Subtype value or null
    */
   getCustomerSubtypeValue(customer, serviceType) {
-    // Check in services array first (new normalized structure)
     const service = (customer.services || []).find(s =>
       s.service_type_id === serviceType.id || s.service_type_slug === serviceType.slug
     );
     if (service?.subtype_name) return service.subtype_name;
 
-    // Fallback to legacy fields for backward compatibility
-    if (serviceType.slug === 'el-kontroll' && customer.el_type) return customer.el_type;
-    if (serviceType.slug === 'brannvarsling' && customer.brann_driftstype) return customer.brann_driftstype;
-
-    // Check custom_data for other industries
     const customData = this.parseCustomData(customer.custom_data);
     return customData[`${serviceType.slug}_subtype`] || null;
   }
 
-  /**
-   * Get equipment value for a customer and service type
-   * Checks services array, legacy fields, and custom_data
-   * @param {Object} customer - Customer object
-   * @param {Object} serviceType - Service type object
-   * @returns {string|null} Equipment value or null
-   */
   getCustomerEquipmentValue(customer, serviceType) {
-    // Check in services array first
     const service = (customer.services || []).find(s =>
       s.service_type_id === serviceType.id || s.service_type_slug === serviceType.slug
     );
     if (service?.equipment_name) return service.equipment_name;
 
-    // Fallback to legacy fields - use normalized value for brannvarsling
-    if (serviceType.slug === 'brannvarsling' && customer.brann_system) {
-      return normalizeBrannsystem(customer.brann_system);
-    }
-
-    // Check custom_data
     const customData = this.parseCustomData(customer.custom_data);
     return customData[`${serviceType.slug}_equipment`] || null;
   }
 
-  /**
-   * Render dynamic industry-specific fields for popup display
-   * Replaces hardcoded el_type, brann_driftstype, brann_system fields
-   * @param {Object} customer - Customer object
-   * @returns {string} HTML string for industry fields
-   */
-  renderPopupIndustryFields(customer) {
-    const serviceTypes = this.getAll();
-    const kategori = customer.kategori || '';
-    let html = '';
-
-    // Find which service types apply to this customer
-    let applicableServiceTypes = serviceTypes.filter(st =>
-      kategori.includes(st.name) || kategori === st.name
-    );
-
-    // If no specific match, try partial matching
-    if (applicableServiceTypes.length === 0 && serviceTypes.length > 0) {
-      const partialMatch = serviceTypes.find(st =>
-        kategori.toLowerCase().includes(st.slug) ||
-        st.name.toLowerCase().includes(kategori.toLowerCase())
-      );
-      if (partialMatch) applicableServiceTypes.push(partialMatch);
-    }
-
-    for (const st of applicableServiceTypes) {
-      // Render subtype field if service type has subtypes
-      if (st.subtypes && st.subtypes.length > 0) {
-        const subtypeValue = this.getCustomerSubtypeValue(customer, st);
-        if (subtypeValue) {
-          const subtypeLabel = this.getSubtypeLabel(st);
-          html += `<p><strong>${escapeHtml(subtypeLabel)}:</strong> ${escapeHtml(subtypeValue)}</p>`;
-        }
-      }
-
-      // Render equipment field if service type has equipment types
-      if (st.equipmentTypes && st.equipmentTypes.length > 0) {
-        const equipmentValue = this.getCustomerEquipmentValue(customer, st);
-        if (equipmentValue) {
-          const equipmentLabel = this.getEquipmentLabel(st);
-          html += `<p><strong>${escapeHtml(equipmentLabel)}:</strong> ${escapeHtml(equipmentValue)}</p>`;
-        }
-      }
-    }
-
-    return html;
-  }
+  // renderPopupIndustryFields() removed — replaced by renderPopupSubcategories() in map-core.js
 }
 
 // Global service type registry instance

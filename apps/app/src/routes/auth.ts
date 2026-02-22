@@ -342,7 +342,7 @@ router.post(
           adresse: (user as KlientRecord).adresse,
           postnummer: (user as KlientRecord).postnummer,
           poststed: (user as KlientRecord).poststed,
-          rolle: userType === 'bruker' ? 'admin' : (user.rolle || 'klient'),
+          rolle: userType === 'bruker' ? ((user as BrukerRecord).rolle || 'admin') : (user.rolle || 'leser'),
           type: userType,
           organizationId: user.organization_id || null,
           organizationSlug: organization?.slug || null,
@@ -446,9 +446,6 @@ router.get(
       return daysUntil >= 0 && daysUntil <= 30;
     });
 
-    // Check if user is admin
-    const isAdmin = user.type === 'bruker' || klient?.rolle === 'admin';
-
     const response: ApiResponse = {
       success: true,
       data: {
@@ -460,7 +457,7 @@ router.get(
           adresse: klient?.adresse,
           postnummer: klient?.postnummer,
           poststed: klient?.poststed,
-          rolle: isAdmin ? 'admin' : (klient?.rolle || 'klient'),
+          rolle: klient?.rolle || 'leser',
           type: user.type,
         },
         sessionExpiresAt: user.exp ? user.exp * 1000 : undefined,
@@ -628,6 +625,7 @@ router.get(
             organizationId: decoded.organizationId,
             organizationSlug: decoded.organizationSlug,
             isSuperAdmin,
+            rolle: decoded.type === 'klient' ? ((user as KlientRecord).rolle || 'leser') : ((user as BrukerRecord).rolle || 'admin'),
           },
           organization: organization
             ? {
@@ -661,6 +659,18 @@ router.get(
 );
 
 /**
+ * Escape HTML entities for safe embedding in email templates
+ */
+function escapeHtmlForEmail(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
+/**
  * Helper: Send login notification email
  */
 async function sendLoginNotification(
@@ -681,12 +691,12 @@ async function sendLoginNotification(
     const subject = `Innlogging: ${user.navn} (${userType})`;
     const message = `
       <h2>Ny innlogging på Sky Planner</h2>
-      <p><strong>Bruker:</strong> ${user.navn}</p>
-      <p><strong>E-post:</strong> ${user.epost}</p>
-      <p><strong>Type:</strong> ${userType}</p>
-      <p><strong>Tidspunkt:</strong> ${now}</p>
-      <p><strong>IP-adresse:</strong> ${ip}</p>
-      <p><strong>Enhet:</strong> ${userAgent ? userAgent.substring(0, 100) : 'Ukjent'}</p>
+      <p><strong>Bruker:</strong> ${escapeHtmlForEmail(user.navn)}</p>
+      <p><strong>E-post:</strong> ${escapeHtmlForEmail(user.epost)}</p>
+      <p><strong>Type:</strong> ${escapeHtmlForEmail(userType)}</p>
+      <p><strong>Tidspunkt:</strong> ${escapeHtmlForEmail(now)}</p>
+      <p><strong>IP-adresse:</strong> ${escapeHtmlForEmail(ip)}</p>
+      <p><strong>Enhet:</strong> ${userAgent ? escapeHtmlForEmail(userAgent.substring(0, 100)) : 'Ukjent'}</p>
     `;
 
     await emailService.sendEmail(notifyEmail, subject, message);

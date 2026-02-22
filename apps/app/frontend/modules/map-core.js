@@ -36,6 +36,7 @@ function refreshMapTiles() {
   Logger.log('Refreshing map tiles with updated Mapbox token');
   map.removeLayer(currentTileLayer);
   currentTileLayer = L.tileLayer(getMapTileUrl(), {
+    minZoom: 3,
     maxZoom: 19,
     tileSize: 512,
     zoomOffset: -1,
@@ -66,6 +67,7 @@ function toggleNightMode() {
       // Switch to Mapbox Satellite Streets (satellite with all roads and labels)
       map.removeLayer(currentTileLayer);
       currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
+        minZoom: 3,
         maxZoom: 19,
         tileSize: 512,
         zoomOffset: -1,
@@ -82,6 +84,7 @@ function toggleNightMode() {
       // Switch to Mapbox Navigation Night (dark with visible roads)
       map.removeLayer(currentTileLayer);
       currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
+        minZoom: 3,
         maxZoom: 19,
         tileSize: 512,
         zoomOffset: -1,
@@ -114,6 +117,7 @@ function initSharedMap() {
     map = L.map('map', {
       zoomControl: false,
       attributionControl: false,
+      minZoom: 3,
       dragging: false,
       scrollWheelZoom: false,
       doubleClickZoom: false,
@@ -126,6 +130,7 @@ function initSharedMap() {
     Logger.log('Map tile URL:', tileUrl);
 
     currentTileLayer = L.tileLayer(tileUrl, {
+      minZoom: 3,
       maxZoom: 19,
       tileSize: 512,
       zoomOffset: -1,
@@ -264,7 +269,7 @@ function initMap() {
     spiderfyOnEveryZoom: false,
     spiderfyDistanceMultiplier: 2.5,
     showCoverageOnHover: false,
-    zoomToBoundsOnClick: true, // Zoom to bounds instead of spiderfying immediately
+    zoomToBoundsOnClick: false, // Disabled - popup has "Zoom inn" button instead
     // Animate cluster split
     animate: true,
     animateAddingMarkers: false,
@@ -328,49 +333,44 @@ function initMap() {
 
     // Create popup content with options
     const areaNames = new Set();
-    const typeCounts = {};  // el_type: Landbruk, Næring, etc.
-    const driftCounts = {}; // brann_driftstype: Storfe, Sau, etc.
-    const systemCounts = {}; // brann_system: Elotec, ICAS, etc.
+    const subcatCounts = {}; // { "groupName: subcatName": count }
 
     customerIds.forEach(id => {
       const customer = customers.find(c => c.id === id);
       if (customer) {
         if (customer.poststed) areaNames.add(customer.poststed);
 
-        // Count el_type (Landbruk, Næring, Bolig, etc.)
-        if (customer.el_type) typeCounts[customer.el_type] = (typeCounts[customer.el_type] || 0) + 1;
-
-        // Count driftstype
-        const drift = normalizeDriftstype(customer.brann_driftstype);
-        if (drift) driftCounts[drift] = (driftCounts[drift] || 0) + 1;
-
-        // Count brannsystem
-        const system = normalizeBrannsystem(customer.brann_system);
-        if (system) systemCounts[system] = (systemCounts[system] || 0) + 1;
+        // Count subcategory assignments
+        const assignments = kundeSubcatMap[id] || [];
+        for (const a of assignments) {
+          for (const group of allSubcategoryGroups) {
+            if (group.id !== a.group_id) continue;
+            const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
+            if (sub) {
+              const key = `${group.navn}|${sub.navn}`;
+              subcatCounts[key] = (subcatCounts[key] || 0) + 1;
+            }
+          }
+        }
       }
     });
 
-    // Build category summary HTML
+    // Build category summary HTML from subcategory counts
     let categoryHtml = '';
-    const typeEntries = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
-    const driftEntries = Object.entries(driftCounts).sort((a, b) => b[1] - a[1]);
-    const systemEntries = Object.entries(systemCounts).sort((a, b) => b[1] - a[1]);
+    const grouped = {};
+    for (const [key, count] of Object.entries(subcatCounts)) {
+      const [groupName, subcatName] = key.split('|');
+      if (!grouped[groupName]) grouped[groupName] = [];
+      grouped[groupName].push([subcatName, count]);
+    }
 
-    if (typeEntries.length > 0 || driftEntries.length > 0 || systemEntries.length > 0) {
+    const groupEntries = Object.entries(grouped);
+    if (groupEntries.length > 0) {
       categoryHtml = '<div class="cluster-categories">';
-      if (typeEntries.length > 0) {
-        categoryHtml += '<div class="cluster-category-group"><strong>Type:</strong> ';
-        categoryHtml += typeEntries.map(([name, count]) => `<span class="cluster-tag type-tag clickable" data-action="filterByElType" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
-        categoryHtml += '</div>';
-      }
-      if (systemEntries.length > 0) {
-        categoryHtml += '<div class="cluster-category-group"><strong>System:</strong> ';
-        categoryHtml += systemEntries.map(([name, count]) => `<span class="cluster-tag system-tag clickable" data-action="filterByBrannsystem" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
-        categoryHtml += '</div>';
-      }
-      if (driftEntries.length > 0) {
-        categoryHtml += '<div class="cluster-category-group"><strong>Drift:</strong> ';
-        categoryHtml += driftEntries.map(([name, count]) => `<span class="cluster-tag drift-tag clickable" data-action="filterByDrift" data-value="${escapeHtml(name)}">${escapeHtml(name)} (${count})</span>`).join(' ');
+      for (const [groupName, items] of groupEntries) {
+        items.sort((a, b) => b[1] - a[1]);
+        categoryHtml += `<div class="cluster-category-group"><strong>${escapeHtml(groupName)}:</strong> `;
+        categoryHtml += items.map(([name, count]) => `<span class="cluster-tag">${escapeHtml(name)} (${count})</span>`).join(' ');
         categoryHtml += '</div>';
       }
       categoryHtml += '</div>';
@@ -562,6 +562,30 @@ function createClusterIcon(cluster) {
   });
 }
 
+/**
+ * Render subcategory assignments for a customer in the popup.
+ * Uses kundeSubcatMap (global) and serviceTypeRegistry to resolve names.
+ */
+function renderPopupSubcategories(customer) {
+  const assignments = kundeSubcatMap[customer.id];
+  if (!assignments || assignments.length === 0) return '';
+
+  const labels = [];
+
+  for (const a of assignments) {
+    for (const group of allSubcategoryGroups) {
+      if (group.id !== a.group_id) continue;
+      const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
+      if (sub) {
+        labels.push(`<strong>${escapeHtml(group.navn)}:</strong> ${escapeHtml(sub.navn)}`);
+      }
+    }
+  }
+
+  if (labels.length === 0) return '';
+  return labels.map(l => `<p>${l}</p>`).join('');
+}
+
 // Generate popup content lazily (performance optimization - only called when popup opens)
 function generatePopupContent(customer) {
   const isSelected = selectedCustomers.has(customer.id);
@@ -571,26 +595,16 @@ function generatePopupContent(customer) {
   // Generate dynamic popup control info based on selected industry
   const kontrollInfoHtml = serviceTypeRegistry.renderPopupControlInfo(customer, controlStatus);
 
-  // Generate dynamic industry-specific fields
-  const industryFieldsHtml = serviceTypeRegistry.renderPopupIndustryFields(customer);
-
   // Generate custom organization fields from Excel import
   const customFieldsHtml = renderPopupCustomFields(customer);
 
-  // Fallback: show el_type, brann_system, brann_driftstype directly if not rendered by service type registry
-  let directFieldsHtml = '';
-  if (!industryFieldsHtml) {
-    if (customer.el_type) directFieldsHtml += `<p><strong>Type:</strong> ${escapeHtml(customer.el_type)}</p>`;
-    if (customer.brann_system) directFieldsHtml += `<p><strong>Brannsystem:</strong> ${escapeHtml(customer.brann_system)}</p>`;
-    if (customer.brann_driftstype) directFieldsHtml += `<p><strong>Driftstype:</strong> ${escapeHtml(customer.brann_driftstype)}</p>`;
-  }
-  // Show org.nr. from dedicated field or fallback to notater tag
+  // Show org.nr., kundenr, prosjektnr, estimert tid
+  let extraFieldsHtml = '';
   const orgNr = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]);
-  if (orgNr) directFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
-  // Show Tripletex kundenummer and prosjektnummer if present
-  if (customer.kundenummer) directFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
-  if (customer.prosjektnummer) directFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
-  if (customer.estimert_tid) directFieldsHtml += `<p><strong>Est. tid:</strong> ${customer.estimert_tid} min</p>`;
+  if (orgNr) extraFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
+  if (customer.kundenummer) extraFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
+  if (customer.prosjektnummer) extraFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
+  if (customer.estimert_tid) extraFieldsHtml += `<p><strong>Est. tid:</strong> ${customer.estimert_tid} min</p>`;
 
   // Show notater if present (strip internal tags for cleaner display)
   let notatHtml = '';
@@ -613,12 +627,15 @@ function generatePopupContent(customer) {
       </div>`
     : '';
 
+  // Generate subcategory assignments display
+  const subcatHtml = renderPopupSubcategories(customer);
+
   return `
     ${presenceBanner}
     <h3>${escapeHtml(customer.navn)}</h3>
-    <p><strong>Kategori:</strong> ${escapeHtml(customer.kategori || 'Annen')}</p>
-    ${industryFieldsHtml}
-    ${directFieldsHtml}
+    ${customer.kategori ? `<p><strong>Kategori:</strong> ${escapeHtml(customer.kategori)}</p>` : ''}
+    ${subcatHtml}
+    ${extraFieldsHtml}
     ${customFieldsHtml}
     <p>${escapeHtml(customer.adresse)}</p>
     <p>${escapeHtml(customer.postnummer || '')} ${escapeHtml(customer.poststed || '')}</p>

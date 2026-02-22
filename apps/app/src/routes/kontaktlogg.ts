@@ -5,7 +5,7 @@
 
 import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import type { AuthenticatedRequest, Kontaktlogg, ApiResponse, CreateKontaktloggRequest } from '../types';
 
@@ -69,7 +69,7 @@ router.get(
  */
 router.post(
   '/kunder/:kundeId/kontaktlogg',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const kundeId = Number.parseInt(req.params.kundeId);
     if (Number.isNaN(kundeId)) {
@@ -121,7 +121,7 @@ router.post(
  */
 router.delete(
   '/kontaktlogg/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {

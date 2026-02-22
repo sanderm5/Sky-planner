@@ -5,7 +5,7 @@
 
 import { Router, Response } from 'express';
 import { apiLogger, logAudit } from '../services/logger';
-import { requireTenantAuth } from '../middleware/auth';
+import { requireTenantAuth, requireRole } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { broadcast } from '../services/websocket';
 import type { AuthenticatedRequest, Avtale, ApiResponse, CreateAvtaleRequest, Organization, Kunde } from '../types';
@@ -166,7 +166,7 @@ router.get(
  */
 router.post(
   '/',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av, gjentakelse_regel, gjentakelse_slutt, varighet } = req.body;
 
@@ -271,7 +271,7 @@ router.post(
  */
 router.put(
   '/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -327,7 +327,7 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -362,7 +362,7 @@ router.delete(
  */
 router.delete(
   '/:id/series',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -400,7 +400,7 @@ router.delete(
  */
 router.post(
   '/:id/complete',
-  requireTenantAuth,
+  requireRole('tekniker'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {

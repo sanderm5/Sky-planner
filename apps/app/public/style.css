@@ -604,7 +604,32 @@ a:hover {
   overflow-y: auto;
   overflow-x: hidden;
   flex-shrink: 0;
+  position: relative;
   transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease;
+}
+
+/* Resize handle — draggable edge on right side of content panel */
+.content-panel-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 1001;
+  background: transparent;
+  transition: background 0.2s;
+}
+
+.content-panel-resize:hover,
+.content-panel-resize.dragging {
+  background: var(--color-primary);
+}
+
+/* Prevent width transition during drag (avoid lag) */
+.content-panel.resizing {
+  transition: none;
+  user-select: none;
 }
 
 .content-panel.closed {
@@ -1432,6 +1457,41 @@ a:hover {
 }
 
 /* Kategori tabs */
+/* Kategori checkbox multi-select in customer form */
+.kategori-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kategori-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: var(--font-size-sm);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.kategori-checkbox-label:hover {
+  background: var(--color-bg-hover);
+}
+
+.kategori-checkbox-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.kategori-checkbox-label:has(input:checked) {
+  background: var(--color-accent-subtle, rgba(59, 130, 246, 0.1));
+  border-color: var(--color-accent, #3B82F6);
+}
+
 .kategori-tabs {
   display: flex;
   gap: 4px;
@@ -2919,25 +2979,25 @@ a:hover {
 }
 
 /* Buttons on colored proximity/warning backgrounds — explicit white with semi-transparent bg */
-.overdue-proximity-section .cluster-actions .btn-group-route,
-.overdue-proximity-section .cluster-actions .btn-group-map,
-.overdue-proximity-section .cluster-actions .btn-group-weekplan,
-.warning-header .cluster-actions .btn-group-route,
-.warning-header .cluster-actions .btn-group-map,
-.warning-header .cluster-actions .btn-group-weekplan {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: white;
+.overdue-proximity-section .btn-group-route,
+.overdue-proximity-section .btn-group-map,
+.overdue-proximity-section .btn-group-weekplan {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.9);
 }
 
-.overdue-proximity-section .cluster-actions .btn-group-route:hover,
-.overdue-proximity-section .cluster-actions .btn-group-map:hover,
-.overdue-proximity-section .cluster-actions .btn-group-weekplan:hover,
-.warning-header .cluster-actions .btn-group-route:hover,
-.warning-header .cluster-actions .btn-group-map:hover,
-.warning-header .cluster-actions .btn-group-weekplan:hover {
-  background: rgba(255, 255, 255, 0.35);
-  border-color: rgba(255, 255, 255, 0.7);
+/* Override .overdue-section-header i accent color for button icons on colored backgrounds */
+.overdue-proximity-section .btn-group-route i,
+.overdue-proximity-section .btn-group-map i,
+.overdue-proximity-section .btn-group-weekplan i {
+  color: inherit;
+}
+
+.overdue-proximity-section .btn-group-route:hover,
+.overdue-proximity-section .btn-group-map:hover,
+.overdue-proximity-section .btn-group-weekplan:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.6);
   color: white;
 }
 
@@ -5120,6 +5180,8 @@ a:hover {
   margin: 12px 14px !important;
   font-size: var(--font-size-sm) !important;
   line-height: 1.5 !important;
+  max-height: 60vh !important;
+  overflow-y: auto !important;
 }
 
 .leaflet-popup-content h3 {
@@ -5209,6 +5271,143 @@ a:hover {
 .leaflet-popup-content .popup-controls p {
   margin: 4px 0;
   font-size: var(--font-size-sm);
+}
+
+/* Tag badges in popup */
+.popup-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 8px;
+}
+
+.tag-badge-small {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tag-color-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.tag-filter-buttons {
+  flex-wrap: wrap;
+}
+
+.tag-btn {
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-icon-tiny {
+  background: none;
+  border: 1px solid var(--color-border, #333);
+  color: var(--color-text-secondary, #999);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.btn-icon-tiny:hover {
+  background: var(--color-primary, #5E81AC);
+  border-color: var(--color-primary, #5E81AC);
+  color: white;
+}
+
+.btn-icon-danger:hover {
+  background: var(--color-danger, #BF616A);
+  border-color: var(--color-danger, #BF616A);
+  color: white;
+}
+
+/* Tag Filter Groups */
+.tag-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.tag-filter-group-label {
+  width: 100%;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted, #666);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  margin-top: 4px;
+}
+
+.tag-btn-grouped {
+  margin-left: 8px;
+}
+
+/* Tag Manager Groups */
+.tag-group-section {
+  margin-bottom: 8px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tag-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--color-surface-2, #1a1a2e);
+}
+
+.tag-group-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.tag-group-count {
+  color: var(--color-text-muted, #666);
+  font-size: 12px;
+}
+
+.tag-group-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.tag-group-items {
+  padding: 4px 12px 8px;
+}
+
+.tag-group-add-item {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.tag-inline-input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 6px;
+  background: var(--color-surface, #0f0f23);
+  color: var(--color-text, #e0e0e0);
 }
 
 .leaflet-popup-content .popup-actions {
@@ -6131,6 +6330,225 @@ a:hover {
 
 .category-manage-btn:hover {
   color: var(--color-accent);
+}
+
+/* ========================================
+   SUBCATEGORY FILTER + MANAGEMENT
+   ======================================== */
+
+.subcat-st-block {
+  margin-bottom: 14px;
+}
+
+.subcat-st-block:last-child {
+  margin-bottom: 0;
+}
+
+.subcat-st-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 10px;
+}
+
+.subcat-st-header i {
+  font-size: 14px;
+}
+
+.subcat-group {
+  margin-left: 8px;
+  margin-bottom: 12px;
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border);
+}
+
+.subcat-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.subcat-group-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  user-select: none;
+}
+
+.subcat-group-name:hover {
+  color: var(--color-text-primary);
+}
+
+.subcat-chevron {
+  font-size: 9px;
+  color: var(--color-text-muted);
+  transition: transform 0.15s;
+  width: 10px;
+}
+
+.subcat-active-indicator {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  padding: 1px 8px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+/* Collapsible groups */
+.subcat-group-collapsed .subcat-group-body {
+  display: none;
+}
+
+/* Admin toggle button */
+.subcat-admin-toggle {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  font-size: 13px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  margin-left: auto;
+}
+
+.subcat-admin-toggle:hover {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
+}
+
+.subcat-admin-toggle.active {
+  color: var(--color-accent);
+}
+
+/* Admin-only elements — hidden by default */
+.subcat-admin-only {
+  display: none !important;
+}
+
+.subcat-admin-active .subcat-admin-only {
+  display: flex !important;
+}
+
+/* Inline edit/delete for filter buttons in admin mode */
+.subcat-btn-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.subcat-item-actions {
+  gap: 0px !important;
+  align-items: center !important;
+}
+
+.subcat-item-actions .category-manage-btn {
+  padding: 2px 4px;
+  font-size: 10px;
+}
+
+.subcat-filter-buttons {
+  gap: 8px !important;
+  margin-bottom: 8px;
+}
+
+.subcat-filter-buttons .category-btn {
+  padding: 8px 14px;
+  font-size: var(--font-size-sm);
+}
+
+.subcat-count {
+  opacity: 0.5;
+  margin-left: 2px;
+}
+
+.subcat-delete-btn:hover {
+  color: var(--color-error, #ef4444) !important;
+}
+
+.subcat-add-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.subcat-add-input {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  padding: 6px 10px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.subcat-add-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.subcat-add-input:focus {
+  border-color: var(--color-accent);
+}
+
+.subcat-add-btn {
+  background: var(--color-accent);
+  border: none;
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+
+.subcat-add-btn:hover {
+  opacity: 0.85;
+}
+
+.subcat-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.subcat-add-group-row {
+  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.subcat-add-group-btn {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+.subcat-add-group-btn:hover {
+  color: var(--color-text-primary);
+  opacity: 1;
+}
+
+.subcat-empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-style: italic;
+  margin: 4px 0 4px 6px;
 }
 
 /* Category list modal items */
@@ -8322,6 +8740,10 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   }
 
   /* Content panel - slides in from right on mobile */
+  .content-panel-resize {
+    display: none !important;
+  }
+
   .content-panel {
     position: fixed !important;
     top: 0 !important;
@@ -19177,4 +19599,39 @@ body.is-impersonating #loginOverlay {
   .split-week-grid {
     grid-template-columns: repeat(7, 1fr);
   }
+}
+
+/* ========================================
+   ROLE-BASED UI: Hide write actions for leser
+   ======================================== */
+
+/* Hide add/create buttons */
+body.role-leser #addCustomerBtn,
+body.role-leser #addCustomerBtnTab,
+body.role-leser #subcatAdminToggle,
+body.role-leser .import-btn,
+body.role-leser .export-btn {
+  display: none !important;
+}
+
+/* Hide edit/delete actions in popups and customer details */
+body.role-leser [data-action="editCustomer"],
+body.role-leser [data-action="deleteCustomer"],
+body.role-leser [data-action="toggleCustomerSelection"],
+body.role-leser [data-action="quickMarkVisited"],
+body.role-leser [data-action="quickAddToday"],
+body.role-leser [data-action="showCalendarQuickMenu"],
+body.role-leser [data-action="quickAddToSplitDay"],
+body.role-leser [data-action="sendEmail"],
+body.role-leser [data-action="addCustomerToCalendar"],
+body.role-leser .kontaktlogg-delete,
+body.role-leser .kontaktperson-delete,
+body.role-leser .popup-btn-group {
+  display: none !important;
+}
+
+/* Hide customer form save/delete buttons */
+body.role-leser #customerForm .btn-primary,
+body.role-leser #customerForm .btn-danger {
+  display: none !important;
 }

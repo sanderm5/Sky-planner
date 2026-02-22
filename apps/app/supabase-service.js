@@ -1657,20 +1657,14 @@ async function getAllKunderWithServices(organizationId = null) {
 
   if (!kunder || kunder.length === 0) return kunder;
 
-  // Get all customer services with joined data
+  // Get all customer services with joined data (FK now points to organization_service_types)
   const kundeIds = kunder.map(k => k.id);
   const { data: services, error: servicesError } = await getClient()
     .from('customer_services')
     .select(`
       *,
-      template_service_types (
+      organization_service_types (
         id, name, slug, icon, color, default_interval_months
-      ),
-      template_subtypes (
-        id, name, slug
-      ),
-      template_equipment (
-        id, name, slug
       )
     `)
     .in('kunde_id', kundeIds)
@@ -1694,14 +1688,14 @@ async function getAllKunderWithServices(organizationId = null) {
       intervall_months: s.intervall_months,
       driftstype: s.driftstype,
       notater: s.notater,
-      service_type_name: s.template_service_types?.name,
-      service_type_slug: s.template_service_types?.slug,
-      service_type_icon: s.template_service_types?.icon,
-      service_type_color: s.template_service_types?.color,
-      subtype_name: s.template_subtypes?.name,
-      subtype_slug: s.template_subtypes?.slug,
-      equipment_name: s.template_equipment?.name,
-      equipment_slug: s.template_equipment?.slug
+      service_type_name: s.organization_service_types?.name,
+      service_type_slug: s.organization_service_types?.slug,
+      service_type_icon: s.organization_service_types?.icon,
+      service_type_color: s.organization_service_types?.color,
+      subtype_name: null,
+      subtype_slug: null,
+      equipment_name: null,
+      equipment_slug: null
     });
   });
 
@@ -1731,18 +1725,13 @@ async function getKundeByIdWithServices(id, organizationId = null) {
   if (!kunde) return null;
 
   // Get customer services
+  // FK now points to organization_service_types after migration 049
   const { data: services, error: servicesError } = await getClient()
     .from('customer_services')
     .select(`
       *,
-      template_service_types (
+      organization_service_types (
         id, name, slug, icon, color, default_interval_months
-      ),
-      template_subtypes (
-        id, name, slug
-      ),
-      template_equipment (
-        id, name, slug
       )
     `)
     .eq('kunde_id', id)
@@ -1760,14 +1749,14 @@ async function getKundeByIdWithServices(id, organizationId = null) {
     intervall_months: s.intervall_months,
     driftstype: s.driftstype,
     notater: s.notater,
-    service_type_name: s.template_service_types?.name,
-    service_type_slug: s.template_service_types?.slug,
-    service_type_icon: s.template_service_types?.icon,
-    service_type_color: s.template_service_types?.color,
-    subtype_name: s.template_subtypes?.name,
-    subtype_slug: s.template_subtypes?.slug,
-    equipment_name: s.template_equipment?.name,
-    equipment_slug: s.template_equipment?.slug
+    service_type_name: s.organization_service_types?.name,
+    service_type_slug: s.organization_service_types?.slug,
+    service_type_icon: s.organization_service_types?.icon,
+    service_type_color: s.organization_service_types?.color,
+    subtype_name: null,
+    subtype_slug: null,
+    equipment_name: null,
+    equipment_slug: null
   }));
 
   return kunde;

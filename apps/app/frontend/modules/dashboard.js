@@ -97,7 +97,7 @@ function renderDashboardCategories(categoryStats) {
     html += `
       <div class="category-stat">
         ${icons}
-        <span class="cat-name">Begge</span>
+        <span class="cat-name">${serviceTypes.length > 2 ? 'Alle' : 'Begge'}</span>
         <span class="cat-count">${combinedCount}</span>
       </div>
     `;

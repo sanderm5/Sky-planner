@@ -3,6 +3,33 @@
 // Logout, impersonation, session verification
 // ========================================
 
+/**
+ * Check if current user has write permissions (redigerer or admin).
+ * Returns false for leser role.
+ */
+function canEdit() {
+  const role = localStorage.getItem('userRole') || 'leser';
+  return role === 'admin' || role === 'redigerer';
+}
+
+/**
+ * Check if current user is admin.
+ */
+function isAdmin() {
+  const role = localStorage.getItem('userRole') || 'leser';
+  return role === 'admin';
+}
+
+/**
+ * Apply role-based UI classes to body.
+ * Adds 'role-leser' when user is a reader (hides write UI via CSS).
+ */
+function applyRoleUI() {
+  const role = localStorage.getItem('userRole') || 'leser';
+  document.body.classList.remove('role-leser', 'role-redigerer', 'role-admin');
+  document.body.classList.add(`role-${role}`);
+}
+
 // Handle logout (for SPA - shows login view without redirect)
 function handleLogout() {
   // Stop proactive token refresh
@@ -107,7 +134,7 @@ async function checkExistingAuth() {
           localStorage.setItem('userName', user.navn || 'Bruker');
           localStorage.setItem('userEmail', user.epost || '');
           localStorage.setItem('userType', user.type || 'klient');
-          localStorage.setItem('userRole', user.type === 'bruker' ? 'admin' : 'klient');
+          localStorage.setItem('userRole', user.rolle || (user.type === 'bruker' ? 'admin' : 'leser'));
           // Store super admin flag
           if (user.isSuperAdmin) {
             localStorage.setItem('isSuperAdmin', 'true');
@@ -141,6 +168,9 @@ async function checkExistingAuth() {
           await reloadConfigWithAuth();
         }
 
+        // Apply role-based UI restrictions
+        applyRoleUI();
+
         Logger.log('SSO session verified successfully');
         return true;
       }
@@ -160,9 +190,10 @@ async function checkExistingAuth() {
         const data = await response.json();
         if (data.klient) {
           localStorage.setItem('userName', data.klient.navn || 'Bruker');
-          localStorage.setItem('userRole', data.klient.rolle || 'klient');
+          localStorage.setItem('userRole', data.klient.rolle || 'leser');
           localStorage.setItem('userType', data.klient.type || 'klient');
         }
+        applyRoleUI();
         return true;
       }
     } catch (error) {
