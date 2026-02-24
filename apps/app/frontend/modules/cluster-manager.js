@@ -9,19 +9,19 @@ let supercluster = null; // Legacy reference (kept for compatibility with loggin
 let clusterMarkers = new Map(); // HTML marker cache for individual cluster markers
 
 function initClusterManager() {
-  if (!map) return;
-  if (map.getSource(CLUSTER_SOURCE)) { _clusterSourceReady = true; return; }
+  if (!map) { Logger.log('initClusterManager: no map'); return; }
+  if (map.getSource(CLUSTER_SOURCE)) { Logger.log('initClusterManager: source exists, ready'); _clusterSourceReady = true; return; }
   // Style must be loaded before adding sources/layers.
-  // Use both 'style.load' and 'load' events as fallback — on some systems
-  // (especially Windows) 'style.load' may have already fired before this runs.
   if (!map.isStyleLoaded()) {
+    Logger.log('initClusterManager: style not loaded, deferring');
     map.once('style.load', () => initClusterManager());
-    // Fallback: if style.load already fired, 'load' (full map load) will catch it
+    // Fallback: 'load' event fires after style + tiles are ready
     map.once('load', () => {
       if (!_clusterSourceReady) initClusterManager();
     });
     return;
   }
+  Logger.log('initClusterManager: creating source and layers');
   try {
     map.addSource(CLUSTER_SOURCE, {
       type: 'geojson', data: { type: 'FeatureCollection', features: [] },
@@ -73,8 +73,10 @@ function initClusterManager() {
       }
     });
     _clusterSourceReady = true;
+    Logger.log('initClusterManager: ready, source created');
     // If customers were loaded while we waited for style, render them now
     if (typeof customers !== 'undefined' && customers.length > 0 && typeof applyFilters === 'function') {
+      Logger.log('initClusterManager: triggering applyFilters for', customers.length, 'customers');
       applyFilters();
     }
   } catch (err) {
@@ -216,12 +218,17 @@ function refreshClusters() {
 function readdClusterLayers() {
   if (!map) return;
   _clusterSourceReady = false;
+  // Remove old event listeners to prevent duplicates
+  map.off('click', CLUSTER_CIRCLE_LAYER, onClusterClick);
   [CLUSTER_COUNT_LAYER, CLUSTER_CIRCLE_LAYER].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
   if (map.getSource(CLUSTER_SOURCE)) map.removeSource(CLUSTER_SOURCE);
   initClusterManager();
-  if (clusterGeoJSONFeatures.length > 0) {
+  // initClusterManager may defer if style isn't loaded yet —
+  // in that case _clusterSourceReady will be set when the callback fires,
+  // and it will call applyFilters() to trigger renderMarkers.
+  if (_clusterSourceReady && clusterGeoJSONFeatures.length > 0) {
     const src = map.getSource(CLUSTER_SOURCE);
     if (src) src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
   }
-  updateClusters();
+  if (_clusterSourceReady) updateClusters();
 }

@@ -352,8 +352,14 @@ function initDOMElements() {
 let mapInitialized = false;
 function initMap() {
   if (mapInitialized) {
-    // Controls already added — just re-init clusters (needed after logout → login)
-    initClusterManager();
+    // Controls already added — re-init clusters (needed after logout → login)
+    // Use readdClusterLayers which removes stale layers, re-creates source,
+    // and repopulates data — more robust than bare initClusterManager()
+    if (typeof readdClusterLayers === 'function') {
+      readdClusterLayers();
+    } else {
+      initClusterManager();
+    }
     return;
   }
   mapInitialized = true;
