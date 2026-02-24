@@ -255,50 +255,67 @@ function transitionToAppView() {
     }
   }, 200);
 
-  // PHASE 3: Fly to overview (always zoom out after login)
+  // PHASE 3: Stop globe spin and fly to Norway
   setTimeout(() => {
     if (map) {
-      map.flyTo([67.5, 15.0], 6, {
-        duration: 1.8,
-        easeLinearity: 0.1
+      stopGlobeSpin();
+      map.flyTo({
+        center: [15.0, 67.5],
+        zoom: 6,
+        duration: 1600,
+        essential: true,
+        curve: 1.42
       });
     }
-  }, 400);
+  }, 300);
 
   // PHASE 4: Hide login overlay completely (pointer-events already handled by CSS)
   setTimeout(() => {
     loginOverlay.classList.add('hidden');
-  }, 900);
+  }, 700);
 
   // PHASE 5: Enable map interactivity
   setTimeout(() => {
     if (map) {
-      map.dragging.enable();
-      map.scrollWheelZoom.enable();
-      map.doubleClickZoom.enable();
-      map.touchZoom.enable();
-      map.keyboard.enable();
-      // Add zoom control after login
+      setMapInteractive(true);
+      // Add zoom/navigation control after login
       if (!map._zoomControl) {
-        map._zoomControl = L.control.zoom({ position: 'topright' }).addTo(map);
+        map._zoomControl = new mapboxgl.NavigationControl({ showCompass: false });
+        map.addControl(map._zoomControl, 'top-right');
       }
-      // Block browser context menu on map area to prevent it interfering with marker context menus
+      // Block browser context menu on map area
       map.getContainer().addEventListener('contextmenu', (e) => {
         e.preventDefault();
       });
     }
-  }, 1000);
 
-  // PHASE 5b: Load data AFTER flyTo animation completes (~2.2s from start)
+    // Restore floating map control buttons (hidden on logout)
+    document.querySelectorAll('.terrain-toggle-btn, .area-select-toggle-btn, .isochrone-toggle-btn, .coverage-area-toggle-btn').forEach(btn => {
+      btn.style.transition = 'opacity 0.4s ease-out';
+      btn.style.opacity = '1';
+      btn.style.pointerEvents = 'auto';
+    });
+
+    // Restore Mapbox GL native controls
+    document.querySelectorAll('.mapboxgl-ctrl').forEach(ctrl => {
+      ctrl.style.transition = 'opacity 0.4s ease-out';
+      ctrl.style.opacity = '1';
+      ctrl.style.pointerEvents = 'auto';
+    });
+  }, 800);
+
+  // PHASE 5b: Load data AFTER flyTo animation mostly completes (~1.6s)
   // This prevents UI jank during the login transition
   setTimeout(() => {
     if (!appInitialized) {
       initializeApp();
       appInitialized = true;
     } else {
+      // Re-initialize clusters (cleared on logout) before loading customers
+      if (typeof readdClusterLayers === 'function') readdClusterLayers();
       loadCustomers();
     }
-  }, 2300);
+  }, 1700);
 
   // PHASE 6: Slide in sidebar and show tab navigation
   setTimeout(() => {
@@ -320,7 +337,7 @@ function transitionToAppView() {
       sidebarToggle.style.opacity = '1';
       sidebarToggle.style.pointerEvents = 'auto';
     }
-  }, 1100);
+  }, 900);
 
   // PHASE 7: Slide in filter panel
   setTimeout(() => {
@@ -338,9 +355,9 @@ function transitionToAppView() {
       contentPanel.style.transform = 'translateX(0)';
       contentPanel.style.opacity = '1';
     }
-  }, 1250);
+  }, 1050);
 
-  // PHASE 8: Clean up inline styles
+  // PHASE 8: Clean up inline styles (after easeTo settles at ~2.6s)
   setTimeout(() => {
     // Clean up sidebar/filter inline styles
     if (sidebar) {
@@ -377,7 +394,14 @@ function transitionToAppView() {
       loginMapOverlay.style.transition = '';
       loginMapOverlay.style.opacity = '';
     }
-  }, 2000);
+
+    // Clean up map control button inline styles
+    document.querySelectorAll('.terrain-toggle-btn, .area-select-toggle-btn, .isochrone-toggle-btn, .coverage-area-toggle-btn, .mapboxgl-ctrl').forEach(el => {
+      el.style.transition = '';
+      el.style.opacity = '';
+      el.style.pointerEvents = '';
+    });
+  }, 2800);
 }
 
 // Show login view (for logout)
@@ -467,28 +491,38 @@ function showLoginView() {
     sidebarToggle.style.pointerEvents = 'none';
   }
 
-  // Step 3: Fade out markers gradually
-  if (markerClusterGroup) {
-    // Add fade-out class to markers before removing
-    const markerPane = document.querySelector('.leaflet-marker-pane');
-    if (markerPane) {
-      markerPane.style.transition = 'opacity 0.5s ease-out';
-      markerPane.style.opacity = '0';
+  // Hide floating map control buttons (same z-index as login overlay)
+  document.querySelectorAll('.terrain-toggle-btn, .area-select-toggle-btn, .isochrone-toggle-btn, .coverage-area-toggle-btn').forEach(btn => {
+    btn.style.transition = 'opacity 0.3s ease-out';
+    btn.style.opacity = '0';
+    btn.style.pointerEvents = 'none';
+  });
+
+  // Hide Mapbox GL native controls (locate, zoom, etc.)
+  document.querySelectorAll('.mapboxgl-ctrl').forEach(ctrl => {
+    ctrl.style.transition = 'opacity 0.3s ease-out';
+    ctrl.style.opacity = '0';
+    ctrl.style.pointerEvents = 'none';
+  });
+
+  // Step 3: Fade out all markers (customers + clusters) gradually
+  const allMarkerEls = document.querySelectorAll('.mapboxgl-marker');
+  allMarkerEls.forEach(el => {
+    el.style.transition = 'opacity 0.5s ease-out';
+    el.style.opacity = '0';
+  });
+  setTimeout(() => {
+    // Remove all customer markers
+    for (const [id, marker] of Object.entries(markers)) {
+      marker.remove();
     }
-    setTimeout(() => {
-      markerClusterGroup.clearLayers();
-      if (markerPane) {
-        markerPane.style.transition = '';
-        markerPane.style.opacity = '';
-      }
-    }, 500);
-  }
+    Object.keys(markers).forEach(k => delete markers[k]);
+    // Remove all cluster markers
+    if (typeof clearAllClusters === 'function') clearAllClusters();
+  }, 500);
 
   // Clear route if any
-  if (routeLayer) {
-    map.removeLayer(routeLayer);
-    routeLayer = null;
-  }
+  clearRoute();
 
   // Step 4: Show login overlay and start map fly animation
   setTimeout(() => {
@@ -523,11 +557,7 @@ function showLoginView() {
   // Zoom map back to login position with smooth animation
   if (map) {
     // Disable interactivity
-    map.dragging.disable();
-    map.scrollWheelZoom.disable();
-    map.doubleClickZoom.disable();
-    map.touchZoom.disable();
-    map.keyboard.disable();
+    setMapInteractive(false);
 
     // Remove zoom control if present
     if (map._zoomControl) {
@@ -535,10 +565,16 @@ function showLoginView() {
       map._zoomControl = null;
     }
 
-    map.flyTo([69.06888, 17.65274], 11, {
-      duration: 1.8,
-      easeLinearity: 0.15
+    map.flyTo({
+      center: [15.0, 65.0],
+      zoom: 3.0,
+      duration: 2000,
+      essential: true,
+      curve: 1.5
     });
+
+    // Start globe spin again after fly-out completes
+    setTimeout(() => startGlobeSpin(), 2200);
   }
 
   // Step 6: Hide app view and reset styles after animation completes

@@ -38,8 +38,8 @@ function createRouteForAreaYear(area, year) {
   // Zoom to area
   const areaData = areaCustomers.filter(c => c.lat && c.lng);
   if (areaData.length > 0) {
-    const bounds = L.latLngBounds(areaData.map(c => [c.lat, c.lng]));
-    map.fitBounds(bounds, { padding: [50, 50] });
+    const bounds = boundsFromCustomers(areaData);
+    map.fitBounds(bounds, { padding: 50 });
   }
 }
 
@@ -63,8 +63,8 @@ async function selectCustomersNeedingControl() {
       // Zoom to selected customers
       const selectedData = customers.filter(c => selectedCustomers.has(c.id) && c.lat && c.lng);
       if (selectedData.length > 0) {
-        const bounds = L.latLngBounds(selectedData.map(c => [c.lat, c.lng]));
-        map.fitBounds(bounds, { padding: [50, 50] });
+        const bounds = boundsFromCustomers(selectedData);
+        map.fitBounds(bounds, { padding: 50 });
       }
     }
   } catch (error) {

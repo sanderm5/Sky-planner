@@ -160,7 +160,7 @@ function focusTeamMemberOnMap(memberName) {
     wpFocusedTeamMember = null;
     wpFocusedMemberIds = null;
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
     renderWeeklyPlan();
     return;
   }
@@ -174,27 +174,28 @@ function focusTeamMemberOnMap(memberName) {
   wpFocusedMemberIds = new Set([...member.kundeIds].map(id => Number(id)));
 
   // Collect bounds from actual map markers
-  const bounds = [];
+  const bounds = new mapboxgl.LngLatBounds();
+  let hasPoints = false;
   for (const kundeId of wpFocusedMemberIds) {
     const m = markers[kundeId];
     if (m) {
-      const ll = m.getLatLng();
+      const ll = m.getLngLat();
       if (ll && ll.lat && ll.lng) {
-        bounds.push(ll);
+        bounds.extend(ll);
+        hasPoints = true;
       }
     }
   }
 
   // Zoom map FIRST, then apply styling after zoom settles
-  if (bounds.length > 0) {
-    const latLngBounds = L.latLngBounds(bounds);
-    map.fitBounds(latLngBounds.pad(0.5), { maxZoom: 11, padding: [40, 40] });
+  if (hasPoints) {
+    map.fitBounds(bounds, { maxZoom: 11, padding: 40 });
   }
 
   // Delay focus styling until after zoom animation completes
   setTimeout(() => {
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
   }, 400);
 
   renderWeeklyPlan();
@@ -214,7 +215,7 @@ function refreshTeamFocus() {
     wpFocusedMemberIds = new Set([...member.kundeIds].map(id => Number(id)));
   }
   applyTeamFocusToMarkers();
-  if (markerClusterGroup) markerClusterGroup.refreshClusters();
+  if (typeof refreshClusters === 'function') refreshClusters();
 }
 
 // Apply focus/dim styling to individual markers (called after zoom changes too)
@@ -460,7 +461,7 @@ async function renderWeeklyPlan() {
         const custInitials = custAssignedName ? getCreatorDisplay(custAssignedName, true) : '';
         const custColor = teamColorMap.get(custAssignedName) || currentUserColor;
         html += `
-          <div class="wp-item new wp-timeline-item" style="border-left:3px solid ${custColor}">
+          <div class="wp-item new wp-timeline-item" data-customer-id="${c.id}" data-day="${dayKey}" style="border-left:3px solid ${custColor}">
             <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${custColor}">${stopIndex}</span>${custInitials ? `<span class="wp-stop-initials" style="background:${custColor}">${escapeHtml(custInitials)}</span>` : ''}</span>
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(c.navn)}</span>
@@ -601,18 +602,111 @@ async function renderWeeklyPlan() {
     }, 200));
   }
 
-  // Right-click context menu on existing avtaler
+  // Right-click context menu on weekplan items
   container.addEventListener('contextmenu', (e) => {
-    const item = e.target.closest('.wp-item.existing[data-avtale-id]');
-    if (!item) return;
-    e.preventDefault();
-    const avtaleId = item.dataset.avtaleId;
-    const avtaleName = item.dataset.avtaleName;
-    showWpContextMenu(avtaleId, avtaleName, e.clientX, e.clientY);
+    // Existing avtaler
+    const existingItem = e.target.closest('.wp-item.existing[data-avtale-id]');
+    if (existingItem) {
+      e.preventDefault();
+      const avtaleId = Number(existingItem.dataset.avtaleId);
+      const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+      if (avtale) {
+        showWeekplanExistingContextMenu(avtale, e.clientX, e.clientY);
+      }
+      return;
+    }
+    // Planned (unsaved) items
+    const plannedItem = e.target.closest('.wp-item.new[data-customer-id]');
+    if (plannedItem) {
+      e.preventDefault();
+      const customerId = Number(plannedItem.dataset.customerId);
+      const dayKey = plannedItem.dataset.day;
+      const customer = typeof customers !== 'undefined' ? customers.find(c => c.id === customerId) : null;
+      if (customer && dayKey) {
+        showWeekplanPlannedContextMenu(customer, dayKey, e.clientX, e.clientY);
+      }
+      return;
+    }
   });
 
   // Update map markers with plan badges
   updateWeekPlanBadges();
+
+  // Load travel times asynchronously for each day with content
+  if (typeof MatrixService !== 'undefined') {
+    for (let i = 0; i < 5; i++) {
+      const dayKey = weekDayKeys[i];
+      const dayData = weekPlanState.days[dayKey];
+      const dateStr = dayData.date;
+      const existingCount = avtaler.filter(a => a.dato === dateStr).length;
+      if (dayData.planned.length > 0 || existingCount > 0) {
+        wpLoadTravelTimes(dayKey);
+      }
+    }
+  }
+}
+
+// Load and display travel times between stops for a day
+async function wpLoadTravelTimes(dayKey) {
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return;
+
+  const dateStr = dayData.date;
+  const startLng = appConfig.routeStartLng || 17.65274;
+  const startLat = appConfig.routeStartLat || 69.06888;
+
+  // Build coordinate array: [office, stop1, stop2, ..., office]
+  const coords = [[startLng, startLat]];
+
+  for (const c of dayData.planned) {
+    if (c.lat && c.lng) coords.push([c.lng, c.lat]);
+  }
+
+  const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+  for (const a of existingAvtaler) {
+    const kunde = customers.find(c => c.id === a.kunde_id);
+    if (kunde?.lat && kunde?.lng) {
+      coords.push([kunde.lng, kunde.lat]);
+    }
+  }
+
+  // Return to office
+  coords.push([startLng, startLat]);
+
+  if (coords.length < 3) return; // Need at least office + 1 stop + office
+
+  const times = await MatrixService.getSequentialTimes(coords);
+  if (!times || times.length === 0) return;
+
+  // Verify we're still showing this day (user might have navigated away)
+  const dayEl = document.querySelector(`.wp-day[data-day="${dayKey}"] .wp-day-content`);
+  if (!dayEl) return;
+
+  // Remove any previously inserted separators
+  dayEl.querySelectorAll('.wp-drive-separator').forEach(el => el.remove());
+
+  const items = dayEl.querySelectorAll('.wp-timeline-item');
+
+  items.forEach((item, idx) => {
+    const time = times[idx]; // drive from previous to this stop
+    if (!time || time.durationSec === 0) return;
+
+    const driveMin = Math.round(time.durationSec / 60);
+    const sep = document.createElement('div');
+    sep.className = 'wp-drive-separator';
+    sep.innerHTML = `<i class="fas fa-car" style="font-size:9px"></i> ${driveMin} min kjøretid`;
+    item.parentNode.insertBefore(sep, item);
+  });
+
+  // Update the footer summary with total driving info
+  const totalDriveSec = times.reduce((sum, t) => sum + t.durationSec, 0);
+  const totalDriveMin = Math.round(totalDriveSec / 60);
+  const totalKm = Math.round(times.reduce((sum, t) => sum + t.distanceM, 0) / 1000);
+
+  const summaryEl = dayEl.parentNode.querySelector('.wp-day-stats .wp-day-summary');
+  if (summaryEl && totalDriveMin > 0) {
+    summaryEl.textContent += ` · ${formatMinutes(totalDriveMin)} kjøretid · ${totalKm} km`;
+  }
 }
 
 // Day-picker popup for adding customers to weekly plan from overdue/upcoming views
@@ -746,6 +840,17 @@ function addCustomersToWeekPlan(customersList) {
   renderWeeklyPlan();
 }
 
+// Add a single customer to weekplan from map tooltip/context menu
+function addToWeekPlanFromMap(customerId) {
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+  if (!weekPlanState.activeDay) {
+    showToast('Åpne ukeplanen og velg en dag først', 'info');
+    return;
+  }
+  addCustomersToWeekPlan([customer]);
+}
+
 async function saveWeeklyPlan() {
   const totalPlanned = getWeekPlanTotalPlanned();
   if (totalPlanned === 0) return;
@@ -841,73 +946,8 @@ async function saveWeeklyPlan() {
   renderWeeklyPlan();
 }
 
-// Weekly plan context menu for existing avtaler
-function showWpContextMenu(avtaleId, avtaleName, x, y) {
-  closeWpContextMenu();
-  const menu = document.createElement('div');
-  menu.className = 'marker-context-menu';
-  menu.setAttribute('role', 'menu');
-  menu.innerHTML = `
-    <div class="context-menu-header">${escapeHtml(avtaleName)}</div>
-    <div class="context-menu-item" role="menuitem" data-wp-action="delete" data-id="${escapeHtml(avtaleId)}">
-      <i class="fas fa-trash" aria-hidden="true"></i> Slett avtale
-    </div>
-  `;
-
-  // Position
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-  document.body.appendChild(menu);
-
-  // Adjust if off-screen
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = `${x - rect.width}px`;
-    if (rect.bottom > window.innerHeight) menu.style.top = `${y - rect.height}px`;
-  });
-
-  // Click handler
-  menu.addEventListener('click', async (e) => {
-    const item = e.target.closest('[data-wp-action]');
-    if (!item) return;
-    const action = item.dataset.wpAction;
-    const id = item.dataset.id;
-
-    if (action === 'delete') {
-      closeWpContextMenu();
-      try {
-        const response = await apiFetch(`/api/avtaler/${id}`, { method: 'DELETE' });
-        if (response.ok) {
-          showToast('Avtale slettet', 'success');
-          await loadAvtaler();
-          refreshTeamFocus();
-          renderWeeklyPlan();
-          applyFilters(); // Oppdater kart-markører
-        } else {
-          const err = await response.json().catch(() => ({}));
-          showToast(err.error?.message || 'Kunne ikke slette avtale', 'error');
-        }
-      } catch (err) {
-        showToast('Feil ved sletting: ' + err.message, 'error');
-      }
-    }
-  });
-
-  // Close on outside click
-  setTimeout(() => {
-    document.addEventListener('click', closeWpContextMenu, { once: true });
-  }, 10);
-
-  activeWpContextMenu = menu;
-}
-
-let activeWpContextMenu = null;
-function closeWpContextMenu() {
-  if (activeWpContextMenu) {
-    activeWpContextMenu.remove();
-    activeWpContextMenu = null;
-  }
-}
+// Weekplan context menu is now handled by the generic showContextMenu() system
+// See context-menu.js: showWeekplanExistingContextMenu() and showWeekplanPlannedContextMenu()
 
 function clearWeekPlan() {
   for (const dayKey of weekDayKeys) {
@@ -1146,10 +1186,15 @@ async function wpNavigateDay(dayKey) {
     wpRouteActive = true;
     wpRouteStopIds = new Set(stops.map(s => Number(s.id)));
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
 
     // Build route line: start → stop1 → stop2 → ... → start
-    const linePoints = [startLatLng, ...stops.map(s => [s.lat, s.lng]), startLatLng];
+    // Note: startLatLng is [lat, lng], convert to [lng, lat] for GeoJSON
+    const lineCoords = [
+      [startLatLng[1], startLatLng[0]],
+      ...stops.map(s => [s.lng, s.lat]),
+      [startLatLng[1], startLatLng[0]]
+    ];
 
     // Try ORS road-following geometry, fall back to straight lines
     let routeDrawn = false;
@@ -1158,15 +1203,12 @@ async function wpNavigateDay(dayKey) {
         const geomType = feature.geometry.type;
         let routeCoords;
         if (geomType === 'MultiLineString') {
-          routeCoords = feature.geometry.coordinates.flat().map(c => [c[1], c[0]]);
+          routeCoords = feature.geometry.coordinates.flat();
         } else {
-          routeCoords = feature.geometry.coordinates.map(c => [c[1], c[0]]);
+          routeCoords = feature.geometry.coordinates;
         }
         if (routeCoords.length > 2 && !isNaN(routeCoords[0][0]) && !isNaN(routeCoords[0][1])) {
-          routeLayer = L.polyline(routeCoords, {
-            color: '#2563eb', weight: 5, opacity: 0.85,
-            lineCap: 'round', lineJoin: 'round'
-          }).addTo(map);
+          drawRouteGeoJSON(routeCoords, { color: '#2563eb', width: 5, opacity: 0.85 });
           routeDrawn = true;
         }
       } catch (e) {
@@ -1175,15 +1217,12 @@ async function wpNavigateDay(dayKey) {
     }
     // Fallback: straight dashed lines between stops
     if (!routeDrawn) {
-      routeLayer = L.polyline(linePoints, {
-        color: '#2563eb', weight: 4, opacity: 0.7,
-        dashArray: '10, 8', lineCap: 'round', lineJoin: 'round'
-      }).addTo(map);
+      drawRouteGeoJSON(lineCoords, { color: '#2563eb', width: 4, opacity: 0.7, dasharray: [10, 8] });
     }
 
     // Fit map to route
-    const allPoints = [startLatLng, ...stops.map(s => [s.lat, s.lng])];
-    map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+    const allBounds = boundsFromLatLngArray([startLatLng, ...stops.map(s => [s.lat, s.lng])]);
+    map.fitBounds(allBounds, { padding: 50 });
 
     // Store for export to Maps
     currentRouteData = { customers: stops, duration: drivingSeconds, distance: distanceMeters };
@@ -1198,7 +1237,7 @@ async function wpNavigateDay(dayKey) {
     wpRouteActive = false;
     wpRouteStopIds = null;
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
   }
 }
 
@@ -1261,7 +1300,7 @@ function closeWpRouteSummary() {
   wpRouteActive = false;
   wpRouteStopIds = null;
   applyTeamFocusToMarkers();
-  if (markerClusterGroup) markerClusterGroup.refreshClusters();
+  if (typeof refreshClusters === 'function') refreshClusters();
 }
 
 // Export weekly plan route to Google/Apple Maps

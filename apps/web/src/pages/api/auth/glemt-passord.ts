@@ -123,7 +123,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     // Check rate limit
     if (isRateLimited(ip)) {
       return new Response(
-        JSON.stringify({ error: 'For mange forespørsler. Vennligst vent 15 minutter.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'For mange forespørsler. Vennligst vent 15 minutter.' } }),
         { status: 429, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -133,7 +133,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     if (!epost) {
       return new Response(
-        JSON.stringify({ error: 'E-post er påkrevd' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'E-post er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -142,7 +142,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
     if (!emailRegex.test(epost)) {
       return new Response(
-        JSON.stringify({ error: 'Ugyldig e-postformat' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig e-postformat' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -189,7 +189,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   } catch (error) {
     console.error('Password reset error:', error);
     return new Response(
-      JSON.stringify({ error: 'Noe gikk galt. Prøv igjen senere.' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Noe gikk galt. Prøv igjen senere.' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

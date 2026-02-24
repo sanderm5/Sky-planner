@@ -176,14 +176,18 @@ html {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
   background: var(--color-bg-primary);
   min-height: 100vh;
   color: var(--color-text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+/* Force font inheritance on form elements (browsers don't inherit by default) */
+input, select, textarea, button {
+  font-family: inherit;
 }
 
 a {
@@ -3277,10 +3281,31 @@ a:hover {
   background: rgba(94, 129, 172, 0.08);
 }
 
+.day-top-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .day-number {
   font-weight: 600;
   color: var(--color-text-primary);
   font-size: var(--font-size-sm);
+}
+
+.day-gmaps {
+  color: var(--text-secondary);
+  text-decoration: none;
+  opacity: 0.4;
+  font-size: 11px;
+  padding: 1px 3px;
+  border-radius: 3px;
+  transition: opacity 0.15s, color 0.15s;
+  margin-left: auto;
+}
+.day-gmaps:hover {
+  opacity: 1;
+  color: #4285f4;
 }
 
 .calendar-events {
@@ -3505,6 +3530,24 @@ a:hover {
   opacity: 1;
   color: var(--color-primary);
   background: color-mix(in srgb, var(--color-primary) 5%, var(--bg-primary));
+}
+.week-day-gmaps,
+.split-day-gmaps {
+  color: var(--text-secondary);
+  text-decoration: none;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+  font-size: 12px;
+  margin-left: auto;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+}
+.week-day-gmaps:hover,
+.split-day-gmaps:hover {
+  opacity: 1;
+  color: #4285f4;
 }
 .week-summary {
   margin-top: 12px;
@@ -4525,13 +4568,11 @@ a:hover {
   height: 100%;
 }
 
-/* Ensure Leaflet controls don't block our panels */
-.leaflet-top,
-.leaflet-bottom {
-  z-index: 999 !important;
-}
-
-.leaflet-control {
+/* Ensure Mapbox GL JS controls don't block our panels */
+.mapboxgl-ctrl-top-left,
+.mapboxgl-ctrl-top-right,
+.mapboxgl-ctrl-bottom-left,
+.mapboxgl-ctrl-bottom-right {
   z-index: 999 !important;
 }
 
@@ -4541,12 +4582,12 @@ a:hover {
 
 .cluster-marker {
   cursor: pointer !important;
-  transition: transform 0.2s ease !important;
   color: #fff;
+  /* No transition on transform — Mapbox GL JS uses transform to position this element */
 }
 
-.cluster-marker:hover {
-  transform: scale(1.1) !important;
+.cluster-marker:hover .cluster-icon {
+  transform: scale(1.1);
 }
 
 .cluster-marker:hover .cluster-icon {
@@ -4595,12 +4636,13 @@ a:hover {
 /* Custom Marker with Label - Shows name and location */
 .custom-marker-with-label {
   display: flex !important;
+  flex-direction: column !important;
   align-items: center !important;
-  gap: 6px;
+  gap: 4px;
   cursor: pointer !important;
   background: transparent !important;
   border: none !important;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif !important;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif !important;
   pointer-events: auto !important;
   overflow: visible !important;
 }
@@ -4942,18 +4984,20 @@ a:hover {
 
 .custom-marker-with-label:hover .marker-label {
   background: #1a1a1a;
-  border-left-color: #FF9500;
+  border-bottom-color: #FF9500;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
-  transform: translateX(2px);
 }
 
 .custom-marker-with-label .marker-label {
   display: flex !important;
   flex-direction: column;
+  align-items: center;
+  order: -1;
   background: rgba(0, 0, 0, 0.9) !important;
-  padding: 6px 10px !important;
+  padding: 4px 8px !important;
   border-radius: 4px;
-  border-left: 3px solid #FF9500 !important;
+  border-left: none !important;
+  border-bottom: 2px solid #FF9500 !important;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.8) !important;
   white-space: nowrap;
   max-width: 200px;
@@ -5009,8 +5053,8 @@ a:hover {
 
 .custom-marker-with-label.selected .marker-label {
   background: rgba(0, 0, 0, 0.95) !important;
-  border-left-color: #FF9500 !important;
-  border-left-width: 4px;
+  border-bottom-color: #FF9500 !important;
+  border-bottom-width: 3px;
   box-shadow: 0 2px 12px rgba(94, 129, 172, 0.5), 0 0 0 2px rgba(94, 129, 172, 0.3) !important;
 }
 
@@ -5167,24 +5211,22 @@ a:hover {
 
 /* Marker animations removed - was causing visibility issues */
 
-/* Leaflet Popup Styling - Dark Theme */
-.leaflet-popup-content-wrapper {
+/* Mapbox GL JS Popup Styling - Dark Theme */
+.mapboxgl-popup-content {
   background: var(--color-bg-secondary) !important;
   color: var(--color-text-primary) !important;
   border-radius: 8px !important;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
   border: 1px solid var(--color-border) !important;
-}
-
-.leaflet-popup-content {
-  margin: 12px 14px !important;
+  padding: 12px 14px !important;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
   font-size: var(--font-size-sm) !important;
   line-height: 1.5 !important;
   max-height: 60vh !important;
   overflow-y: auto !important;
 }
 
-.leaflet-popup-content h3 {
+.mapboxgl-popup-content h3 {
   margin: 0 0 8px 0;
   font-size: 15px;
   font-weight: 600;
@@ -5193,13 +5235,13 @@ a:hover {
   padding-bottom: 8px;
 }
 
-.leaflet-popup-content p {
+.mapboxgl-popup-content p {
   margin: 4px 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
 
-.leaflet-popup-content .popup-status {
+.mapboxgl-popup-content .popup-status {
   margin-top: 8px;
   padding: 8px 12px;
   border-radius: 6px;
@@ -5209,27 +5251,27 @@ a:hover {
   color: var(--color-text-primary);
 }
 
-.leaflet-popup-content .popup-status.status-overdue {
+.mapboxgl-popup-content .popup-status.status-overdue {
   background: var(--color-status-overdue);
   color: #fff !important;
 }
 
-.leaflet-popup-content .popup-status.status-soon {
+.mapboxgl-popup-content .popup-status.status-soon {
   background: var(--color-status-soon);
   color: #000 !important;
 }
 
-.leaflet-popup-content .popup-status.status-ok {
+.mapboxgl-popup-content .popup-status.status-ok {
   background: var(--color-status-ok);
   color: #fff !important;
 }
 
-.leaflet-popup-content .popup-status.status-good {
+.mapboxgl-popup-content .popup-status.status-good {
   background: var(--color-status-good);
   color: #fff !important;
 }
 
-.leaflet-popup-content .popup-status.status-unknown {
+.mapboxgl-popup-content .popup-status.status-unknown {
   background: var(--color-status-unknown);
   color: #fff !important;
 }
@@ -5239,36 +5281,36 @@ a:hover {
 .popup-status.status-soon i,
 .popup-status.status-ok i,
 .popup-status.status-good i,
-.leaflet-popup-content .popup-status.status-overdue i,
-.leaflet-popup-content .popup-status.status-soon i,
-.leaflet-popup-content .popup-status.status-ok i,
-.leaflet-popup-content .popup-status.status-good i {
+.mapboxgl-popup-content .popup-status.status-overdue i,
+.mapboxgl-popup-content .popup-status.status-soon i,
+.mapboxgl-popup-content .popup-status.status-ok i,
+.mapboxgl-popup-content .popup-status.status-good i {
   color: inherit !important;
 }
 
-.leaflet-popup-content .popup-control-info {
+.mapboxgl-popup-content .popup-control-info {
   margin-top: 8px;
 }
 
-.leaflet-popup-content .popup-status .control-days {
+.mapboxgl-popup-content .popup-status .control-days {
   font-weight: 700;
   margin-left: 4px;
 }
 
-.leaflet-popup-content .popup-status .control-date {
+.mapboxgl-popup-content .popup-status .control-date {
   font-weight: 400;
   margin-left: 6px;
   opacity: 0.9;
 }
 
-.leaflet-popup-content .popup-controls {
+.mapboxgl-popup-content .popup-controls {
   margin-top: 8px;
   padding: 10px;
   background: var(--color-bg-tertiary);
   border-radius: 6px;
 }
 
-.leaflet-popup-content .popup-controls p {
+.mapboxgl-popup-content .popup-controls p {
   margin: 4px 0;
   font-size: var(--font-size-sm);
 }
@@ -5410,7 +5452,7 @@ a:hover {
   color: var(--color-text, #e0e0e0);
 }
 
-.leaflet-popup-content .popup-actions {
+.mapboxgl-popup-content .popup-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -5419,7 +5461,7 @@ a:hover {
   border-top: 1px solid var(--color-border);
 }
 
-.leaflet-popup-content .popup-actions .btn {
+.mapboxgl-popup-content .popup-actions .btn {
   flex: 1 1 auto;
   min-width: 80px;
   padding: 6px 8px;
@@ -5427,17 +5469,17 @@ a:hover {
   white-space: nowrap;
 }
 
-.leaflet-popup-tip-container {
+.mapboxgl-popup-tip {
   display: none;
 }
 
-.leaflet-popup-close-button {
+.mapboxgl-popup-close-button {
   color: var(--color-text-muted) !important;
   font-size: 20px !important;
   padding: 4px 8px !important;
 }
 
-.leaflet-popup-close-button:hover {
+.mapboxgl-popup-close-button:hover {
   color: var(--color-accent) !important;
 }
 
@@ -5465,11 +5507,13 @@ a:hover {
   overflow: visible !important;
   font-size: var(--font-size-xs) !important;
   cursor: pointer !important;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.custom-cluster:hover {
+.custom-cluster:hover .cluster-icon {
   transform: scale(1.08);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.5),
+    0 0 0 3px rgba(94, 129, 172, 0.5);
 }
 
 .cluster-icon {
@@ -5484,6 +5528,7 @@ a:hover {
     0 4px 15px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   animation: cluster-pulse 3s ease-in-out infinite;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 /* Unified dark professional style with sizes */
@@ -5683,16 +5728,7 @@ a:hover {
   filter: brightness(1.2);
 }
 
-/* Spiderfy lines for overlapping markers */
-.leaflet-cluster-spider-leg {
-  stroke: var(--color-accent);
-  stroke-width: 2;
-  stroke-opacity: 0.6;
-}
-
-.leaflet-cluster-spider-leg:hover {
-  stroke-opacity: 1;
-}
+/* Spiderfy removed — Supercluster doesn't include spiderfy */
 
 /* Country labels for map */
 .country-label {
@@ -5711,7 +5747,7 @@ a:hover {
 }
 
 /* Scale control styling */
-.leaflet-control-scale-line {
+.mapboxgl-ctrl-scale {
   background: rgba(0, 0, 0, 0.6) !important;
   border: 1px solid rgba(255, 255, 255, 0.3) !important;
   border-top: none !important;
@@ -7225,17 +7261,14 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
 }
 
 .address-suggestions {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
+  position: fixed;
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-top: none;
   border-radius: 0 0 8px 8px;
   max-height: 200px;
   overflow-y: auto;
-  z-index: 1000;
+  z-index: 100000;
   display: none;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
@@ -7452,7 +7485,7 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   cursor: crosshair !important;
 }
 
-.map-picking-mode .leaflet-container {
+.map-picking-mode .mapboxgl-canvas {
   cursor: crosshair !important;
 }
 
@@ -9049,32 +9082,24 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
     font-size: 16px;
   }
 
-  /* Leaflet controls positioning */
-  .leaflet-top.leaflet-left {
+  /* Mapbox GL JS controls positioning */
+  .mapboxgl-ctrl-top-left {
     top: 10px;
     left: 10px;
   }
 
-  .leaflet-top.leaflet-right {
+  .mapboxgl-ctrl-top-right {
     top: 10px;
     right: 10px;
   }
 
-  .leaflet-control-zoom {
-    margin-top: 0 !important;
-  }
-
   /* Popup adjustments - ensure popups appear above sidebar on mobile */
-  .leaflet-popup {
+  .mapboxgl-popup {
     z-index: 1600 !important;
   }
 
-  .leaflet-popup-content-wrapper {
-    max-width: calc(100vw - 40px) !important;
-  }
-
-  .leaflet-popup-content {
-    max-width: 280px !important;
+  .mapboxgl-popup-content {
+    max-width: min(calc(100vw - 40px), 280px) !important;
   }
 
   /* Marker labels - hide by default on mobile for cleaner view */
@@ -9872,13 +9897,20 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   background: #14b8a6;
 }
 
-/* === AREA SELECT (dra-for-å-velge) === */
-.area-select-toggle-btn {
+/* === MAP TOOLBAR CENTER (shared container for map action buttons) === */
+.map-toolbar-center {
   position: absolute;
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* === AREA SELECT (dra-for-å-velge) === */
+.area-select-toggle-btn {
   width: 40px;
   height: 40px;
   border-radius: 8px;
@@ -9895,13 +9927,49 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
 }
 .area-select-toggle-btn:hover {
   background: #f0f0f0;
-  transform: translateX(-50%);
 }
 .area-select-toggle-btn.active {
   background: #3b82f6;
   color: white;
   box-shadow: 0 2px 12px rgba(59, 130, 246, 0.5);
 }
+
+/* === 3D TERRAIN TOGGLE === */
+.terrain-toggle-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: none;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #333;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.terrain-toggle-btn:hover {
+  background: #f0f0f0;
+}
+.terrain-toggle-btn.active {
+  background: #10b981;
+  color: white;
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.5);
+}
+
+/* === WEEKPLAN DRIVE TIME SEPARATORS === */
+.wp-drive-separator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 40px;
+  font-size: 10px;
+  color: var(--color-text-secondary, #94a3b8);
+  opacity: 0.7;
+}
+
 .area-select-menu {
   position: fixed;
   bottom: 24px;
@@ -10528,7 +10596,7 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
 }
 
 /* Office Popup Styling */
-.office-popup-container .leaflet-popup-content-wrapper {
+.office-popup-container .mapboxgl-popup-content {
   background: rgba(26, 26, 26, 0.95);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(34, 197, 94, 0.3);
@@ -10536,18 +10604,18 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(34, 197, 94, 0.2);
 }
 
-.office-popup-container .leaflet-popup-tip {
+.office-popup-container .mapboxgl-popup-tip {
   background: rgba(26, 26, 26, 0.95);
   border: 1px solid rgba(34, 197, 94, 0.3);
   border-top: none;
   border-right: none;
 }
 
-.office-popup-container .leaflet-popup-close-button {
+.office-popup-container .mapboxgl-popup-close-button {
   color: #a0a0a0 !important;
 }
 
-.office-popup-container .leaflet-popup-close-button:hover {
+.office-popup-container .mapboxgl-popup-close-button:hover {
   color: #22c55e !important;
 }
 
@@ -17098,14 +17166,7 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   border: 2px solid white;
 }
 
-/* Highlight area on map */
-.leaflet-interactive.highlight-area {
-  animation: pulse-area 2s ease-in-out infinite;
-}
-
-.leaflet-interactive.highlight-dot {
-  filter: drop-shadow(0 0 4px #ff6b00);
-}
+/* Highlight area on map — now handled by GeoJSON layers in smart-route-engine.js */
 
 @keyframes pulse-area {
   0%, 100% {
@@ -17164,12 +17225,12 @@ button, .btn, a, input, select, textarea {
 
 /* Enhanced button hover effects */
 .btn:hover:not(:disabled),
-button:hover:not(:disabled):not(.tab-item):not(.kategori-tab):not(.category-btn):not(.area-select-toggle-btn):not(.filter-panel-toggle) {
+button:hover:not(:disabled):not(.tab-item):not(.kategori-tab):not(.category-btn):not(.area-select-toggle-btn):not(.terrain-toggle-btn):not(.filter-panel-toggle) {
   transform: translateY(-1px);
 }
 
 .btn:active:not(:disabled),
-button:active:not(:disabled):not(.area-select-toggle-btn):not(.filter-panel-toggle) {
+button:active:not(:disabled):not(.area-select-toggle-btn):not(.terrain-toggle-btn):not(.filter-panel-toggle) {
   transform: translateY(0);
 }
 
@@ -17475,7 +17536,7 @@ body.is-impersonating #loginOverlay {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   padding: 4px 0;
   animation: contextMenuIn 0.15s ease-out;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  font-family: inherit;
   font-size: 13px;
 }
 
@@ -17510,6 +17571,17 @@ body.is-impersonating #loginOverlay {
 
 .context-menu-item:hover {
   background: var(--color-primary, #10b981);
+  color: #fff;
+}
+
+.context-menu-item.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+
+.context-menu-item.danger:hover {
+  background: #DC2626;
   color: #fff;
 }
 
@@ -17598,9 +17670,9 @@ body.is-impersonating #loginOverlay {
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
   padding: 0;
-  pointer-events: none;
+  pointer-events: auto;
   animation: tooltipFadeIn 0.15s ease-out;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  font-family: inherit;
   font-size: 12px;
 }
 
@@ -17708,6 +17780,33 @@ body.is-impersonating #loginOverlay {
 .marker-hover-tooltip .tooltip-status.status-confirmed-both {
   background: linear-gradient(90deg, rgba(239, 83, 80, 0.15), rgba(102, 187, 106, 0.15));
   color: #ddd;
+}
+
+.marker-hover-tooltip .tooltip-actions {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px 6px;
+  border-top: 1px solid var(--color-border, #333);
+}
+
+.tooltip-action-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary, #aaa);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.tooltip-action-btn:hover {
+  background: var(--color-accent, #5e81ac);
+  color: #fff;
 }
 
 /* Hide tooltip on mobile (touch devices use bottom sheet instead) */
@@ -18210,8 +18309,8 @@ body.is-impersonating #loginOverlay {
     display: none !important;
   }
 
-  /* Hide Leaflet attribution on mobile - clutters bottom area */
-  body.has-bottom-tab-bar .leaflet-control-attribution {
+  /* Hide Mapbox GL JS attribution on mobile - clutters bottom area */
+  body.has-bottom-tab-bar .mapboxgl-ctrl-attrib {
     display: none !important;
   }
 
@@ -18305,8 +18404,8 @@ body.is-impersonating #loginOverlay {
     bottom: calc(56px + env(safe-area-inset-bottom, 0px));
   }
 
-  /* Leaflet popups above tab bar */
-  body.has-bottom-tab-bar .leaflet-popup {
+  /* Mapbox GL JS popups above tab bar */
+  body.has-bottom-tab-bar .mapboxgl-popup {
     z-index: 2600 !important;
   }
 }
@@ -19093,7 +19192,7 @@ body.is-impersonating #loginOverlay {
 
 /* ========== CALENDAR SPLIT VIEW ========== */
 .calendar-split-overlay {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 .calendar-split-panel {
@@ -19344,7 +19443,6 @@ body.is-impersonating #loginOverlay {
   color: var(--color-success, #22c55e);
   background: color-mix(in srgb, var(--color-success, #22c55e) 8%, var(--bg-primary));
 }
-
 /* Confirm Day Panel (floating) */
 .confirm-day-panel {
   position: fixed;

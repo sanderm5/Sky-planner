@@ -6,6 +6,13 @@ import type { APIRoute } from 'astro';
 
 const APP_API_URL = import.meta.env.APP_API_URL || (import.meta.env.PROD ? 'https://skyplannerapp-production.up.railway.app' : 'http://localhost:3000');
 
+/** Validate that a string looks like an IPv4 or IPv6 address */
+function isValidIP(ip: string): boolean {
+  const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
+  const ipv6 = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+  return ipv4.test(ip) || ipv6.test(ip);
+}
+
 export const ALL: APIRoute = async ({ request, params }) => {
   const path = params.path || '';
 
@@ -50,15 +57,16 @@ export const ALL: APIRoute = async ({ request, params }) => {
 
     // Forward client IP for accurate rate limiting
     // Use x-real-ip (set by Vercel) to avoid spoofed x-forwarded-for from clients
+    // Validate IP format before forwarding to prevent header injection
     const realIP = request.headers.get('x-real-ip');
-    if (realIP) {
-      headers.set('x-forwarded-for', realIP);
+    if (realIP && isValidIP(realIP.trim())) {
+      headers.set('x-forwarded-for', realIP.trim());
     } else {
       // Fallback: use x-forwarded-for but only the first IP (closest to Vercel)
       const forwardedFor = request.headers.get('x-forwarded-for');
       if (forwardedFor) {
         const firstIP = forwardedFor.split(',')[0]?.trim();
-        if (firstIP) {
+        if (firstIP && isValidIP(firstIP)) {
           headers.set('x-forwarded-for', firstIP);
         }
       }
@@ -78,7 +86,19 @@ export const ALL: APIRoute = async ({ request, params }) => {
       }
     }
 
-    const response = await fetch(`${targetUrl}${queryString}`, options);
+    // Add timeout to prevent indefinite hangs (Vercel serverless has 25-60s limit)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    let response: globalThis.Response;
+    try {
+      response = await fetch(`${targetUrl}${queryString}`, {
+        ...options,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     // Forward response headers
     const responseHeaders = new Headers();
@@ -89,6 +109,19 @@ export const ALL: APIRoute = async ({ request, params }) => {
       }
     });
 
+    // Check Content-Length before reading body to prevent OOM on Vercel (128MB limit)
+    const contentLength = response.headers.get('content-length');
+    const MAX_RESPONSE_SIZE = 50 * 1024 * 1024; // 50MB
+    if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_SIZE) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'RESPONSE_TOO_LARGE', message: 'Backend-respons er for stor' }
+        }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const responseBody = await response.text();
 
     return new Response(responseBody, {
@@ -97,17 +130,18 @@ export const ALL: APIRoute = async ({ request, params }) => {
       headers: responseHeaders,
     });
   } catch (error) {
-    console.error('Proxy error:', error);
+    const isTimeout = error instanceof Error && error.name === 'AbortError';
+    console.error('Proxy error:', isTimeout ? 'Request timed out after 30s' : error);
     return new Response(
       JSON.stringify({
         success: false,
         error: {
-          code: 'PROXY_ERROR',
-          message: 'Kunne ikke koble til backend'
+          code: isTimeout ? 'PROXY_TIMEOUT' : 'PROXY_ERROR',
+          message: isTimeout ? 'Backend svarte ikke innen tidsfristen' : 'Kunne ikke koble til backend'
         }
       }),
       {
-        status: 502,
+        status: isTimeout ? 504 : 502,
         headers: { 'Content-Type': 'application/json' }
       }
     );

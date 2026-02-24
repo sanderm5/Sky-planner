@@ -1,7 +1,7 @@
 // Sky Planner Service Worker
 // Handles caching strategies for offline support
 
-const SHELL_CACHE = 'skyplanner-shell-v2';
+const SHELL_CACHE = 'skyplanner-shell-v3';
 const CDN_CACHE = 'skyplanner-cdn-v1';
 const TILE_CACHE = 'skyplanner-tiles-v1';
 const API_CACHE = 'skyplanner-api-v1';
@@ -12,8 +12,8 @@ const MAX_TILE_CACHE = 2000;
 const SHELL_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260215-dispatch',
-  '/style.css?v=20260215-dispatch',
+  '/app.js?v=20260222-autocomplete-v2',
+  '/style.css?v=20260222-autocomplete-v2',
   '/offline-storage.js?v=1',
   '/sync-manager.js?v=1',
   '/skyplanner-logo.svg',
@@ -27,15 +27,15 @@ const SHELL_ASSETS = [
 
 // CDN patterns to cache
 const CDN_PATTERNS = [
-  'unpkg.com/leaflet',
-  'unpkg.com/leaflet.markercluster',
+  'api.mapbox.com/mapbox-gl-js',
+  'unpkg.com/supercluster',
   'cdnjs.cloudflare.com/ajax/libs/font-awesome',
   'fonts.googleapis.com',
   'fonts.gstatic.com'
 ];
 
-// Tile URL pattern
-const TILE_PATTERN = /api\.mapbox\.com\/styles\/v1\/.+\/tiles\//;
+// Tile URL pattern (Mapbox GL JS vector tiles)
+const TILE_PATTERN = /api\.mapbox\.com\/(v4|styles\/v1)\/.+\/(tiles|sprite|glyphs)/;
 
 // API patterns that can be cached for offline
 const CACHEABLE_API = [

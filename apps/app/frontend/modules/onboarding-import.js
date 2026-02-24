@@ -1117,19 +1117,19 @@ function renderAIQuestions() {
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === q.targetField ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="${q.targetField || ''}"
                   ${wizardImportState.questionAnswers[q.header] === q.targetField || (!wizardImportState.questionAnswers[q.header] && q.targetField) ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '${q.targetField || ''}')">
+                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '${escapeJsString(q.targetField || '')}')">
                 <span>${escapeHtml(q.targetField || 'Egendefinert felt')} <span class="recommended">(Anbefalt av AI)</span></span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_custom"
                   ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '_custom')">
+                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_custom')">
                 <span>Behold som egendefinert felt</span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_skip"
                   ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '_skip')">
+                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_skip')">
                 <span>Ignorer denne kolonnen</span>
               </label>
             </div>
@@ -1443,7 +1443,7 @@ function renderUnmappedColumnsSection(data, headers, mapping, targetFields) {
                 <span class="wizard-unmapped-sample">Eksempel: ${escapeHtml(col.sampleValue || '-')}</span>
               </div>
               <div class="wizard-unmapped-action">
-                <select onchange="handleUnmappedColumn('${escapeHtml(col.header)}', this.value)">
+                <select onchange="handleUnmappedColumn('${escapeJsString(col.header)}', this.value)">
                   <option value="ignore" ${currentAction === 'ignore' ? 'selected' : ''}>
                     Ignorer
                   </option>
@@ -1525,7 +1525,7 @@ function renderWizardImportPreview() {
               </div>
               <div class="wizard-category-arrow"><i class="fas fa-arrow-right"></i></div>
               <div class="wizard-category-select">
-                <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeHtml(match.original)}', this.value)">
+                <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeJsString(match.original)}', this.value)">
                   ${match.suggested ? `
                     <option value="${escapeHtml(match.suggested.id)}" selected>
                       ${escapeHtml(match.suggested.name)} (anbefalt)
@@ -2991,11 +2991,11 @@ function renderErrorGrouping(preview) {
               <span class="error-group-count">${group.count} rader</span>
             </div>
             ${group.field === 'epost' && group.message.includes('skrivefeil') ? `
-              <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeHtml(group.field)}', '${escapeHtml(group.message)}')">
+              <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
                 <i class="fas fa-magic"></i> Fiks alle
               </button>
             ` : `
-              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeHtml(group.field)}', '${escapeHtml(group.message)}')">
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
                 <i class="fas fa-minus-circle"></i> Fjern fra import
               </button>
             `}
@@ -3138,24 +3138,25 @@ function attachCompanyListeners() {
       const lat = data.route_start_lat || 59.9139;
       const lng = data.route_start_lng || 10.7522;
 
-      wizardRouteMap = L.map('wizardRouteMap').setView([lat, lng], 10);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
-      }).addTo(wizardRouteMap);
+      wizardRouteMap = new mapboxgl.Map({
+        container: 'wizardRouteMap',
+        style: 'mapbox://styles/mapbox/streets-v12',
+        center: [lng, lat],
+        zoom: 10,
+        accessToken: mapboxgl.accessToken
+      });
 
       if (data.route_start_lat) {
-        wizardRouteMarker = L.marker([lat, lng]).addTo(wizardRouteMap);
+        wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
       }
 
       wizardRouteMap.on('click', (e) => {
-        if (wizardRouteMarker) {
-          wizardRouteMap.removeLayer(wizardRouteMarker);
-        }
-        wizardRouteMarker = L.marker(e.latlng).addTo(wizardRouteMap);
-        onboardingWizard.data.company.route_start_lat = e.latlng.lat;
-        onboardingWizard.data.company.route_start_lng = e.latlng.lng;
+        if (wizardRouteMarker) wizardRouteMarker.remove();
+        wizardRouteMarker = new mapboxgl.Marker().setLngLat(e.lngLat).addTo(wizardRouteMap);
+        onboardingWizard.data.company.route_start_lat = e.lngLat.lat;
+        onboardingWizard.data.company.route_start_lng = e.lngLat.lng;
         document.getElementById('routeCoordinates').innerHTML =
-          `<span>Valgt: ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}</span>`;
+          `<span>Valgt: ${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}</span>`;
       });
     }
   }, 100);
@@ -3296,9 +3297,9 @@ function selectWizardAddressSuggestion(suggestion) {
 
   // Update map marker
   if (wizardRouteMap) {
-    if (wizardRouteMarker) wizardRouteMap.removeLayer(wizardRouteMarker);
-    wizardRouteMarker = L.marker([suggestion.lat, suggestion.lng]).addTo(wizardRouteMap);
-    wizardRouteMap.setView([suggestion.lat, suggestion.lng], 14);
+    if (wizardRouteMarker) wizardRouteMarker.remove();
+    wizardRouteMarker = new mapboxgl.Marker().setLngLat([suggestion.lng, suggestion.lat]).addTo(wizardRouteMap);
+    wizardRouteMap.flyTo({ center: [suggestion.lng, suggestion.lat], zoom: 14 });
   }
 
   // Update coordinates display
@@ -3388,10 +3389,13 @@ function attachMapListeners() {
       const lng = data.center_lng || company.route_start_lng || 10.7522;
       const zoom = data.zoom || 10;
 
-      wizardMainMap = L.map('wizardMainMap').setView([lat, lng], zoom);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
-      }).addTo(wizardMainMap);
+      wizardMainMap = new mapboxgl.Map({
+        container: 'wizardMainMap',
+        style: 'mapbox://styles/mapbox/streets-v12',
+        center: [lng, lat],
+        zoom: zoom,
+        accessToken: mapboxgl.accessToken
+      });
 
       wizardMainMap.on('moveend', () => {
         const center = wizardMainMap.getCenter();
@@ -3442,11 +3446,9 @@ async function useAddressAsRouteStart() {
       onboardingWizard.data.company.route_start_lng = lng;
 
       if (wizardRouteMap) {
-        if (wizardRouteMarker) {
-          wizardRouteMap.removeLayer(wizardRouteMarker);
-        }
-        wizardRouteMarker = L.marker([lat, lng]).addTo(wizardRouteMap);
-        wizardRouteMap.setView([lat, lng], 14);
+        if (wizardRouteMarker) wizardRouteMarker.remove();
+        wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
+        wizardRouteMap.flyTo({ center: [lng, lat], zoom: 14 });
       }
 
       document.getElementById('routeCoordinates').innerHTML =

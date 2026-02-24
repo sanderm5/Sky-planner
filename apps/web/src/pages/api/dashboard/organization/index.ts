@@ -44,7 +44,7 @@ export const PUT: APIRoute = async ({ request }) => {
 
   try {
     const body = await request.json();
-    const { navn, logo_url, primary_color, industry_template_id, dato_modus } = body;
+    const { navn, logo_url, primary_color, industry_template_id, dato_modus, company_address, company_postnummer, company_poststed, route_start_lat, route_start_lng } = body;
 
     // Build update object
     const updateData: Record<string, unknown> = {};
@@ -64,7 +64,7 @@ export const PUT: APIRoute = async ({ request }) => {
 
       if (industryError || !industry) {
         return new Response(
-          JSON.stringify({ error: 'Ugyldig bransje valgt' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig bransje valgt' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -74,13 +74,13 @@ export const PUT: APIRoute = async ({ request }) => {
     if (navn !== undefined) {
       if (!navn.trim()) {
         return new Response(
-          JSON.stringify({ error: 'Organisasjonsnavn kan ikke være tomt' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Organisasjonsnavn kan ikke være tomt' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
       if (navn.length > 100) {
         return new Response(
-          JSON.stringify({ error: 'Organisasjonsnavn kan ikke være lengre enn 100 tegn' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Organisasjonsnavn kan ikke være lengre enn 100 tegn' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -126,7 +126,7 @@ export const PUT: APIRoute = async ({ request }) => {
           }
         } catch (error) {
           return new Response(
-            JSON.stringify({ error: error instanceof Error ? error.message : 'Ugyldig logo-URL' }),
+            JSON.stringify({ success: false, error: { code: 'ERROR', message: error instanceof Error ? error.message : 'Ugyldig logo-URL' } }),
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
         }
@@ -137,7 +137,7 @@ export const PUT: APIRoute = async ({ request }) => {
     if (dato_modus !== undefined) {
       if (!['full_date', 'month_year'].includes(dato_modus)) {
         return new Response(
-          JSON.stringify({ error: 'Ugyldig datoformat-modus' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig datoformat-modus' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -148,16 +148,67 @@ export const PUT: APIRoute = async ({ request }) => {
       // Validate hex color (or null to clear)
       if (primary_color && !primary_color.match(/^#[0-9A-Fa-f]{6}$/)) {
         return new Response(
-          JSON.stringify({ error: 'Ugyldig fargeformat. Bruk hex-format (#RRGGBB)' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig fargeformat. Bruk hex-format (#RRGGBB)' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
       updateData.primary_color = primary_color || null;
     }
 
+    // Company address fields
+    if (company_address !== undefined) {
+      if (company_address && company_address.length > 200) {
+        return new Response(
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Adresse kan ikke være lengre enn 200 tegn' } }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      updateData.company_address = company_address?.trim() || null;
+    }
+
+    if (company_postnummer !== undefined) {
+      if (company_postnummer && company_postnummer.length > 10) {
+        return new Response(
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Postnummer kan ikke være lengre enn 10 tegn' } }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      updateData.company_postnummer = company_postnummer?.trim() || null;
+    }
+
+    if (company_poststed !== undefined) {
+      if (company_poststed && company_poststed.length > 100) {
+        return new Response(
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Poststed kan ikke være lengre enn 100 tegn' } }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      updateData.company_poststed = company_poststed?.trim() || null;
+    }
+
+    if (route_start_lat !== undefined) {
+      if (route_start_lat !== null && (typeof route_start_lat !== 'number' || route_start_lat < -90 || route_start_lat > 90)) {
+        return new Response(
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig breddegrad (latitude). Må være mellom -90 og 90.' } }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      updateData.route_start_lat = route_start_lat;
+    }
+
+    if (route_start_lng !== undefined) {
+      if (route_start_lng !== null && (typeof route_start_lng !== 'number' || route_start_lng < -180 || route_start_lng > 180)) {
+        return new Response(
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig lengdegrad (longitude). Må være mellom -180 og 180.' } }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      updateData.route_start_lng = route_start_lng;
+    }
+
     if (Object.keys(updateData).length === 0) {
       return new Response(
-        JSON.stringify({ error: 'Ingen felter å oppdatere' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ingen felter å oppdatere' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -184,8 +235,9 @@ export const PUT: APIRoute = async ({ request }) => {
     );
   } catch (error) {
     console.error('Error updating organization:', error);
+    const message = error instanceof Error ? error.message : 'Kunne ikke oppdatere organisasjon';
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke oppdatere organisasjon' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: message } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

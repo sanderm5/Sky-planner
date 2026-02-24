@@ -17,7 +17,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
   // Verify authentication
   const token = cookies.get('skyplanner_session')?.value;
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Ikke autentisert' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ikke autentisert' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -25,7 +25,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
   const JWT_SECRET = import.meta.env.JWT_SECRET;
   if (!JWT_SECRET) {
-    return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -33,7 +33,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
   const result = auth.verifyToken(token, JWT_SECRET);
   if (!result.success || !result.payload) {
-    return new Response(JSON.stringify({ error: 'Ugyldig token' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig token' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -48,7 +48,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     // Require either password or TOTP code for security
     if (!password && !code) {
       return new Response(
-        JSON.stringify({ error: 'Passord eller 2FA-kode er p\u00e5krevd for \u00e5 deaktivere 2FA' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Passord eller 2FA-kode er p\u00e5krevd for \u00e5 deaktivere 2FA' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -62,14 +62,14 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
       .single();
 
     if (fetchError || !klient) {
-      return new Response(JSON.stringify({ error: 'Bruker ikke funnet' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
     if (!klient.totp_enabled) {
-      return new Response(JSON.stringify({ error: '2FA er ikke aktivert' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: '2FA er ikke aktivert' } }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -79,7 +79,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     if (password) {
       const passwordValid = await bcrypt.compare(password, klient.passord_hash);
       if (!passwordValid) {
-        return new Response(JSON.stringify({ error: 'Feil passord' }), {
+        return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil passord' } }), {
           status: 401,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -91,14 +91,14 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
       const ENCRYPTION_KEY = import.meta.env.ENCRYPTION_KEY;
       const ENCRYPTION_SALT = import.meta.env.ENCRYPTION_SALT;
       if (!ENCRYPTION_KEY || !ENCRYPTION_SALT) {
-        return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
+        return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
         });
       }
 
       if (!klient.totp_secret_encrypted) {
-        return new Response(JSON.stringify({ error: '2FA-konfigurasjon ikke funnet' }), {
+        return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: '2FA-konfigurasjon ikke funnet' } }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -106,7 +106,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
       const secret = auth.decryptTOTPSecret(klient.totp_secret_encrypted, ENCRYPTION_KEY, ENCRYPTION_SALT);
       if (!auth.verifyTOTP(secret, code)) {
-        return new Response(JSON.stringify({ error: 'Feil 2FA-kode' }), {
+        return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil 2FA-kode' } }), {
           status: 401,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -145,7 +145,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     );
   } catch (error) {
     console.error('2FA disable error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: 'Deaktivering feilet' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Deaktivering feilet' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

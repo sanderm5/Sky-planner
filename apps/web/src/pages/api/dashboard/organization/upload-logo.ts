@@ -130,7 +130,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!file) {
       return new Response(
-        JSON.stringify({ error: 'Ingen fil lastet opp' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ingen fil lastet opp' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -138,7 +138,7 @@ export const POST: APIRoute = async ({ request }) => {
     // Validate claimed MIME type
     if (!ALLOWED_TYPES.includes(file.type)) {
       return new Response(
-        JSON.stringify({ error: 'Ugyldig filtype. Kun PNG, JPG, SVG og WebP er tillatt.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig filtype. Kun PNG, JPG, SVG og WebP er tillatt.' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -146,7 +146,7 @@ export const POST: APIRoute = async ({ request }) => {
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
       return new Response(
-        JSON.stringify({ error: 'Filen er for stor. Maks 2MB.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Filen er for stor. Maks 2MB.' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -159,7 +159,7 @@ export const POST: APIRoute = async ({ request }) => {
       const detectedType = detectFileType(buffer);
       if (!detectedType) {
         return new Response(
-          JSON.stringify({ error: 'Filinnholdet matcher ikke den angitte filtypen' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Filinnholdet matcher ikke den angitte filtypen' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -167,7 +167,7 @@ export const POST: APIRoute = async ({ request }) => {
       const normalizedClaimed = file.type === 'image/jpeg' ? 'image/jpeg' : file.type;
       if (detectedType !== normalizedClaimed) {
         return new Response(
-          JSON.stringify({ error: 'Filinnholdet matcher ikke den angitte filtypen' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Filinnholdet matcher ikke den angitte filtypen' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -177,7 +177,7 @@ export const POST: APIRoute = async ({ request }) => {
       const svgValidation = validateSvgContent(svgContent);
       if (!svgValidation.valid) {
         return new Response(
-          JSON.stringify({ error: svgValidation.error }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: svgValidation.error } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -224,7 +224,7 @@ export const POST: APIRoute = async ({ request }) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Logo upload error:', errorMessage);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke laste opp logo' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke laste opp logo' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -263,7 +263,7 @@ export const DELETE: APIRoute = async ({ request }) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Logo delete error:', errorMessage);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke fjerne logo' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke fjerne logo' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

@@ -172,7 +172,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!epost) {
       return new Response(
-        JSON.stringify({ error: 'E-post er påkrevd' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'E-post er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -189,7 +189,7 @@ export const POST: APIRoute = async ({ request }) => {
   } catch (error) {
     console.error('Resend verification error:', error);
     return new Response(
-      JSON.stringify({ error: 'Noe gikk galt' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Noe gikk galt' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

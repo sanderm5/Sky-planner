@@ -1,4 +1,4 @@
-import { baseTemplate } from './base';
+import { baseTemplate, escapeHtmlEmail } from './base';
 
 export interface AccountDeletionScheduledData {
   userName: string;
@@ -10,14 +10,14 @@ export interface AccountDeletionScheduledData {
 
 export function accountDeletionScheduledTemplate(data: AccountDeletionScheduledData): string {
   const content = `
-    <p>Hei ${data.userName},</p>
+    <p>Hei ${escapeHtmlEmail(data.userName)},</p>
 
     <p>Vi har mottatt din forespørsel om å slette kontoen din hos Sky Planner.</p>
 
     <div style="background-color: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px; margin: 24px 0;">
       <p style="margin: 0; color: #92400e; font-weight: 600;">Viktig informasjon om slettingen:</p>
       <ul style="color: #92400e; margin: 12px 0 0 0; padding-left: 20px;">
-        <li>Kontoen din vil bli permanent slettet <strong>${data.scheduledDate}</strong></li>
+        <li>Kontoen din vil bli permanent slettet <strong>${escapeHtmlEmail(data.scheduledDate)}</strong></li>
         <li>Du har ${data.gracePeriodDays} dager på å angre</li>
         <li>Alle data vil bli slettet og kan ikke gjenopprettes</li>
       </ul>
@@ -31,15 +31,15 @@ export function accountDeletionScheduledTemplate(data: AccountDeletionScheduledD
     </ul>
 
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${data.exportUrl}" style="display: inline-block; background-color: #667eea; color: white; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600; margin-right: 12px;">
+      <a href="${data.exportUrl.startsWith('https://') ? escapeHtmlEmail(data.exportUrl) : '#'}" style="display: inline-block; background-color: #667eea; color: white; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600; margin-right: 12px;">
         Last ned data
       </a>
     </div>
 
-    <p>Hvis du har ombestemt deg og ønsker å beholde kontoen, kan du kansellere slettingen når som helst før ${data.scheduledDate}:</p>
+    <p>Hvis du har ombestemt deg og ønsker å beholde kontoen, kan du kansellere slettingen når som helst før ${escapeHtmlEmail(data.scheduledDate)}:</p>
 
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${data.cancelUrl}" style="display: inline-block; background-color: #10b981; color: white; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600;">
+      <a href="${data.cancelUrl.startsWith('https://') ? escapeHtmlEmail(data.cancelUrl) : '#'}" style="display: inline-block; background-color: #10b981; color: white; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600;">
         Kanseller sletting
       </a>
     </div>
@@ -51,7 +51,7 @@ export function accountDeletionScheduledTemplate(data: AccountDeletionScheduledD
   `;
 
   return baseTemplate(content, {
-    previewText: `Din konto vil bli slettet ${data.scheduledDate}`,
+    previewText: `Din konto vil bli slettet ${escapeHtmlEmail(data.scheduledDate)}`,
   });
 }
 
@@ -61,7 +61,7 @@ export interface AccountDeletionCompletedData {
 
 export function accountDeletionCompletedTemplate(data: AccountDeletionCompletedData): string {
   const content = `
-    <p>Hei ${data.userName},</p>
+    <p>Hei ${escapeHtmlEmail(data.userName)},</p>
 
     <p>Kontoen din hos Sky Planner er nå permanent slettet.</p>
 
@@ -100,7 +100,7 @@ export interface AccountDeletionCancelledData {
 
 export function accountDeletionCancelledTemplate(data: AccountDeletionCancelledData): string {
   const content = `
-    <p>Hei ${data.userName},</p>
+    <p>Hei ${escapeHtmlEmail(data.userName)},</p>
 
     <p>Slettingen av kontoen din hos Sky Planner er nå kansellert.</p>
 
@@ -114,7 +114,7 @@ export function accountDeletionCancelledTemplate(data: AccountDeletionCancelledD
     <p>Hvis abonnementet ditt ble satt på pause under sletteprosessen, er det nå reaktivert.</p>
 
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${data.dashboardUrl}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600;">
+      <a href="${data.dashboardUrl.startsWith('https://') ? escapeHtmlEmail(data.dashboardUrl) : '#'}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600;">
         Gå til dashbordet
       </a>
     </div>

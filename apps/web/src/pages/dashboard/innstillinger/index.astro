@@ -123,6 +123,107 @@ if ((organization as any).industry_template_id) {
       </div>
     </div>
 
+    <!-- Company Address Settings -->
+    <div class="glass-card p-6">
+      <h2 class="text-lg font-semibold text-white mb-6">Kontoradresse</h2>
+      <p class="text-dark-400 text-sm mb-4">Adressen brukes som hjemikon på kartet og startpunkt for ruteplanlegging.</p>
+
+      <div class="space-y-4">
+        <div style="position:relative;">
+          <label class="input-label" for="company-address">Adresse</label>
+          <input
+            type="text"
+            id="company-address"
+            name="company_address"
+            value={(organization as any).company_address || ''}
+            class="input max-w-md"
+            maxlength="200"
+            placeholder="Begynn å skrive for å søke..."
+            disabled={!isCurrentUserAdmin}
+            autocomplete="off"
+          />
+          <div id="address-suggestions" style="position:absolute; top:100%; left:0; z-index:9999; display:none; width:100%; max-width:28rem; background:#1e1e2e; border:1px solid #3b3b5c; border-radius:0.75rem; box-shadow:0 8px 32px rgba(0,0,0,0.6); overflow:hidden; margin-top:4px;"></div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 max-w-md">
+          <div>
+            <label class="input-label" for="company-postnummer">Postnummer</label>
+            <input
+              type="text"
+              id="company-postnummer"
+              name="company_postnummer"
+              value={(organization as any).company_postnummer || ''}
+              class="input"
+              maxlength="10"
+              placeholder="0001"
+              disabled={!isCurrentUserAdmin}
+            />
+          </div>
+          <div>
+            <label class="input-label" for="company-poststed">Poststed</label>
+            <input
+              type="text"
+              id="company-poststed"
+              name="company_poststed"
+              value={(organization as any).company_poststed || ''}
+              class="input"
+              maxlength="100"
+              placeholder="Oslo"
+              disabled={!isCurrentUserAdmin}
+            />
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <label class="input-label mb-0">Koordinater</label>
+            {isCurrentUserAdmin && (
+              <button
+                type="button"
+                id="geocode-btn"
+                class="text-primary-400 hover:text-primary-300 text-xs font-medium"
+              >
+                <i class="fas fa-search-location mr-1"></i> Sl&aring; opp fra adresse
+              </button>
+            )}
+          </div>
+          <div class="grid grid-cols-2 gap-4 max-w-md">
+            <div>
+              <label class="text-xs text-dark-500" for="route-start-lat">Breddegrad (lat)</label>
+              <input
+                type="number"
+                id="route-start-lat"
+                name="route_start_lat"
+                value={(organization as any).route_start_lat || ''}
+                class="input"
+                step="any"
+                min="-90"
+                max="90"
+                placeholder="59.9139"
+                disabled={!isCurrentUserAdmin}
+              />
+            </div>
+            <div>
+              <label class="text-xs text-dark-500" for="route-start-lng">Lengdegrad (lng)</label>
+              <input
+                type="number"
+                id="route-start-lng"
+                name="route_start_lng"
+                value={(organization as any).route_start_lng || ''}
+                class="input"
+                step="any"
+                min="-180"
+                max="180"
+                placeholder="10.7522"
+                disabled={!isCurrentUserAdmin}
+              />
+            </div>
+          </div>
+          <p class="text-xs text-dark-400 mt-1" id="geocode-status"></p>
+        </div>
+      </div>
+    </div>
+
     <!-- Industry Settings -->
     <div class="glass-card p-6">
       <h2 class="text-lg font-semibold text-white mb-6">Bransje</h2>
@@ -374,13 +475,28 @@ if ((organization as any).industry_template_id) {
 </DashboardLayout>
 
 <script>
-  function getCsrfToken() {
-    const match = document.cookie.match(/(?:^|;\s*)__csrf=([^;]*)/);
+  function getCsrfToken(cookieName = '__csrf') {
+    const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + cookieName + '=([^;]*)'));
     return match ? match[1] : '';
   }
 
   function csrfHeaders(): Record<string, string> {
     return { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() };
+  }
+
+  // Backend (proxied via /api/app/) uses a different CSRF cookie name
+  function backendCsrfHeaders(): Record<string, string> {
+    return { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken('csrf_token') };
+  }
+
+  // Ensure backend CSRF cookie is set (GET request triggers csrfTokenMiddleware)
+  let backendCsrfReady = !!getCsrfToken('csrf_token');
+  async function ensureBackendCsrf() {
+    if (backendCsrfReady) return;
+    try {
+      await fetch('/api/app/config', { credentials: 'include' });
+      backendCsrfReady = true;
+    } catch { /* ignore */ }
   }
 
   const form = document.getElementById('settings-form') as HTMLFormElement;
@@ -634,9 +750,16 @@ if ((organization as any).industry_template_id) {
     saveError?.classList.add('hidden');
 
     const formData = new FormData(form);
-    const data: Record<string, string | null> = {
+    const latVal = formData.get('route_start_lat') as string;
+    const lngVal = formData.get('route_start_lng') as string;
+    const data: Record<string, string | number | null> = {
       navn: formData.get('navn') as string,
       dato_modus: (formData.get('dato_modus') as string) || 'full_date',
+      company_address: (formData.get('company_address') as string) || null,
+      company_postnummer: (formData.get('company_postnummer') as string) || null,
+      company_poststed: (formData.get('company_poststed') as string) || null,
+      route_start_lat: latVal ? parseFloat(latVal) : null,
+      route_start_lng: lngVal ? parseFloat(lngVal) : null,
     };
 
     try {
@@ -675,5 +798,317 @@ if ((organization as any).industry_template_id) {
   // Delete organization (placeholder - would need confirmation flow)
   deleteOrgBtn?.addEventListener('click', () => {
     alert('For å slette organisasjonen, vennligst kontakt support på support@skyplanner.no');
+  });
+
+  // Address autocomplete
+  const addressInput = document.getElementById('company-address') as HTMLInputElement;
+  const suggestionsContainer = document.getElementById('address-suggestions');
+  const geocodeBtn = document.getElementById('geocode-btn');
+  const geocodeStatus = document.getElementById('geocode-status');
+  const routeStartLat = document.getElementById('route-start-lat') as HTMLInputElement;
+  const routeStartLng = document.getElementById('route-start-lng') as HTMLInputElement;
+  const postnummerInput = document.getElementById('company-postnummer') as HTMLInputElement;
+  const poststedInput = document.getElementById('company-poststed') as HTMLInputElement;
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let abortController: AbortController | null = null;
+  let activeSuggestionIndex = -1;
+
+  function positionDropdown() {
+    // No-op: dropdown uses position:absolute inside a relative wrapper,
+    // so it automatically stays below the input field.
+  }
+
+  function hideSuggestions() {
+    if (suggestionsContainer) {
+      suggestionsContainer.style.display = 'none';
+      suggestionsContainer.innerHTML = '';
+    }
+    activeSuggestionIndex = -1;
+  }
+
+  function selectSuggestion(s: { adresse: string; postnummer: string; poststed: string; lat: number; lng: number; kommune?: string }) {
+    if (addressInput) addressInput.value = s.adresse;
+    if (postnummerInput) postnummerInput.value = s.postnummer || '';
+    if (poststedInput) poststedInput.value = s.poststed || '';
+    if (routeStartLat) routeStartLat.value = s.lat.toFixed(7);
+    if (routeStartLng) routeStartLng.value = s.lng.toFixed(7);
+    if (geocodeStatus) {
+      geocodeStatus.textContent = `Koordinater satt: ${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`;
+      geocodeStatus.className = 'text-xs text-green-400 mt-1';
+    }
+    hideSuggestions();
+  }
+
+  function renderSuggestions(suggestions: Array<{ adresse: string; postnummer: string; poststed: string; lat: number; lng: number; kommune?: string }>) {
+    if (!suggestionsContainer || suggestions.length === 0) {
+      hideSuggestions();
+      return;
+    }
+    activeSuggestionIndex = -1;
+    suggestionsContainer.innerHTML = suggestions.map((s, i) => {
+      const sub = [s.postnummer, s.poststed, s.kommune].filter(Boolean).join(', ');
+      return `<button type="button" data-idx="${i}" style="display:block;width:100%;text-align:left;padding:10px 16px;border:none;background:none;cursor:pointer;border-bottom:1px solid #2d2d44;">
+        <div style="font-size:14px;color:#e0e0e0;">${s.adresse}</div>
+        ${sub ? `<div style="font-size:12px;color:#888;margin-top:2px;">${sub}</div>` : ''}
+      </button>`;
+    }).join('');
+
+    positionDropdown();
+    suggestionsContainer.style.display = 'block';
+
+    // Bind click & hover handlers
+    suggestionsContainer.querySelectorAll('button').forEach((btn, i) => {
+      btn.addEventListener('click', () => selectSuggestion(suggestions[i]));
+      btn.addEventListener('mouseenter', () => {
+        btn.style.background = '#2a2a3e';
+      });
+      btn.addEventListener('mouseleave', () => {
+        btn.style.background = 'none';
+      });
+    });
+  }
+
+  // Client-side cache for address search results
+  const addressSearchCache = new Map<string, { results: Array<any>; ts: number }>();
+  const ADDRESS_CACHE_MAX = 50;
+  const ADDRESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  function getCachedAddressSearch(key: string) {
+    const entry = addressSearchCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.ts > ADDRESS_CACHE_TTL) {
+      addressSearchCache.delete(key);
+      return null;
+    }
+    return entry.results;
+  }
+
+  function setCachedAddressSearch(key: string, results: any[]) {
+    if (addressSearchCache.size >= ADDRESS_CACHE_MAX) {
+      const firstKey = addressSearchCache.keys().next().value;
+      if (firstKey) addressSearchCache.delete(firstKey);
+    }
+    addressSearchCache.set(key, { results, ts: Date.now() });
+  }
+
+  function parseKartverketResults(data: any): Array<{ adresse: string; postnummer: string; poststed: string; lat: number; lng: number; kommune: string }> {
+    if (!data.adresser || data.adresser.length === 0) return [];
+    return data.adresser
+      .filter((addr: any) => addr.representasjonspunkt)
+      .map((addr: any) => ({
+        adresse: addr.adressetekst || '',
+        postnummer: addr.postnummer || '',
+        poststed: addr.poststed || '',
+        lat: addr.representasjonspunkt.lat,
+        lng: addr.representasjonspunkt.lon,
+        kommune: addr.kommunenavn || ''
+      }));
+  }
+
+  function showAddressSearchLoading() {
+    if (!suggestionsContainer) return;
+    suggestionsContainer.innerHTML = `<div style="padding:12px 16px;text-align:center;color:#888;font-size:13px;">
+      <i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i> Søker...
+    </div>`;
+    positionDropdown();
+    suggestionsContainer.style.display = 'block';
+  }
+
+  async function searchAddress(query: string) {
+    if (query.length < 2) {
+      hideSuggestions();
+      return;
+    }
+
+    // Check client-side cache first
+    const cacheKey = query.trim().toLowerCase();
+    const cached = getCachedAddressSearch(cacheKey);
+    if (cached) {
+      renderSuggestions(cached);
+      (addressInput as any)._suggestions = cached;
+      return;
+    }
+
+    // Cancel previous request
+    if (abortController) abortController.abort();
+    abortController = new AbortController();
+    const signal = abortController.signal;
+
+    const encoded = encodeURIComponent(query.trim());
+
+    // Show loading indicator
+    showAddressSearchLoading();
+
+    // Try Kartverket exact search first (fast, public, no API key needed)
+    try {
+      const response = await fetch(
+        `https://ws.geonorge.no/adresser/v1/sok?sok=${encoded}&treffPerSide=5`,
+        { signal }
+      );
+      if (response.ok) {
+        const results = parseKartverketResults(await response.json());
+        if (results.length > 0) {
+          setCachedAddressSearch(cacheKey, results);
+          renderSuggestions(results);
+          (addressInput as any)._suggestions = results;
+          return;
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+    }
+
+    // Fallback: Kartverket fuzzy search (catches typos)
+    try {
+      const response = await fetch(
+        `https://ws.geonorge.no/adresser/v1/sok?sok=${encoded}&fuzzy=true&treffPerSide=5`,
+        { signal }
+      );
+      if (response.ok) {
+        const results = parseKartverketResults(await response.json());
+        if (results.length > 0) {
+          setCachedAddressSearch(cacheKey, results);
+          renderSuggestions(results);
+          (addressInput as any)._suggestions = results;
+          return;
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+    }
+
+    // Last resort: backend proxy (Mapbox)
+    try {
+      await ensureBackendCsrf();
+      const res = await fetch('/api/app/geocode/forward', {
+        method: 'POST',
+        headers: backendCsrfHeaders(),
+        credentials: 'include',
+        body: JSON.stringify({ query, limit: 5 }),
+        signal,
+      });
+      if (!res.ok) { hideSuggestions(); return; }
+      const data = await res.json();
+      const suggestions = data?.data?.suggestions || [];
+      if (suggestions.length > 0) {
+        setCachedAddressSearch(cacheKey, suggestions);
+      }
+      renderSuggestions(suggestions);
+      (addressInput as any)._suggestions = suggestions;
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        hideSuggestions();
+      }
+    }
+  }
+
+  addressInput?.addEventListener('input', () => {
+    const val = addressInput.value.trim();
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => searchAddress(val), 150);
+  });
+
+  addressInput?.addEventListener('keydown', (e) => {
+    const items = suggestionsContainer?.querySelectorAll('button') || [];
+    if (items.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeSuggestionIndex = Math.min(activeSuggestionIndex + 1, items.length - 1);
+      items.forEach((el, i) => { (el as HTMLElement).style.background = i === activeSuggestionIndex ? '#2a2a3e' : 'none'; });
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeSuggestionIndex = Math.max(activeSuggestionIndex - 1, 0);
+      items.forEach((el, i) => { (el as HTMLElement).style.background = i === activeSuggestionIndex ? '#2a2a3e' : 'none'; });
+    } else if (e.key === 'Enter' && activeSuggestionIndex >= 0) {
+      e.preventDefault();
+      const suggestions = (addressInput as any)._suggestions || [];
+      if (suggestions[activeSuggestionIndex]) {
+        selectSuggestion(suggestions[activeSuggestionIndex]);
+      }
+    } else if (e.key === 'Escape') {
+      hideSuggestions();
+    }
+  });
+
+  // Close suggestions when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!addressInput?.contains(e.target as Node) && !suggestionsContainer?.contains(e.target as Node)) {
+      hideSuggestions();
+    }
+  });
+
+  // Manual geocode button
+  geocodeBtn?.addEventListener('click', async () => {
+    const address = addressInput?.value?.trim() || '';
+    const postnummer = postnummerInput?.value?.trim() || '';
+    const poststed = poststedInput?.value?.trim() || '';
+
+    const searchQuery = [address, postnummer, poststed].filter(Boolean).join(', ');
+
+    if (!searchQuery) {
+      if (geocodeStatus) geocodeStatus.textContent = 'Fyll inn adresse først.';
+      return;
+    }
+
+    if (geocodeStatus) {
+      geocodeStatus.textContent = 'Søker...';
+      geocodeStatus.className = 'text-xs text-dark-400 mt-1';
+    }
+
+    // Try Kartverket directly first (fast)
+    try {
+      const url = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(searchQuery)}&fuzzy=true&treffPerSide=1`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const addr = data.adresser?.[0];
+        if (addr?.representasjonspunkt) {
+          routeStartLat.value = addr.representasjonspunkt.lat.toFixed(7);
+          routeStartLng.value = addr.representasjonspunkt.lon.toFixed(7);
+          if (geocodeStatus) {
+            geocodeStatus.textContent = `Funnet: ${addr.adressetekst || searchQuery}`;
+            geocodeStatus.className = 'text-xs text-green-400 mt-1';
+          }
+          return;
+        }
+      }
+    } catch { /* fall through to backend */ }
+
+    // Fallback to backend proxy (Mapbox)
+    try {
+      await ensureBackendCsrf();
+      const res = await fetch('/api/app/geocode/forward', {
+        method: 'POST',
+        headers: backendCsrfHeaders(),
+        credentials: 'include',
+        body: JSON.stringify({ query: searchQuery, limit: 1 }),
+      });
+
+      if (!res.ok) throw new Error('Request failed');
+      const data = await res.json();
+      const suggestions = data?.data?.suggestions || [];
+
+      if (suggestions.length > 0) {
+        const s = suggestions[0];
+        routeStartLat.value = s.lat.toFixed(7);
+        routeStartLng.value = s.lng.toFixed(7);
+        if (geocodeStatus) {
+          geocodeStatus.textContent = `Funnet: ${s.adresse}, ${s.postnummer} ${s.poststed}`;
+          geocodeStatus.className = 'text-xs text-green-400 mt-1';
+        }
+      } else {
+        if (geocodeStatus) {
+          geocodeStatus.textContent = 'Fant ingen resultater. Prøv en annen adresse eller fyll inn koordinater manuelt.';
+          geocodeStatus.className = 'text-xs text-amber-400 mt-1';
+        }
+      }
+    } catch {
+      if (geocodeStatus) {
+        geocodeStatus.textContent = 'Feil ved oppslag. Prøv igjen eller fyll inn koordinater manuelt.';
+        geocodeStatus.className = 'text-xs text-red-400 mt-1';
+      }
+    }
   });
 </script>

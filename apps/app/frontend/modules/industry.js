@@ -515,6 +515,8 @@ async function reloadConfigWithAuth() {
       applyDateModeToInputs();
       // Refresh map tiles in case token was missing at initial load
       refreshMapTiles();
+      // Update office marker position with org-specific coordinates
+      updateOfficeMarkerPosition();
       Logger.log('Tenant-specific config loaded:', appConfig.organizationSlug);
     }
   } catch (error) {

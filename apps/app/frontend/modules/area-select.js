@@ -2,24 +2,33 @@
 
 // === AREA SELECT (dra-for-å-velge kunder på kartet) ===
 let areaSelectMode = false;
-let areaSelectRect = null;
 let areaSelectStart = null;
 
 function initAreaSelect() {
   if (!map) return;
 
-  // Legg til flytende knapp over kartet
+  // Legg til flytende knapp over kartet (inne i map-toolbar-center)
   const mapContainer = document.getElementById('sharedMapContainer');
   if (!mapContainer) return;
   const existingBtn = document.getElementById('areaSelectToggle');
   if (existingBtn) existingBtn.remove();
+
+  // Opprett eller finn delt toolbar-container
+  let toolbar = document.getElementById('mapToolbarCenter');
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = 'mapToolbarCenter';
+    toolbar.className = 'map-toolbar-center';
+    mapContainer.appendChild(toolbar);
+  }
+
   const btn = document.createElement('button');
   btn.id = 'areaSelectToggle';
   btn.className = 'area-select-toggle-btn';
   btn.title = 'Velg område';
   btn.innerHTML = '<i class="fas fa-expand"></i>';
   btn.addEventListener('click', () => toggleAreaSelect());
-  mapContainer.appendChild(btn);
+  toolbar.appendChild(btn);
 
   // Mouse events for area selection
   map.on('mousedown', onAreaSelectStart);
@@ -35,65 +44,94 @@ function toggleAreaSelect() {
   if (areaSelectMode) {
     btn?.classList.add('active');
     mapEl.style.cursor = 'crosshair';
-    map.dragging.disable();
+    map.dragPan.disable();
     showToast('Dra over kunder for å velge dem', 'info');
   } else {
     btn?.classList.remove('active');
     mapEl.style.cursor = '';
-    map.dragging.enable();
-    if (areaSelectRect) {
-      map.removeLayer(areaSelectRect);
-      areaSelectRect = null;
-    }
+    map.dragPan.enable();
+    // Remove selection rectangle layers
+    removeLayerAndSource('area-select-fill');
+    removeLayerAndSource('area-select-line');
+    removeLayerAndSource('area-select-rect');
   }
 }
 
 function onAreaSelectStart(e) {
   if (!areaSelectMode) return;
-  areaSelectStart = e.latlng;
-  if (areaSelectRect) {
-    map.removeLayer(areaSelectRect);
-  }
-  areaSelectRect = L.rectangle([e.latlng, e.latlng], {
-    color: '#3b82f6',
-    weight: 2,
-    fillOpacity: 0.15,
-    dashArray: '6, 4'
-  }).addTo(map);
+  areaSelectStart = e.lngLat;
+
+  // Remove existing rectangle
+  removeLayerAndSource('area-select-fill');
+  removeLayerAndSource('area-select-line');
+  removeLayerAndSource('area-select-rect');
+
+  // Create rectangle source
+  const geojson = rectangleGeoJSON(areaSelectStart, areaSelectStart);
+  map.addSource('area-select-rect', { type: 'geojson', data: geojson });
+  map.addLayer({
+    id: 'area-select-fill',
+    type: 'fill',
+    source: 'area-select-rect',
+    paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.15 }
+  });
+  map.addLayer({
+    id: 'area-select-line',
+    type: 'line',
+    source: 'area-select-rect',
+    paint: { 'line-color': '#3b82f6', 'line-width': 2, 'line-dasharray': [3, 2] }
+  });
 }
 
 function onAreaSelectMove(e) {
-  if (!areaSelectMode || !areaSelectStart || !areaSelectRect) return;
-  areaSelectRect.setBounds(L.latLngBounds(areaSelectStart, e.latlng));
+  if (!areaSelectMode || !areaSelectStart) return;
+  const source = map.getSource('area-select-rect');
+  if (source) {
+    source.setData(rectangleGeoJSON(areaSelectStart, e.lngLat));
+  }
 }
 
 function onAreaSelectEnd(e) {
-  if (!areaSelectMode || !areaSelectStart || !areaSelectRect) return;
+  if (!areaSelectMode || !areaSelectStart) return;
 
-  const bounds = areaSelectRect.getBounds();
+  const end = e.lngLat;
+  const start = areaSelectStart;
   areaSelectStart = null;
+
+  // Bounding box check
+  const minLng = Math.min(start.lng, end.lng);
+  const maxLng = Math.max(start.lng, end.lng);
+  const minLat = Math.min(start.lat, end.lat);
+  const maxLat = Math.max(start.lat, end.lat);
 
   // Finn kunder innenfor rektangelet
   const selected = customers.filter(c =>
-    c.lat && c.lng && bounds.contains(L.latLng(c.lat, c.lng))
+    c.lat && c.lng &&
+    c.lng >= minLng && c.lng <= maxLng &&
+    c.lat >= minLat && c.lat <= maxLat
   );
 
   if (selected.length === 0) {
-    map.removeLayer(areaSelectRect);
-    areaSelectRect = null;
+    removeLayerAndSource('area-select-fill');
+    removeLayerAndSource('area-select-line');
+    removeLayerAndSource('area-select-rect');
     showToast('Ingen kunder i valgt område', 'info');
     return;
   }
 
-  // Vis handlingsmeny (alltid vis valg)
-  showAreaSelectMenu(selected, bounds.getCenter());
+  // Vis handlingsmeny
+  const center = {
+    lng: (minLng + maxLng) / 2,
+    lat: (minLat + maxLat) / 2
+  };
+  showAreaSelectMenu(selected, center);
 }
 
 function showAreaSelectMenu(selectedCustomersList, center) {
   // Fjern eksisterende meny
   document.getElementById('areaSelectMenu')?.remove();
 
-  // Initialize weekplan if not yet (so button is always available)
+  // Initialize weekplan if not yet
   if (!weekPlanState.weekStart) {
     initWeekPlanState(new Date());
   }
@@ -101,7 +139,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
   const wpDayLabel = wpDayActive ? weekDayLabels[weekDayKeys.indexOf(wpDayActive)] : '';
   const showWpButton = true;
 
-  // Build weekplan day picker if no active day but tab is open
+  // Build weekplan day picker if no active day
   let wpDayPickerHtml = '';
   if (showWpButton && !wpDayActive) {
     wpDayPickerHtml = `
@@ -163,26 +201,20 @@ function showAreaSelectMenu(selectedCustomersList, center) {
   if (wpBtn) {
     wpBtn.addEventListener('click', () => {
       if (wpDayActive) {
-        // Aktiv dag finnes — legg til direkte
         addCustomersToWeekPlan(selectedCustomersList);
         closeAreaSelectMenu();
         renderWeeklyPlan();
       } else {
-        // Vis dag-picker
         const picker = document.getElementById('asmDayPicker');
-        if (picker) {
-          picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
-        }
+        if (picker) picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
       }
     });
 
-    // Dag-picker knapper
     const dayPicker = document.getElementById('asmDayPicker');
     if (dayPicker) {
       dayPicker.querySelectorAll('.asm-day-option').forEach(btn => {
         btn.addEventListener('click', () => {
-          const dayKey = btn.dataset.wpDay;
-          weekPlanState.activeDay = dayKey;
+          weekPlanState.activeDay = btn.dataset.wpDay;
           addCustomersToWeekPlan(selectedCustomersList);
           closeAreaSelectMenu();
           renderWeeklyPlan();
@@ -191,7 +223,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     }
   }
 
-  // Legg til split-view aktiv dag — vis varighetssteg
+  // Split-view day button
   const splitDayBtn = document.getElementById('areaAddToSplitDay');
   if (splitDayBtn) {
     splitDayBtn.addEventListener('click', () => {
@@ -242,11 +274,8 @@ function showAreaSelectMenu(selectedCustomersList, center) {
             const response = await apiFetch('/api/avtaler', {
               method: 'POST',
               body: JSON.stringify({
-                kunde_id: c.id,
-                dato,
-                type: avtaleType,
-                beskrivelse: avtaleType,
-                varighet,
+                kunde_id: c.id, dato, type: avtaleType,
+                beskrivelse: avtaleType, varighet,
                 opprettet_av: localStorage.getItem('userName') || 'admin'
               })
             });
@@ -274,7 +303,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     showToast(`${selectedCustomersList.length} kunder lagt til rute`, 'success');
   });
 
-  // Legg i kalender - vis datepicker med tidspunkt
+  // Legg i kalender
   document.getElementById('areaAddToCalendar').addEventListener('click', () => {
     const actionsDiv = menu.querySelector('.area-select-menu-actions');
     actionsDiv.innerHTML = `
@@ -300,17 +329,13 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     `;
 
     document.getElementById('areaCalBack').addEventListener('click', () => {
-      // Gjenoppbygg opprinnelig meny
       showAreaSelectMenu(selectedCustomersList, center);
     });
 
     document.getElementById('areaCalConfirm').addEventListener('click', async () => {
       const dato = document.getElementById('areaCalDate').value;
       const type = document.getElementById('areaCalType').value || 'Kontroll';
-      if (!dato) {
-        showToast('Velg en dato', 'error');
-        return;
-      }
+      if (!dato) { showToast('Velg en dato', 'error'); return; }
       const confirmBtn = document.getElementById('areaCalConfirm');
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Oppretter...';
@@ -318,37 +343,27 @@ function showAreaSelectMenu(selectedCustomersList, center) {
       let lastError = '';
       for (const c of selectedCustomersList) {
         try {
-          // Bruk kundens kategori som type hvis mulig, ellers valgt type
           const avtaleType = c.kategori || type || undefined;
           const response = await apiFetch('/api/avtaler', {
             method: 'POST',
             body: JSON.stringify({
-              kunde_id: c.id,
-              dato,
-              type: avtaleType,
+              kunde_id: c.id, dato, type: avtaleType,
               beskrivelse: avtaleType || 'Kontroll',
               opprettet_av: localStorage.getItem('userName') || 'admin'
             })
           });
-          if (response.ok) {
-            created++;
-          } else {
+          if (response.ok) { created++; }
+          else {
             const errData = await response.json().catch(() => ({}));
             lastError = errData.error?.message || errData.error || response.statusText;
-            console.error(`Avtale-feil for ${c.navn} (${response.status}):`, errData);
           }
         } catch (err) {
-          console.error('Feil ved opprettelse av avtale:', err);
           lastError = err.message;
         }
       }
-      if (created > 0) {
-        showToast(`${created} avtaler opprettet for ${dato}`, 'success');
-      } else {
-        showToast(`Kunne ikke opprette avtaler: ${lastError}`, 'error');
-      }
+      if (created > 0) showToast(`${created} avtaler opprettet for ${dato}`, 'success');
+      else showToast(`Kunne ikke opprette avtaler: ${lastError}`, 'error');
       closeAreaSelectMenu();
-      // Oppdater kalender
       await loadAvtaler();
       renderCalendar();
     });
@@ -367,9 +382,8 @@ function showAreaSelectMenu(selectedCustomersList, center) {
 
 function closeAreaSelectMenu() {
   document.getElementById('areaSelectMenu')?.remove();
-  if (areaSelectRect) {
-    map.removeLayer(areaSelectRect);
-    areaSelectRect = null;
-  }
-  if (areaSelectMode) toggleAreaSelect(); // Gå ut av velg-modus kun hvis aktiv
+  removeLayerAndSource('area-select-fill');
+  removeLayerAndSource('area-select-line');
+  removeLayerAndSource('area-select-rect');
+  if (areaSelectMode) toggleAreaSelect();
 }

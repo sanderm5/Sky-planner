@@ -5,15 +5,24 @@
  */
 
 import { logger } from './logger';
+import { getConfig } from '../config/env';
 
 // ============ Types ============
 
 export interface GeocodingResult {
   lat: number;
   lng: number;
-  source: 'kartverket' | 'kartverket-poststed' | 'nominatim' | 'nominatim-poststed';
+  source: 'mapbox' | 'kartverket' | 'kartverket-poststed' | 'nominatim' | 'nominatim-poststed';
   quality: 'exact' | 'street' | 'area';
   matchedAddress?: string;
+}
+
+export interface ReverseGeocodingResult {
+  address: string;
+  postnummer: string;
+  poststed: string;
+  kommune?: string;
+  source: 'mapbox' | 'nominatim';
 }
 
 export interface GeocodingOptions {
@@ -67,10 +76,16 @@ export async function geocodeAddress(
     return null;
   }
 
-  // Try Kartverket with full address first
+  // Try Kartverket first (fast, free, excellent for Norwegian addresses)
   const kartverketResult = await tryKartverket(adresse, postnummer, poststed);
   if (kartverketResult) {
     return kartverketResult;
+  }
+
+  // Fallback to Mapbox (better for ambiguous or international queries)
+  const mapboxResult = await tryMapbox(adresse, postnummer, poststed);
+  if (mapboxResult) {
+    return mapboxResult;
   }
 
   // Try Kartverket with just poststed
@@ -174,6 +189,136 @@ export async function geocodeCustomerData<T extends {
 }
 
 // ============ API Helpers ============
+
+async function tryMapbox(
+  adresse: string | undefined | null,
+  postnummer: string | undefined | null,
+  poststed: string | undefined | null
+): Promise<GeocodingResult | null> {
+  const config = getConfig();
+  if (!config.MAPBOX_ACCESS_TOKEN) return null;
+
+  try {
+    const searchText = [adresse, postnummer, poststed].filter(Boolean).join(' ');
+    if (!searchText.trim()) return null;
+
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchText)}.json?access_token=${config.MAPBOX_ACCESS_TOKEN}&country=no&language=no&limit=1&types=address`;
+    const response = await fetchWithTimeout(url);
+
+    if (!response.ok) {
+      logger.debug({ status: response.status }, 'Mapbox Geocoding API error');
+      return null;
+    }
+
+    const data = await response.json() as { features?: Array<{ center: [number, number]; relevance: number; place_name?: string }> };
+
+    if (data.features && data.features.length > 0) {
+      const feature = data.features[0];
+      const [lng, lat] = feature.center;
+      const quality = feature.relevance >= 0.9 ? 'exact' : feature.relevance >= 0.7 ? 'street' : 'area';
+
+      return {
+        lat,
+        lng,
+        source: 'mapbox',
+        quality,
+        matchedAddress: feature.place_name,
+      };
+    }
+
+    return null;
+  } catch (error) {
+    logger.debug({ error }, 'Mapbox geocoding failed');
+    return null;
+  }
+}
+
+/**
+ * Reverse geocode coordinates to address using Mapbox
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<ReverseGeocodingResult | null> {
+  const config = getConfig();
+
+  // Try Mapbox first
+  if (config.MAPBOX_ACCESS_TOKEN) {
+    try {
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${config.MAPBOX_ACCESS_TOKEN}&country=no&language=no&types=address&limit=1`;
+      const response = await fetchWithTimeout(url);
+
+      if (response.ok) {
+        const data = await response.json() as { features?: Array<{ text?: string; place_name?: string; context?: Array<{ id: string; text: string }> }> };
+
+        if (data.features && data.features.length > 0) {
+          const feature = data.features[0];
+          let postnummer = '';
+          let poststed = '';
+          let kommune = '';
+
+          if (feature.context) {
+            for (const ctx of feature.context) {
+              if (ctx.id?.startsWith('postcode')) postnummer = ctx.text || '';
+              if (ctx.id?.startsWith('place')) poststed = ctx.text || '';
+              if (ctx.id?.startsWith('district') || ctx.id?.startsWith('locality')) {
+                if (!kommune) kommune = ctx.text || '';
+              }
+            }
+          }
+
+          return {
+            address: feature.text || feature.place_name || '',
+            postnummer,
+            poststed,
+            kommune,
+            source: 'mapbox',
+          };
+        }
+      }
+    } catch (error) {
+      logger.debug({ error }, 'Mapbox reverse geocoding failed');
+    }
+  }
+
+  // Fallback to Nominatim
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
+    const response = await fetchWithTimeout(url, {
+      headers: { 'User-Agent': 'SkyPlanner/1.0 (contact@skyplanner.no)' },
+    });
+
+    if (response.ok) {
+      const data = await response.json() as {
+        address?: {
+          road?: string;
+          house_number?: string;
+          postcode?: string;
+          city?: string;
+          town?: string;
+          village?: string;
+          municipality?: string;
+        };
+        display_name?: string;
+      };
+
+      if (data.address) {
+        const road = data.address.road || '';
+        const houseNumber = data.address.house_number || '';
+        const address = houseNumber ? `${road} ${houseNumber}` : road;
+
+        return {
+          address,
+          postnummer: data.address.postcode || '',
+          poststed: data.address.city || data.address.town || data.address.village || '',
+          kommune: data.address.municipality || '',
+          source: 'nominatim',
+        };
+      }
+    }
+  } catch (error) {
+    logger.debug({ error }, 'Nominatim reverse geocoding failed');
+  }
+
+  return null;
+}
 
 async function tryKartverket(
   adresse: string | undefined | null,

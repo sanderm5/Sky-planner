@@ -39,6 +39,7 @@ import subcategoriesRoutes, { initSubcategoriesRoutes } from './routes/subcatego
 import reportRoutes, { initReportRoutes } from './routes/reports';
 import emailRoutes, { initEmailRoutes } from './routes/email';
 import configRoutes, { initConfigRoutes } from './routes/config';
+import geocodingRoutes from './routes/geocoding';
 import industriesRoutes, { initIndustryRoutes } from './routes/industries';
 import teamMembersRoutes, { initTeamMembersRoutes } from './routes/team-members';
 import onboardingRoutes, { initOnboardingRoutes } from './routes/onboarding';
@@ -163,6 +164,7 @@ app.use(
           'https://api.openrouteservice.org',
           'https://*.supabase.co',
           'https://ws.geonorge.no',
+          'https://api.bring.com',
           'https://nominatim.openstreetmap.org',
           'https://api.mapbox.com',
           'https://*.tiles.mapbox.com',
@@ -192,7 +194,7 @@ app.use(
 // CORS - sikker konfigurasjon
 // I produksjon: Krever eksplisitt ALLOWED_ORIGINS, eller fallback til skyplanner.no domener
 // I development: Kun localhost-origins tillates for å forhindre CSRF via exposed dev-miljø
-const SAFE_DEFAULT_ORIGINS = ['https://skyplanner.no', 'https://app.skyplanner.no', 'https://www.skyplanner.no'];
+const SAFE_DEFAULT_ORIGINS = ['https://skyplanner.no', 'https://app.skyplanner.no', 'https://www.skyplanner.no', 'https://sky-planner-web.vercel.app'];
 const DEV_ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:4321', 'http://127.0.0.1:3000', 'http://127.0.0.1:3001', 'http://127.0.0.1:4321'];
 app.use(
   cors({
@@ -289,7 +291,7 @@ const loginLimiter = rateLimit({
   message: { error: { code: 'TOO_MANY_REQUESTS', message: 'For mange innloggingsforsøk' } },
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true, // Only count failed attempts
+  // Count all login attempts (successful + failed) to prevent unlimited token generation
   skip: (req) => isDevelopment && isLocalhost(req), // Skip localhost in dev
   handler: (req, res) => {
     alertRateLimitExceeded(req.ip || 'unknown', req.path, 10).catch(() => {});
@@ -356,6 +358,7 @@ app.use('/api/super-admin', superAdminRoutes);
 
 // ===== UNAUTHENTICATED API ROUTES (must be before catch-all /api routes) =====
 app.use('/api', configRoutes);  // Routes include /config and /routes/* (config is intentionally unauthenticated)
+app.use('/api/geocode', geocodingRoutes);  // Geocoding proxy (auth handled per-route)
 app.use('/api/industries', industriesRoutes);  // Public industry data for onboarding
 app.use('/api/email', emailRoutes);  // Auth handled per-route (cron endpoint uses Bearer token, not tenant auth)
 
@@ -412,7 +415,6 @@ app.get('/api/health', (_req, res) => {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       version: '2.0.0',
-      environment: config.NODE_ENV,
     },
   });
 });

@@ -8,7 +8,8 @@ export const POST: APIRoute = async ({ request }) => {
   // Remove this block to re-enable Stripe portal
   return new Response(
     JSON.stringify({
-      error: 'Selvbetjent fakturering er ikke tilgjengelig. Kontakt oss på support@skyplanner.no for fakturaer og abonnementsendringer.',
+      success: false,
+      error: { code: 'PORTAL_DISABLED', message: 'Selvbetjent fakturering er ikke tilgjengelig. Kontakt oss på support@skyplanner.no for fakturaer og abonnementsendringer.' },
     }),
     { status: 503, headers: { 'Content-Type': 'application/json' } }
   );
@@ -17,7 +18,7 @@ export const POST: APIRoute = async ({ request }) => {
   if (!STRIPE_SECRET_KEY) {
     console.warn('Stripe not configured - portal unavailable');
     return new Response(
-      JSON.stringify({ error: 'Abonnementstjenesten er midlertidig utilgjengelig' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Abonnementstjenesten er midlertidig utilgjengelig' } }),
       { status: 503, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -33,7 +34,7 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (!organization.stripe_customer_id) {
     return new Response(
-      JSON.stringify({ error: 'Ingen Stripe-kunde tilknyttet organisasjonen' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ingen Stripe-kunde tilknyttet organisasjonen' } }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -56,7 +57,7 @@ export const POST: APIRoute = async ({ request }) => {
   } catch (error) {
     console.error('Stripe portal error:', error);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke opprette Stripe-portal' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke opprette Stripe-portal' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

@@ -31,7 +31,7 @@ const logger = createLogger('integration-webhooks');
 router.post('/tripletex/:organizationId', async (req: Request, res: Response) => {
   const organizationId = parseInt(req.params.organizationId, 10);
 
-  if (isNaN(organizationId) || organizationId <= 0) {
+  if (isNaN(organizationId) || organizationId <= 0 || !Number.isSafeInteger(organizationId) || organizationId > 2147483647) {
     logger.warn({ organizationId: req.params.organizationId }, 'Invalid organization ID in Tripletex webhook');
     res.status(400).json({ error: 'Invalid organization ID' });
     return;

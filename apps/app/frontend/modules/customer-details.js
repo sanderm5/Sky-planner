@@ -3,8 +3,8 @@ function sendManualReminder(customerId) {
   const customer = customers.find(c => c.id === customerId);
   if (!customer) return;
 
-  if (!customer.epost) {
-    showMessage(`${customer.navn} har ingen e-postadresse registrert.`, 'warning');
+  if (!customer.epost || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.epost)) {
+    showMessage(`${customer.navn} har ingen gyldig e-postadresse registrert.`, 'warning');
     return;
   }
 
@@ -23,8 +23,8 @@ function sendManualReminder(customerId) {
     `${companySignature}`
   );
 
-  // Open mailto link
-  window.location.href = `mailto:${customer.epost}?subject=${subject}&body=${body}`;
+  // Open mailto link with encoded email
+  window.location.href = `mailto:${encodeURIComponent(customer.epost)}?subject=${subject}&body=${body}`;
 }
 
 // === OVERDUE MAP FUNCTIONS ===
@@ -60,14 +60,10 @@ function showOverdueOnMap() {
   renderMarkers(customers);
 
   // Zoom to fit all overdue customers
-  const bounds = L.latLngBounds(
-    overdueCustomers
-      .filter(c => c.lat && c.lng)
-      .map(c => [c.lat, c.lng])
-  );
+  const bounds = boundsFromCustomers(overdueCustomers.filter(c => c.lat && c.lng));
 
-  if (bounds.isValid()) {
-    map.fitBounds(bounds, { padding: [50, 50] });
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds, { padding: 50 });
   }
 
   // Show notification
@@ -92,14 +88,10 @@ function showCustomersOnMap(customerIds) {
   renderMarkers(customers);
 
   // Zoom to fit these customers
-  const bounds = L.latLngBounds(
-    customersToShow
-      .filter(c => c.lat && c.lng)
-      .map(c => [c.lat, c.lng])
-  );
+  const bounds = boundsFromCustomers(customersToShow.filter(c => c.lat && c.lng));
 
-  if (bounds.isValid()) {
-    map.fitBounds(bounds, { padding: [50, 50] });
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds, { padding: 50 });
   }
 }
 
@@ -979,7 +971,7 @@ function addClusterToRoute(customerIds) {
     }
   });
   updateSelectionUI();
-  map.closePopup();
+  closeMapPopup();
 
   // Show feedback
   const count = customerIds.length;
@@ -988,8 +980,8 @@ function addClusterToRoute(customerIds) {
 
 // Zoom to cluster location
 function zoomToCluster(lat, lng) {
-  map.closePopup();
-  map.setView([lat, lng], map.getZoom() + 2);
+  closeMapPopup();
+  map.flyTo({ center: [lng, lat], zoom: map.getZoom() + 2 });
 }
 
 // Simple notification toast

@@ -22,15 +22,10 @@ async function planRoute() {
   ];
 
   try {
-
-    // Use server-side proxy for route optimization (protects API key)
-    const optimizeHeaders = {
-      'Content-Type': 'application/json',
-    };
+    const optimizeHeaders = { 'Content-Type': 'application/json' };
     const csrfToken = getCsrfToken();
-    if (csrfToken) {
-      optimizeHeaders['X-CSRF-Token'] = csrfToken;
-    }
+    if (csrfToken) optimizeHeaders['X-CSRF-Token'] = csrfToken;
+
     const response = await fetch('/api/routes/optimize', {
       method: 'POST',
       headers: optimizeHeaders,
@@ -39,19 +34,18 @@ async function planRoute() {
         jobs: selectedCustomerData.map((c, i) => ({
           id: i + 1,
           location: [c.lng, c.lat],
-          service: 1800 // 30 min per kunde
+          service: 1800
         })),
         vehicles: [{
           id: 1,
           profile: 'driving-car',
-          start: startLocation,  // Always start from company address
-          end: startLocation     // Return to company address
+          start: startLocation,
+          end: startLocation
         }]
       })
     });
 
     if (!response.ok) {
-      // Fallback to simple directions if optimization fails
       showMessage('Ruteoptimering ikke tilgjengelig, bruker enkel rute', 'info');
       await planSimpleRoute(selectedCustomerData);
       return;
@@ -67,7 +61,6 @@ async function planRoute() {
 
       await drawRoute(orderedCustomers);
 
-      // Show toast with route summary
       const hours = Math.floor(route.duration / 3600);
       const minutes = Math.floor((route.duration % 3600) / 60);
       const km = (route.distance / 1000).toFixed(1);
@@ -76,7 +69,6 @@ async function planRoute() {
     }
   } catch (error) {
     console.error('Ruteplanlegging feil:', error);
-    // Try simple route as fallback
     await planSimpleRoute(customers.filter(c => selectedCustomers.has(c.id) && c.lat && c.lng));
   } finally {
     planRouteBtn.classList.remove('loading');
@@ -87,51 +79,41 @@ async function planRoute() {
 // Simple route without optimization
 async function planSimpleRoute(customerData) {
   try {
-    // Get start location from config (company address)
     const startLocation = [
       appConfig.routeStartLng || 17.65274,
       appConfig.routeStartLat || 69.06888
     ];
-    const startLatLng = [appConfig.routeStartLat || 69.06888, appConfig.routeStartLng || 17.65274];
+    const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
 
-    // Build coordinates: start -> customers -> start
     const coordinates = [
       startLocation,
       ...customerData.map(c => [c.lng, c.lat]),
-      startLocation  // Return to start
+      startLocation
     ];
 
-    // Use server-side proxy for directions (protects API key)
-    const directionsHeaders = {
-      'Content-Type': 'application/json',
-    };
+    const directionsHeaders = { 'Content-Type': 'application/json' };
     const dirCsrfToken = getCsrfToken();
-    if (dirCsrfToken) {
-      directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
-    }
+    if (dirCsrfToken) directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
+
     const response = await fetch('/api/routes/directions', {
       method: 'POST',
       headers: directionsHeaders,
       credentials: 'include',
-      body: JSON.stringify({
-        coordinates: coordinates
-      })
+      body: JSON.stringify({ coordinates })
     });
 
     const rawData = await response.json();
 
     if (!response.ok) {
-      // Parse ORS error message
       if (rawData.error && rawData.error.message) {
         if (rawData.error.message.includes('Could not find routable point')) {
-          throw new Error('En eller flere kunder har koordinater som ikke er nær en vei. Velg andre kunder eller oppdater koordinatene.');
+          throw new Error('En eller flere kunder har koordinater som ikke er nær en vei.');
         }
         throw new Error(rawData.error.message);
       }
       throw new Error('Kunne ikke beregne rute');
     }
 
-    // Handle wrapped ({ success, data }) or raw ORS response
     const geoData = rawData.data || rawData;
 
     if (geoData.features && geoData.features.length > 0) {
@@ -139,35 +121,28 @@ async function planSimpleRoute(customerData) {
       drawRouteFromGeoJSON(feature);
 
       // Add start marker (company location)
-      const startIcon = L.divIcon({
-        className: 'route-marker route-start',
-        html: '<i class="fas fa-home"></i>',
-        iconSize: [30, 30],
-        iconAnchor: [15, 15]
-      });
-      const startMarker = L.marker(startLatLng, { icon: startIcon }).addTo(map);
-      startMarker.bindPopup(`<strong>Start:</strong><br>${appConfig.routeStartAddress || 'Brøstadveien 343'}`);
+      const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+      const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
+        .setLngLat(startLngLat)
+        .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
+        .addTo(map);
       routeMarkers.push(startMarker);
 
       // Add numbered markers for customers
       customerData.forEach((customer, index) => {
-        const icon = L.divIcon({
-          className: 'route-marker',
-          html: `${index + 1}`,
-          iconSize: [30, 30],
-          iconAnchor: [15, 15]
-        });
-
-        const marker = L.marker([customer.lat, customer.lng], { icon }).addTo(map);
+        const el = createMarkerElement('route-marker', `${index + 1}`, [30, 30]);
+        const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([customer.lng, customer.lat])
+          .addTo(map);
         routeMarkers.push(marker);
       });
 
-      // Fit map to route (include start location)
-      const allPoints = [startLatLng, ...customerData.map(c => [c.lat, c.lng])];
-      const bounds = L.latLngBounds(allPoints);
-      map.fitBounds(bounds, { padding: [50, 50] });
+      // Fit map to route
+      const bounds = new mapboxgl.LngLatBounds();
+      bounds.extend(startLngLat);
+      customerData.forEach(c => bounds.extend([c.lng, c.lat]));
+      map.fitBounds(bounds, { padding: 50 });
 
-      // Extract summary from segments fallback
       let duration = feature.properties?.summary?.duration || 0;
       let distance = feature.properties?.summary?.distance || 0;
       if (duration === 0 && feature.properties?.segments?.length > 0) {
@@ -177,7 +152,6 @@ async function planSimpleRoute(customerData) {
         }
       }
 
-      // Show toast with route summary
       const hours = Math.floor(duration / 3600);
       const minutes = Math.floor((duration % 3600) / 60);
       const km = (distance / 1000).toFixed(1);
@@ -194,29 +168,23 @@ async function planSimpleRoute(customerData) {
 async function drawRoute(orderedCustomers) {
   clearRoute();
 
-  // Get start location from config (company address)
   const startLocation = [
     appConfig.routeStartLng || 17.65274,
     appConfig.routeStartLat || 69.06888
   ];
-  const startLatLng = [appConfig.routeStartLat || 69.06888, appConfig.routeStartLng || 17.65274];
+  const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
 
-  // Build coordinates: start -> customers -> start
   const coordinates = [
     startLocation,
     ...orderedCustomers.map(c => [c.lng, c.lat]),
-    startLocation  // Return to start
+    startLocation
   ];
 
   try {
-    // Use server-side proxy for directions (protects API key)
-    const directionsHeaders = {
-      'Content-Type': 'application/json',
-    };
+    const directionsHeaders = { 'Content-Type': 'application/json' };
     const dirCsrfToken = getCsrfToken();
-    if (dirCsrfToken) {
-      directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
-    }
+    if (dirCsrfToken) directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
+
     const response = await fetch('/api/routes/directions', {
       method: 'POST',
       headers: directionsHeaders,
@@ -225,7 +193,6 @@ async function drawRoute(orderedCustomers) {
     });
 
     const rawData = await response.json();
-    // Handle wrapped ({ success, data }) or raw ORS response
     const geoData = rawData.data || rawData;
 
     if (geoData.features && geoData.features.length > 0) {
@@ -235,63 +202,56 @@ async function drawRoute(orderedCustomers) {
     console.error('Tegning av rute feil:', error);
   }
 
-  // Add start marker (company location)
-  const startIcon = L.divIcon({
-    className: 'route-marker route-start',
-    html: '<i class="fas fa-home"></i>',
-    iconSize: [30, 30],
-    iconAnchor: [15, 15]
-  });
-  const startMarker = L.marker(startLatLng, { icon: startIcon }).addTo(map);
-  startMarker.bindPopup(`<strong>Start:</strong><br>${appConfig.routeStartAddress || 'Brøstadveien 343'}`);
+  // Add start marker
+  const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+  const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
+    .setLngLat(startLngLat)
+    .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
+    .addTo(map);
   routeMarkers.push(startMarker);
 
   // Add numbered markers for customers
   orderedCustomers.forEach((customer, index) => {
-    const icon = L.divIcon({
-      className: 'route-marker',
-      html: `${index + 1}`,
-      iconSize: [30, 30],
-      iconAnchor: [15, 15]
-    });
-
-    const marker = L.marker([customer.lat, customer.lng], { icon }).addTo(map);
+    const el = createMarkerElement('route-marker', `${index + 1}`, [30, 30]);
+    const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([customer.lng, customer.lat])
+      .addTo(map);
     routeMarkers.push(marker);
   });
 
-  // Fit map to route (include start location)
-  const allPoints = [startLatLng, ...orderedCustomers.map(c => [c.lat, c.lng])];
-  const bounds = L.latLngBounds(allPoints);
-  map.fitBounds(bounds, { padding: [50, 50] });
+  // Fit map to route
+  const bounds = new mapboxgl.LngLatBounds();
+  bounds.extend(startLngLat);
+  orderedCustomers.forEach(c => bounds.extend([c.lng, c.lat]));
+  map.fitBounds(bounds, { padding: 50 });
 }
 
-// Draw route from GeoJSON
+// Draw route from GeoJSON using Mapbox GL JS source + layer
 function drawRouteFromGeoJSON(feature) {
   clearRoute();
 
-  if (feature && feature.geometry && feature.geometry.coordinates) {
-    // Convert GeoJSON [lng, lat] to Leaflet [lat, lng] and draw polyline directly
-    const routeCoords = feature.geometry.coordinates.map(c => [c[1], c[0]]);
-    routeLayer = L.polyline(routeCoords, {
-      color: '#2563eb',
-      weight: 6,
-      opacity: 0.9,
-      lineCap: 'round',
-      lineJoin: 'round'
-    }).addTo(map);
-
-    // Bring route to front
-    routeLayer.bringToFront();
+  if (feature?.geometry?.coordinates) {
+    // GeoJSON is already [lng, lat] — no conversion needed!
+    if (map.getSource('route-line')) {
+      map.getSource('route-line').setData(feature);
+    } else {
+      map.addSource('route-line', { type: 'geojson', data: feature });
+      map.addLayer({
+        id: 'route-line',
+        type: 'line',
+        source: 'route-line',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#2563eb', 'line-width': 6, 'line-opacity': 0.9 }
+      });
+    }
   }
 }
 
 // Clear route from map
 function clearRoute() {
-  if (routeLayer) {
-    map.removeLayer(routeLayer);
-    routeLayer = null;
-  }
-  routeMarkers.forEach(m => map.removeLayer(m));
+  if (map.getLayer('route-line')) map.removeLayer('route-line');
+  if (map.getSource('route-line')) map.removeSource('route-line');
+  routeMarkers.forEach(m => m.remove());
   routeMarkers = [];
 }
 
@@ -300,21 +260,15 @@ let currentRouteData = null;
 
 // Navigate to a single customer using device maps app
 function navigateToCustomer(lat, lng, _name) {
-  // Detect if iOS or Android
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const startLat = appConfig.routeStartLat || 69.06888;
   const startLng = appConfig.routeStartLng || 17.65274;
 
   if (isIOS) {
-    // Apple Maps
-    const url = `https://maps.apple.com/?saddr=${startLat},${startLng}&daddr=${lat},${lng}&dirflg=d`;
-    window.open(url, '_blank');
+    window.open(`https://maps.apple.com/?saddr=${startLat},${startLng}&daddr=${lat},${lng}&dirflg=d`, '_blank');
   } else {
-    // Google Maps (works on Android and desktop)
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${startLat},${startLng}&destination=${lat},${lng}&travelmode=driving`;
-    window.open(url, '_blank');
+    window.open(`https://www.google.com/maps/dir/?api=1&origin=${startLat},${startLng}&destination=${lat},${lng}&travelmode=driving`, '_blank');
   }
 
-  // Close popup
-  map.closePopup();
+  closeMapPopup();
 }

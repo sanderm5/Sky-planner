@@ -1,6 +1,11 @@
 /**
  * Base email template with Sky Planner branding
  */
+/**
+ * Escape user-controlled text for safe HTML rendering in email templates.
+ * Must be used for all user-provided data (names, org names, etc.).
+ */
+export declare function escapeHtmlEmail(text: string): string;
 export interface BaseTemplateOptions {
     previewText?: string;
 }

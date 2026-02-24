@@ -577,54 +577,41 @@ function updateControlSectionsVisibility(kategori) {
   renderDynamicServiceSections();
 }
 
-// Auto-geocode address
+// Auto-geocode address via backend proxy (Mapbox → Kartverket → Nominatim)
 async function geocodeAddressAuto(adresse, postnummer, poststed) {
-  const fullAddress = `${adresse}, ${postnummer} ${poststed}, Norway`;
+  const query = `${adresse || ''}, ${postnummer || ''} ${poststed || ''}`.trim();
+  if (!query || query.length < 3) return null;
 
-  // Try Kartverket first
+  // Try Kartverket directly first (fast)
   try {
-    const kartverketUrl = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(fullAddress)}&fuzzy=true&treffPerSide=1`;
-    const response = await fetch(kartverketUrl);
-    const data = await response.json();
-
-    if (data.adresser && data.adresser.length > 0) {
-      const addr = data.adresser[0];
-      if (addr.representasjonspunkt) {
+    const url = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(query)}&fuzzy=true&treffPerSide=1`;
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      const addr = data.adresser?.[0];
+      if (addr?.representasjonspunkt) {
         return { lat: addr.representasjonspunkt.lat, lng: addr.representasjonspunkt.lon };
       }
     }
   } catch (error) {
-    Logger.log('Kartverket geocode failed:', error);
+    // Kartverket failed, fall through to backend
   }
 
-  // Try with just poststed
+  // Fallback to backend proxy (Mapbox → Kartverket)
   try {
-    const simpleAddress = `${postnummer} ${poststed}`;
-    const kartverketUrl = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(simpleAddress)}&fuzzy=true&treffPerSide=1`;
-    const response = await fetch(kartverketUrl);
-    const data = await response.json();
-
-    if (data.adresser && data.adresser.length > 0) {
-      const addr = data.adresser[0];
-      if (addr.representasjonspunkt) {
-        return { lat: addr.representasjonspunkt.lat, lng: addr.representasjonspunkt.lon };
+    const response = await apiFetch('/api/geocode/forward', {
+      method: 'POST',
+      body: JSON.stringify({ query, limit: 1 })
+    });
+    if (response.ok) {
+      const result = await response.json();
+      const suggestion = result.data?.suggestions?.[0];
+      if (suggestion) {
+        return { lat: suggestion.lat, lng: suggestion.lng };
       }
     }
   } catch (error) {
-    Logger.log('Kartverket poststed geocode failed:', error);
-  }
-
-  // Fallback to Nominatim
-  try {
-    const nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddress)}&limit=1`;
-    const response = await fetch(nominatimUrl);
-    const data = await response.json();
-
-    if (data && data.length > 0) {
-      return { lat: Number.parseFloat(data[0].lat), lng: Number.parseFloat(data[0].lon) };
-    }
-  } catch (error) {
-    Logger.log('Nominatim geocode failed:', error);
+    Logger.log('Geocode auto failed:', error);
   }
 
   return null;
@@ -654,6 +641,7 @@ async function saveCustomer(e) {
     }
   }
 
+
   // Bruk kategori-checkboxes for alle (MVP + Full)
   let kategori = serviceTypeRegistry.getSelectedCategories() || null;
 
@@ -679,19 +667,20 @@ async function saveCustomer(e) {
     estimert_tid: Number.parseInt(document.getElementById('estimert_tid').value) || null,
     lat: lat,
     lng: lng,
-    siste_kontroll: normalizeDateValue(document.getElementById('siste_kontroll').value) || null,
-    neste_kontroll: normalizeDateValue(document.getElementById('neste_kontroll').value) || null,
-    kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || 12,
+    // Legacy date fields: prefer form value, fallback to existing customer data (hidden inputs may be empty)
+    siste_kontroll: normalizeDateValue(document.getElementById('siste_kontroll').value) || (_editingCustomer?.siste_kontroll || null),
+    neste_kontroll: normalizeDateValue(document.getElementById('neste_kontroll').value) || (_editingCustomer?.neste_kontroll || null),
+    kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || (_editingCustomer?.kontroll_intervall_mnd || 12),
     kategori: kategori,
     notater: (document.getElementById('notater').value || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').trim(),
-    // Separate El-Kontroll felt — null ut hvis el-kontroll ikke er valgt
-    siste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('siste_el_kontroll').value) || null) : null,
-    neste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('neste_el_kontroll').value) || null) : null,
-    el_kontroll_intervall: hasEl ? (Number.parseInt(document.getElementById('el_kontroll_intervall').value) || 36) : null,
-    // Separate Brannvarsling felt — null ut hvis brannvarsling ikke er valgt
-    siste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || null) : null,
-    neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || null) : null,
-    brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || 12) : null,
+    // Separate El-Kontroll felt — null ut hvis el-kontroll ikke er valgt, bevar eksisterende verdier
+    siste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('siste_el_kontroll').value) || (_editingCustomer?.siste_el_kontroll || null)) : null,
+    neste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('neste_el_kontroll').value) || (_editingCustomer?.neste_el_kontroll || null)) : null,
+    el_kontroll_intervall: hasEl ? (Number.parseInt(document.getElementById('el_kontroll_intervall').value) || (_editingCustomer?.el_kontroll_intervall || 36)) : null,
+    // Separate Brannvarsling felt — null ut hvis brannvarsling ikke er valgt, bevar eksisterende verdier
+    siste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || (_editingCustomer?.siste_brann_kontroll || null)) : null,
+    neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || (_editingCustomer?.neste_brann_kontroll || null)) : null,
+    brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || (_editingCustomer?.brann_kontroll_intervall || 12)) : null,
     // Dynamiske tjeneste-datoer fra dynamiske seksjoner
     services: serviceTypeRegistry.parseServiceFormData(),
     // Custom organization fields
@@ -723,26 +712,26 @@ async function saveCustomer(e) {
 
     const savedCustomerId = customerId || result.id;
 
-    // Save subcategory assignments
-    if (savedCustomerId) {
-      const subcatAssignments = collectSubcategoryAssignments();
-      try {
-        await apiFetch(`/api/subcategories/kunde/${savedCustomerId}`, {
-          method: 'PUT',
-          body: JSON.stringify({ assignments: subcatAssignments })
-        });
-      } catch (err) {
-        console.error('Error saving subcategory assignments:', err);
-      }
-    }
-
-    // Save email settings
-    if (savedCustomerId) {
-      await saveCustomerEmailSettings(savedCustomerId);
-    }
-
+    // Close modal and show notification immediately — don't block on secondary saves
     releaseCustomer(currentClaimedKundeId);
     customerModal.classList.add('hidden');
+    showNotification('Kunde lagret!');
+
+    // Fire secondary saves and data reload in parallel (non-blocking for UX)
+    const secondarySaves = [];
+    if (savedCustomerId) {
+      const subcatAssignments = collectSubcategoryAssignments();
+      secondarySaves.push(
+        apiFetch(`/api/subcategories/kunde/${savedCustomerId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ assignments: subcatAssignments })
+        }).catch(err => console.error('Error saving subcategory assignments:', err))
+      );
+      secondarySaves.push(
+        saveCustomerEmailSettings(savedCustomerId).catch(err => console.error('Error saving email settings:', err))
+      );
+    }
+    await Promise.all(secondarySaves);
 
     // Reset filter to show all customers so the new/updated one is visible
     currentFilter = 'alle';
@@ -750,9 +739,20 @@ async function saveCustomer(e) {
     const omradeSelect = document.getElementById('omradeSelect');
     if (omradeSelect) omradeSelect.value = 'alle';
 
-    await loadCustomers();
-    await loadOmrader();
-    showNotification('Kunde lagret!');
+    // Reload data in parallel
+    await Promise.all([loadCustomers(), loadOmrader()]);
+
+    // Refresh open popup with updated customer data
+    if (savedCustomerId) {
+      const updatedCustomer = customers.find(c => c.id === Number(savedCustomerId));
+      if (updatedCustomer && updatedCustomer.lat && updatedCustomer.lng) {
+        showMapPopup(
+          [updatedCustomer.lng, updatedCustomer.lat],
+          generatePopupContent(updatedCustomer),
+          { maxWidth: '350px', offset: [0, -35] }
+        );
+      }
+    }
   } catch (error) {
     console.error('Lagring feilet:', error);
     showMessage('Kunne ikke lagre kunden: ' + error.message, 'error');
@@ -848,9 +848,9 @@ function enableCoordinatePicking() {
   document.addEventListener('keydown', handlePickingEscape);
 }
 
-function handleMapPick(e) {
-  const lat = e.latlng.lat;
-  const lng = e.latlng.lng;
+async function handleMapPick(e) {
+  const lat = e.lngLat.lat;
+  const lng = e.lngLat.lng;
 
   // Update form fields
   document.getElementById('lat').value = lat.toFixed(6);
@@ -859,15 +859,46 @@ function handleMapPick(e) {
   // Update quality badge
   updateGeocodeQualityBadge('manual');
 
-  // Show notification
-  showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
-
   // Clean up and show modal again
   disableCoordinatePicking();
-
-  // Show modal again
   const customerModal = document.getElementById('customerModal');
   openModal(customerModal);
+
+  // Reverse geocode to fill address fields
+  try {
+    const response = await apiFetch('/api/geocode/reverse', {
+      method: 'POST',
+      body: JSON.stringify({ lat, lng })
+    });
+    if (response.ok) {
+      const result = await response.json();
+      const addr = result.data;
+      if (addr) {
+        const adresseInput = document.getElementById('adresse');
+        const postnummerInput = document.getElementById('postnummer');
+        const poststedInput = document.getElementById('poststed');
+
+        if (adresseInput && addr.address && !adresseInput.value) {
+          adresseInput.value = addr.address;
+        }
+        if (postnummerInput && addr.postnummer && !postnummerInput.value) {
+          postnummerInput.value = addr.postnummer;
+        }
+        if (poststedInput && addr.poststed && !poststedInput.value) {
+          poststedInput.value = addr.poststed;
+          poststedInput.classList.add('auto-filled');
+        }
+        showNotification(`Adresse funnet: ${escapeHtml(addr.address || `${lat.toFixed(4)}, ${lng.toFixed(4)}`)}`, 'success');
+      } else {
+        showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
+      }
+    } else {
+      showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
+    }
+  } catch (err) {
+    Logger.log('Reverse geocode failed:', err);
+    showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
+  }
 }
 
 function handlePickingEscape(e) {

@@ -8,7 +8,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { createLogger } from '../services/logger';
 import { cleanupExpiredTokens } from '../services/token-blacklist';
 import { getDatabase } from '../services/database';
-import { timingSafeEqual } from 'crypto';
+import { timingSafeEqual, createHash } from 'crypto';
 import { getIntegrationRegistry } from '../integrations/registry';
 import { decryptCredentials, encryptCredentials, isCredentialsExpired } from '../integrations/encryption';
 import { getWebhookService } from '../services/webhooks';
@@ -36,11 +36,12 @@ function verifyCronSecret(req: Request, res: Response, next: NextFunction): void
     return;
   }
 
-  // Timing-safe comparison to prevent timing attacks
-  const secretBuffer = Buffer.from(cronSecret);
-  const providedBuffer = Buffer.from(providedSecret);
+  // Hash both values to normalize length, then use timing-safe comparison
+  // This prevents leaking the secret length via timing side-channel
+  const secretHash = createHash('sha256').update(cronSecret).digest();
+  const providedHash = createHash('sha256').update(providedSecret).digest();
 
-  if (secretBuffer.length !== providedBuffer.length || !timingSafeEqual(secretBuffer, providedBuffer)) {
+  if (!timingSafeEqual(secretHash, providedHash)) {
     logger.warn('Invalid cron secret provided');
     res.status(401).json({ error: 'Unauthorized' });
     return;

@@ -135,8 +135,9 @@ router.get(
       mapZoom: envConfig.MAP_ZOOM,
       mapboxAccessToken: envConfig.MAPBOX_ACCESS_TOKEN || undefined,
       orsApiKeyConfigured: Boolean(envConfig.ORS_API_KEY),
-      routeStartLat: envConfig.ROUTE_START_LAT,
-      routeStartLng: envConfig.ROUTE_START_LNG,
+      routeStartLat: organization?.route_start_lat || envConfig.ROUTE_START_LAT,
+      routeStartLng: organization?.route_start_lng || envConfig.ROUTE_START_LNG,
+      routeStartAddress: organization?.company_address || envConfig.ROUTE_START_ADDRESS,
       enableRoutePlanning: envConfig.ENABLE_ROUTE_PLANNING,
       emailNotificationsEnabled: envConfig.EMAIL_NOTIFICATIONS_ENABLED,
       organizationName: organization?.navn,
@@ -288,6 +289,127 @@ router.post(
       res.json(apiResponse);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Ukjent feil ved ruteberegning';
+      throw Errors.internal(message);
+    }
+  })
+);
+
+/**
+ * GET /api/routes/isochrone
+ * Proxy to Mapbox Isochrone API - calculate reachable areas within given time
+ */
+router.get(
+  '/routes/isochrone',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const config = getConfig();
+
+    if (!config.MAPBOX_ACCESS_TOKEN) {
+      throw Errors.badRequest('Mapbox access token er ikke konfigurert');
+    }
+
+    const { lng, lat, minutes, profile = 'driving' } = req.query;
+
+    const lngNum = parseFloat(lng as string);
+    const latNum = parseFloat(lat as string);
+    if (isNaN(lngNum) || isNaN(latNum)) {
+      throw Errors.badRequest('Ugyldige koordinater (lng og lat er påkrevd)');
+    }
+
+    // Validate contour minutes (max 4 contours per Mapbox limits)
+    const minutesStr = (minutes as string) || '15,30,45';
+    const minutesArr = minutesStr.split(',').map(Number);
+    if (minutesArr.some(isNaN) || minutesArr.length > 4 || minutesArr.length === 0) {
+      throw Errors.badRequest('Ugyldig contours_minutes (maks 4 verdier)');
+    }
+
+    const validProfiles = ['driving', 'walking', 'cycling'];
+    if (!validProfiles.includes(profile as string)) {
+      throw Errors.badRequest('Ugyldig profil');
+    }
+
+    try {
+      const url = `https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lngNum},${latNum}?contours_minutes=${minutesStr}&polygons=true&denoise=1&generalize=500&access_token=${config.MAPBOX_ACCESS_TOKEN}`;
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Mapbox Isochrone API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+
+      const apiResponse: ApiResponse = {
+        success: true,
+        data,
+      };
+
+      res.json(apiResponse);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Ukjent feil ved isochrone-beregning';
+      throw Errors.internal(message);
+    }
+  })
+);
+
+/**
+ * POST /api/routes/matrix
+ * Proxy to Mapbox Matrix API - calculate travel times between multiple points
+ */
+router.post(
+  '/routes/matrix',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const config = getConfig();
+
+    if (!config.MAPBOX_ACCESS_TOKEN) {
+      throw Errors.badRequest('Mapbox access token er ikke konfigurert');
+    }
+
+    const { coordinates, profile = 'driving', sources, destinations, depart_at } = req.body;
+
+    if (!coordinates || !Array.isArray(coordinates) || coordinates.length < 2 || coordinates.length > 25) {
+      throw Errors.badRequest('coordinates er påkrevd (2-25 punkter)');
+    }
+
+    // Validate coordinates format
+    for (const coord of coordinates) {
+      if (!Array.isArray(coord) || coord.length !== 2 || typeof coord[0] !== 'number' || typeof coord[1] !== 'number') {
+        throw Errors.badRequest('Hver koordinat må være [lng, lat]');
+      }
+    }
+
+    const validProfiles = ['driving', 'walking', 'cycling'];
+    if (!validProfiles.includes(profile)) {
+      throw Errors.badRequest(`Ugyldig profil. Gyldige verdier: ${validProfiles.join(', ')}`);
+    }
+
+    try {
+      const coordStr = coordinates.map((c: number[]) => `${c[0]},${c[1]}`).join(';');
+      let url = `https://api.mapbox.com/directions-matrix/v1/mapbox/${profile}/${coordStr}?annotations=duration,distance&access_token=${config.MAPBOX_ACCESS_TOKEN}`;
+
+      if (sources !== undefined) url += `&sources=${sources}`;
+      if (destinations !== undefined) url += `&destinations=${destinations}`;
+      if (depart_at) url += `&depart_at=${depart_at}`;
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Mapbox Matrix API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+
+      const apiResponse: ApiResponse = {
+        success: true,
+        data,
+      };
+
+      res.json(apiResponse);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Ukjent feil ved matrise-beregning';
       throw Errors.internal(message);
     }
   })

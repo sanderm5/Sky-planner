@@ -245,11 +245,38 @@ export function validateEventTypes(events: string[]): WebhookEventType[] {
 
 /**
  * Validate a webhook URL
+ * Requires HTTPS and blocks private/internal IP ranges (SSRF protection)
  */
 export function isValidWebhookUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'https:';
+    if (parsed.protocol !== 'https:') return false;
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block localhost and loopback
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '0.0.0.0') {
+      return false;
+    }
+
+    // Block private/reserved IPv4 ranges
+    const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+      const [, a, b] = ipv4Match.map(Number);
+      if (a === 10) return false;                         // 10.0.0.0/8
+      if (a === 172 && b >= 16 && b <= 31) return false;  // 172.16.0.0/12
+      if (a === 192 && b === 168) return false;            // 192.168.0.0/16
+      if (a === 169 && b === 254) return false;            // 169.254.0.0/16 (link-local / cloud metadata)
+      if (a === 0) return false;                           // 0.0.0.0/8
+      if (a === 255) return false;                         // broadcast
+    }
+
+    // Block .local and .internal domains
+    if (hostname.endsWith('.local') || hostname.endsWith('.internal') || hostname.endsWith('.localhost')) {
+      return false;
+    }
+
+    return true;
   } catch {
     return false;
   }

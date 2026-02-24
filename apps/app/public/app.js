@@ -1,5 +1,442 @@
 // ========================================
-// HTML ESCAPE UTILITY
+// MAP COMPATIBILITY LAYER
+// Helper functions for Mapbox GL JS migration
+// ========================================
+
+// Convert [lat, lng] (Leaflet convention) to [lng, lat] (Mapbox GL JS convention)
+function lngLat(lat, lng) {
+  return [lng, lat];
+}
+
+// Create LngLatBounds from an array of customers with lat/lng properties
+function boundsFromCustomers(customerArray) {
+  const bounds = new mapboxgl.LngLatBounds();
+  customerArray.forEach(c => {
+    if (c.lat && c.lng) bounds.extend([c.lng, c.lat]);
+  });
+  return bounds;
+}
+
+// Create LngLatBounds from an array of [lat, lng] points (Leaflet convention)
+function boundsFromLatLngArray(points) {
+  const bounds = new mapboxgl.LngLatBounds();
+  points.forEach(p => bounds.extend([p[1], p[0]]));
+  return bounds;
+}
+
+// Create an HTML element for use as a Mapbox GL JS marker
+function createMarkerElement(className, innerHTML, size) {
+  const el = document.createElement('div');
+  el.className = className;
+  el.innerHTML = innerHTML;
+  if (size) {
+    el.style.width = size[0] + 'px';
+    el.style.height = size[1] + 'px';
+  }
+  return el;
+}
+
+// Enable or disable all map interactions (replaces map.dragging.enable/disable pattern)
+function setMapInteractive(enabled) {
+  if (!map) return;
+  const handlers = ['dragPan', 'scrollZoom', 'doubleClickZoom', 'touchZoomRotate', 'keyboard'];
+  handlers.forEach(h => {
+    if (map[h]) {
+      if (enabled) map[h].enable();
+      else map[h].disable();
+    }
+  });
+}
+
+// Safely remove a Mapbox GL JS layer and its source
+function removeLayerAndSource(layerId) {
+  if (!map) return;
+  if (map.getLayer(layerId)) map.removeLayer(layerId);
+  if (map.getSource(layerId)) map.removeSource(layerId);
+}
+
+// Create a GeoJSON polygon from two corner points (for area selection)
+function rectangleGeoJSON(corner1, corner2) {
+  return {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [corner1.lng, corner1.lat],
+        [corner2.lng, corner1.lat],
+        [corner2.lng, corner2.lat],
+        [corner1.lng, corner2.lat],
+        [corner1.lng, corner1.lat]
+      ]]
+    }
+  };
+}
+
+// Draw a route line from [lng, lat] coordinates array with custom styling
+// Uses the shared 'route-line' source/layer from clearRoute()
+function drawRouteGeoJSON(lngLatCoords, options = {}) {
+  clearRoute();
+  const geojson = {
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: lngLatCoords }
+  };
+  const paint = {
+    'line-color': options.color || '#2563eb',
+    'line-width': options.width || 6,
+    'line-opacity': options.opacity || 0.9
+  };
+  if (options.dasharray) paint['line-dasharray'] = options.dasharray;
+
+  map.addSource('route-line', { type: 'geojson', data: geojson });
+  map.addLayer({
+    id: 'route-line',
+    type: 'line',
+    source: 'route-line',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint
+  });
+}
+
+// Track the currently open popup for single-popup behavior
+let currentPopup = null;
+
+function showMapPopup(lngLatCoord, html, options = {}) {
+  if (currentPopup) currentPopup.remove();
+  currentPopup = new mapboxgl.Popup({
+    maxWidth: options.maxWidth || '350px',
+    offset: options.offset || [0, -35],
+    closeButton: options.closeButton !== false
+  })
+    .setLngLat(lngLatCoord)
+    .setHTML(html)
+    .addTo(map);
+  // Clear reference when user closes popup (X button or map click)
+  currentPopup.on('close', () => { currentPopup = null; });
+  return currentPopup;
+}
+
+function closeMapPopup() {
+  if (currentPopup) {
+    currentPopup.remove();
+    currentPopup = null;
+  }
+}
+
+
+// CLUSTER MANAGER — Mapbox GL native clustering (GPU-rendered)
+const CLUSTER_SOURCE = 'customer-clusters';
+const CLUSTER_CIRCLE_LAYER = 'cluster-circles';
+const CLUSTER_COUNT_LAYER = 'cluster-counts';
+const CLUSTER_MAX_ZOOM = 11;
+let clusterGeoJSONFeatures = [];
+let _clusterSourceReady = false;
+let supercluster = null; // Legacy reference (kept for compatibility with logging)
+let clusterMarkers = new Map(); // HTML marker cache for individual cluster markers
+
+function initClusterManager() {
+  if (!map) return;
+  if (map.getSource(CLUSTER_SOURCE)) { _clusterSourceReady = true; return; }
+  // Style must be loaded before adding sources/layers
+  if (!map.isStyleLoaded()) {
+    map.once('style.load', () => initClusterManager());
+    return;
+  }
+  try {
+    map.addSource(CLUSTER_SOURCE, {
+      type: 'geojson', data: { type: 'FeatureCollection', features: [] },
+      cluster: true, clusterMaxZoom: CLUSTER_MAX_ZOOM,
+      clusterRadius: appConfig?.mapClusterRadius || 50,
+      clusterProperties: {
+        'cluster_name': [
+          ['case', ['==', ['accumulated'], ''], ['get', 'cluster_name'], ['accumulated']],
+          ['get', 'poststed']
+        ]
+      }
+    });
+    map.addLayer({ id: CLUSTER_CIRCLE_LAYER, type: 'circle', source: CLUSTER_SOURCE,
+      filter: ['has', 'point_count'],
+      paint: { 'circle-color': 'rgba(30,30,30,0.85)',
+        'circle-radius': ['step',['get','point_count'],30,20,34,50,40],
+        'circle-stroke-width': 2, 'circle-stroke-color': 'rgba(94,129,172,0.6)' }
+    });
+    map.addLayer({ id: CLUSTER_COUNT_LAYER, type: 'symbol', source: CLUSTER_SOURCE,
+      filter: ['has', 'point_count'],
+      layout: {
+        'text-field': ['case',
+          ['!=', ['get', 'cluster_name'], ''],
+          ['format',
+            ['get', 'point_count_abbreviated'], { 'font-scale': 1.1, 'text-font': ['literal', ['DIN Pro Bold','Arial Unicode MS Bold']] },
+            '\n', {},
+            ['case',
+              ['>', ['length', ['get', 'cluster_name']], 10],
+              ['concat', ['slice', ['get', 'cluster_name'], 0, 9], '…'],
+              ['get', 'cluster_name']
+            ], { 'font-scale': 0.65, 'text-font': ['literal', ['DIN Pro Medium','Arial Unicode MS Regular']] }
+          ],
+          ['format',
+            ['get', 'point_count_abbreviated'], { 'font-scale': 1.0, 'text-font': ['literal', ['DIN Pro Bold','Arial Unicode MS Bold']] }
+          ]
+        ],
+        'text-size': ['step',['get','point_count'],13,20,12,50,11],
+        'text-allow-overlap': true,
+        'text-line-height': 1.3
+      },
+      paint: { 'text-color': '#ffffff' }
+    });
+    map.on('click', CLUSTER_CIRCLE_LAYER, onClusterClick);
+    map.on('mouseenter', CLUSTER_CIRCLE_LAYER, () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', CLUSTER_CIRCLE_LAYER, () => { map.getCanvas().style.cursor = ''; });
+    map.on('sourcedata', (e) => {
+      if (e.sourceId === CLUSTER_SOURCE && e.isSourceLoaded && map.getZoom() <= CLUSTER_MAX_ZOOM) {
+        updateClusters();
+      }
+    });
+    _clusterSourceReady = true;
+    // If customers were loaded while we waited for style, render them now
+    if (typeof customers !== 'undefined' && customers.length > 0 && typeof applyFilters === 'function') {
+      applyFilters();
+    }
+  } catch (err) {
+    console.error('initClusterManager failed:', err);
+    // Retry once after style is loaded
+    map.once('style.load', () => initClusterManager());
+  }
+}
+
+function loadClusterData(customerData) {
+  clusterGeoJSONFeatures = customerData.filter(c => c.lat && c.lng).map(c => ({
+    type: 'Feature', geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
+    properties: { customerId: c.id, poststed: c.poststed || '' }
+  }));
+  const src = map && map.getSource(CLUSTER_SOURCE);
+  if (src) src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
+}
+
+function updateClusters() {
+  if (!map || !_clusterSourceReady) return;
+  const zoom = map.getZoom();
+  const bounds = map.getBounds();
+
+  if (zoom > CLUSTER_MAX_ZOOM) {
+    // Above cluster threshold: hide native cluster layers, show all individual markers
+    setClusterLayerVisibility(false);
+    for (const cid of Object.keys(markers)) {
+      const m = markers[cid], c = customers.find(x => x.id === parseInt(cid));
+      if (c && c.lat && c.lng) {
+        const inView = bounds.contains([c.lng, c.lat]);
+        if (inView && !m._addedToMap) { m.addTo(map); m._addedToMap = true; }
+        else if (!inView && m._addedToMap) { m.remove(); m._addedToMap = false; }
+      }
+    }
+  } else {
+    // At or below cluster threshold: show cluster layers for grouped points,
+    // and show individual DOM markers for unclustered (standalone) points
+    setClusterLayerVisibility(true);
+
+    // Query which customer IDs are NOT in any cluster
+    const unclustered = new Set();
+    try {
+      const sf = map.querySourceFeatures(CLUSTER_SOURCE, {
+        filter: ['!', ['has', 'point_count']]
+      });
+      for (const f of sf) {
+        if (f.properties?.customerId) unclustered.add(f.properties.customerId);
+      }
+    } catch (e) { /* source tiles not ready yet — sourcedata event will retry */ }
+
+    for (const cid of Object.keys(markers)) {
+      const id = parseInt(cid), mk = markers[cid];
+      if (unclustered.has(id)) {
+        if (!mk._addedToMap) { mk.addTo(map); mk._addedToMap = true; }
+      } else {
+        if (mk._addedToMap) { mk.remove(); mk._addedToMap = false; }
+      }
+    }
+  }
+}
+
+function setClusterLayerVisibility(visible) {
+  if (!map) return;
+  const vis = visible ? 'visible' : 'none';
+  [CLUSTER_CIRCLE_LAYER, CLUSTER_COUNT_LAYER].forEach(id => {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
+  });
+}
+
+function onClusterClick(e) {
+  const feats = map.queryRenderedFeatures(e.point, { layers: [CLUSTER_CIRCLE_LAYER] });
+  if (!feats.length) return;
+  const clusterId = feats[0].properties.cluster_id;
+  const coords = feats[0].geometry.coordinates.slice();
+  const src = map.getSource(CLUSTER_SOURCE);
+  src.getClusterLeaves(clusterId, Infinity, 0, (err, leaves) => {
+    if (err || !leaves || !leaves.length) {
+      src.getClusterExpansionZoom(clusterId, (e2, z) => {
+        if (!e2) map.easeTo({ center: coords, zoom: Math.min((z||10)+1,15), duration: 500 });
+      });
+      return;
+    }
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const l of leaves) {
+      const [a, b] = l.geometry.coordinates;
+      if (a < minLng) minLng = a; if (a > maxLng) maxLng = a;
+      if (b < minLat) minLat = b; if (b > maxLat) maxLat = b;
+    }
+    if ((maxLng - minLng) < 0.0001 && (maxLat - minLat) < 0.0001) {
+      const ids = leaves.map(f => f.properties.customerId);
+      const cc = ids.map(id => customers.find(c => c.id === id)).filter(Boolean);
+      showMapPopup(coords, generateClusterPopupContent(cc), { maxWidth: '320px', offset: [0, 0] });
+      return;
+    }
+    src.getClusterExpansionZoom(clusterId, (e2, ez) => {
+      map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
+        padding: 80, duration: 600, maxZoom: Math.min((ez || 10) + 1, 15)
+      });
+    });
+  });
+}
+
+function generateClusterPopupContent(clusterCustomers) {
+  const list = clusterCustomers.slice(0, 10).map(c => {
+    const status = getControlStatus(c);
+    return `<div class="cluster-popup-item" onclick="focusOnCustomer(${c.id})" style="cursor:pointer;padding:4px 0;border-bottom:1px solid var(--color-border);">
+      <span class="popup-status ${status.class}" style="display:inline-block;width:8px;height:8px;border-radius:50;margin-right:6px;"></span>
+      <strong>${escapeHtml(c.navn)}</strong>
+      ${c.poststed ? `<span style="color:var(--color-text-secondary);font-size:12px;"> — ${escapeHtml(c.poststed)}</span>` : ''}
+    </div>`;
+  }).join('');
+  const moreText = clusterCustomers.length > 10
+    ? `<div style="padding:4px 0;color:var(--color-text-secondary);font-size:12px;">+${clusterCustomers.length - 10} flere...</div>`
+    : '';
+  return `<div class="cluster-popup">
+    <div style="font-weight:600;margin-bottom:8px;">${clusterCustomers.length} kunder</div>
+    ${list}
+    ${moreText}
+  </div>`;
+}
+
+function clearAllClusters() {
+  _clusterSourceReady = false;
+  clusterGeoJSONFeatures = [];
+  if (!map) return;
+  [CLUSTER_COUNT_LAYER, CLUSTER_CIRCLE_LAYER].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
+  if (map.getSource(CLUSTER_SOURCE)) map.removeSource(CLUSTER_SOURCE);
+}
+
+function refreshClusters() {
+  if (!map || !_clusterSourceReady) return;
+  const src = map.getSource(CLUSTER_SOURCE);
+  if (src && clusterGeoJSONFeatures.length > 0) {
+    src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
+  }
+  updateClusters();
+}
+
+function readdClusterLayers() {
+  if (!map) return;
+  _clusterSourceReady = false;
+  [CLUSTER_COUNT_LAYER, CLUSTER_CIRCLE_LAYER].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
+  if (map.getSource(CLUSTER_SOURCE)) map.removeSource(CLUSTER_SOURCE);
+  initClusterManager();
+  if (clusterGeoJSONFeatures.length > 0) {
+    const src = map.getSource(CLUSTER_SOURCE);
+    if (src) src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
+  }
+  updateClusters();
+}
+
+
+// ========================================
+// MAPBOX MATRIX SERVICE
+// Beregn kjøretider mellom punkter
+// ========================================
+
+const MatrixService = {
+  cache: new Map(),
+
+  /**
+   * Fetch travel time matrix for a list of coordinates
+   * @param {Array<[number,number]>} coords - Array of [lng, lat]
+   * @param {Object} options - { profile, sources, destinations, depart_at }
+   * @returns {Promise<{durations: number[][], distances: number[][]}|null>}
+   */
+  async getMatrix(coords, options = {}) {
+    if (!coords || coords.length < 2) return null;
+
+    // Enforce Mapbox limit of 25 coordinates
+    if (coords.length > 25) {
+      Logger.log('[MatrixService] Max 25 koordinater, trunkerer');
+      coords = coords.slice(0, 25);
+    }
+
+    // Build cache key
+    const cacheKey = JSON.stringify({ c: coords.map(c => [+c[0].toFixed(4), +c[1].toFixed(4)]), ...options });
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey);
+    }
+
+    try {
+      const response = await apiFetch('/api/routes/matrix', {
+        method: 'POST',
+        body: JSON.stringify({
+          coordinates: coords,
+          profile: options.profile || 'driving',
+          ...(options.sources !== undefined && { sources: options.sources }),
+          ...(options.destinations !== undefined && { destinations: options.destinations }),
+          ...(options.depart_at && { depart_at: options.depart_at }),
+        })
+      });
+
+      if (!response.ok) return null;
+
+      const result = await response.json();
+      const data = result.data || result;
+
+      const matrixResult = {
+        durations: data.durations,
+        distances: data.distances,
+      };
+
+      // Cache result (expire after 5 minutes)
+      this.cache.set(cacheKey, matrixResult);
+      setTimeout(() => this.cache.delete(cacheKey), 5 * 60 * 1000);
+
+      return matrixResult;
+    } catch (err) {
+      Logger.log('[MatrixService] Feil:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Get sequential travel times for an ordered list of stops
+   * @param {Array<[number,number]>} coords - Ordered [lng, lat] coordinates
+   * @returns {Promise<Array<{durationSec: number, distanceM: number}>>}
+   */
+  async getSequentialTimes(coords) {
+    if (coords.length < 2) return [];
+
+    const matrix = await this.getMatrix(coords);
+    if (!matrix || !matrix.durations) return [];
+
+    const times = [];
+    for (let i = 0; i < coords.length - 1; i++) {
+      times.push({
+        durationSec: matrix.durations[i]?.[i + 1] || 0,
+        distanceM: matrix.distances?.[i]?.[i + 1] || 0,
+      });
+    }
+    return times;
+  },
+
+  clearCache() {
+    this.cache.clear();
+  }
+};
+
+
+// ========================================
+// HTML & JS ESCAPE UTILITIES
 // XSS protection - used in all template literals
 // ========================================
 
@@ -9,6 +446,23 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+/**
+ * Escape a string for safe use inside JavaScript string literals in inline event handlers.
+ * Use this instead of escapeHtml() when embedding values in onclick/onchange attributes.
+ * Example: onclick="fn('${escapeJsString(userInput)}')"
+ */
+function escapeJsString(text) {
+  if (text === null || text === undefined) return '';
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/`/g, '\\`')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\//g, '\\/');
 }
 
 
@@ -536,7 +990,6 @@ const industryPalettes = {
 // Initialize theme on page load
 function initializeTheme() {
   document.documentElement.setAttribute('data-theme', currentTheme);
-  updateMapTilesForTheme(currentTheme);
 }
 
 // Toggle between light and dark theme
@@ -544,26 +997,7 @@ function toggleTheme() {
   currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', currentTheme);
   localStorage.setItem('theme', currentTheme);
-  updateMapTilesForTheme(currentTheme);
-}
-
-// Update map tiles based on theme
-function updateMapTilesForTheme(theme) {
-  if (!map) return;
-
-  const darkTiles = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-  const lightTiles = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-
-  // Find and update the current tile layer
-  map.eachLayer(layer => {
-    if (layer instanceof L.TileLayer) {
-      const url = layer._url;
-      // Only update CartoDB tiles, not satellite
-      if (url && (url.includes('dark_all') || url.includes('light_all'))) {
-        layer.setUrl(theme === 'dark' ? darkTiles : lightTiles);
-      }
-    }
-  });
+  // Map style is handled by toggleNightMode() in map-core.js
 }
 
 
@@ -878,7 +1312,6 @@ async function checkExistingAuth() {
 
 // Helper function to make authenticated API calls
 // Token refresh state to prevent multiple simultaneous refresh attempts
-let isRefreshingToken = false;
 let refreshPromise = null;
 
 // Check if access token is expiring soon (within 2 minutes)
@@ -892,12 +1325,11 @@ function isAccessTokenExpiringSoon() {
 
 // Refresh the access token using refresh token
 async function refreshAccessToken() {
-  // If already refreshing, wait for that promise
-  if (isRefreshingToken && refreshPromise) {
+  // If already refreshing, reuse the existing promise (prevents race condition)
+  if (refreshPromise) {
     return refreshPromise;
   }
 
-  isRefreshingToken = true;
   refreshPromise = (async () => {
     try {
       const refreshHeaders = { 'Content-Type': 'application/json' };
@@ -928,7 +1360,6 @@ async function refreshAccessToken() {
       console.error('Token refresh error:', error);
       return false;
     } finally {
-      isRefreshingToken = false;
       refreshPromise = null;
     }
   })();
@@ -1808,10 +2239,15 @@ class ServiceTypeRegistry {
   renderCategoryCheckboxes(selectedValue = '') {
     const serviceTypes = this.getAll();
     const selectedNames = selectedValue.split(' + ').map(s => s.trim()).filter(Boolean);
+    const selectedNamesLower = selectedNames.map(s => s.toLowerCase());
     let html = '';
 
     serviceTypes.forEach(st => {
-      const checked = selectedNames.includes(st.name) || selectedNames.includes(st.slug) ? 'checked' : '';
+      // Match by name or slug (case-insensitive)
+      const nameMatch = selectedNamesLower.includes(st.name.toLowerCase()) || selectedNamesLower.includes(st.slug.toLowerCase());
+      // Auto-check if only one service type and customer has any category
+      const autoCheck = serviceTypes.length === 1 && selectedNames.length > 0;
+      const checked = nameMatch || autoCheck ? 'checked' : '';
       html += `
         <label class="kategori-checkbox-label">
           <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
@@ -2200,18 +2636,17 @@ class ServiceTypeRegistry {
       const subtype = subtypeSelect?.value || null;
       const equipment = equipmentSelect?.value || null;
 
-      // Only include service if it has dates
-      if (siste || neste) {
-        services.push({
-          service_type_id: st.id,
-          service_type_slug: st.slug,
-          siste_kontroll: siste,
-          neste_kontroll: neste,
-          intervall_months: intervall,
-          subtype_name: subtype,
-          equipment_name: equipment
-        });
-      }
+      // Always include rendered service sections (even without dates)
+      // Null dates = "service type selected but no dates set yet"
+      services.push({
+        service_type_id: st.id,
+        service_type_slug: st.slug,
+        siste_kontroll: siste,
+        neste_kontroll: neste,
+        intervall_months: intervall,
+        subtype_name: subtype,
+        equipment_name: equipment
+      });
     });
 
     return services;
@@ -2345,12 +2780,32 @@ class ServiceTypeRegistry {
       }
 
       // Single service type - simple view
-      const sisteKontroll = customer.siste_kontroll || customer.siste_el_kontroll;
+      const st = serviceTypes[0];
+      let nesteKontroll = null;
+      let sisteKontroll = null;
+
+      const serviceData = (customer.services || []).find(s =>
+        s.service_type_slug === st.slug || s.service_type_id === st.id
+      );
+      if (serviceData) {
+        nesteKontroll = serviceData.neste_kontroll;
+        sisteKontroll = serviceData.siste_kontroll;
+      }
+      if (st.slug === 'el-kontroll') {
+        if (!nesteKontroll) nesteKontroll = customer.neste_el_kontroll;
+        if (!sisteKontroll) sisteKontroll = customer.siste_el_kontroll;
+      } else if (st.slug === 'brannvarsling') {
+        if (!nesteKontroll) nesteKontroll = customer.neste_brann_kontroll;
+        if (!sisteKontroll) sisteKontroll = customer.siste_brann_kontroll;
+      }
+      if (!nesteKontroll) nesteKontroll = customer.neste_kontroll;
+      if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
+
       return `
         <div class="popup-control-info">
           <p class="popup-status ${controlStatus.class}">
-            <strong><span class="marker-svg-icon" style="display:inline-block;width:14px;height:14px;vertical-align:middle;color:#3B82F6;">${svgIcons['service']}</span> Neste kontroll:</strong>
-            <span class="control-days">${escapeHtml(controlStatus.label)}</span>
+            <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+            <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
           </p>
           ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
         </div>`;
@@ -2762,7 +3217,9 @@ const SmartRouteEngine = {
 
     // Effektivitetsscore (0-100)
     // Høyere er bedre: belønner tetthet og antall, straffer lang avstand
-    const rawScore = (density * n * 10) / (1 + distanceToStart * 0.05 + avgDistanceFromCentroid * 0.3);
+    let rawScore = (density * n * 10) / (1 + distanceToStart * 0.05 + avgDistanceFromCentroid * 0.3);
+
+
     const efficiencyScore = Math.min(100, Math.round(rawScore * 10));
 
     // Finn primært område (mest vanlige poststed)
@@ -2792,6 +3249,56 @@ const SmartRouteEngine = {
       avgDistanceFromCentroid: Math.round(avgDistanceFromCentroid * 10) / 10,
       distanceToStart: Math.round(distanceToStart)
     };
+  },
+
+  // Enhanced efficiency calculation using Mapbox Matrix API (real travel times)
+  async calculateClusterEfficiencyWithMatrix(cluster) {
+    const basic = this.calculateClusterEfficiency(cluster);
+    if (!basic || cluster.length < 2) return basic;
+
+    if (typeof MatrixService === 'undefined') return basic;
+
+    const startLng = appConfig.routeStartLng || 17.65274;
+    const startLat = appConfig.routeStartLat || 69.06888;
+
+    const coords = [
+      [startLng, startLat],
+      ...cluster.filter(c => c.lat && c.lng).map(c => [c.lng, c.lat])
+    ];
+
+    // Only use matrix for clusters up to 24 customers (25 - 1 office)
+    if (coords.length > 25 || coords.length < 3) return basic;
+
+    const matrix = await MatrixService.getMatrix(coords, {
+      sources: '0',
+      destinations: 'all'
+    });
+
+    if (!matrix || !matrix.durations || !matrix.durations[0]) return basic;
+
+    // Office → each customer times
+    const officeTimes = matrix.durations[0].slice(1);
+    const officeDistances = matrix.distances ? matrix.distances[0].slice(1) : [];
+    const validTimes = officeTimes.filter(t => t !== null && t > 0);
+
+    if (validTimes.length === 0) return basic;
+
+    const avgTravelToCluster = validTimes.reduce((a, b) => a + b, 0) / validTimes.length;
+
+    // Override estimated minutes with real data
+    const serviceTime = cluster.length * this.params.serviceTimeMinutes;
+    const travelToClusterMin = Math.round(avgTravelToCluster / 60) * 2; // round trip
+    basic.estimatedMinutes = travelToClusterMin + serviceTime;
+
+    if (officeDistances.length > 0) {
+      const validDist = officeDistances.filter(d => d !== null && d > 0);
+      if (validDist.length > 0) {
+        basic.estimatedKm = Math.round(validDist.reduce((a, b) => a + b, 0) / 1000 * 2);
+      }
+    }
+
+    basic.matrixBased = true;
+    return basic;
   },
 
   // Generer anbefalinger
@@ -2892,58 +3399,79 @@ const SmartRouteEngine = {
     this.selectedClusterId = clusterId;
     this.updateClusterButtons(); // Oppdater knapper
 
-    // Lag layer group for visualisering
-    this.clusterLayer = L.layerGroup().addTo(map);
+    // Track layer IDs for cleanup
+    this.clusterLayerIds = [];
+    this._clusterMarkers = [];
 
     // Tegn convex hull polygon rundt kundene
     const positions = cluster.customers.map(c => [c.lat, c.lng]);
     if (positions.length >= 3) {
       const hull = this.convexHull(positions);
-      const polygon = L.polygon(hull, {
-        color: '#ff6b00',
-        weight: 2,
-        fillColor: '#ff6b00',
-        fillOpacity: 0.15,
-        dashArray: '5, 5'
-      }).addTo(this.clusterLayer);
+      const hullCoords = hull.map(p => [p[1], p[0]]);
+      hullCoords.push(hullCoords[0]); // close the ring
+      const srcId = 'sre-cluster-hull';
+      map.addSource(srcId, {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [hullCoords] } }
+      });
+      map.addLayer({ id: srcId + '-fill', type: 'fill', source: srcId, paint: { 'fill-color': '#ff6b00', 'fill-opacity': 0.15 } });
+      map.addLayer({ id: srcId + '-line', type: 'line', source: srcId, paint: { 'line-color': '#ff6b00', 'line-width': 2, 'line-dasharray': [5, 5] } });
+      this.clusterLayerIds.push(srcId + '-fill', srcId + '-line', srcId);
     }
 
     // Marker kunder i klyngen
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    cluster.customers.forEach((c, idx) => {
+    const dotFeatures = cluster.customers.map(c => {
       const nextDate = getNextControlDate(c);
       const isOverdue = nextDate && nextDate < today;
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
+        properties: {
+          color: isOverdue ? '#e74c3c' : '#f39c12',
+          navn: c.navn, adresse: c.adresse || '',
+          status: isOverdue ? 'Forfalt' : 'Kommende'
+        }
+      };
+    });
+    const dotSrcId = 'sre-cluster-dots';
+    map.addSource(dotSrcId, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: dotFeatures }
+    });
+    map.addLayer({
+      id: dotSrcId, type: 'circle', source: dotSrcId,
+      paint: {
+        'circle-radius': 10, 'circle-color': ['get', 'color'],
+        'circle-stroke-width': 2, 'circle-stroke-color': ['get', 'color'],
+        'circle-opacity': 0.8
+      }
+    });
+    this.clusterLayerIds.push(dotSrcId);
 
-      const marker = L.circleMarker([c.lat, c.lng], {
-        radius: 10,
-        color: isOverdue ? '#e74c3c' : '#f39c12',
-        weight: 2,
-        fillColor: isOverdue ? '#e74c3c' : '#f39c12',
-        fillOpacity: 0.8
-      }).addTo(this.clusterLayer);
-
-      marker.bindPopup(`
-        <strong>${escapeHtml(c.navn)}</strong><br>
-        ${escapeHtml(c.adresse || '')}<br>
-        <small>${isOverdue ? 'Forfalt' : 'Kommende'}</small>
+    // Click on dot shows popup
+    map.on('click', dotSrcId, (e) => {
+      const props = e.features[0].properties;
+      showMapPopup(e.lngLat, `
+        <strong>${escapeHtml(props.navn)}</strong><br>
+        ${escapeHtml(props.adresse)}<br>
+        <small>${props.status}</small>
       `);
     });
 
     // Marker sentroiden
-    const centroidMarker = L.marker([cluster.centroid.lat, cluster.centroid.lng], {
-      icon: L.divIcon({
-        className: 'cluster-centroid-marker',
-        html: `<div class="centroid-icon"><i class="fas fa-crosshairs"></i></div>`,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15]
-      })
-    }).addTo(this.clusterLayer);
+    const centroidEl = createMarkerElement('cluster-centroid-marker',
+      '<div class="centroid-icon"><i class="fas fa-crosshairs"></i></div>', [30, 30]);
+    const centroidMarker = new mapboxgl.Marker({ element: centroidEl })
+      .setLngLat([cluster.centroid.lng, cluster.centroid.lat])
+      .addTo(map);
+    this._clusterMarkers.push(centroidMarker);
 
     // Zoom til klyngen
-    const bounds = L.latLngBounds(positions);
-    map.fitBounds(bounds, { padding: [50, 50] });
+    const bounds = boundsFromLatLngArray(positions);
+    map.fitBounds(bounds, { padding: 50 });
 
     // Oppdater knapper etter visning
     this.updateClusterButtons();
@@ -2951,9 +3479,19 @@ const SmartRouteEngine = {
 
   // Fjern klynge-visualisering
   clearClusterVisualization() {
-    if (this.clusterLayer && map) {
-      map.removeLayer(this.clusterLayer);
-      this.clusterLayer = null;
+    if (this.clusterLayerIds && map) {
+      // Remove layers first, then sources
+      for (const id of this.clusterLayerIds) {
+        if (map.getLayer(id)) map.removeLayer(id);
+      }
+      for (const id of this.clusterLayerIds) {
+        if (map.getSource(id)) map.removeSource(id);
+      }
+      this.clusterLayerIds = [];
+    }
+    if (this._clusterMarkers) {
+      this._clusterMarkers.forEach(m => m.remove());
+      this._clusterMarkers = [];
     }
     this.selectedClusterId = null;
   },
@@ -3404,19 +3942,17 @@ function showAreaOnMap(area) {
   const areaCustomers = customers.filter(c => c.poststed === area);
   if (areaCustomers.length === 0) return;
 
-  // Get valid coordinates
-  const coords = areaCustomers
-    .filter(c => c.lat && c.lng)
-    .map(c => [c.lat, c.lng]);
+  // Get valid customers with coordinates
+  const validCustomers = areaCustomers.filter(c => c.lat && c.lng);
 
-  if (coords.length === 0) {
+  if (validCustomers.length === 0) {
     showToast('Ingen kunder med koordinater i dette området', 'warning');
     return;
   }
 
   // Fit map to bounds
-  const bounds = L.latLngBounds(coords);
-  map.fitBounds(bounds, { padding: [50, 50] });
+  const bounds = boundsFromCustomers(validCustomers);
+  map.fitBounds(bounds, { padding: 50 });
 
   // Highlight the customers
   highlightCustomersOnMap(areaCustomers.map(c => c.id));
@@ -3446,15 +3982,14 @@ function highlightCustomersOnMap(customerIds) {
   // Clear previous highlights
   clearMapHighlights();
 
-  // Create a layer group for highlight rings
-  window.highlightLayer = L.layerGroup().addTo(map);
   window.highlightedCustomerIds = customerIds;
+  window._highlightLayerIds = [];
 
   // Get positions of all customers to highlight
   const positions = [];
   customers.forEach(c => {
     if (customerIds.includes(c.id) && c.lat && c.lng) {
-      positions.push([c.lat, c.lng]);
+      positions.push([c.lng, c.lat]); // [lng, lat] for GeoJSON
     }
   });
 
@@ -3463,49 +3998,59 @@ function highlightCustomersOnMap(customerIds) {
     return;
   }
 
-  // Add small marker at each position
-  positions.forEach(pos => {
-    const dot = L.circleMarker(pos, {
-      radius: 8,
-      color: '#ff6b00',
-      weight: 2,
-      fillColor: '#ff6b00',
-      fillOpacity: 0.8,
-      className: 'highlight-dot'
-    }).addTo(window.highlightLayer);
+  // Add dot markers at each position
+  const dotFeatures = positions.map(p => ({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: p }
+  }));
+  map.addSource('sre-highlight-dots', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: dotFeatures }
   });
+  map.addLayer({
+    id: 'sre-highlight-dots', type: 'circle', source: 'sre-highlight-dots',
+    paint: {
+      'circle-radius': 8, 'circle-color': '#ff6b00',
+      'circle-stroke-width': 2, 'circle-stroke-color': '#ff6b00',
+      'circle-opacity': 0.8
+    }
+  });
+  window._highlightLayerIds.push('sre-highlight-dots');
 
   // Create area highlight around all points
   if (positions.length >= 3) {
-    // Use convex hull for 3+ points
-    const hull = getConvexHull(positions);
-    const polygon = L.polygon(hull, {
-      color: '#ff6b00',
-      weight: 3,
-      fillColor: '#ff6b00',
-      fillOpacity: 0.1,
-      dashArray: '8, 8',
-      className: 'highlight-area'
-    }).addTo(window.highlightLayer);
+    const hull = getConvexHull(positions.map(p => [p[1], p[0]])); // hull expects [lat,lng]
+    const hullCoords = hull.map(p => [p[1], p[0]]);
+    hullCoords.push(hullCoords[0]);
+    map.addSource('sre-highlight-area', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [hullCoords] } }
+    });
+    map.addLayer({ id: 'sre-highlight-area-fill', type: 'fill', source: 'sre-highlight-area', paint: { 'fill-color': '#ff6b00', 'fill-opacity': 0.1 } });
+    map.addLayer({ id: 'sre-highlight-area-line', type: 'line', source: 'sre-highlight-area', paint: { 'line-color': '#ff6b00', 'line-width': 3, 'line-dasharray': [8, 8] } });
+    window._highlightLayerIds.push('sre-highlight-area-fill', 'sre-highlight-area-line', 'sre-highlight-area');
   } else if (positions.length === 2) {
-    // Draw line between 2 points with buffer
-    const line = L.polyline(positions, {
-      color: '#ff6b00',
-      weight: 4,
-      dashArray: '8, 8',
-      className: 'highlight-area'
-    }).addTo(window.highlightLayer);
+    map.addSource('sre-highlight-line', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'LineString', coordinates: positions } }
+    });
+    map.addLayer({ id: 'sre-highlight-line', type: 'line', source: 'sre-highlight-line', paint: { 'line-color': '#ff6b00', 'line-width': 4, 'line-dasharray': [8, 8] } });
+    window._highlightLayerIds.push('sre-highlight-line');
   } else {
-    // Single point - draw larger circle
-    const circle = L.circle(positions[0], {
-      radius: 500,
-      color: '#ff6b00',
-      weight: 2,
-      fillColor: '#ff6b00',
-      fillOpacity: 0.1,
-      dashArray: '8, 8',
-      className: 'highlight-area'
-    }).addTo(window.highlightLayer);
+    // Single point - draw larger circle (approximate 500m radius)
+    map.addSource('sre-highlight-circle', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Point', coordinates: positions[0] } }
+    });
+    map.addLayer({
+      id: 'sre-highlight-circle', type: 'circle', source: 'sre-highlight-circle',
+      paint: {
+        'circle-radius': 30, 'circle-color': '#ff6b00',
+        'circle-stroke-width': 2, 'circle-stroke-color': '#ff6b00',
+        'circle-opacity': 0.1
+      }
+    });
+    window._highlightLayerIds.push('sre-highlight-circle');
   }
 
   // Show count
@@ -3558,10 +4103,14 @@ function crossProduct(o, a, b) {
  * Clear all map highlights
  */
 function clearMapHighlights() {
-  if (window.highlightLayer) {
-    window.highlightLayer.clearLayers();
-    map.removeLayer(window.highlightLayer);
-    window.highlightLayer = null;
+  if (window._highlightLayerIds && map) {
+    for (const id of window._highlightLayerIds) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    }
+    for (const id of window._highlightLayerIds) {
+      if (map.getSource(id)) map.removeSource(id);
+    }
+    window._highlightLayerIds = [];
   }
   window.highlightedCustomerIds = [];
 }
@@ -3582,31 +4131,32 @@ function syncMapToTab(tabName) {
 
   switch (tabName) {
     case 'customers': {
-      const positions = customers
-        .filter(c => c.lat && c.lng)
-        .map(c => [c.lat, c.lng]);
-      if (positions.length > 0) {
-        map.fitBounds(L.latLngBounds(positions), { padding: [30, 30] });
+      const validCustomers = customers.filter(c => c.lat && c.lng);
+      if (validCustomers.length > 0) {
+        map.fitBounds(boundsFromCustomers(validCustomers), { padding: 30 });
       }
       break;
     }
     case 'routes': {
-      if (routeLayer && routeLayer.getBounds) {
-        try {
-          map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
-        } catch (e) {
-          // routeLayer may be empty
+      // Route is now a GeoJSON source — try to get its bounds
+      try {
+        const src = map.getSource('route-line');
+        if (src && src._data?.geometry?.coordinates) {
+          const coords = src._data.geometry.coordinates;
+          const b = new mapboxgl.LngLatBounds();
+          coords.forEach(c => b.extend(c));
+          map.fitBounds(b, { padding: 30 });
         }
+      } catch (e) {
+        // route source may not exist
       }
       break;
     }
     case 'overdue': {
       const now = new Date();
-      const overduePositions = customers
-        .filter(c => c.neste_kontroll && c.lat && c.lng && new Date(c.neste_kontroll) < now)
-        .map(c => [c.lat, c.lng]);
-      if (overduePositions.length > 0) {
-        map.fitBounds(L.latLngBounds(overduePositions), { padding: [30, 30] });
+      const overdueCustomers = customers.filter(c => c.neste_kontroll && c.lat && c.lng && new Date(c.neste_kontroll) < now);
+      if (overdueCustomers.length > 0) {
+        map.fitBounds(boundsFromCustomers(overdueCustomers), { padding: 30 });
       }
       break;
     }
@@ -5692,19 +6242,19 @@ function renderAIQuestions() {
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === q.targetField ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="${q.targetField || ''}"
                   ${wizardImportState.questionAnswers[q.header] === q.targetField || (!wizardImportState.questionAnswers[q.header] && q.targetField) ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '${q.targetField || ''}')">
+                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '${escapeJsString(q.targetField || '')}')">
                 <span>${escapeHtml(q.targetField || 'Egendefinert felt')} <span class="recommended">(Anbefalt av AI)</span></span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_custom"
                   ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '_custom')">
+                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_custom')">
                 <span>Behold som egendefinert felt</span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_skip"
                   ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeHtml(q.header)}', '_skip')">
+                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_skip')">
                 <span>Ignorer denne kolonnen</span>
               </label>
             </div>
@@ -6018,7 +6568,7 @@ function renderUnmappedColumnsSection(data, headers, mapping, targetFields) {
                 <span class="wizard-unmapped-sample">Eksempel: ${escapeHtml(col.sampleValue || '-')}</span>
               </div>
               <div class="wizard-unmapped-action">
-                <select onchange="handleUnmappedColumn('${escapeHtml(col.header)}', this.value)">
+                <select onchange="handleUnmappedColumn('${escapeJsString(col.header)}', this.value)">
                   <option value="ignore" ${currentAction === 'ignore' ? 'selected' : ''}>
                     Ignorer
                   </option>
@@ -6100,7 +6650,7 @@ function renderWizardImportPreview() {
               </div>
               <div class="wizard-category-arrow"><i class="fas fa-arrow-right"></i></div>
               <div class="wizard-category-select">
-                <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeHtml(match.original)}', this.value)">
+                <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeJsString(match.original)}', this.value)">
                   ${match.suggested ? `
                     <option value="${escapeHtml(match.suggested.id)}" selected>
                       ${escapeHtml(match.suggested.name)} (anbefalt)
@@ -7566,11 +8116,11 @@ function renderErrorGrouping(preview) {
               <span class="error-group-count">${group.count} rader</span>
             </div>
             ${group.field === 'epost' && group.message.includes('skrivefeil') ? `
-              <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeHtml(group.field)}', '${escapeHtml(group.message)}')">
+              <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
                 <i class="fas fa-magic"></i> Fiks alle
               </button>
             ` : `
-              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeHtml(group.field)}', '${escapeHtml(group.message)}')">
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
                 <i class="fas fa-minus-circle"></i> Fjern fra import
               </button>
             `}
@@ -7713,24 +8263,25 @@ function attachCompanyListeners() {
       const lat = data.route_start_lat || 59.9139;
       const lng = data.route_start_lng || 10.7522;
 
-      wizardRouteMap = L.map('wizardRouteMap').setView([lat, lng], 10);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
-      }).addTo(wizardRouteMap);
+      wizardRouteMap = new mapboxgl.Map({
+        container: 'wizardRouteMap',
+        style: 'mapbox://styles/mapbox/streets-v12',
+        center: [lng, lat],
+        zoom: 10,
+        accessToken: mapboxgl.accessToken
+      });
 
       if (data.route_start_lat) {
-        wizardRouteMarker = L.marker([lat, lng]).addTo(wizardRouteMap);
+        wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
       }
 
       wizardRouteMap.on('click', (e) => {
-        if (wizardRouteMarker) {
-          wizardRouteMap.removeLayer(wizardRouteMarker);
-        }
-        wizardRouteMarker = L.marker(e.latlng).addTo(wizardRouteMap);
-        onboardingWizard.data.company.route_start_lat = e.latlng.lat;
-        onboardingWizard.data.company.route_start_lng = e.latlng.lng;
+        if (wizardRouteMarker) wizardRouteMarker.remove();
+        wizardRouteMarker = new mapboxgl.Marker().setLngLat(e.lngLat).addTo(wizardRouteMap);
+        onboardingWizard.data.company.route_start_lat = e.lngLat.lat;
+        onboardingWizard.data.company.route_start_lng = e.lngLat.lng;
         document.getElementById('routeCoordinates').innerHTML =
-          `<span>Valgt: ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}</span>`;
+          `<span>Valgt: ${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}</span>`;
       });
     }
   }, 100);
@@ -7871,9 +8422,9 @@ function selectWizardAddressSuggestion(suggestion) {
 
   // Update map marker
   if (wizardRouteMap) {
-    if (wizardRouteMarker) wizardRouteMap.removeLayer(wizardRouteMarker);
-    wizardRouteMarker = L.marker([suggestion.lat, suggestion.lng]).addTo(wizardRouteMap);
-    wizardRouteMap.setView([suggestion.lat, suggestion.lng], 14);
+    if (wizardRouteMarker) wizardRouteMarker.remove();
+    wizardRouteMarker = new mapboxgl.Marker().setLngLat([suggestion.lng, suggestion.lat]).addTo(wizardRouteMap);
+    wizardRouteMap.flyTo({ center: [suggestion.lng, suggestion.lat], zoom: 14 });
   }
 
   // Update coordinates display
@@ -7963,10 +8514,13 @@ function attachMapListeners() {
       const lng = data.center_lng || company.route_start_lng || 10.7522;
       const zoom = data.zoom || 10;
 
-      wizardMainMap = L.map('wizardMainMap').setView([lat, lng], zoom);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
-      }).addTo(wizardMainMap);
+      wizardMainMap = new mapboxgl.Map({
+        container: 'wizardMainMap',
+        style: 'mapbox://styles/mapbox/streets-v12',
+        center: [lng, lat],
+        zoom: zoom,
+        accessToken: mapboxgl.accessToken
+      });
 
       wizardMainMap.on('moveend', () => {
         const center = wizardMainMap.getCenter();
@@ -8017,11 +8571,9 @@ async function useAddressAsRouteStart() {
       onboardingWizard.data.company.route_start_lng = lng;
 
       if (wizardRouteMap) {
-        if (wizardRouteMarker) {
-          wizardRouteMap.removeLayer(wizardRouteMarker);
-        }
-        wizardRouteMarker = L.marker([lat, lng]).addTo(wizardRouteMap);
-        wizardRouteMap.setView([lat, lng], 14);
+        if (wizardRouteMarker) wizardRouteMarker.remove();
+        wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
+        wizardRouteMap.flyTo({ center: [lng, lat], zoom: 14 });
       }
 
       document.getElementById('routeCoordinates').innerHTML =
@@ -8551,7 +9103,7 @@ function renderCategoryIconPicker(selectedIcon) {
   container.innerHTML = CATEGORY_ICONS.map(icon => `
     <button type="button" class="icon-btn ${icon === selectedIcon ? 'selected' : ''}"
             data-icon="${escapeHtml(icon)}" title="${escapeHtml(icon.replace('fa-', ''))}"
-            onclick="selectCategoryIcon(this, '${escapeHtml(icon)}')">
+            onclick="selectCategoryIcon(this, '${escapeJsString(icon)}')">
       <i class="fas ${escapeHtml(icon)}"></i>
     </button>
   `).join('');
@@ -8748,10 +9300,10 @@ async function renderAdminSubcategories() {
         <i class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
         <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
         <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
-        <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeHtml(group.navn).replace(/'/g, "\\'")}')" title="Gi nytt navn">
+        <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Gi nytt navn">
           <i class="fas fa-pen" style="font-size: 10px;"></i>
         </button>
-        <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeHtml(group.navn).replace(/'/g, "\\'")}')" title="Slett gruppe">
+        <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Slett gruppe">
           <i class="fas fa-trash" style="font-size: 10px;"></i>
         </button>
       </div>
@@ -8760,10 +9312,10 @@ async function renderAdminSubcategories() {
         <div style="display: flex; align-items: center; gap: 6px; margin-left: 16px; padding: 2px 0;">
           <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
           <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
-          <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeHtml(sub.navn).replace(/'/g, "\\'")}')" title="Gi nytt navn">
+          <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Gi nytt navn">
             <i class="fas fa-pen" style="font-size: 10px;"></i>
           </button>
-          <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeHtml(sub.navn).replace(/'/g, "\\'")}')" title="Slett">
+          <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Slett">
             <i class="fas fa-trash" style="font-size: 10px;"></i>
           </button>
         </div>
@@ -9621,6 +10173,7 @@ function renderBrannsystemStats() {
 
   renderBarStats('brannsystemStats', systems, { barClass: 'brannsystem' });
 }
+
 
 
 // ========================================
@@ -11313,56 +11866,42 @@ function resetContextTips() {
 }
 
 
-// Render markers on map
+// Render markers on map — Mapbox GL JS version
 let renderMarkersRetryCount = 0;
-const MAX_RENDER_RETRIES = 10;
+const MAX_RENDER_RETRIES = 30;
 
 function renderMarkers(customerData) {
-  // Don't render markers if still on login view (prevents markers showing through login overlay)
+  // Don't render markers if still on login view
   if (currentView === 'login') {
     Logger.log('renderMarkers skipped - still on login view');
     renderMarkersRetryCount = 0;
     return;
   }
 
-  // Safety check - markerClusterGroup must be initialized
-  if (!markerClusterGroup) {
+  // Safety check - cluster manager must be initialized
+  // If not ready, wait — initClusterManager will call applyFilters() when done
+  if (!_clusterSourceReady) {
     if (renderMarkersRetryCount >= MAX_RENDER_RETRIES) {
-      console.error('renderMarkers failed after max retries - markerClusterGroup never initialized');
+      console.error('renderMarkers: cluster manager never initialized after', MAX_RENDER_RETRIES, 'retries');
       renderMarkersRetryCount = 0;
       return;
     }
     renderMarkersRetryCount++;
-    console.error(`renderMarkers called but markerClusterGroup is null - retry ${renderMarkersRetryCount}/${MAX_RENDER_RETRIES}`);
-    setTimeout(() => renderMarkers(customerData), 100);
+    setTimeout(() => renderMarkers(customerData), 200);
     return;
   }
 
-  // Reset retry count on successful render
   renderMarkersRetryCount = 0;
 
-  // Clear existing markers from cluster (with error handling for animation edge cases)
-  try {
-    markerClusterGroup.clearLayers();
-  } catch (e) {
-    // Leaflet animation race condition - recreate cluster group
-    console.warn('clearLayers failed, recreating cluster group:', e.message);
-    map.removeLayer(markerClusterGroup);
-    markerClusterGroup = L.markerClusterGroup({
-      maxClusterRadius: appConfig.mapClusterRadius || 60,
-      iconCreateFunction: createClusterIcon,
-      disableClusteringAtZoom: 14,
-      spiderfyOnMaxZoom: true,
-      spiderfyOnEveryZoom: false,
-      spiderfyDistanceMultiplier: 2.5,
-      showCoverageOnHover: false,
-      zoomToBoundsOnClick: true,
-      animate: true,
-      animateAddingMarkers: false,
-      singleMarkerMode: false
-    });
-    map.addLayer(markerClusterGroup);
+  // Clear existing markers
+  for (const [id, marker] of Object.entries(markers)) {
+    marker.remove();
   }
+  // Clear cluster markers
+  for (const [key, marker] of clusterMarkers) {
+    marker.remove();
+  }
+  clusterMarkers.clear();
   markers = {};
 
   // Log what we're rendering
@@ -11373,15 +11912,12 @@ function renderMarkers(customerData) {
   });
   Logger.log('renderMarkers:', customerData.length, 'kunder', kategorier);
 
-  // Collect markers to add with staggered animation
-  const markersToAdd = [];
-
   customerData.forEach(customer => {
     if (customer.lat && customer.lng) {
       const isSelected = selectedCustomers.has(customer.id);
       const controlStatus = getControlStatus(customer);
 
-      // Create marker with simplified label (performance optimization)
+      // Create marker with simplified label
       const shortName = customer.navn.length > 20 ? customer.navn.substring(0, 18) + '...' : customer.navn;
 
       // Show warning icon for urgent statuses
@@ -11392,7 +11928,6 @@ function renderMarkers(customerData) {
       let categoryIcon, categoryClass;
       const serviceTypes = serviceTypeRegistry.getAll();
       if (customer.kategori && serviceTypes.length > 0) {
-        // Use the customer's own category to determine icon
         categoryIcon = serviceTypeRegistry.getIconForCategory(customer.kategori);
         categoryClass = serviceTypeRegistry.getCategoryClass(customer.kategori);
       } else if (serviceTypes.length > 0) {
@@ -11404,167 +11939,138 @@ function renderMarkers(customerData) {
         categoryClass = 'service';
       }
 
-      const icon = L.divIcon({
-        className: `custom-marker-with-label ${isSelected ? 'selected' : ''} ${controlStatus.class}`,
-        html: `
-          <div class="marker-icon ${categoryClass} ${controlStatus.class}" data-status="${controlStatus.status}">
-            ${categoryIcon}
-            ${warningBadge}
-          </div>
-          <div class="marker-label">
-            <span class="marker-name">${escapeHtml(shortName)}</span>
-          </div>
-        `,
-        iconSize: [42, 42],
-        iconAnchor: [21, 35]
+      // Create DOM element for marker (replaces L.divIcon)
+      const el = document.createElement('div');
+      el.className = `custom-marker-with-label ${isSelected ? 'selected' : ''} ${controlStatus.class}`;
+      el.innerHTML = `
+        <div class="marker-icon ${categoryClass} ${controlStatus.class}" data-status="${controlStatus.status}">
+          ${categoryIcon}
+          ${warningBadge}
+        </div>
+        <div class="marker-label">
+          <span class="marker-name">${escapeHtml(shortName)}</span>
+        </div>
+      `;
+      el.dataset.customerId = String(customer.id);
+
+      // Create Mapbox GL JS marker
+      const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([customer.lng, customer.lat]);
+
+      // Store customer data on marker for cluster access
+      marker._customerData = {
+        id: customer.id,
+        poststed: customer.poststed,
+        hasWarning: showWarning
+      };
+      marker._addedToMap = false;
+
+      // Click — open popup
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showMapPopup(
+          [customer.lng, customer.lat],
+          generatePopupContent(customer),
+          { maxWidth: '350px', offset: [0, -35] }
+        );
       });
 
-      // Lazy popup - generate content only when opened (performance optimization)
-      // Store customer data on marker for cluster icon (avoids parsing popup content)
-      const marker = L.marker([customer.lat, customer.lng], {
-        icon,
-        customerData: {
-          id: customer.id,
-          poststed: customer.poststed,
-          hasWarning: showWarning
-        }
-      }).bindPopup(() => generatePopupContent(customer), { maxWidth: 350 });
-
-      marker.on('click', () => {
-        marker.openPopup();
-      });
-
-      // Context menu (right-click on PC, long-press on mobile)
-      // Leaflet contextmenu event on marker
-      marker.on('contextmenu', (e) => {
-        L.DomEvent.stopPropagation(e);
-        L.DomEvent.preventDefault(e);
-        showMarkerContextMenu(customer, e.originalEvent.clientX, e.originalEvent.clientY);
-      });
-
-      // Also attach native contextmenu to DOM element for reliability
-      // Leaflet's divIcon can miss events depending on click target within the icon
-      marker.on('add', () => {
-        const el = marker.getElement();
-        if (el && !el.dataset.ctxInit) {
-          el.dataset.ctxInit = 'true';
-          el.addEventListener('contextmenu', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            showMarkerContextMenu(customer, ev.clientX, ev.clientY);
-          });
-        }
+      // Context menu (right-click)
+      el.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        showMarkerContextMenu(customer, ev.clientX, ev.clientY);
       });
 
       // Long-press for mobile (500ms threshold)
       let longPressTimer = null;
-      marker.on('touchstart', (e) => {
+      el.addEventListener('touchstart', (e) => {
         longPressTimer = setTimeout(() => {
           longPressTimer = null;
-          const touch = e.originalEvent.touches[0];
+          const touch = e.touches[0];
           if (touch) {
             showMarkerContextMenu(customer, touch.clientX, touch.clientY);
           }
         }, 500);
+      }, { passive: true });
+      el.addEventListener('touchend', () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       });
-      marker.on('touchend touchmove', () => {
-        if (longPressTimer) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
-        }
-      });
-      // Clear timer if marker is removed from DOM (e.g. cluster animation)
-      marker.on('remove', () => {
-        if (longPressTimer) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
-        }
+      el.addEventListener('touchmove', () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       });
 
-      // Hover tooltip (PC only - mouseover)
+      // Hover tooltip (PC only)
       if (hasFeature('hover_tooltip')) {
-        marker.on('mouseover', (e) => {
-          if (window.innerWidth > 768 && !marker.isPopupOpen()) {
-            showMarkerTooltip(customer, e.target._icon, e.originalEvent);
+        el.addEventListener('mouseenter', (ev) => {
+          if (window.innerWidth > 768 && !currentPopup) {
+            showMarkerTooltip(customer, el, ev);
           }
         });
-        marker.on('mouseout', () => {
-          hideMarkerTooltip();
-        });
-        marker.on('popupopen', () => {
-          hideMarkerTooltip();
+        el.addEventListener('mouseleave', () => {
+          // Delay hide to allow moving mouse to tooltip actions
+          setTimeout(() => {
+            if (activeTooltipEl && !activeTooltipEl._hovered) {
+              hideMarkerTooltip();
+            }
+          }, 100);
         });
       }
 
-      // Drag-to-category: custom drag with mousedown/mousemove/mouseup
-      marker.on('add', () => {
-        const el = marker.getElement();
-        if (el && !el.dataset.dragInit) {
-          el.dataset.dragInit = 'true';
-          el.dataset.customerId = String(customer.id);
-          let dragTimeout = null;
+      // Drag-to-weekplan: custom drag with mousedown
+      el.addEventListener('mousedown', (ev) => {
+        if (ev.button !== 0) return;
+        const startX = ev.clientX;
+        const startY = ev.clientY;
+        let isDragging = false;
+        let dragTimeout = null;
 
-          el.addEventListener('mousedown', (ev) => {
-            if (ev.button !== 0) return; // Only left click
-            const startX = ev.clientX;
-            const startY = ev.clientY;
-            let isDragging = false;
+        dragTimeout = setTimeout(() => {
+          isDragging = true;
+          map.dragPan.disable();
+          startMarkerDrag(customer.id, startX, startY);
+        }, 300);
 
-            // Start drag after holding 300ms (avoids conflict with click)
-            dragTimeout = setTimeout(() => {
-              isDragging = true;
-              map.dragging.disable();
-              startMarkerDrag(customer.id, startX, startY);
-            }, 300);
-
-            const onMouseMove = (moveEv) => {
-              // Cancel if mouse moved significantly before timeout (user is panning)
-              if (!isDragging) {
-                const dist = Math.abs(moveEv.clientX - startX) + Math.abs(moveEv.clientY - startY);
-                if (dist > 10) {
-                  clearTimeout(dragTimeout);
-                  document.removeEventListener('mousemove', onMouseMove);
-                  document.removeEventListener('mouseup', onMouseUp);
-                }
-                return;
-              }
-              updateMarkerDrag(moveEv.clientX, moveEv.clientY);
-            };
-
-            const onMouseUp = () => {
+        const onMouseMove = (moveEv) => {
+          if (!isDragging) {
+            const dist = Math.abs(moveEv.clientX - startX) + Math.abs(moveEv.clientY - startY);
+            if (dist > 10) {
               clearTimeout(dragTimeout);
               document.removeEventListener('mousemove', onMouseMove);
               document.removeEventListener('mouseup', onMouseUp);
-              if (isDragging) {
-                endMarkerDrag(customer.id);
-                map.dragging.enable();
-              }
-            };
+            }
+            return;
+          }
+          updateMarkerDrag(moveEv.clientX, moveEv.clientY);
+        };
 
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
-          });
-        }
+        const onMouseUp = () => {
+          clearTimeout(dragTimeout);
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          if (isDragging) {
+            endMarkerDrag(customer.id);
+            map.dragPan.enable();
+          }
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
       });
 
-      // Collect marker for staggered animation
-      markersToAdd.push({ marker, customerId: customer.id });
       markers[customer.id] = marker;
     }
   });
 
-  // Add markers to the map
-  if (markersToAdd.length > 0) {
-    // Add all markers at once
-    markersToAdd.forEach(item => {
-      markerClusterGroup.addLayer(item.marker);
-    });
-    Logger.log('renderMarkers: Added', markersToAdd.length, 'markers to cluster group');
+  // Load data into Supercluster and render
+  loadClusterData(customerData);
+  updateClusters();
 
-    // Re-apply presence badges after markers are in DOM
-    if (presenceClaims.size > 0) {
-      setTimeout(updatePresenceBadges, 200);
-    }
+  Logger.log('renderMarkers: Created', Object.keys(markers).length, 'markers with Supercluster clustering');
+
+  // Re-apply presence badges after markers are in DOM
+  if (presenceClaims.size > 0) {
+    setTimeout(updatePresenceBadges, 200);
   }
 }
 
@@ -11588,11 +12094,17 @@ function focusOnCustomer(customerId) {
   if (customer.lat && customer.lng) {
     const delay = isMobile ? 150 : 0;
     setTimeout(() => {
-      map.invalidateSize();
-      map.setView([customer.lat, customer.lng], 14);
-      if (markers[customerId]) {
-        markers[customerId].openPopup();
-      }
+      map.resize();
+      map.flyTo({ center: [customer.lng, customer.lat], zoom: 14, duration: 1000 });
+
+      // Open popup after fly animation
+      setTimeout(() => {
+        showMapPopup(
+          [customer.lng, customer.lat],
+          generatePopupContent(customer),
+          { maxWidth: '350px', offset: [0, -35] }
+        );
+      }, 1100);
     }, delay);
   } else {
     showNotification(`${customer.navn} mangler koordinater - bruk geokoding`);
@@ -11640,7 +12152,7 @@ function updateSelectionUI() {
   updateMarkerSelectionStyles();
 }
 
-// Update selection CSS on existing markers (avoids expensive full re-render)
+// Update selection CSS on existing markers
 function updateMarkerSelectionStyles() {
   for (const [id, marker] of Object.entries(markers)) {
     const el = marker.getElement();
@@ -11648,7 +12160,6 @@ function updateMarkerSelectionStyles() {
     const customerId = Number.parseInt(id);
     const isSelected = selectedCustomers.has(customerId);
     el.classList.toggle('selected', isSelected);
-    // Also update the inner marker-icon div
     const iconDiv = el.querySelector('.marker-icon');
     if (iconDiv) iconDiv.classList.toggle('selected', isSelected);
   }
@@ -11665,7 +12176,6 @@ function clearSelection() {
   updateSelectionUI();
   clearRoute();
 }
-
 
 
 // ===== QUICK MARK VISITED + SEARCH FILTER =====
@@ -11853,36 +12363,22 @@ function filterCustomers() {
 
 
 async function geocodeAddress(address, postnummer, poststed) {
-  const fullAddress = `${address}, ${postnummer || ''} ${poststed || ''}`.trim();
+  const query = `${address || ''}, ${postnummer || ''} ${poststed || ''}`.trim();
 
   try {
-    // Try Kartverket first (best for Norwegian addresses)
-    const response = await fetch(
-      `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(fullAddress)}&fuzzy=true&treffPerSide=1`
-    );
-    if (response.ok) {
-      const data = await response.json();
-      if (data.adresser && data.adresser.length > 0) {
-        const result = data.adresser[0];
-        return {
-          lat: result.representasjonspunkt.lat,
-          lng: result.representasjonspunkt.lon,
-          formatted: `${result.adressetekst}, ${result.postnummer} ${result.poststed}`
-        };
-      }
-    }
+    const response = await apiFetch('/api/geocode/forward', {
+      method: 'POST',
+      body: JSON.stringify({ query, limit: 1 })
+    });
 
-    // Fallback to Nominatim
-    const nomResponse = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&countrycodes=no&limit=1`
-    );
-    if (nomResponse.ok) {
-      const nomData = await nomResponse.json();
-      if (nomData.length > 0) {
+    if (response.ok) {
+      const result = await response.json();
+      const suggestion = result.data?.suggestions?.[0];
+      if (suggestion) {
         return {
-          lat: Number.parseFloat(nomData[0].lat),
-          lng: Number.parseFloat(nomData[0].lon),
-          formatted: nomData[0].display_name
+          lat: suggestion.lat,
+          lng: suggestion.lng,
+          formatted: `${suggestion.adresse}, ${suggestion.postnummer} ${suggestion.poststed}`.trim()
         };
       }
     }
@@ -11910,35 +12406,121 @@ function debounce(func, wait) {
 // AbortController for canceling in-flight address searches
 let addressSearchController = null;
 
-// Search addresses using Kartverket API
+// Client-side cache for address search results
+const _addressSearchCache = new Map();
+const _ADDRESS_CACHE_MAX = 50;
+const _ADDRESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getCachedAddressSearch(key) {
+  const entry = _addressSearchCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > _ADDRESS_CACHE_TTL) {
+    _addressSearchCache.delete(key);
+    return null;
+  }
+  return entry.results;
+}
+
+function setCachedAddressSearch(key, results) {
+  if (_addressSearchCache.size >= _ADDRESS_CACHE_MAX) {
+    const firstKey = _addressSearchCache.keys().next().value;
+    if (firstKey) _addressSearchCache.delete(firstKey);
+  }
+  _addressSearchCache.set(key, { results, ts: Date.now() });
+}
+
+// Parse Kartverket response into suggestion objects
+function parseKartverketResults(data) {
+  if (!data.adresser || data.adresser.length === 0) return [];
+  return data.adresser
+    .filter(addr => addr.representasjonspunkt)
+    .map(addr => ({
+      adresse: addr.adressetekst || '',
+      postnummer: addr.postnummer || '',
+      poststed: addr.poststed || '',
+      lat: addr.representasjonspunkt.lat,
+      lng: addr.representasjonspunkt.lon,
+      kommune: addr.kommunenavn || ''
+    }));
+}
+
+// Search addresses directly via Kartverket API (fast, public, no backend round-trip)
+// Falls back to backend proxy (Mapbox) if Kartverket fails
 async function searchAddresses(query) {
-  if (!query || query.length < 3) return [];
+  if (!query || query.length < 2) return [];
+
+  // Check client-side cache first
+  const cacheKey = query.trim().toLowerCase();
+  const cached = getCachedAddressSearch(cacheKey);
+  if (cached) return cached;
 
   // Cancel any in-flight request to prevent stale results
   if (addressSearchController) {
     addressSearchController.abort();
   }
   addressSearchController = new AbortController();
+  const signal = addressSearchController.signal;
 
+  const encoded = encodeURIComponent(query.trim());
+
+  // Try Kartverket exact search first (very fast, no fuzzy)
   try {
-    const url = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(query)}&fuzzy=true&treffPerSide=5`;
-    const response = await fetch(url, { signal: addressSearchController.signal });
-    const data = await response.json();
-
-    if (data.adresser && data.adresser.length > 0) {
-      return data.adresser.map(a => ({
-        adresse: a.adressetekst,
-        postnummer: a.postnummer,
-        poststed: a.poststed,
-        lat: a.representasjonspunkt.lat,
-        lng: a.representasjonspunkt.lon,
-        kommune: a.kommunenavn || ''
-      }));
+    const response = await fetch(
+      `https://ws.geonorge.no/adresser/v1/sok?sok=${encoded}&treffPerSide=5`,
+      { signal }
+    );
+    if (response.ok) {
+      const results = parseKartverketResults(await response.json());
+      if (results.length > 0) {
+        setCachedAddressSearch(cacheKey, results);
+        return results;
+      }
     }
-    return [];
   } catch (error) {
     if (error.name === 'AbortError') return [];
-    console.error('Adressesøk feilet:', error);
+  }
+
+  // Fallback: Kartverket with fuzzy (slower but catches typos)
+  try {
+    const response = await fetch(
+      `https://ws.geonorge.no/adresser/v1/sok?sok=${encoded}&fuzzy=true&treffPerSide=5`,
+      { signal }
+    );
+    if (response.ok) {
+      const results = parseKartverketResults(await response.json());
+      if (results.length > 0) {
+        setCachedAddressSearch(cacheKey, results);
+        return results;
+      }
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') return [];
+  }
+
+  // Last resort: backend proxy (Mapbox)
+  try {
+    const proximity = map ? [map.getCenter().lng, map.getCenter().lat] : undefined;
+    const response = await apiFetch('/api/geocode/forward', {
+      method: 'POST',
+      body: JSON.stringify({ query, limit: 5, proximity }),
+      signal
+    });
+    if (!response.ok) return [];
+    const result = await response.json();
+    const suggestions = (result.data?.suggestions || []).map(s => ({
+      adresse: s.adresse,
+      postnummer: s.postnummer,
+      poststed: s.poststed,
+      lat: s.lat,
+      lng: s.lng,
+      kommune: s.kommune || ''
+    }));
+    if (suggestions.length > 0) {
+      setCachedAddressSearch(cacheKey, suggestions);
+    }
+    return suggestions;
+  } catch (error) {
+    if (error.name === 'AbortError') return [];
     return [];
   }
 }
@@ -11962,6 +12544,18 @@ async function lookupPostnummer(postnummer) {
   }
 }
 
+// Position the address suggestions dropdown relative to the input (fixed positioning)
+function positionAddressSuggestions() {
+  const container = document.getElementById('addressSuggestions');
+  const adresseInput = document.getElementById('adresse');
+  if (!container || !adresseInput) return;
+
+  const rect = adresseInput.getBoundingClientRect();
+  container.style.top = `${rect.bottom}px`;
+  container.style.left = `${rect.left}px`;
+  container.style.width = `${rect.width}px`;
+}
+
 // Render address suggestions dropdown
 function renderAddressSuggestions(results) {
   const container = document.getElementById('addressSuggestions');
@@ -11977,7 +12571,6 @@ function renderAddressSuggestions(results) {
   }
 
   container.setAttribute('role', 'listbox');
-  container.setAttribute('id', 'addressSuggestionsList');
 
   container.innerHTML = results.map((addr, index) => `
     <div class="address-suggestion-item" role="option" data-index="${index}">
@@ -11988,6 +12581,9 @@ function renderAddressSuggestions(results) {
       </div>
     </div>
   `).join('');
+
+  // Position dropdown below the input using fixed positioning
+  positionAddressSuggestions();
 
   container.classList.add('visible');
   if (adresseInput) adresseInput.setAttribute('aria-expanded', 'true');
@@ -12085,11 +12681,23 @@ function setupAddressAutocomplete() {
   adresseInput.setAttribute('role', 'combobox');
   adresseInput.setAttribute('aria-autocomplete', 'list');
   adresseInput.setAttribute('aria-expanded', 'false');
-  adresseInput.setAttribute('aria-controls', 'addressSuggestionsList');
+  adresseInput.setAttribute('aria-controls', 'addressSuggestions');
+
+  // Show loading state in dropdown
+  function showSearchLoading() {
+    suggestionsContainer.innerHTML = `
+      <div class="address-suggestion-item" style="justify-content:center;opacity:0.6;pointer-events:none;">
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Søker...</span>
+      </div>`;
+    positionAddressSuggestions();
+    suggestionsContainer.classList.add('visible');
+    adresseInput.setAttribute('aria-expanded', 'true');
+  }
 
   // Debounced search function
   const debouncedSearch = debounce(async (query) => {
-    if (query.length < 3) {
+    if (query.length < 2) {
       suggestionsContainer.classList.remove('visible');
       adresseInput.setAttribute('aria-expanded', 'false');
       return;
@@ -12098,11 +12706,13 @@ function setupAddressAutocomplete() {
     addressSuggestions = await searchAddresses(query);
     selectedSuggestionIndex = -1;
     renderAddressSuggestions(addressSuggestions);
-  }, 300);
+  }, 150);
 
   // Input event for address search
   adresseInput.addEventListener('input', (e) => {
-    debouncedSearch(e.target.value);
+    const val = e.target.value;
+    if (val.length >= 2) showSearchLoading();
+    debouncedSearch(val);
   });
 
   // Keyboard navigation
@@ -12147,13 +12757,31 @@ function setupAddressAutocomplete() {
     }
   });
 
-  // Hide suggestions when clicking outside
+  // Hide suggestions when clicking outside (check both wrapper and fixed dropdown)
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.address-autocomplete-wrapper')) {
+    if (!e.target.closest('.address-autocomplete-wrapper') && !e.target.closest('.address-suggestions')) {
       suggestionsContainer.classList.remove('visible');
       adresseInput.setAttribute('aria-expanded', 'false');
     }
   });
+
+  // Reposition or hide dropdown on modal scroll
+  const modalContent = adresseInput.closest('.modal-content');
+  if (modalContent) {
+    modalContent.addEventListener('scroll', () => {
+      if (suggestionsContainer.classList.contains('visible')) {
+        // Hide if input scrolled out of view
+        const rect = adresseInput.getBoundingClientRect();
+        const modalRect = modalContent.getBoundingClientRect();
+        if (rect.bottom < modalRect.top || rect.top > modalRect.bottom) {
+          suggestionsContainer.classList.remove('visible');
+          adresseInput.setAttribute('aria-expanded', 'false');
+        } else {
+          positionAddressSuggestions();
+        }
+      }
+    });
+  }
 
   // Postnummer auto-lookup
   if (postnummerInput && poststedInput) {
@@ -12223,15 +12851,10 @@ async function planRoute() {
   ];
 
   try {
-
-    // Use server-side proxy for route optimization (protects API key)
-    const optimizeHeaders = {
-      'Content-Type': 'application/json',
-    };
+    const optimizeHeaders = { 'Content-Type': 'application/json' };
     const csrfToken = getCsrfToken();
-    if (csrfToken) {
-      optimizeHeaders['X-CSRF-Token'] = csrfToken;
-    }
+    if (csrfToken) optimizeHeaders['X-CSRF-Token'] = csrfToken;
+
     const response = await fetch('/api/routes/optimize', {
       method: 'POST',
       headers: optimizeHeaders,
@@ -12240,19 +12863,18 @@ async function planRoute() {
         jobs: selectedCustomerData.map((c, i) => ({
           id: i + 1,
           location: [c.lng, c.lat],
-          service: 1800 // 30 min per kunde
+          service: 1800
         })),
         vehicles: [{
           id: 1,
           profile: 'driving-car',
-          start: startLocation,  // Always start from company address
-          end: startLocation     // Return to company address
+          start: startLocation,
+          end: startLocation
         }]
       })
     });
 
     if (!response.ok) {
-      // Fallback to simple directions if optimization fails
       showMessage('Ruteoptimering ikke tilgjengelig, bruker enkel rute', 'info');
       await planSimpleRoute(selectedCustomerData);
       return;
@@ -12268,7 +12890,6 @@ async function planRoute() {
 
       await drawRoute(orderedCustomers);
 
-      // Show toast with route summary
       const hours = Math.floor(route.duration / 3600);
       const minutes = Math.floor((route.duration % 3600) / 60);
       const km = (route.distance / 1000).toFixed(1);
@@ -12277,7 +12898,6 @@ async function planRoute() {
     }
   } catch (error) {
     console.error('Ruteplanlegging feil:', error);
-    // Try simple route as fallback
     await planSimpleRoute(customers.filter(c => selectedCustomers.has(c.id) && c.lat && c.lng));
   } finally {
     planRouteBtn.classList.remove('loading');
@@ -12288,51 +12908,41 @@ async function planRoute() {
 // Simple route without optimization
 async function planSimpleRoute(customerData) {
   try {
-    // Get start location from config (company address)
     const startLocation = [
       appConfig.routeStartLng || 17.65274,
       appConfig.routeStartLat || 69.06888
     ];
-    const startLatLng = [appConfig.routeStartLat || 69.06888, appConfig.routeStartLng || 17.65274];
+    const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
 
-    // Build coordinates: start -> customers -> start
     const coordinates = [
       startLocation,
       ...customerData.map(c => [c.lng, c.lat]),
-      startLocation  // Return to start
+      startLocation
     ];
 
-    // Use server-side proxy for directions (protects API key)
-    const directionsHeaders = {
-      'Content-Type': 'application/json',
-    };
+    const directionsHeaders = { 'Content-Type': 'application/json' };
     const dirCsrfToken = getCsrfToken();
-    if (dirCsrfToken) {
-      directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
-    }
+    if (dirCsrfToken) directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
+
     const response = await fetch('/api/routes/directions', {
       method: 'POST',
       headers: directionsHeaders,
       credentials: 'include',
-      body: JSON.stringify({
-        coordinates: coordinates
-      })
+      body: JSON.stringify({ coordinates })
     });
 
     const rawData = await response.json();
 
     if (!response.ok) {
-      // Parse ORS error message
       if (rawData.error && rawData.error.message) {
         if (rawData.error.message.includes('Could not find routable point')) {
-          throw new Error('En eller flere kunder har koordinater som ikke er nær en vei. Velg andre kunder eller oppdater koordinatene.');
+          throw new Error('En eller flere kunder har koordinater som ikke er nær en vei.');
         }
         throw new Error(rawData.error.message);
       }
       throw new Error('Kunne ikke beregne rute');
     }
 
-    // Handle wrapped ({ success, data }) or raw ORS response
     const geoData = rawData.data || rawData;
 
     if (geoData.features && geoData.features.length > 0) {
@@ -12340,35 +12950,28 @@ async function planSimpleRoute(customerData) {
       drawRouteFromGeoJSON(feature);
 
       // Add start marker (company location)
-      const startIcon = L.divIcon({
-        className: 'route-marker route-start',
-        html: '<i class="fas fa-home"></i>',
-        iconSize: [30, 30],
-        iconAnchor: [15, 15]
-      });
-      const startMarker = L.marker(startLatLng, { icon: startIcon }).addTo(map);
-      startMarker.bindPopup(`<strong>Start:</strong><br>${appConfig.routeStartAddress || 'Brøstadveien 343'}`);
+      const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+      const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
+        .setLngLat(startLngLat)
+        .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
+        .addTo(map);
       routeMarkers.push(startMarker);
 
       // Add numbered markers for customers
       customerData.forEach((customer, index) => {
-        const icon = L.divIcon({
-          className: 'route-marker',
-          html: `${index + 1}`,
-          iconSize: [30, 30],
-          iconAnchor: [15, 15]
-        });
-
-        const marker = L.marker([customer.lat, customer.lng], { icon }).addTo(map);
+        const el = createMarkerElement('route-marker', `${index + 1}`, [30, 30]);
+        const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([customer.lng, customer.lat])
+          .addTo(map);
         routeMarkers.push(marker);
       });
 
-      // Fit map to route (include start location)
-      const allPoints = [startLatLng, ...customerData.map(c => [c.lat, c.lng])];
-      const bounds = L.latLngBounds(allPoints);
-      map.fitBounds(bounds, { padding: [50, 50] });
+      // Fit map to route
+      const bounds = new mapboxgl.LngLatBounds();
+      bounds.extend(startLngLat);
+      customerData.forEach(c => bounds.extend([c.lng, c.lat]));
+      map.fitBounds(bounds, { padding: 50 });
 
-      // Extract summary from segments fallback
       let duration = feature.properties?.summary?.duration || 0;
       let distance = feature.properties?.summary?.distance || 0;
       if (duration === 0 && feature.properties?.segments?.length > 0) {
@@ -12378,7 +12981,6 @@ async function planSimpleRoute(customerData) {
         }
       }
 
-      // Show toast with route summary
       const hours = Math.floor(duration / 3600);
       const minutes = Math.floor((duration % 3600) / 60);
       const km = (distance / 1000).toFixed(1);
@@ -12395,29 +12997,23 @@ async function planSimpleRoute(customerData) {
 async function drawRoute(orderedCustomers) {
   clearRoute();
 
-  // Get start location from config (company address)
   const startLocation = [
     appConfig.routeStartLng || 17.65274,
     appConfig.routeStartLat || 69.06888
   ];
-  const startLatLng = [appConfig.routeStartLat || 69.06888, appConfig.routeStartLng || 17.65274];
+  const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
 
-  // Build coordinates: start -> customers -> start
   const coordinates = [
     startLocation,
     ...orderedCustomers.map(c => [c.lng, c.lat]),
-    startLocation  // Return to start
+    startLocation
   ];
 
   try {
-    // Use server-side proxy for directions (protects API key)
-    const directionsHeaders = {
-      'Content-Type': 'application/json',
-    };
+    const directionsHeaders = { 'Content-Type': 'application/json' };
     const dirCsrfToken = getCsrfToken();
-    if (dirCsrfToken) {
-      directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
-    }
+    if (dirCsrfToken) directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
+
     const response = await fetch('/api/routes/directions', {
       method: 'POST',
       headers: directionsHeaders,
@@ -12426,7 +13022,6 @@ async function drawRoute(orderedCustomers) {
     });
 
     const rawData = await response.json();
-    // Handle wrapped ({ success, data }) or raw ORS response
     const geoData = rawData.data || rawData;
 
     if (geoData.features && geoData.features.length > 0) {
@@ -12436,63 +13031,56 @@ async function drawRoute(orderedCustomers) {
     console.error('Tegning av rute feil:', error);
   }
 
-  // Add start marker (company location)
-  const startIcon = L.divIcon({
-    className: 'route-marker route-start',
-    html: '<i class="fas fa-home"></i>',
-    iconSize: [30, 30],
-    iconAnchor: [15, 15]
-  });
-  const startMarker = L.marker(startLatLng, { icon: startIcon }).addTo(map);
-  startMarker.bindPopup(`<strong>Start:</strong><br>${appConfig.routeStartAddress || 'Brøstadveien 343'}`);
+  // Add start marker
+  const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+  const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
+    .setLngLat(startLngLat)
+    .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
+    .addTo(map);
   routeMarkers.push(startMarker);
 
   // Add numbered markers for customers
   orderedCustomers.forEach((customer, index) => {
-    const icon = L.divIcon({
-      className: 'route-marker',
-      html: `${index + 1}`,
-      iconSize: [30, 30],
-      iconAnchor: [15, 15]
-    });
-
-    const marker = L.marker([customer.lat, customer.lng], { icon }).addTo(map);
+    const el = createMarkerElement('route-marker', `${index + 1}`, [30, 30]);
+    const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([customer.lng, customer.lat])
+      .addTo(map);
     routeMarkers.push(marker);
   });
 
-  // Fit map to route (include start location)
-  const allPoints = [startLatLng, ...orderedCustomers.map(c => [c.lat, c.lng])];
-  const bounds = L.latLngBounds(allPoints);
-  map.fitBounds(bounds, { padding: [50, 50] });
+  // Fit map to route
+  const bounds = new mapboxgl.LngLatBounds();
+  bounds.extend(startLngLat);
+  orderedCustomers.forEach(c => bounds.extend([c.lng, c.lat]));
+  map.fitBounds(bounds, { padding: 50 });
 }
 
-// Draw route from GeoJSON
+// Draw route from GeoJSON using Mapbox GL JS source + layer
 function drawRouteFromGeoJSON(feature) {
   clearRoute();
 
-  if (feature && feature.geometry && feature.geometry.coordinates) {
-    // Convert GeoJSON [lng, lat] to Leaflet [lat, lng] and draw polyline directly
-    const routeCoords = feature.geometry.coordinates.map(c => [c[1], c[0]]);
-    routeLayer = L.polyline(routeCoords, {
-      color: '#2563eb',
-      weight: 6,
-      opacity: 0.9,
-      lineCap: 'round',
-      lineJoin: 'round'
-    }).addTo(map);
-
-    // Bring route to front
-    routeLayer.bringToFront();
+  if (feature?.geometry?.coordinates) {
+    // GeoJSON is already [lng, lat] — no conversion needed!
+    if (map.getSource('route-line')) {
+      map.getSource('route-line').setData(feature);
+    } else {
+      map.addSource('route-line', { type: 'geojson', data: feature });
+      map.addLayer({
+        id: 'route-line',
+        type: 'line',
+        source: 'route-line',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#2563eb', 'line-width': 6, 'line-opacity': 0.9 }
+      });
+    }
   }
 }
 
 // Clear route from map
 function clearRoute() {
-  if (routeLayer) {
-    map.removeLayer(routeLayer);
-    routeLayer = null;
-  }
-  routeMarkers.forEach(m => map.removeLayer(m));
+  if (map.getLayer('route-line')) map.removeLayer('route-line');
+  if (map.getSource('route-line')) map.removeSource('route-line');
+  routeMarkers.forEach(m => m.remove());
   routeMarkers = [];
 }
 
@@ -12501,23 +13089,17 @@ let currentRouteData = null;
 
 // Navigate to a single customer using device maps app
 function navigateToCustomer(lat, lng, _name) {
-  // Detect if iOS or Android
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const startLat = appConfig.routeStartLat || 69.06888;
   const startLng = appConfig.routeStartLng || 17.65274;
 
   if (isIOS) {
-    // Apple Maps
-    const url = `https://maps.apple.com/?saddr=${startLat},${startLng}&daddr=${lat},${lng}&dirflg=d`;
-    window.open(url, '_blank');
+    window.open(`https://maps.apple.com/?saddr=${startLat},${startLng}&daddr=${lat},${lng}&dirflg=d`, '_blank');
   } else {
-    // Google Maps (works on Android and desktop)
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${startLat},${startLng}&destination=${lat},${lng}&travelmode=driving`;
-    window.open(url, '_blank');
+    window.open(`https://www.google.com/maps/dir/?api=1&origin=${startLat},${startLng}&destination=${lat},${lng}&travelmode=driving`, '_blank');
   }
 
-  // Close popup
-  map.closePopup();
+  closeMapPopup();
 }
 
 
@@ -13416,7 +13998,7 @@ function focusTeamMemberOnMap(memberName) {
     wpFocusedTeamMember = null;
     wpFocusedMemberIds = null;
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
     renderWeeklyPlan();
     return;
   }
@@ -13430,27 +14012,28 @@ function focusTeamMemberOnMap(memberName) {
   wpFocusedMemberIds = new Set([...member.kundeIds].map(id => Number(id)));
 
   // Collect bounds from actual map markers
-  const bounds = [];
+  const bounds = new mapboxgl.LngLatBounds();
+  let hasPoints = false;
   for (const kundeId of wpFocusedMemberIds) {
     const m = markers[kundeId];
     if (m) {
-      const ll = m.getLatLng();
+      const ll = m.getLngLat();
       if (ll && ll.lat && ll.lng) {
-        bounds.push(ll);
+        bounds.extend(ll);
+        hasPoints = true;
       }
     }
   }
 
   // Zoom map FIRST, then apply styling after zoom settles
-  if (bounds.length > 0) {
-    const latLngBounds = L.latLngBounds(bounds);
-    map.fitBounds(latLngBounds.pad(0.5), { maxZoom: 11, padding: [40, 40] });
+  if (hasPoints) {
+    map.fitBounds(bounds, { maxZoom: 11, padding: 40 });
   }
 
   // Delay focus styling until after zoom animation completes
   setTimeout(() => {
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
   }, 400);
 
   renderWeeklyPlan();
@@ -13470,7 +14053,7 @@ function refreshTeamFocus() {
     wpFocusedMemberIds = new Set([...member.kundeIds].map(id => Number(id)));
   }
   applyTeamFocusToMarkers();
-  if (markerClusterGroup) markerClusterGroup.refreshClusters();
+  if (typeof refreshClusters === 'function') refreshClusters();
 }
 
 // Apply focus/dim styling to individual markers (called after zoom changes too)
@@ -13716,7 +14299,7 @@ async function renderWeeklyPlan() {
         const custInitials = custAssignedName ? getCreatorDisplay(custAssignedName, true) : '';
         const custColor = teamColorMap.get(custAssignedName) || currentUserColor;
         html += `
-          <div class="wp-item new wp-timeline-item" style="border-left:3px solid ${custColor}">
+          <div class="wp-item new wp-timeline-item" data-customer-id="${c.id}" data-day="${dayKey}" style="border-left:3px solid ${custColor}">
             <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${custColor}">${stopIndex}</span>${custInitials ? `<span class="wp-stop-initials" style="background:${custColor}">${escapeHtml(custInitials)}</span>` : ''}</span>
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(c.navn)}</span>
@@ -13857,18 +14440,111 @@ async function renderWeeklyPlan() {
     }, 200));
   }
 
-  // Right-click context menu on existing avtaler
+  // Right-click context menu on weekplan items
   container.addEventListener('contextmenu', (e) => {
-    const item = e.target.closest('.wp-item.existing[data-avtale-id]');
-    if (!item) return;
-    e.preventDefault();
-    const avtaleId = item.dataset.avtaleId;
-    const avtaleName = item.dataset.avtaleName;
-    showWpContextMenu(avtaleId, avtaleName, e.clientX, e.clientY);
+    // Existing avtaler
+    const existingItem = e.target.closest('.wp-item.existing[data-avtale-id]');
+    if (existingItem) {
+      e.preventDefault();
+      const avtaleId = Number(existingItem.dataset.avtaleId);
+      const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+      if (avtale) {
+        showWeekplanExistingContextMenu(avtale, e.clientX, e.clientY);
+      }
+      return;
+    }
+    // Planned (unsaved) items
+    const plannedItem = e.target.closest('.wp-item.new[data-customer-id]');
+    if (plannedItem) {
+      e.preventDefault();
+      const customerId = Number(plannedItem.dataset.customerId);
+      const dayKey = plannedItem.dataset.day;
+      const customer = typeof customers !== 'undefined' ? customers.find(c => c.id === customerId) : null;
+      if (customer && dayKey) {
+        showWeekplanPlannedContextMenu(customer, dayKey, e.clientX, e.clientY);
+      }
+      return;
+    }
   });
 
   // Update map markers with plan badges
   updateWeekPlanBadges();
+
+  // Load travel times asynchronously for each day with content
+  if (typeof MatrixService !== 'undefined') {
+    for (let i = 0; i < 5; i++) {
+      const dayKey = weekDayKeys[i];
+      const dayData = weekPlanState.days[dayKey];
+      const dateStr = dayData.date;
+      const existingCount = avtaler.filter(a => a.dato === dateStr).length;
+      if (dayData.planned.length > 0 || existingCount > 0) {
+        wpLoadTravelTimes(dayKey);
+      }
+    }
+  }
+}
+
+// Load and display travel times between stops for a day
+async function wpLoadTravelTimes(dayKey) {
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return;
+
+  const dateStr = dayData.date;
+  const startLng = appConfig.routeStartLng || 17.65274;
+  const startLat = appConfig.routeStartLat || 69.06888;
+
+  // Build coordinate array: [office, stop1, stop2, ..., office]
+  const coords = [[startLng, startLat]];
+
+  for (const c of dayData.planned) {
+    if (c.lat && c.lng) coords.push([c.lng, c.lat]);
+  }
+
+  const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+  for (const a of existingAvtaler) {
+    const kunde = customers.find(c => c.id === a.kunde_id);
+    if (kunde?.lat && kunde?.lng) {
+      coords.push([kunde.lng, kunde.lat]);
+    }
+  }
+
+  // Return to office
+  coords.push([startLng, startLat]);
+
+  if (coords.length < 3) return; // Need at least office + 1 stop + office
+
+  const times = await MatrixService.getSequentialTimes(coords);
+  if (!times || times.length === 0) return;
+
+  // Verify we're still showing this day (user might have navigated away)
+  const dayEl = document.querySelector(`.wp-day[data-day="${dayKey}"] .wp-day-content`);
+  if (!dayEl) return;
+
+  // Remove any previously inserted separators
+  dayEl.querySelectorAll('.wp-drive-separator').forEach(el => el.remove());
+
+  const items = dayEl.querySelectorAll('.wp-timeline-item');
+
+  items.forEach((item, idx) => {
+    const time = times[idx]; // drive from previous to this stop
+    if (!time || time.durationSec === 0) return;
+
+    const driveMin = Math.round(time.durationSec / 60);
+    const sep = document.createElement('div');
+    sep.className = 'wp-drive-separator';
+    sep.innerHTML = `<i class="fas fa-car" style="font-size:9px"></i> ${driveMin} min kjøretid`;
+    item.parentNode.insertBefore(sep, item);
+  });
+
+  // Update the footer summary with total driving info
+  const totalDriveSec = times.reduce((sum, t) => sum + t.durationSec, 0);
+  const totalDriveMin = Math.round(totalDriveSec / 60);
+  const totalKm = Math.round(times.reduce((sum, t) => sum + t.distanceM, 0) / 1000);
+
+  const summaryEl = dayEl.parentNode.querySelector('.wp-day-stats .wp-day-summary');
+  if (summaryEl && totalDriveMin > 0) {
+    summaryEl.textContent += ` · ${formatMinutes(totalDriveMin)} kjøretid · ${totalKm} km`;
+  }
 }
 
 // Day-picker popup for adding customers to weekly plan from overdue/upcoming views
@@ -14002,6 +14678,17 @@ function addCustomersToWeekPlan(customersList) {
   renderWeeklyPlan();
 }
 
+// Add a single customer to weekplan from map tooltip/context menu
+function addToWeekPlanFromMap(customerId) {
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+  if (!weekPlanState.activeDay) {
+    showToast('Åpne ukeplanen og velg en dag først', 'info');
+    return;
+  }
+  addCustomersToWeekPlan([customer]);
+}
+
 async function saveWeeklyPlan() {
   const totalPlanned = getWeekPlanTotalPlanned();
   if (totalPlanned === 0) return;
@@ -14097,73 +14784,8 @@ async function saveWeeklyPlan() {
   renderWeeklyPlan();
 }
 
-// Weekly plan context menu for existing avtaler
-function showWpContextMenu(avtaleId, avtaleName, x, y) {
-  closeWpContextMenu();
-  const menu = document.createElement('div');
-  menu.className = 'marker-context-menu';
-  menu.setAttribute('role', 'menu');
-  menu.innerHTML = `
-    <div class="context-menu-header">${escapeHtml(avtaleName)}</div>
-    <div class="context-menu-item" role="menuitem" data-wp-action="delete" data-id="${escapeHtml(avtaleId)}">
-      <i class="fas fa-trash" aria-hidden="true"></i> Slett avtale
-    </div>
-  `;
-
-  // Position
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-  document.body.appendChild(menu);
-
-  // Adjust if off-screen
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = `${x - rect.width}px`;
-    if (rect.bottom > window.innerHeight) menu.style.top = `${y - rect.height}px`;
-  });
-
-  // Click handler
-  menu.addEventListener('click', async (e) => {
-    const item = e.target.closest('[data-wp-action]');
-    if (!item) return;
-    const action = item.dataset.wpAction;
-    const id = item.dataset.id;
-
-    if (action === 'delete') {
-      closeWpContextMenu();
-      try {
-        const response = await apiFetch(`/api/avtaler/${id}`, { method: 'DELETE' });
-        if (response.ok) {
-          showToast('Avtale slettet', 'success');
-          await loadAvtaler();
-          refreshTeamFocus();
-          renderWeeklyPlan();
-          applyFilters(); // Oppdater kart-markører
-        } else {
-          const err = await response.json().catch(() => ({}));
-          showToast(err.error?.message || 'Kunne ikke slette avtale', 'error');
-        }
-      } catch (err) {
-        showToast('Feil ved sletting: ' + err.message, 'error');
-      }
-    }
-  });
-
-  // Close on outside click
-  setTimeout(() => {
-    document.addEventListener('click', closeWpContextMenu, { once: true });
-  }, 10);
-
-  activeWpContextMenu = menu;
-}
-
-let activeWpContextMenu = null;
-function closeWpContextMenu() {
-  if (activeWpContextMenu) {
-    activeWpContextMenu.remove();
-    activeWpContextMenu = null;
-  }
-}
+// Weekplan context menu is now handled by the generic showContextMenu() system
+// See context-menu.js: showWeekplanExistingContextMenu() and showWeekplanPlannedContextMenu()
 
 function clearWeekPlan() {
   for (const dayKey of weekDayKeys) {
@@ -14402,10 +15024,15 @@ async function wpNavigateDay(dayKey) {
     wpRouteActive = true;
     wpRouteStopIds = new Set(stops.map(s => Number(s.id)));
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
 
     // Build route line: start → stop1 → stop2 → ... → start
-    const linePoints = [startLatLng, ...stops.map(s => [s.lat, s.lng]), startLatLng];
+    // Note: startLatLng is [lat, lng], convert to [lng, lat] for GeoJSON
+    const lineCoords = [
+      [startLatLng[1], startLatLng[0]],
+      ...stops.map(s => [s.lng, s.lat]),
+      [startLatLng[1], startLatLng[0]]
+    ];
 
     // Try ORS road-following geometry, fall back to straight lines
     let routeDrawn = false;
@@ -14414,15 +15041,12 @@ async function wpNavigateDay(dayKey) {
         const geomType = feature.geometry.type;
         let routeCoords;
         if (geomType === 'MultiLineString') {
-          routeCoords = feature.geometry.coordinates.flat().map(c => [c[1], c[0]]);
+          routeCoords = feature.geometry.coordinates.flat();
         } else {
-          routeCoords = feature.geometry.coordinates.map(c => [c[1], c[0]]);
+          routeCoords = feature.geometry.coordinates;
         }
         if (routeCoords.length > 2 && !isNaN(routeCoords[0][0]) && !isNaN(routeCoords[0][1])) {
-          routeLayer = L.polyline(routeCoords, {
-            color: '#2563eb', weight: 5, opacity: 0.85,
-            lineCap: 'round', lineJoin: 'round'
-          }).addTo(map);
+          drawRouteGeoJSON(routeCoords, { color: '#2563eb', width: 5, opacity: 0.85 });
           routeDrawn = true;
         }
       } catch (e) {
@@ -14431,15 +15055,12 @@ async function wpNavigateDay(dayKey) {
     }
     // Fallback: straight dashed lines between stops
     if (!routeDrawn) {
-      routeLayer = L.polyline(linePoints, {
-        color: '#2563eb', weight: 4, opacity: 0.7,
-        dashArray: '10, 8', lineCap: 'round', lineJoin: 'round'
-      }).addTo(map);
+      drawRouteGeoJSON(lineCoords, { color: '#2563eb', width: 4, opacity: 0.7, dasharray: [10, 8] });
     }
 
     // Fit map to route
-    const allPoints = [startLatLng, ...stops.map(s => [s.lat, s.lng])];
-    map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+    const allBounds = boundsFromLatLngArray([startLatLng, ...stops.map(s => [s.lat, s.lng])]);
+    map.fitBounds(allBounds, { padding: 50 });
 
     // Store for export to Maps
     currentRouteData = { customers: stops, duration: drivingSeconds, distance: distanceMeters };
@@ -14454,7 +15075,7 @@ async function wpNavigateDay(dayKey) {
     wpRouteActive = false;
     wpRouteStopIds = null;
     applyTeamFocusToMarkers();
-    if (markerClusterGroup) markerClusterGroup.refreshClusters();
+    if (typeof refreshClusters === 'function') refreshClusters();
   }
 }
 
@@ -14517,7 +15138,7 @@ function closeWpRouteSummary() {
   wpRouteActive = false;
   wpRouteStopIds = null;
   applyTeamFocusToMarkers();
-  if (markerClusterGroup) markerClusterGroup.refreshClusters();
+  if (typeof refreshClusters === 'function') refreshClusters();
 }
 
 // Export weekly plan route to Google/Apple Maps
@@ -14644,6 +15265,42 @@ async function quickAddAvtaleForDate(customerId, customerName, date) {
 }
 
 
+// Build Google Maps directions URL for a list of avtaler on a given date
+// Route: Kontor → kunde1 → kunde2 → ... → Kontor
+function buildGoogleMapsUrl(dayAvtaler) {
+  // Office start/end point
+  const officeLat = appConfig.routeStartLat;
+  const officeLng = appConfig.routeStartLng;
+  const officeAddr = appConfig.routeStartAddress;
+  let officeWaypoint = null;
+  if (officeLat && officeLng) {
+    officeWaypoint = `${officeLat},${officeLng}`;
+  } else if (officeAddr) {
+    officeWaypoint = officeAddr;
+  }
+
+  const stops = [];
+  for (const a of dayAvtaler) {
+    const kunde = customers.find(c => c.id === a.kunde_id);
+    if (!kunde) continue;
+    if (kunde.lat && kunde.lng) {
+      stops.push(`${kunde.lat},${kunde.lng}`);
+    } else {
+      const parts = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean);
+      if (parts.length > 0) stops.push(parts.join(', '));
+    }
+  }
+  if (stops.length === 0) return null;
+
+  // Build route: office → stops → office
+  const waypoints = [];
+  if (officeWaypoint) waypoints.push(officeWaypoint);
+  waypoints.push(...stops);
+  if (officeWaypoint) waypoints.push(officeWaypoint);
+
+  return 'https://www.google.com/maps/dir/' + waypoints.map(a => encodeURIComponent(a)).join('/');
+}
+
 function getAvtaleServiceColor(avtale) {
   const kunde = customers.find(c => c.id === avtale.kunde_id);
   const kategori = kunde?.kategori || avtale.type || '';
@@ -14753,8 +15410,11 @@ async function renderCalendar() {
     html += `
       <div class="calendar-day ${isToday ? 'today' : ''} ${isPast ? 'past' : ''} ${hasContent ? 'has-content' : ''}"
            data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
-        <span class="day-number">${day}</span>
-        ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} ${areaCount === 1 ? 'omr.' : 'omr.'}</span>` : ''}
+        <div class="day-top-row">
+          <span class="day-number">${day}</span>
+          ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} omr.</span>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+        </div>
         <div class="calendar-events">
           ${dayAvtaler.map(a => {
             const serviceColor = getAvtaleServiceColor(a);
@@ -14831,6 +15491,7 @@ async function renderCalendar() {
             <span class="week-day-name">${weekDayNames[i].substring(0, 3)}</span>
             <span class="week-day-date">${dayDate.getDate()}</span>
             ${dayMinutes > 0 ? `<span class="week-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
+            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
           </div>
           ${renderAreaBadges(dayAvtaler)}
           <div class="week-day-content">
@@ -15116,7 +15777,7 @@ function openCalendarSplitView() {
 
   // Invalidate map size so tiles re-render in the visible area
   setTimeout(() => {
-    if (window.map) window.map.invalidateSize();
+    if (window.map) window.map.resize();
   }, 100);
 }
 
@@ -15142,7 +15803,7 @@ function closeCalendarSplitView() {
 
   // Invalidate map size
   setTimeout(() => {
-    if (window.map) window.map.invalidateSize();
+    if (window.map) window.map.resize();
   }, 100);
 }
 
@@ -15190,6 +15851,7 @@ function renderSplitWeekContent() {
           ${isActive ? '<i class="fas fa-crosshairs split-active-icon" aria-hidden="true"></i>' : ''}
           ${dayMinutes > 0 ? `<span class="split-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
           ${dayAvtaler.length > 0 ? `<span class="split-day-count">${dayAvtaler.length} avtale${dayAvtaler.length !== 1 ? 'r' : ''}</span>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
         </div>
         ${dayAvtaler.length > 0 ? renderAreaBadges(dayAvtaler) : ''}
         <div class="split-day-content">
@@ -15467,7 +16129,7 @@ function setupSplitDivider() {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     // Re-render map
-    setTimeout(() => { if (window.map) window.map.invalidateSize(); }, 50);
+    setTimeout(() => { if (window.map) window.map.resize(); }, 50);
   };
 
   divider.addEventListener('mousedown', onMouseDown);
@@ -15588,6 +16250,23 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
 
   // Focus on search field
   setTimeout(() => kundeSearch.focus(), 100);
+}
+
+// Open new avtale with preselected customer (from map tooltip/context menu)
+function openNewAvtaleForCustomer(customerId) {
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+  openAvtaleModal(null, null);
+  // Pre-fill customer
+  const kundeSearch = document.getElementById('avtaleKundeSearch');
+  const kundeInput = document.getElementById('avtaleKunde');
+  if (kundeSearch) kundeSearch.value = `${customer.navn} (${customer.poststed || 'Ukjent'})`;
+  if (kundeInput) kundeInput.value = customer.id;
+  // Set today's date
+  const datoInput = document.getElementById('avtaleDato');
+  if (datoInput && !datoInput.value) {
+    datoInput.value = new Date().toISOString().split('T')[0];
+  }
 }
 
 // Kunde search for avtale modal
@@ -15822,8 +16501,8 @@ function createRouteForAreaYear(area, year) {
   // Zoom to area
   const areaData = areaCustomers.filter(c => c.lat && c.lng);
   if (areaData.length > 0) {
-    const bounds = L.latLngBounds(areaData.map(c => [c.lat, c.lng]));
-    map.fitBounds(bounds, { padding: [50, 50] });
+    const bounds = boundsFromCustomers(areaData);
+    map.fitBounds(bounds, { padding: 50 });
   }
 }
 
@@ -15847,8 +16526,8 @@ async function selectCustomersNeedingControl() {
       // Zoom to selected customers
       const selectedData = customers.filter(c => selectedCustomers.has(c.id) && c.lat && c.lng);
       if (selectedData.length > 0) {
-        const bounds = L.latLngBounds(selectedData.map(c => [c.lat, c.lng]));
-        map.fitBounds(bounds, { padding: [50, 50] });
+        const bounds = boundsFromCustomers(selectedData);
+        map.fitBounds(bounds, { padding: 50 });
       }
     }
   } catch (error) {
@@ -16032,9 +16711,12 @@ function dismissInactivityWarning() {
   }
 }
 
+const INACTIVITY_EVENTS = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+
 function startInactivityTracking() {
-  const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
-  events.forEach(event => {
+  // Remove any existing listeners first to prevent duplicates
+  stopInactivityTracking();
+  INACTIVITY_EVENTS.forEach(event => {
     document.addEventListener(event, resetInactivityTimers, { passive: true });
   });
   resetInactivityTimers();
@@ -16043,6 +16725,10 @@ function startInactivityTracking() {
 function stopInactivityTracking() {
   clearTimeout(inactivityTimer);
   clearTimeout(inactivityWarningTimer);
+  // Remove event listeners to prevent memory leaks
+  INACTIVITY_EVENTS.forEach(event => {
+    document.removeEventListener(event, resetInactivityTimers);
+  });
   dismissInactivityWarning();
 }
 
@@ -16052,8 +16738,8 @@ function sendManualReminder(customerId) {
   const customer = customers.find(c => c.id === customerId);
   if (!customer) return;
 
-  if (!customer.epost) {
-    showMessage(`${customer.navn} har ingen e-postadresse registrert.`, 'warning');
+  if (!customer.epost || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.epost)) {
+    showMessage(`${customer.navn} har ingen gyldig e-postadresse registrert.`, 'warning');
     return;
   }
 
@@ -16072,8 +16758,8 @@ function sendManualReminder(customerId) {
     `${companySignature}`
   );
 
-  // Open mailto link
-  window.location.href = `mailto:${customer.epost}?subject=${subject}&body=${body}`;
+  // Open mailto link with encoded email
+  window.location.href = `mailto:${encodeURIComponent(customer.epost)}?subject=${subject}&body=${body}`;
 }
 
 // === OVERDUE MAP FUNCTIONS ===
@@ -16109,14 +16795,10 @@ function showOverdueOnMap() {
   renderMarkers(customers);
 
   // Zoom to fit all overdue customers
-  const bounds = L.latLngBounds(
-    overdueCustomers
-      .filter(c => c.lat && c.lng)
-      .map(c => [c.lat, c.lng])
-  );
+  const bounds = boundsFromCustomers(overdueCustomers.filter(c => c.lat && c.lng));
 
-  if (bounds.isValid()) {
-    map.fitBounds(bounds, { padding: [50, 50] });
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds, { padding: 50 });
   }
 
   // Show notification
@@ -16141,14 +16823,10 @@ function showCustomersOnMap(customerIds) {
   renderMarkers(customers);
 
   // Zoom to fit these customers
-  const bounds = L.latLngBounds(
-    customersToShow
-      .filter(c => c.lat && c.lng)
-      .map(c => [c.lat, c.lng])
-  );
+  const bounds = boundsFromCustomers(customersToShow.filter(c => c.lat && c.lng));
 
-  if (bounds.isValid()) {
-    map.fitBounds(bounds, { padding: [50, 50] });
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds, { padding: 50 });
   }
 }
 
@@ -17028,7 +17706,7 @@ function addClusterToRoute(customerIds) {
     }
   });
   updateSelectionUI();
-  map.closePopup();
+  closeMapPopup();
 
   // Show feedback
   const count = customerIds.length;
@@ -17037,8 +17715,8 @@ function addClusterToRoute(customerIds) {
 
 // Zoom to cluster location
 function zoomToCluster(lat, lng) {
-  map.closePopup();
-  map.setView([lat, lng], map.getZoom() + 2);
+  closeMapPopup();
+  map.flyTo({ center: [lng, lat], zoom: map.getZoom() + 2 });
 }
 
 // Simple notification toast
@@ -17441,7 +18119,12 @@ function attachCategoryFilterHandlers() {
  * Always visible when organization has service types.
  */
 let subcatAdminMode = false;
-let collapsedSubcatGroups = {};
+let collapsedSubcatGroups = (() => {
+  try {
+    const saved = localStorage.getItem('skyplanner_subcatCollapsed');
+    return saved ? JSON.parse(saved) : null;
+  } catch { return null; }
+})();
 
 function renderSubcategoryFilter() {
   const contentEl = document.getElementById('subcategoryFilterContent');
@@ -17476,12 +18159,20 @@ function renderSubcategoryFilter() {
     });
   });
 
+  // Initialize collapsed state: default all groups to collapsed on first render
+  if (!collapsedSubcatGroups) {
+    collapsedSubcatGroups = {};
+    groups.forEach(g => { collapsedSubcatGroups[g.id] = true; });
+    try { localStorage.setItem('skyplanner_subcatCollapsed', JSON.stringify(collapsedSubcatGroups)); } catch {}
+  }
+
   let html = '';
 
   groups.forEach(group => {
     const subs = group.subcategories || [];
     const activeSubcatId = selectedSubcategories[group.id];
-    const isCollapsed = collapsedSubcatGroups[group.id];
+    // Default new groups to collapsed
+    const isCollapsed = collapsedSubcatGroups[group.id] !== false;
     const activeSub = activeSubcatId ? subs.find(s => s.id === activeSubcatId) : null;
 
     // Group heading (clickable for collapse)
@@ -17567,7 +18258,9 @@ function attachSubcategoryHandlers() {
     const groupToggle = e.target.closest('[data-toggle-group]');
     if (groupToggle) {
       const groupId = parseInt(groupToggle.dataset.toggleGroup, 10);
-      collapsedSubcatGroups[groupId] = !collapsedSubcatGroups[groupId];
+      // Toggle: if currently collapsed (true or undefined), open it (false); if open (false), collapse it (true)
+      collapsedSubcatGroups[groupId] = collapsedSubcatGroups[groupId] === false;
+      try { localStorage.setItem('skyplanner_subcatCollapsed', JSON.stringify(collapsedSubcatGroups)); } catch {}
       renderSubcategoryFilter();
       return;
     }
@@ -18133,7 +18826,7 @@ function renderDashboardAreas() {
 
 
 // ========================================
-// SPA VIEW MANAGEMENT
+// SPA VIEW MANAGEMENT — Mapbox GL JS v3
 // ========================================
 
 // Get Mapbox access token from server config
@@ -18145,45 +18838,31 @@ function getMapboxToken() {
   return '';
 }
 
-// Initialize the shared map (used for both login background and app)
-// Get map tile layer - Mapbox Satellite Streets (satellite with roads and labels)
-function getMapTileUrl() {
-  // Mapbox Satellite Streets - satellittbilder med veier og stedsnavn
-  return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`;
-}
-
-// Get attribution for current tile layer
-function getMapAttribution() {
-  return '&copy; <a href="https://mapbox.com/">Mapbox</a> &copy; <a href="https://openstreetmap.org/">OpenStreetMap</a>';
-}
-
-// Variable to store current tile layer for later switching
-let currentTileLayer = null;
-
 // Refresh map tiles when Mapbox token becomes available (e.g. after auth)
 function refreshMapTiles() {
-  if (!map || !currentTileLayer) return;
+  if (!map) return;
   const token = getMapboxToken();
   if (!token) return;
-  // Skip if current layer already uses the correct token
-  if (currentTileLayer._url && currentTileLayer._url.includes(token)) return;
-  Logger.log('Refreshing map tiles with updated Mapbox token');
-  map.removeLayer(currentTileLayer);
-  currentTileLayer = L.tileLayer(getMapTileUrl(), {
-    minZoom: 3,
-    maxZoom: 19,
-    tileSize: 512,
-    zoomOffset: -1,
-    attribution: getMapAttribution()
-  }).addTo(map);
+  if (mapboxgl.accessToken === token) return;
+  Logger.log('Refreshing map with updated Mapbox token');
+  mapboxgl.accessToken = token;
 }
 
-// Map mode: 'satellite' only (dark mode removed)
+// Map mode: 'satellite' or 'dark'
 let mapMode = 'satellite';
 
-// Toggle between street map and satellite view
+// Track whether custom layers need re-adding after style change
+let _pendingStyleReload = false;
+
+// 3D terrain state
+let terrainEnabled = false;
+const TERRAIN_EXAGGERATION = 1.5;
+const TERRAIN_PITCH = 60;
+const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
+
+// Toggle between satellite and dark map style
 function toggleNightMode() {
-  if (!map || !currentTileLayer) return;
+  if (!map) return;
 
   const btn = document.getElementById('nightmodeBtn');
   const icon = btn?.querySelector('i');
@@ -18198,116 +18877,271 @@ function toggleNightMode() {
 
   setTimeout(() => {
     if (mapMode === 'dark') {
-      // Switch to Mapbox Satellite Streets (satellite with all roads and labels)
-      map.removeLayer(currentTileLayer);
-      currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
-        minZoom: 3,
-        maxZoom: 19,
-        tileSize: 512,
-        zoomOffset: -1,
-        attribution: '&copy; Mapbox'
-      }).addTo(map);
-
+      map.setStyle('mapbox://styles/mapbox/satellite-streets-v12');
       mapMode = 'satellite';
       btn?.classList.add('satellite-active');
-      if (icon) {
-        icon.className = 'fas fa-sun';
-      }
+      if (icon) icon.className = 'fas fa-sun';
       btn?.setAttribute('title', 'Bytt til mørkt kart');
     } else {
-      // Switch to Mapbox Navigation Night (dark with visible roads)
-      map.removeLayer(currentTileLayer);
-      currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
-        minZoom: 3,
-        maxZoom: 19,
-        tileSize: 512,
-        zoomOffset: -1,
-        attribution: '&copy; Mapbox'
-      }).addTo(map);
-
+      map.setStyle('mapbox://styles/mapbox/navigation-night-v1');
       mapMode = 'dark';
       btn?.classList.remove('satellite-active');
-      if (icon) {
-        icon.className = 'fas fa-moon';
-      }
+      if (icon) icon.className = 'fas fa-moon';
       btn?.setAttribute('title', 'Bytt til satellittkart');
     }
+
+    // Re-add custom layers after style loads
+    map.once('style.load', () => {
+      addNorwayBorder();
+      reapplyTerrain();
+      // Re-add cluster source/layers (native GL layers are lost on style change)
+      if (typeof readdClusterLayers === 'function') readdClusterLayers();
+    });
 
     // Fade back in
     setTimeout(() => {
       mapContainer.style.opacity = '1';
       if (btn) btn.disabled = false;
-    }, 100);
+    }, 300);
   }, 400);
+}
+
+// ========================================
+// 3D TERRAIN TOGGLE
+// ========================================
+
+function enableTerrain(animate = true) {
+  if (!map) return;
+
+  // Add Mapbox DEM source if not present
+  if (!map.getSource('mapbox-dem')) {
+    map.addSource('mapbox-dem', {
+      type: 'raster-dem',
+      url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+      tileSize: 512,
+      maxzoom: 14
+    });
+  }
+
+  // Enable terrain with exaggeration
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+
+  // Add sky layer for atmosphere effect
+  if (!map.getLayer('sky-layer')) {
+    map.addLayer({
+      id: 'sky-layer',
+      type: 'sky',
+      paint: {
+        'sky-type': 'atmosphere',
+        'sky-atmosphere-sun': [0.0, 0.0],
+        'sky-atmosphere-sun-intensity': 15
+      }
+    });
+  }
+
+  // Animate or set pitch for 3D viewing angle
+  if (animate) {
+    map.easeTo({ pitch: TERRAIN_PITCH, duration: 1000 });
+  } else {
+    map.setPitch(TERRAIN_PITCH);
+  }
+
+  // Enable compass on NavigationControl for pitch reset
+  if (map._zoomControl) {
+    map.removeControl(map._zoomControl);
+    map._zoomControl = new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: true });
+    map.addControl(map._zoomControl, 'top-right');
+  }
+
+  terrainEnabled = true;
+  localStorage.setItem(TERRAIN_LS_KEY, 'true');
+  updateTerrainButton(true);
+  Logger.log('3D terreng aktivert');
+}
+
+function disableTerrain() {
+  if (!map) return;
+
+  map.setTerrain(null);
+
+  if (map.getLayer('sky-layer')) {
+    map.removeLayer('sky-layer');
+  }
+
+  // Animate pitch back to flat
+  map.easeTo({ pitch: 0, duration: 1000 });
+
+  // Restore NavigationControl without compass
+  if (map._zoomControl) {
+    map.removeControl(map._zoomControl);
+    map._zoomControl = new mapboxgl.NavigationControl({ showCompass: false });
+    map.addControl(map._zoomControl, 'top-right');
+  }
+
+  terrainEnabled = false;
+  localStorage.setItem(TERRAIN_LS_KEY, 'false');
+  updateTerrainButton(false);
+  Logger.log('3D terreng deaktivert');
+}
+
+function toggleTerrain() {
+  if (terrainEnabled) {
+    disableTerrain();
+  } else {
+    enableTerrain();
+  }
+}
+
+function updateTerrainButton(active) {
+  const btn = document.getElementById('terrainToggle');
+  if (!btn) return;
+  if (active) {
+    btn.classList.add('active');
+    btn.title = 'Slå av 3D-terreng';
+  } else {
+    btn.classList.remove('active');
+    btn.title = 'Slå på 3D-terreng';
+  }
+}
+
+function reapplyTerrain() {
+  if (!terrainEnabled || !map) return;
+  if (!map.getSource('mapbox-dem')) {
+    map.addSource('mapbox-dem', {
+      type: 'raster-dem',
+      url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+      tileSize: 512,
+      maxzoom: 14
+    });
+  }
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+  if (!map.getLayer('sky-layer')) {
+    map.addLayer({
+      id: 'sky-layer',
+      type: 'sky',
+      paint: {
+        'sky-type': 'atmosphere',
+        'sky-atmosphere-sun': [0.0, 0.0],
+        'sky-atmosphere-sun-intensity': 15
+      }
+    });
+  }
 }
 
 // Office location marker (glowing house icon)
 let officeMarker = null;
 
-function initSharedMap() {
+function initSharedMap(options = {}) {
   const mapEl = document.getElementById('map');
   if (mapEl && !map) {
-    // Start zoomed in on Troms region (company location) for login view
-    map = L.map('map', {
-      zoomControl: false,
-      attributionControl: false,
-      minZoom: 3,
-      dragging: false,
-      scrollWheelZoom: false,
-      doubleClickZoom: false,
-      touchZoom: false,
-      keyboard: false
-    }).setView([69.06888, 17.65274], 11);
+    // Set Mapbox GL JS access token
+    mapboxgl.accessToken = getMapboxToken();
 
-    // Always use Mapbox satellite tiles
-    const tileUrl = getMapTileUrl();
-    Logger.log('Map tile URL:', tileUrl);
+    // If returning user, skip globe view and start at app position
+    const skipGlobe = options.skipGlobe || false;
+    const initialCenter = skipGlobe ? [15.0, 67.5] : [15.0, 65.0];
+    const initialZoom = skipGlobe ? 6 : 3.0;
 
-    currentTileLayer = L.tileLayer(tileUrl, {
-      minZoom: 3,
+    // Create Mapbox GL JS map with globe projection
+    map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/satellite-streets-v12',
+      center: initialCenter,
+      zoom: initialZoom,
+      minZoom: 1,
       maxZoom: 19,
-      tileSize: 512,
-      zoomOffset: -1,
-      attribution: getMapAttribution()
-    }).addTo(map);
-
-    // Add glowing office marker (Brøstadveien 343, 9311 Brøstadbotn)
-    const officeIcon = L.divIcon({
-      className: 'office-marker-glow',
-      html: `
-        <div class="office-marker-container">
-          <div class="office-glow-ring"></div>
-          <div class="office-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-              <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-          </div>
-        </div>
-      `,
-      iconSize: [60, 60],
-      iconAnchor: [30, 30]
+      projection: 'globe',
+      interactive: skipGlobe, // Enable immediately for returning users
+      attributionControl: false
     });
 
-    officeMarker = L.marker([69.06888, 17.65274], {
-      icon: officeIcon,
-      interactive: false,  // Not clickable - just visual decoration
-      keyboard: false
-    }).addTo(map);
+    // Add fog/atmosphere for globe effect
+    map.on('style.load', () => {
+      map.setFog({
+        color: 'rgb(186, 210, 235)',
+        'high-color': 'rgb(36, 92, 223)',
+        'horizon-blend': 0.02,
+        'space-color': 'rgb(11, 11, 25)',
+        'star-intensity': 0.6
+      });
 
-    // Mark decorative marker as hidden from assistive tech
-    const el = officeMarker.getElement();
-    if (el) {
-      el.setAttribute('aria-hidden', 'true');
-      el.removeAttribute('tabindex');
-      el.removeAttribute('role');
+      // Add Norway border on first load
+      addNorwayBorder();
+    });
+
+    // Only spin globe on login screen (not for returning users)
+    if (!skipGlobe) {
+      startGlobeSpin();
     }
+
+    // Speed up scroll-wheel zoom (default is ~1/450, higher = faster)
+    map.scrollZoom.setWheelZoomRate(1 / 200);
+    map.scrollZoom.setZoomRate(1 / 50);
+
+    Logger.log('Mapbox GL JS map initialized with globe projection');
+
+    // Add glowing office marker (Brøstadveien 343, 9311 Brøstadbotn)
+    const officeEl = createMarkerElement('office-marker-glow', `
+      <div class="office-marker-container">
+        <div class="office-glow-ring"></div>
+        <div class="office-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </div>
+      </div>
+    `, [60, 60]);
+    officeEl.setAttribute('aria-hidden', 'true');
+
+    const homeLng = appConfig.routeStartLng || 17.65274;
+    const homeLat = appConfig.routeStartLat || 69.06888;
+    officeMarker = new mapboxgl.Marker({ element: officeEl, anchor: 'center' })
+      .setLngLat([homeLng, homeLat])
+      .addTo(map);
+  }
+}
+
+// Update office marker position when org-specific config is loaded after auth
+function updateOfficeMarkerPosition() {
+  if (!officeMarker) return;
+  const homeLng = appConfig.routeStartLng || 17.65274;
+  const homeLat = appConfig.routeStartLat || 69.06888;
+  officeMarker.setLngLat([homeLng, homeLat]);
+}
+
+// Globe spin animation for login screen
+let globeSpinRAF = null;
+
+function startGlobeSpin() {
+  if (!map) return;
+  const secondsPerRevolution = 480; // Very slow: 8 minutes per full rotation
+  const degreesPerSecond = 360 / secondsPerRevolution;
+  let lastTime = performance.now();
+
+  function spin() {
+    const now = performance.now();
+    const delta = (now - lastTime) / 1000;
+    lastTime = now;
+
+    const center = map.getCenter();
+    center.lng += degreesPerSecond * delta;
+    map.setCenter(center);
+
+    globeSpinRAF = requestAnimationFrame(spin);
+  }
+  globeSpinRAF = requestAnimationFrame(spin);
+}
+
+function stopGlobeSpin() {
+  if (globeSpinRAF) {
+    cancelAnimationFrame(globeSpinRAF);
+    globeSpinRAF = null;
   }
 }
 
 // Initialize login view (just set up form handler, map is already initialized)
 function initLoginView() {
-  // Set up login form handler
   const loginForm = document.getElementById('spaLoginForm');
   if (loginForm) {
     loginForm.addEventListener('submit', handleSpaLogin);
@@ -18340,217 +19174,157 @@ function initDOMElements() {
   routeInfo = document.getElementById('routeInfo');
 }
 
-// Initialize map features (clustering, borders, etc.)
+// Initialize map features (clustering, borders, controls, etc.)
 // Note: The base map is created in initSharedMap() at page load
 let mapInitialized = false;
 function initMap() {
-  if (mapInitialized) return; // Guard against double initialization (login + already-authenticated paths)
+  if (mapInitialized) {
+    // Controls already added — just re-init clusters (needed after logout → login)
+    initClusterManager();
+    return;
+  }
   mapInitialized = true;
   Logger.log('initMap() starting, map exists:', !!map);
-  // Map should already exist from initSharedMap()
+
   if (!map) {
-    mapInitialized = false; // Reset so it can retry
+    mapInitialized = false;
     console.error('Map not initialized - call initSharedMap() first');
     return;
   }
 
-  // Add Norway border overlay from Kartverket
-  addNorwayBorder();
-
   // Add scale control
-  L.control.scale({
-    metric: true,
-    imperial: false,
-    position: 'bottomleft'
-  }).addTo(map);
+  map.addControl(new mapboxgl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
-  // Add "My location" button
-  const LocateControl = L.Control.extend({
-    options: { position: 'topleft' },
-    onAdd: function() {
-      const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-      btn.innerHTML = '<a href="#" title="Min posisjon" role="button" aria-label="Min posisjon" style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:16px;"><i class="fas fa-location-crosshairs"></i></a>';
+  // Add "My location" button (custom IControl)
+  class LocateControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+      this._container = document.createElement('div');
+      this._container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = 'Min posisjon';
+      btn.setAttribute('aria-label', 'Min posisjon');
+      btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:16px;cursor:pointer;';
+      btn.innerHTML = '<i class="fas fa-location-crosshairs"></i>';
+
       let locationMarker = null;
-      L.DomEvent.on(btn, 'click', function(e) {
-        L.DomEvent.preventDefault(e);
-        L.DomEvent.stopPropagation(e);
-        map.locate({ setView: true, maxZoom: 15 });
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const coords = [pos.coords.longitude, pos.coords.latitude];
+            mapInstance.flyTo({ center: coords, zoom: 15, duration: 1500 });
+            if (locationMarker) locationMarker.remove();
+            const el = document.createElement('div');
+            el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#4285F4;border:2px solid #fff;box-shadow:0 0 6px rgba(66,133,244,0.5);';
+            locationMarker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+              .setLngLat(coords)
+              .setPopup(new mapboxgl.Popup({ offset: 10 }).setText('Du er her'))
+              .addTo(mapInstance);
+          },
+          () => showNotification('Kunne ikke finne posisjonen din', 'error'),
+          { enableHighAccuracy: true }
+        );
       });
-      map.on('locationfound', function(e) {
-        if (locationMarker) map.removeLayer(locationMarker);
-        locationMarker = L.circleMarker(e.latlng, {
-          radius: 8, fillColor: '#4285F4', fillOpacity: 1,
-          color: '#fff', weight: 2
-        }).addTo(map).bindPopup('Du er her');
-      });
-      map.on('locationerror', function() {
-        showNotification('Kunne ikke finne posisjonen din', 'error');
-      });
-      return btn;
+
+      this._container.appendChild(btn);
+      return this._container;
     }
-  });
-  new LocateControl().addTo(map);
+    onRemove() {
+      this._container.parentNode?.removeChild(this._container);
+      this._map = undefined;
+    }
+  }
+  map.addControl(new LocateControl(), 'top-left');
 
-  // Initialize marker cluster group - reduced radius for better overview
-  const clusterRadius = appConfig.mapClusterRadius || 60;
-  markerClusterGroup = L.markerClusterGroup({
-    maxClusterRadius: clusterRadius,
-    iconCreateFunction: createClusterIcon,
-    // Disable clustering at zoom 14 - keep clustering longer for better performance
-    disableClusteringAtZoom: 14,
-    // Enable spiderfy only at max zoom (not on every zoom)
-    spiderfyOnMaxZoom: true,
-    spiderfyOnEveryZoom: false,
-    spiderfyDistanceMultiplier: 2.5,
-    showCoverageOnHover: false,
-    zoomToBoundsOnClick: false, // Disabled - popup has "Zoom inn" button instead
-    // Animate cluster split
-    animate: true,
-    animateAddingMarkers: false,
-    // Keep single markers visible (not clustered alone)
-    singleMarkerMode: false
-  });
-  map.addLayer(markerClusterGroup);
+  // Initialize clustering — must wait for map style to be loaded
+  if (map.isStyleLoaded()) {
+    initClusterManager();
+  } else {
+    map.once('style.load', () => initClusterManager());
+  }
 
-  // Handle spiderfied markers - make them compact
-  markerClusterGroup.on('spiderfied', (e) => {
-    e.markers.forEach(marker => {
-      if (marker._icon) {
-        marker._icon.classList.add('spiderfied-marker');
-      }
-    });
-  });
-
-  markerClusterGroup.on('unspiderfied', (e) => {
-    e.markers.forEach(marker => {
-      if (marker._icon) {
-        marker._icon.classList.remove('spiderfied-marker');
-      }
-    });
-  });
-
-  // Re-apply badges and focus styling on ANY map zoom/pan (new marker DOM elements appear)
+  // Update clusters after map movement completes (not during zoom — markers are
+  // geo-anchored and follow the map automatically, updating mid-zoom causes jitter)
   map.on('moveend', () => {
     requestAnimationFrame(() => {
-      reapplyPlanBadges();
-      if (wpFocusedMemberIds || wpRouteActive) applyTeamFocusToMarkers();
-    });
-  });
-  markerClusterGroup.on('animationend', () => {
-    reapplyPlanBadges();
-    if (wpFocusedMemberIds || wpRouteActive) applyTeamFocusToMarkers();
-  });
-
-  Logger.log('initMap() markerClusterGroup created and added to map');
-
-  // Handle cluster click - show popup with options
-  markerClusterGroup.on('clusterclick', function(e) {
-    const cluster = e.layer;
-    const childMarkers = cluster.getAllChildMarkers();
-    const customerIds = [];
-    const customerNames = [];
-
-    // Extract customer IDs from markers
-    childMarkers.forEach(marker => {
-      // Find customer ID by matching marker position
-      for (const [id, m] of Object.entries(markers)) {
-        if (m === marker) {
-          customerIds.push(Number.parseInt(id));
-          const customer = customers.find(c => c.id === Number.parseInt(id));
-          if (customer) {
-            customerNames.push(customer.navn);
-          }
-          break;
-        }
+      if (typeof updateClusters === 'function') updateClusters();
+      if (typeof reapplyPlanBadges === 'function') reapplyPlanBadges();
+      if (wpFocusedMemberIds || wpRouteActive) {
+        if (typeof applyTeamFocusToMarkers === 'function') applyTeamFocusToMarkers();
       }
     });
-
-    // Create popup content with options
-    const areaNames = new Set();
-    const subcatCounts = {}; // { "groupName: subcatName": count }
-
-    customerIds.forEach(id => {
-      const customer = customers.find(c => c.id === id);
-      if (customer) {
-        if (customer.poststed) areaNames.add(customer.poststed);
-
-        // Count subcategory assignments
-        const assignments = kundeSubcatMap[id] || [];
-        for (const a of assignments) {
-          for (const group of allSubcategoryGroups) {
-            if (group.id !== a.group_id) continue;
-            const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
-            if (sub) {
-              const key = `${group.navn}|${sub.navn}`;
-              subcatCounts[key] = (subcatCounts[key] || 0) + 1;
-            }
-          }
-        }
-      }
-    });
-
-    // Build category summary HTML from subcategory counts
-    let categoryHtml = '';
-    const grouped = {};
-    for (const [key, count] of Object.entries(subcatCounts)) {
-      const [groupName, subcatName] = key.split('|');
-      if (!grouped[groupName]) grouped[groupName] = [];
-      grouped[groupName].push([subcatName, count]);
-    }
-
-    const groupEntries = Object.entries(grouped);
-    if (groupEntries.length > 0) {
-      categoryHtml = '<div class="cluster-categories">';
-      for (const [groupName, items] of groupEntries) {
-        items.sort((a, b) => b[1] - a[1]);
-        categoryHtml += `<div class="cluster-category-group"><strong>${escapeHtml(groupName)}:</strong> `;
-        categoryHtml += items.map(([name, count]) => `<span class="cluster-tag">${escapeHtml(name)} (${count})</span>`).join(' ');
-        categoryHtml += '</div>';
-      }
-      categoryHtml += '</div>';
-    }
-
-    const areaText = Array.from(areaNames).slice(0, 2).join(' / ') || 'Område';
-    const popupContent = `
-      <div class="cluster-popup">
-        <h3>${escapeHtml(areaText)}</h3>
-        <p><strong>${customerIds.length}</strong> kunder i dette området</p>
-        ${categoryHtml}
-        <div class="cluster-popup-actions">
-          <button class="btn btn-primary btn-small" data-action="addClusterToRoute" data-customer-ids="${customerIds.join(',')}">
-            <i class="fas fa-route"></i> Legg til rute
-          </button>
-          <button class="btn btn-secondary btn-small" data-action="zoomToCluster" data-lat="${e.latlng.lat}" data-lng="${e.latlng.lng}">
-            <i class="fas fa-search-plus"></i> Zoom inn
-          </button>
-        </div>
-        <div class="cluster-customer-list">
-          ${customerNames.slice(0, 5).map(name => `<span class="cluster-customer-name">${escapeHtml(name)}</span>`).join('')}
-          ${customerNames.length > 5 ? `<span class="cluster-more">+${customerNames.length - 5} flere...</span>` : ''}
-        </div>
-      </div>
-    `;
-
-    L.popup()
-      .setLatLng(e.latlng)
-      .setContent(popupContent)
-      .openOn(map);
   });
 
   // Update marker labels visibility based on zoom level
   map.on('zoomend', updateMarkerLabelsVisibility);
 
+  // Listen for popup actions via event delegation on map container
+  map.getContainer().addEventListener('click', handlePopupAction);
+
   // Init area select (dra-for-å-velge)
   initAreaSelect();
+
+  // Add 3D terrain toggle button (inside shared toolbar container)
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer && !document.getElementById('terrainToggle')) {
+    // Opprett eller finn delt toolbar-container
+    let toolbar = document.getElementById('mapToolbarCenter');
+    if (!toolbar) {
+      toolbar = document.createElement('div');
+      toolbar.id = 'mapToolbarCenter';
+      toolbar.className = 'map-toolbar-center';
+      mapContainer.appendChild(toolbar);
+    }
+    const terrainBtn = document.createElement('button');
+    terrainBtn.id = 'terrainToggle';
+    terrainBtn.className = 'terrain-toggle-btn';
+    terrainBtn.title = 'Slå på 3D-terreng';
+    terrainBtn.innerHTML = '<i class="fas fa-mountain"></i>';
+    terrainBtn.addEventListener('click', () => toggleTerrain());
+    toolbar.appendChild(terrainBtn);
+  }
+
+  // Restore terrain preference from localStorage (only after login)
+  if (localStorage.getItem(TERRAIN_LS_KEY) === 'true') {
+    if (map.isStyleLoaded()) {
+      enableTerrain(false);
+    } else {
+      map.once('style.load', () => enableTerrain(false));
+    }
+  }
+
+  Logger.log('initMap() complete — Mapbox GL JS with Supercluster clustering');
+}
+
+// Handle popup button clicks via event delegation
+function handlePopupAction(e) {
+  const actionEl = e.target.closest('[data-action]');
+  if (!actionEl) return;
+  const action = actionEl.dataset.action;
+
+  if (action === 'zoomToCluster') {
+    const lat = parseFloat(actionEl.dataset.lat);
+    const lng = parseFloat(actionEl.dataset.lng);
+    map.flyTo({ center: [lng, lat], zoom: map.getZoom() + 3, duration: 500 });
+    closeMapPopup();
+  } else if (action === 'addClusterToRoute') {
+    const ids = actionEl.dataset.customerIds.split(',').map(Number);
+    ids.forEach(id => selectedCustomers.add(id));
+    updateSelectionUI();
+    closeMapPopup();
+    showNotification(`${ids.length} kunder lagt til rute`, 'success');
+  }
 }
 
 // Show/hide marker labels based on zoom level
 function updateMarkerLabelsVisibility() {
+  if (!map) return;
   const zoom = map.getZoom();
   const mapContainer = document.getElementById('map');
 
-  // At low zoom levels (zoomed out), hide labels to reduce clutter
-  // Show labels when zoomed in (zoom >= 10) so names and addresses are visible
   if (zoom < 10) {
     mapContainer.classList.add('hide-marker-labels');
   } else {
@@ -18558,141 +19332,67 @@ function updateMarkerLabelsVisibility() {
   }
 }
 
-// Add Norway border visualization
+// Add Norway border visualization using GeoJSON sources and layers
 function addNorwayBorder() {
-  // Norge-Sverige grense (forenklet men synlig)
+  if (!map) return;
+
+  // Remove existing layers if present (needed after style change)
+  ['norway-border-line', 'sweden-overlay', 'sweden-overlay-fill'].forEach(id => {
+    if (map.getLayer(id)) map.removeLayer(id);
+    if (map.getSource(id)) map.removeSource(id);
+  });
+
+  // Norge-Sverige grense coordinates [lng, lat] for GeoJSON
   const borderCoords = [
-    [69.06, 20.55], // Treriksrøysa (Norge-Sverige-Finland)
-    [68.95, 20.10],
-    [68.45, 18.10],
-    [68.15, 17.90],
-    [67.95, 17.15],
-    [67.50, 16.40],
-    [66.60, 15.50],
-    [66.15, 14.60],
-    [65.10, 14.25],
-    [64.15, 13.95],
-    [63.70, 12.70],
-    [62.65, 12.30],
-    [61.80, 12.10],
-    [61.00, 12.15],
-    [59.80, 11.80],
-    [59.10, 11.45],
-    [58.95, 11.15]  // Svinesund
+    [20.55, 69.06], [20.10, 68.95], [18.10, 68.45], [17.90, 68.15],
+    [17.15, 67.95], [16.40, 67.50], [15.50, 66.60], [14.60, 66.15],
+    [14.25, 65.10], [13.95, 64.15], [12.70, 63.70], [12.30, 62.65],
+    [12.10, 61.80], [12.15, 61.00], [11.80, 59.80], [11.45, 59.10],
+    [11.15, 58.95]
   ];
 
-  // Grense som stiplet linje
-  L.polyline(borderCoords, {
-    color: '#ef4444',
-    weight: 2,
-    opacity: 0.7,
-    dashArray: '8, 4'
-  }).addTo(map);
-
-  // Sverige-etikett (nærmere grensen i Troms-området)
-  L.marker([68.5, 19.5], {
-    icon: L.divIcon({
-      className: 'country-label',
-      html: '<span>SVERIGE</span>',
-      iconSize: [100, 20]
-    })
-  }).addTo(map);
-
-  // Dim overlay over Sverige (øst for grensen)
-  L.polygon([
-    [71.5, 20.5], [71.5, 32.0], [58.0, 32.0], [58.0, 11.0],
-    [59.0, 11.5], [61.0, 12.2], [63.5, 12.5], [66.0, 14.5],
-    [68.0, 17.5], [69.0, 20.0], [71.5, 20.5]
-  ], {
-    color: 'transparent',
-    fillColor: '#000',
-    fillOpacity: 0.25,
-    interactive: false
-  }).addTo(map);
-}
-
-// Create custom cluster icon with area name and warning count
-function createClusterIcon(cluster) {
-  const childMarkers = cluster.getAllChildMarkers();
-  const areaNames = new Set();
-  let warningCount = 0;
-
-  // Collect all unique area names, count warnings and planned markers
-  const plannedByUser = new Map(); // initials → count
-  let plannedCount = 0;
-  let focusedInCluster = 0; // how many of the focused member's markers are in this cluster
-  let routeStopsInCluster = 0; // how many route stop markers are in this cluster
-
-  childMarkers.forEach(marker => {
-    const customerData = marker.options.customerData;
-    if (customerData) {
-      if (customerData.poststed) {
-        areaNames.add(customerData.poststed);
-      }
-      if (customerData.hasWarning) {
-        warningCount++;
-      }
-      if (customerData.planned) {
-        plannedCount++;
-        const initials = customerData.plannedInitials || '?';
-        plannedByUser.set(initials, (plannedByUser.get(initials) || 0) + 1);
-      }
-      // Check if this marker belongs to the focused team member
-      if (wpFocusedMemberIds && customerData.id != null && wpFocusedMemberIds.has(Number(customerData.id))) {
-        focusedInCluster++;
-      }
-      // Check if this marker is a route stop
-      if (wpRouteStopIds && customerData.id != null && wpRouteStopIds.has(Number(customerData.id))) {
-        routeStopsInCluster++;
-      }
+  // Border line
+  map.addSource('norway-border-line', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: borderCoords }
+    }
+  });
+  map.addLayer({
+    id: 'norway-border-line',
+    type: 'line',
+    source: 'norway-border-line',
+    paint: {
+      'line-color': '#ef4444',
+      'line-width': 2,
+      'line-opacity': 0.7,
+      'line-dasharray': [4, 2]
     }
   });
 
-  const size = childMarkers.length;
-  const warningBadge = warningCount > 0 ? `<div class="cluster-warning">${warningCount}</div>` : '';
+  // Sweden dim overlay (east of border)
+  const swedenCoords = [[
+    [20.5, 71.5], [32.0, 71.5], [32.0, 58.0], [11.0, 58.0],
+    [11.5, 59.0], [12.2, 61.0], [12.5, 63.5], [14.5, 66.0],
+    [17.5, 68.0], [20.0, 69.0], [20.5, 71.5]
+  ]];
 
-  // Plan badge on cluster: shows initials and count
-  let planBadge = '';
-  if (plannedCount > 0) {
-    const entries = Array.from(plannedByUser.entries());
-    const badgeText = entries.map(([init, count]) => `${init} ${count}`).join(' · ');
-    planBadge = `<div class="cluster-plan-badge">${badgeText}</div>`;
-  }
-
-  // Use "Region Nord" only when nearly all customers are clustered (zoomed fully out)
-  let areaText;
-  if (size >= 100) {
-    areaText = 'Region Nord';
-  } else {
-    areaText = Array.from(areaNames).slice(0, 2).join(' / ');
-  }
-
-  // Size class determines color gradient (green → blue → orange → red)
-  let sizeClass = 'cluster-small';
-  if (size >= 50) sizeClass = 'cluster-xlarge';
-  else if (size >= 20) sizeClass = 'cluster-large';
-  else if (size >= 8) sizeClass = 'cluster-medium';
-
-  // Dim cluster if route/focus is active and this cluster has none of the highlighted markers
-  let dimStyle = '';
-  if (wpRouteActive && wpRouteStopIds) {
-    dimStyle = routeStopsInCluster === 0 ? 'opacity:0.3;filter:grayscale(0.8);pointer-events:none;' : '';
-  } else if (wpFocusedMemberIds) {
-    dimStyle = focusedInCluster === 0 ? 'opacity:0.15;filter:grayscale(1);pointer-events:none;' : '';
-  }
-
-  return L.divIcon({
-    html: `
-      <div class="cluster-icon ${sizeClass}" style="${dimStyle}">
-        <div class="cluster-count">${wpFocusedMemberIds && focusedInCluster > 0 ? focusedInCluster : size}</div>
-        <div class="cluster-area">${areaText}</div>
-        ${warningBadge}
-        ${planBadge}
-      </div>
-    `,
-    className: 'custom-cluster',
-    iconSize: [70, 70],
-    iconAnchor: [35, 35]
+  map.addSource('sweden-overlay', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: swedenCoords }
+    }
+  });
+  map.addLayer({
+    id: 'sweden-overlay-fill',
+    type: 'fill',
+    source: 'sweden-overlay',
+    paint: {
+      'fill-color': '#000',
+      'fill-opacity': 0.25
+    }
   });
 }
 
@@ -19071,50 +19771,67 @@ function transitionToAppView() {
     }
   }, 200);
 
-  // PHASE 3: Fly to overview (always zoom out after login)
+  // PHASE 3: Stop globe spin and fly to Norway
   setTimeout(() => {
     if (map) {
-      map.flyTo([67.5, 15.0], 6, {
-        duration: 1.8,
-        easeLinearity: 0.1
+      stopGlobeSpin();
+      map.flyTo({
+        center: [15.0, 67.5],
+        zoom: 6,
+        duration: 1600,
+        essential: true,
+        curve: 1.42
       });
     }
-  }, 400);
+  }, 300);
 
   // PHASE 4: Hide login overlay completely (pointer-events already handled by CSS)
   setTimeout(() => {
     loginOverlay.classList.add('hidden');
-  }, 900);
+  }, 700);
 
   // PHASE 5: Enable map interactivity
   setTimeout(() => {
     if (map) {
-      map.dragging.enable();
-      map.scrollWheelZoom.enable();
-      map.doubleClickZoom.enable();
-      map.touchZoom.enable();
-      map.keyboard.enable();
-      // Add zoom control after login
+      setMapInteractive(true);
+      // Add zoom/navigation control after login
       if (!map._zoomControl) {
-        map._zoomControl = L.control.zoom({ position: 'topright' }).addTo(map);
+        map._zoomControl = new mapboxgl.NavigationControl({ showCompass: false });
+        map.addControl(map._zoomControl, 'top-right');
       }
-      // Block browser context menu on map area to prevent it interfering with marker context menus
+      // Block browser context menu on map area
       map.getContainer().addEventListener('contextmenu', (e) => {
         e.preventDefault();
       });
     }
-  }, 1000);
 
-  // PHASE 5b: Load data AFTER flyTo animation completes (~2.2s from start)
+    // Restore floating map control buttons (hidden on logout)
+    document.querySelectorAll('.terrain-toggle-btn, .area-select-toggle-btn, .isochrone-toggle-btn, .coverage-area-toggle-btn').forEach(btn => {
+      btn.style.transition = 'opacity 0.4s ease-out';
+      btn.style.opacity = '1';
+      btn.style.pointerEvents = 'auto';
+    });
+
+    // Restore Mapbox GL native controls
+    document.querySelectorAll('.mapboxgl-ctrl').forEach(ctrl => {
+      ctrl.style.transition = 'opacity 0.4s ease-out';
+      ctrl.style.opacity = '1';
+      ctrl.style.pointerEvents = 'auto';
+    });
+  }, 800);
+
+  // PHASE 5b: Load data AFTER flyTo animation mostly completes (~1.6s)
   // This prevents UI jank during the login transition
   setTimeout(() => {
     if (!appInitialized) {
       initializeApp();
       appInitialized = true;
     } else {
+      // Re-initialize clusters (cleared on logout) before loading customers
+      if (typeof readdClusterLayers === 'function') readdClusterLayers();
       loadCustomers();
     }
-  }, 2300);
+  }, 1700);
 
   // PHASE 6: Slide in sidebar and show tab navigation
   setTimeout(() => {
@@ -19136,7 +19853,7 @@ function transitionToAppView() {
       sidebarToggle.style.opacity = '1';
       sidebarToggle.style.pointerEvents = 'auto';
     }
-  }, 1100);
+  }, 900);
 
   // PHASE 7: Slide in filter panel
   setTimeout(() => {
@@ -19154,9 +19871,9 @@ function transitionToAppView() {
       contentPanel.style.transform = 'translateX(0)';
       contentPanel.style.opacity = '1';
     }
-  }, 1250);
+  }, 1050);
 
-  // PHASE 8: Clean up inline styles
+  // PHASE 8: Clean up inline styles (after easeTo settles at ~2.6s)
   setTimeout(() => {
     // Clean up sidebar/filter inline styles
     if (sidebar) {
@@ -19193,7 +19910,14 @@ function transitionToAppView() {
       loginMapOverlay.style.transition = '';
       loginMapOverlay.style.opacity = '';
     }
-  }, 2000);
+
+    // Clean up map control button inline styles
+    document.querySelectorAll('.terrain-toggle-btn, .area-select-toggle-btn, .isochrone-toggle-btn, .coverage-area-toggle-btn, .mapboxgl-ctrl').forEach(el => {
+      el.style.transition = '';
+      el.style.opacity = '';
+      el.style.pointerEvents = '';
+    });
+  }, 2800);
 }
 
 // Show login view (for logout)
@@ -19283,28 +20007,38 @@ function showLoginView() {
     sidebarToggle.style.pointerEvents = 'none';
   }
 
-  // Step 3: Fade out markers gradually
-  if (markerClusterGroup) {
-    // Add fade-out class to markers before removing
-    const markerPane = document.querySelector('.leaflet-marker-pane');
-    if (markerPane) {
-      markerPane.style.transition = 'opacity 0.5s ease-out';
-      markerPane.style.opacity = '0';
+  // Hide floating map control buttons (same z-index as login overlay)
+  document.querySelectorAll('.terrain-toggle-btn, .area-select-toggle-btn, .isochrone-toggle-btn, .coverage-area-toggle-btn').forEach(btn => {
+    btn.style.transition = 'opacity 0.3s ease-out';
+    btn.style.opacity = '0';
+    btn.style.pointerEvents = 'none';
+  });
+
+  // Hide Mapbox GL native controls (locate, zoom, etc.)
+  document.querySelectorAll('.mapboxgl-ctrl').forEach(ctrl => {
+    ctrl.style.transition = 'opacity 0.3s ease-out';
+    ctrl.style.opacity = '0';
+    ctrl.style.pointerEvents = 'none';
+  });
+
+  // Step 3: Fade out all markers (customers + clusters) gradually
+  const allMarkerEls = document.querySelectorAll('.mapboxgl-marker');
+  allMarkerEls.forEach(el => {
+    el.style.transition = 'opacity 0.5s ease-out';
+    el.style.opacity = '0';
+  });
+  setTimeout(() => {
+    // Remove all customer markers
+    for (const [id, marker] of Object.entries(markers)) {
+      marker.remove();
     }
-    setTimeout(() => {
-      markerClusterGroup.clearLayers();
-      if (markerPane) {
-        markerPane.style.transition = '';
-        markerPane.style.opacity = '';
-      }
-    }, 500);
-  }
+    Object.keys(markers).forEach(k => delete markers[k]);
+    // Remove all cluster markers
+    if (typeof clearAllClusters === 'function') clearAllClusters();
+  }, 500);
 
   // Clear route if any
-  if (routeLayer) {
-    map.removeLayer(routeLayer);
-    routeLayer = null;
-  }
+  clearRoute();
 
   // Step 4: Show login overlay and start map fly animation
   setTimeout(() => {
@@ -19339,11 +20073,7 @@ function showLoginView() {
   // Zoom map back to login position with smooth animation
   if (map) {
     // Disable interactivity
-    map.dragging.disable();
-    map.scrollWheelZoom.disable();
-    map.doubleClickZoom.disable();
-    map.touchZoom.disable();
-    map.keyboard.disable();
+    setMapInteractive(false);
 
     // Remove zoom control if present
     if (map._zoomControl) {
@@ -19351,10 +20081,16 @@ function showLoginView() {
       map._zoomControl = null;
     }
 
-    map.flyTo([69.06888, 17.65274], 11, {
-      duration: 1.8,
-      easeLinearity: 0.15
+    map.flyTo({
+      center: [15.0, 65.0],
+      zoom: 3.0,
+      duration: 2000,
+      essential: true,
+      curve: 1.5
     });
+
+    // Start globe spin again after fly-out completes
+    setTimeout(() => startGlobeSpin(), 2200);
   }
 
   // Step 6: Hide app view and reset styles after animation completes
@@ -19916,6 +20652,8 @@ async function reloadConfigWithAuth() {
       applyDateModeToInputs();
       // Refresh map tiles in case token was missing at initial load
       refreshMapTiles();
+      // Update office marker position with org-specific coordinates
+      updateOfficeMarkerPosition();
       Logger.log('Tenant-specific config loaded:', appConfig.organizationSlug);
     }
   } catch (error) {
@@ -20692,29 +21430,26 @@ function updateWeekPlanBadges() {
     }
   }
 
-  // Refresh cluster icons so they pick up planned data
-  if (markerClusterGroup) {
-    // Store plan data on marker options for cluster icon access
-    for (const [kundeId, plan] of planMap) {
-      if (markers[kundeId]) {
-        markers[kundeId].options.customerData = {
-          ...markers[kundeId].options.customerData,
-          planned: true,
-          plannedInitials: plan.initials,
-          plannedColor: plan.color
-        };
-      }
+  // Store plan data on markers for cluster icon access
+  for (const [kundeId, plan] of planMap) {
+    if (markers[kundeId]) {
+      markers[kundeId]._customerData = {
+        ...markers[kundeId]._customerData,
+        planned: true,
+        plannedInitials: plan.initials,
+        plannedColor: plan.color
+      };
     }
-    // Clear planned flag for non-planned markers
-    for (const kundeId of Object.keys(markers)) {
-      if (!planMap.has(Number(kundeId)) && markers[kundeId].options.customerData) {
-        delete markers[kundeId].options.customerData.planned;
-        delete markers[kundeId].options.customerData.plannedInitials;
-        delete markers[kundeId].options.customerData.plannedColor;
-      }
-    }
-    markerClusterGroup.refreshClusters();
   }
+  // Clear planned flag for non-planned markers
+  for (const kundeId of Object.keys(markers)) {
+    if (!planMap.has(Number(kundeId)) && markers[kundeId]._customerData) {
+      delete markers[kundeId]._customerData.planned;
+      delete markers[kundeId]._customerData.plannedInitials;
+      delete markers[kundeId]._customerData.plannedColor;
+    }
+  }
+  if (typeof refreshClusters === 'function') refreshClusters();
 }
 
 // Lightweight re-apply of plan badges on visible markers (uses data stored on marker.options)
@@ -20729,7 +21464,7 @@ function reapplyPlanBadges() {
     // Skip if badge already exists
     if (el.querySelector('.wp-plan-badge')) continue;
 
-    const cd = marker.options.customerData;
+    const cd = marker._customerData;
     if (cd && cd.planned && cd.plannedInitials) {
       const badge = document.createElement('div');
       badge.className = 'wp-plan-badge';
@@ -20885,15 +21620,14 @@ async function loadConfig() {
 
 // Load customers from API
 async function loadCustomers() {
-  Logger.log('loadCustomers() called, markerClusterGroup:', !!markerClusterGroup);
+  Logger.log('loadCustomers() called, supercluster:', !!supercluster);
   try {
     const response = await apiFetch('/api/kunder');
     if (!response.ok) throw new Error(`HTTP ${response.status}: Kunne ikke laste kunder`);
     const result = await response.json();
     customers = result.data || result; // Handle both { data: [...] } and direct array
     Logger.log('loadCustomers() fetched', customers.length, 'customers');
-    applyFilters();
-    renderMarkers(customers);
+    applyFilters(); // Handles both renderCustomerList(filtered) and renderMarkers(filtered)
     renderCustomerAdmin();
     updateOverdueBadge();
     renderMissingData(); // Update missing data badge and lists
@@ -21094,15 +21828,12 @@ async function applyFilters() {
   let filtered = [...customers];
   const searchQuery = searchInput?.value?.toLowerCase() || '';
 
-  // Category filter - matches if customer has the selected category (supports multi-category customers)
+  // Category filter - exact match on kategori string
   if (selectedCategory !== 'all') {
     const beforeCount = filtered.length;
-    const filterKats = selectedCategory.split(' + ').map(s => s.trim());
     filtered = filtered.filter(c => {
       if (!c.kategori) return false;
-      const kundeKategorier = c.kategori.split(' + ').map(s => s.trim());
-      // Customer must have ALL selected filter categories
-      return filterKats.every(fk => kundeKategorier.includes(fk));
+      return c.kategori === selectedCategory;
     });
     Logger.log(`applyFilters: "${selectedCategory}" - ${beforeCount} -> ${filtered.length} kunder`);
   }
@@ -21229,11 +21960,8 @@ function updateCategoryFilterCounts() {
 
   // Update each service type button/tab dynamically
   serviceTypes.forEach(st => {
-    // Count customers that have this category (supports multi-category customers)
-    const count = customers.filter(c => {
-      if (!c.kategori) return false;
-      return c.kategori.split(' + ').map(s => s.trim()).includes(st.name);
-    }).length;
+    // Count customers with exactly this category
+    const count = customers.filter(c => c.kategori === st.name).length;
     const icon = serviceTypeRegistry.getIcon(st);
 
     // Left sidebar category buttons
@@ -21248,12 +21976,8 @@ function updateCategoryFilterCounts() {
   // Combined category (when org has 2+ service types)
   if (serviceTypes.length >= 2) {
     const combinedName = serviceTypes.map(st => st.name).join(' + ');
-    // Count customers that have ALL categories
-    const beggeCount = customers.filter(c => {
-      if (!c.kategori) return false;
-      const kundeKats = c.kategori.split(' + ').map(s => s.trim());
-      return serviceTypes.every(st => kundeKats.includes(st.name));
-    }).length;
+    // Count customers with the exact combined category
+    const beggeCount = customers.filter(c => c.kategori === combinedName).length;
     const combinedIcons = serviceTypes.map(st => serviceTypeRegistry.getIcon(st)).join('');
 
     const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';
@@ -21476,86 +22200,85 @@ function renderCustomerList(customerData) {
 
 
 // ========================================
-// CONTEXT MENU (Feature: context_menu)
-// Right-click menu on map markers
+// CONTEXT MENU — Generisk system
+// Brukes av kart, kundeliste, kalender, ukeplan
 // ========================================
 
 let activeContextMenu = null;
-let contextMenuCustomerId = null;
+let activeContextMenuContext = null;
+const contextMenuActions = new Map();
 
-function showMarkerContextMenu(customer, x, y) {
+// ── Generisk motor ──────────────────────────────────────────
+
+function registerContextMenuAction(name, handler) {
+  contextMenuActions.set(name, handler);
+}
+
+/**
+ * Vis en kontekstmeny ved gitte koordinater.
+ * @param {Object} opts
+ * @param {string} opts.header - Tittel (escapes automatisk)
+ * @param {Array}  opts.items  - Menyvalg-definisjoner
+ * @param {number} opts.x      - clientX
+ * @param {number} opts.y      - clientY
+ * @param {Object} [opts.context] - Vilkårlig data tilgjengelig for action-handlers
+ */
+function showContextMenu({ header, items, x, y, context }) {
   closeContextMenu();
-  contextMenuCustomerId = customer.id;
+  activeContextMenuContext = context || {};
 
   const menu = document.createElement('div');
   menu.className = 'marker-context-menu';
   menu.setAttribute('role', 'menu');
 
-  const isSelected = selectedCustomers.has(customer.id);
-  const hasEmail = customer.epost && customer.epost.trim() !== '';
+  let menuHtml = `<div class="context-menu-header">${escapeHtml(header)}</div>`;
 
-  // Build menu items dynamically based on enabled features
-  let menuHtml = `
-    <div class="context-menu-header">${escapeHtml(customer.navn)}</div>
-    <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="ctx-details" data-id="${customer.id}">
-      <i class="fas fa-info-circle"></i> Se detaljer
-    </div>
-    <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="ctx-navigate" data-lat="${customer.lat}" data-lng="${customer.lng}">
-      <i class="fas fa-directions"></i> Naviger hit
-    </div>
-    <div class="context-menu-divider"></div>
-    <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="ctx-add-route" data-id="${customer.id}">
-      <i class="fas fa-route"></i> ${isSelected ? 'Fjern fra rute' : 'Legg til i rute'}
-    </div>
-    <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="ctx-mark-visited" data-id="${customer.id}">
-      <i class="fas fa-check"></i> Marker besøkt
-    </div>`;
+  for (const item of items) {
+    if (item.hidden) continue;
 
-  // Email option (feature: email_templates or always if email exists)
-  if (hasEmail) {
-    menuHtml += `
-    <div class="context-menu-divider"></div>
-    <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="ctx-email" data-id="${customer.id}">
-      <i class="fas fa-envelope"></i> Send e-post
-    </div>`;
-  }
+    if (item.type === 'divider') {
+      menuHtml += '<div class="context-menu-divider"></div>';
+      continue;
+    }
 
-  // Tripletex project creation (feature: tripletex_projects)
-  if (hasFeature('tripletex_projects') && appConfig.integrations?.tripletex?.active !== false) {
-    const categories = getFeatureConfig('tripletex_projects')?.project_categories || [
-      { key: 'elkontroll', label: '01 - Elkontroll' },
-      { key: 'arskontroll', label: '02 - Årskontroll' },
-      { key: 'begge', label: '03 - Begge' }
-    ];
+    // Data-attributter
+    const dataAttrs = [`data-action="${escapeHtml(item.action || '')}"`];
+    if (item.data) {
+      for (const [k, v] of Object.entries(item.data)) {
+        if (v != null) dataAttrs.push(`data-${escapeHtml(k)}="${escapeHtml(String(v))}"`);
+      }
+    }
 
-    menuHtml += `
-    <div class="context-menu-divider"></div>
-    <div class="context-menu-item context-menu-parent" role="menuitem" tabindex="-1">
-      <span><i class="fas fa-folder-plus"></i> Opprett prosjekt</span>
-      <i class="fas fa-chevron-right context-menu-arrow"></i>
-      <div class="context-menu-submenu" role="menu">
-        ${categories.map(cat => `
-          <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="ctx-create-project" data-id="${customer.id}" data-type="${escapeHtml(cat.key)}">
-            ${escapeHtml(cat.label)}
-          </div>
-        `).join('')}
-      </div>
-    </div>`;
-  }
+    const cssClass = `context-menu-item${item.className ? ' ' + item.className : ''}${item.disabled ? ' disabled' : ''}`;
 
-  // Push/sync customer to Tripletex (if Tripletex is connected)
-  if (appConfig.integrations?.tripletex?.active !== false) {
-    const isLinked = customer.external_source === 'tripletex' && customer.external_id;
-    menuHtml += `
-    <div class="context-menu-divider"></div>
-    <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="ctx-push-tripletex" data-id="${customer.id}">
-      <i class="fas ${isLinked ? 'fa-sync' : 'fa-cloud-upload-alt'}"></i> ${isLinked ? 'Oppdater i Tripletex' : 'Opprett i Tripletex'}
-    </div>`;
+    if (item.type === 'submenu' && item.children) {
+      menuHtml += `
+      <div class="${cssClass} context-menu-parent" role="menuitem" tabindex="-1">
+        <span>${item.icon ? `<i class="${item.icon}"></i> ` : ''}${escapeHtml(item.label)}</span>
+        <i class="fas fa-chevron-right context-menu-arrow"></i>
+        <div class="context-menu-submenu" role="menu">
+          ${item.children.filter(c => !c.hidden).map(child => {
+            const childDataAttrs = [`data-action="${escapeHtml(child.action || '')}"`];
+            if (child.data) {
+              for (const [k, v] of Object.entries(child.data)) {
+                if (v != null) childDataAttrs.push(`data-${escapeHtml(k)}="${escapeHtml(String(v))}"`);
+              }
+            }
+            return `<div class="context-menu-item" role="menuitem" tabindex="-1" ${childDataAttrs.join(' ')}>${child.icon ? `<i class="${child.icon}"></i> ` : ''}${escapeHtml(child.label)}</div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    } else {
+      menuHtml += `
+      <div class="${cssClass}" role="menuitem" tabindex="-1" ${dataAttrs.join(' ')}>
+        ${item.icon ? `<i class="${item.icon}"></i> ` : ''}${escapeHtml(item.label)}
+      </div>`;
+    }
   }
 
   menu.innerHTML = menuHtml;
 
-  // Position menu within viewport bounds
+  // Posisjonering innenfor viewport
   document.body.appendChild(menu);
   const menuRect = menu.getBoundingClientRect();
   const viewportW = window.innerWidth;
@@ -21568,28 +22291,25 @@ function showMarkerContextMenu(customer, x, y) {
 
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
-
   activeContextMenu = menu;
 
-  // Event delegation for menu items
+  // Klikk-delegering
   menu.addEventListener('click', handleContextMenuClick);
 
-  // Close on outside click (deferred to avoid immediate close)
+  // Lukk ved klikk utenfor (utsatt for å unngå umiddelbar lukking)
   requestAnimationFrame(() => {
     document.addEventListener('click', closeContextMenu, { once: true });
     document.addEventListener('contextmenu', closeContextMenu, { once: true });
   });
 
-  // Keyboard navigation for menu items (arrow keys, Enter/Space, Escape)
+  // Tastaturnavigasjon
   const keydownHandler = (e) => {
     if (!activeContextMenu) {
       document.removeEventListener('keydown', keydownHandler);
       return;
     }
-
     const menuItems = Array.from(activeContextMenu.querySelectorAll(':scope > [role="menuitem"]'));
     const currentIndex = menuItems.indexOf(document.activeElement);
-
     switch (e.key) {
       case 'ArrowDown': {
         e.preventDefault();
@@ -21604,13 +22324,12 @@ function showMarkerContextMenu(customer, x, y) {
         break;
       }
       case 'Enter':
-      case ' ': {
+      case ' ':
         e.preventDefault();
         if (document.activeElement && document.activeElement.closest('.marker-context-menu')) {
           document.activeElement.click();
         }
         break;
-      }
       case 'Escape':
         e.preventDefault();
         closeContextMenu();
@@ -21620,72 +22339,322 @@ function showMarkerContextMenu(customer, x, y) {
   };
   document.addEventListener('keydown', keydownHandler);
 
-  // Focus the first menuitem after the menu is shown
+  // Fokuser første element
   const firstItem = menu.querySelector('[role="menuitem"]');
-  if (firstItem) {
-    firstItem.focus();
-  }
+  if (firstItem) firstItem.focus();
 }
 
 function closeContextMenu() {
   if (activeContextMenu) {
     activeContextMenu.remove();
     activeContextMenu = null;
-    contextMenuCustomerId = null;
+    activeContextMenuContext = null;
   }
 }
 
 function handleContextMenuClick(e) {
   const item = e.target.closest('[data-action]');
-  if (!item) return;
+  if (!item || !item.dataset.action) return;
 
   const action = item.dataset.action;
-  const id = Number(item.dataset.id);
+  const ctx = activeContextMenuContext || {};
 
   closeContextMenu();
 
-  switch (action) {
-    case 'ctx-details':
-      editCustomer(id);
-      break;
-    case 'ctx-navigate': {
-      const lat = Number(item.dataset.lat);
-      const lng = Number(item.dataset.lng);
-      navigateToCustomer(lat, lng);
-      break;
-    }
-    case 'ctx-add-route':
-      toggleCustomerSelection(id);
-      break;
-    case 'ctx-mark-visited':
-      quickMarkVisited(id);
-      break;
-    case 'ctx-email':
-      // Open email dialog for this customer
-      if (typeof openEmailDialog === 'function') {
-        openEmailDialog(id);
-      } else {
-        // Fallback: open customer edit dialog on contact tab
-        editCustomer(id);
-      }
-      break;
-    case 'ctx-create-project': {
-      const projectType = item.dataset.type;
-      createTripletexProjectFromMenu(id, projectType);
-      break;
-    }
-    case 'ctx-push-tripletex':
-      pushCustomerToTripletex(id);
-      break;
+  const handler = contextMenuActions.get(action);
+  if (handler) {
+    handler(item.dataset, ctx);
   }
 }
 
-// Create a Tripletex project from the map context menu
+// ── Registrer felles actions ────────────────────────────────
+
+registerContextMenuAction('ctx-details', (data, ctx) => {
+  const id = ctx.customerId || Number(data.id);
+  if (id) editCustomer(id);
+});
+
+registerContextMenuAction('ctx-navigate', (data) => {
+  const lat = Number(data.lat);
+  const lng = Number(data.lng);
+  if (lat && lng) navigateToCustomer(lat, lng);
+});
+
+registerContextMenuAction('ctx-add-route', (data, ctx) => {
+  const id = ctx.customerId || Number(data.id);
+  if (id) toggleCustomerSelection(id);
+});
+
+registerContextMenuAction('ctx-mark-visited', (data, ctx) => {
+  const id = ctx.customerId || Number(data.id);
+  if (id) quickMarkVisited(id);
+});
+
+registerContextMenuAction('ctx-email', (data, ctx) => {
+  const id = ctx.customerId || Number(data.id);
+  if (typeof openEmailDialog === 'function') {
+    openEmailDialog(id);
+  } else {
+    editCustomer(id);
+  }
+});
+
+registerContextMenuAction('ctx-focus-map', (data, ctx) => {
+  const id = ctx.customerId || Number(data.id);
+  if (id && typeof focusOnCustomer === 'function') {
+    focusOnCustomer(id);
+  } else {
+    // Fallback: fly til koordinater
+    const lat = Number(data.lat);
+    const lng = Number(data.lng);
+    if (lat && lng && typeof map !== 'undefined' && map) {
+      map.flyTo({ center: [lng, lat], zoom: 16 });
+    }
+  }
+});
+
+registerContextMenuAction('ctx-add-weekplan', (data, ctx) => {
+  const id = ctx.customerId || Number(data.id);
+  if (id && typeof addToWeekPlanFromMap === 'function') addToWeekPlanFromMap(id);
+});
+
+registerContextMenuAction('ctx-new-avtale', (data, ctx) => {
+  const id = ctx.customerId || Number(data.id);
+  if (id && typeof openNewAvtaleForCustomer === 'function') openNewAvtaleForCustomer(id);
+});
+
+// Tripletex-spesifikke actions
+registerContextMenuAction('ctx-create-project', (data) => {
+  const id = Number(data.id);
+  const projectType = data.type;
+  if (id) createTripletexProjectFromMenu(id, projectType);
+});
+
+registerContextMenuAction('ctx-push-tripletex', (data) => {
+  const id = Number(data.id);
+  if (id) pushCustomerToTripletex(id);
+});
+
+// Avtale-actions (kalender + ukeplan)
+registerContextMenuAction('ctx-edit-avtale', (data, ctx) => {
+  if (ctx.avtale && typeof openAvtaleModal === 'function') {
+    openAvtaleModal(ctx.avtale);
+  } else {
+    const avtaleId = ctx.avtaleId || Number(data.avtaleId);
+    const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+    if (avtale && typeof openAvtaleModal === 'function') openAvtaleModal(avtale);
+  }
+});
+
+registerContextMenuAction('ctx-toggle-complete-avtale', async (data, ctx) => {
+  const avtaleId = ctx.avtaleId || Number(data.avtaleId);
+  if (!avtaleId) return;
+  try {
+    const resp = await apiFetch(`/api/avtaler/${avtaleId}/complete`, { method: 'POST' });
+    if (resp.ok) {
+      showToast('Avtale oppdatert', 'success');
+      if (typeof loadAvtaler === 'function') await loadAvtaler();
+      if (typeof renderCalendar === 'function') renderCalendar();
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+    } else {
+      showToast('Kunne ikke oppdatere avtale', 'error');
+    }
+  } catch (err) {
+    showToast('Feil ved oppdatering: ' + err.message, 'error');
+  }
+});
+
+registerContextMenuAction('ctx-delete-avtale', async (data, ctx) => {
+  const avtaleId = ctx.avtaleId || Number(data.avtaleId);
+  if (!avtaleId) return;
+  try {
+    const resp = await apiFetch(`/api/avtaler/${avtaleId}`, { method: 'DELETE' });
+    if (resp.ok) {
+      showToast('Avtale slettet', 'success');
+      if (typeof loadAvtaler === 'function') await loadAvtaler();
+      if (typeof refreshTeamFocus === 'function') refreshTeamFocus();
+      if (typeof renderCalendar === 'function') renderCalendar();
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof applyFilters === 'function') applyFilters();
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      showToast(err.error?.message || 'Kunne ikke slette avtale', 'error');
+    }
+  } catch (err) {
+    showToast('Feil ved sletting: ' + err.message, 'error');
+  }
+});
+
+registerContextMenuAction('ctx-remove-from-plan', (data) => {
+  const dayKey = data.day;
+  const customerId = Number(data.customerId);
+  if (dayKey && customerId && typeof weekPlanState !== 'undefined') {
+    weekPlanState.days[dayKey].planned = weekPlanState.days[dayKey].planned.filter(c => c.id !== customerId);
+    if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+    if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+  }
+});
+
+// ── Kart-markør kontekstmeny (wrapper) ──────────────────────
+
+function getMarkerContextMenuItems(customer) {
+  const isSelected = selectedCustomers.has(customer.id);
+  const hasEmail = customer.epost && customer.epost.trim() !== '';
+
+  const items = [
+    { type: 'item', label: 'Se detaljer', icon: 'fas fa-info-circle', action: 'ctx-details', data: { id: customer.id } },
+    { type: 'item', label: 'Naviger hit', icon: 'fas fa-directions', action: 'ctx-navigate', data: { lat: customer.lat, lng: customer.lng } },
+    { type: 'divider' },
+    { type: 'item', label: isSelected ? 'Fjern fra rute' : 'Legg til i rute', icon: 'fas fa-route', action: 'ctx-add-route', data: { id: customer.id } },
+    { type: 'item', label: 'Marker besøkt', icon: 'fas fa-check', action: 'ctx-mark-visited', data: { id: customer.id } },
+    { type: 'divider', hidden: !hasEmail },
+    { type: 'item', label: 'Send e-post', icon: 'fas fa-envelope', action: 'ctx-email', data: { id: customer.id }, hidden: !hasEmail },
+  ];
+
+  // Tripletex project creation (feature: tripletex_projects)
+  if (typeof hasFeature === 'function' && hasFeature('tripletex_projects') && appConfig.integrations?.tripletex?.active !== false) {
+    const categories = (typeof getFeatureConfig === 'function' ? getFeatureConfig('tripletex_projects')?.project_categories : null) || [
+      { key: 'elkontroll', label: '01 - Elkontroll' },
+      { key: 'arskontroll', label: '02 - Årskontroll' },
+      { key: 'begge', label: '03 - Begge' }
+    ];
+
+    items.push({ type: 'divider' });
+    items.push({
+      type: 'submenu',
+      label: 'Opprett prosjekt',
+      icon: 'fas fa-folder-plus',
+      children: categories.map(cat => ({
+        type: 'item',
+        label: cat.label,
+        action: 'ctx-create-project',
+        data: { id: customer.id, type: cat.key }
+      }))
+    });
+  }
+
+  // Push/sync customer to Tripletex (if connected)
+  if (typeof appConfig !== 'undefined' && appConfig.integrations?.tripletex?.active !== false) {
+    const isLinked = customer.external_source === 'tripletex' && customer.external_id;
+    items.push({ type: 'divider' });
+    items.push({
+      type: 'item',
+      label: isLinked ? 'Oppdater i Tripletex' : 'Opprett i Tripletex',
+      icon: isLinked ? 'fas fa-sync' : 'fas fa-cloud-upload-alt',
+      action: 'ctx-push-tripletex',
+      data: { id: customer.id }
+    });
+  }
+
+  return items;
+}
+
+function showMarkerContextMenu(customer, x, y) {
+  showContextMenu({
+    header: customer.navn,
+    items: getMarkerContextMenuItems(customer),
+    x, y,
+    context: { customer, customerId: customer.id }
+  });
+}
+
+// ── Kundeliste kontekstmeny ─────────────────────────────────
+
+function showCustomerListContextMenu(customer, x, y) {
+  const isSelected = selectedCustomers.has(customer.id);
+  const hasEmail = customer.epost && customer.epost.trim() !== '';
+  const hasCoords = customer.lat && customer.lng;
+
+  showContextMenu({
+    header: customer.navn,
+    items: [
+      { type: 'item', label: 'Se detaljer', icon: 'fas fa-info-circle', action: 'ctx-details' },
+      { type: 'item', label: 'Vis på kart', icon: 'fas fa-map-marker-alt', action: 'ctx-focus-map', hidden: !hasCoords, data: { lat: customer.lat, lng: customer.lng } },
+      { type: 'item', label: 'Naviger hit', icon: 'fas fa-directions', action: 'ctx-navigate', hidden: !hasCoords, data: { lat: customer.lat, lng: customer.lng } },
+      { type: 'divider' },
+      { type: 'item', label: isSelected ? 'Fjern fra rute' : 'Legg til i rute', icon: 'fas fa-route', action: 'ctx-add-route' },
+      { type: 'item', label: 'Legg til i ukeplan', icon: 'fas fa-calendar-week', action: 'ctx-add-weekplan' },
+      { type: 'item', label: 'Ny avtale', icon: 'fas fa-calendar-plus', action: 'ctx-new-avtale' },
+      { type: 'item', label: 'Marker besøkt', icon: 'fas fa-check', action: 'ctx-mark-visited' },
+      { type: 'divider', hidden: !hasEmail },
+      { type: 'item', label: 'Send e-post', icon: 'fas fa-envelope', action: 'ctx-email', hidden: !hasEmail },
+    ],
+    x, y,
+    context: { customer, customerId: customer.id }
+  });
+}
+
+// ── Kalender kontekstmeny ───────────────────────────────────
+
+function showCalendarContextMenu(avtale, x, y) {
+  const kunde = typeof customers !== 'undefined' ? customers.find(c => c.id === avtale.kunde_id) : null;
+  const hasCoords = kunde && kunde.lat && kunde.lng;
+  const isCompleted = avtale.status === 'fullført';
+
+  showContextMenu({
+    header: kunde?.navn || avtale.kunde_navn || 'Avtale',
+    items: [
+      { type: 'item', label: 'Rediger avtale', icon: 'fas fa-edit', action: 'ctx-edit-avtale' },
+      { type: 'item', label: isCompleted ? 'Marker uferdig' : 'Marker fullført', icon: 'fas fa-check-circle', action: 'ctx-toggle-complete-avtale' },
+      { type: 'divider' },
+      { type: 'item', label: 'Se kundedetaljer', icon: 'fas fa-user', action: 'ctx-details', hidden: !avtale.kunde_id },
+      { type: 'item', label: 'Vis på kart', icon: 'fas fa-map-marker-alt', action: 'ctx-focus-map', hidden: !hasCoords, data: { lat: kunde?.lat, lng: kunde?.lng } },
+      { type: 'item', label: 'Naviger hit', icon: 'fas fa-directions', action: 'ctx-navigate', hidden: !hasCoords, data: { lat: kunde?.lat, lng: kunde?.lng } },
+      { type: 'divider' },
+      { type: 'item', label: 'Slett avtale', icon: 'fas fa-trash', action: 'ctx-delete-avtale', className: 'danger' },
+    ],
+    x, y,
+    context: { avtale, avtaleId: avtale.id, customerId: avtale.kunde_id }
+  });
+}
+
+// ── Ukeplan kontekstmeny ────────────────────────────────────
+
+function showWeekplanExistingContextMenu(avtale, x, y) {
+  const kunde = typeof customers !== 'undefined' ? customers.find(c => c.id === avtale.kunde_id) : null;
+  const hasCoords = kunde && kunde.lat && kunde.lng;
+
+  showContextMenu({
+    header: kunde?.navn || avtale.kunde_navn || 'Avtale',
+    items: [
+      { type: 'item', label: 'Rediger avtale', icon: 'fas fa-edit', action: 'ctx-edit-avtale' },
+      { type: 'item', label: 'Marker fullført', icon: 'fas fa-check-circle', action: 'ctx-toggle-complete-avtale' },
+      { type: 'divider' },
+      { type: 'item', label: 'Se kundedetaljer', icon: 'fas fa-user', action: 'ctx-details', hidden: !avtale.kunde_id },
+      { type: 'item', label: 'Vis på kart', icon: 'fas fa-map-marker-alt', action: 'ctx-focus-map', hidden: !hasCoords, data: { lat: kunde?.lat, lng: kunde?.lng } },
+      { type: 'item', label: 'Naviger hit', icon: 'fas fa-directions', action: 'ctx-navigate', hidden: !hasCoords, data: { lat: kunde?.lat, lng: kunde?.lng } },
+      { type: 'divider' },
+      { type: 'item', label: 'Slett avtale', icon: 'fas fa-trash', action: 'ctx-delete-avtale', className: 'danger' },
+    ],
+    x, y,
+    context: { avtale, avtaleId: avtale.id, customerId: avtale.kunde_id }
+  });
+}
+
+function showWeekplanPlannedContextMenu(customer, dayKey, x, y) {
+  const hasCoords = customer.lat && customer.lng;
+
+  showContextMenu({
+    header: customer.navn,
+    items: [
+      { type: 'item', label: 'Se kundedetaljer', icon: 'fas fa-user', action: 'ctx-details' },
+      { type: 'item', label: 'Vis på kart', icon: 'fas fa-map-marker-alt', action: 'ctx-focus-map', hidden: !hasCoords, data: { lat: customer.lat, lng: customer.lng } },
+      { type: 'item', label: 'Naviger hit', icon: 'fas fa-directions', action: 'ctx-navigate', hidden: !hasCoords, data: { lat: customer.lat, lng: customer.lng } },
+      { type: 'divider' },
+      { type: 'item', label: 'Fjern fra plan', icon: 'fas fa-times', action: 'ctx-remove-from-plan', className: 'danger', data: { day: dayKey, customerId: customer.id } },
+    ],
+    x, y,
+    context: { customer, customerId: customer.id }
+  });
+}
+
+// ── Tripletex-hjelpefunksjoner (uendret) ────────────────────
+
 async function createTripletexProjectFromMenu(kundeId, projectType) {
   try {
     showNotification('Oppretter prosjekt i Tripletex...', 'info');
 
-    const featureConfig = getFeatureConfig('tripletex_projects');
+    const featureConfig = typeof getFeatureConfig === 'function' ? getFeatureConfig('tripletex_projects') : null;
     const categories = featureConfig?.project_categories || [];
     const matchedCategory = categories.find(c => c.key === projectType);
 
@@ -21703,8 +22672,6 @@ async function createTripletexProjectFromMenu(kundeId, projectType) {
 
     if (data.success) {
       showNotification(`Prosjekt ${data.data.projectNumber} opprettet i Tripletex`, 'success');
-
-      // Update the local customer data with the new project number
       const customer = customers.find(c => c.id === kundeId);
       if (customer) {
         const existing = customer.prosjektnummer ? customer.prosjektnummer.split(', ') : [];
@@ -21720,7 +22687,6 @@ async function createTripletexProjectFromMenu(kundeId, projectType) {
   }
 }
 
-// Push (create or update) a customer to Tripletex
 async function pushCustomerToTripletex(kundeId) {
   try {
     const customer = customers.find(c => c.id === kundeId);
@@ -21737,8 +22703,6 @@ async function pushCustomerToTripletex(kundeId) {
 
     if (data.success) {
       showNotification(data.message, 'success');
-
-      // Update local customer data with Tripletex link
       if (customer && data.data.action === 'created') {
         customer.external_source = 'tripletex';
         customer.external_id = String(data.data.tripletexId);
@@ -21775,17 +22739,55 @@ function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
     serviceInfo = customer.kategori;
   }
 
+  const isSelected = selectedCustomers.has(customer.id);
+
   const tooltip = document.createElement('div');
   tooltip.className = 'marker-hover-tooltip';
   tooltip.innerHTML = `
     <div class="tooltip-header">${escapeHtml(customer.navn)}</div>
     <div class="tooltip-body">
-      <div class="tooltip-row"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.adresse || '')}</div>
+      <div class="tooltip-row"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.adresse || '')}${customer.postnummer ? `, ${escapeHtml(customer.postnummer)}` : ''} ${escapeHtml(customer.poststed || '')}</div>
       ${customer.telefon ? `<div class="tooltip-row"><i class="fas fa-phone"></i> ${escapeHtml(customer.telefon)}</div>` : ''}
       <div class="tooltip-service"><i class="fas fa-tools"></i> ${escapeHtml(serviceInfo)}</div>
       <div class="tooltip-status ${controlStatus.class}">${escapeHtml(controlStatus.label)}</div>
     </div>
+    <div class="tooltip-actions">
+      <button class="tooltip-action-btn" data-action="select" title="${isSelected ? 'Fjern fra utvalg' : 'Velg kunde'}">
+        <i class="fas ${isSelected ? 'fa-check-square' : 'fa-square'}"></i>
+      </button>
+      <button class="tooltip-action-btn" data-action="weekplan" title="Legg til ukeplan">
+        <i class="fas fa-calendar-week"></i>
+      </button>
+      <button class="tooltip-action-btn" data-action="calendar" title="Ny avtale">
+        <i class="fas fa-calendar-plus"></i>
+      </button>
+    </div>
   `;
+
+  // Prevent tooltip from disappearing when hovering over it
+  tooltip.addEventListener('mouseenter', () => { tooltip._hovered = true; });
+  tooltip.addEventListener('mouseleave', () => {
+    tooltip._hovered = false;
+    hideMarkerTooltip();
+  });
+
+  // Quick action buttons
+  tooltip.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tooltip-action-btn');
+    if (!btn) return;
+    e.stopPropagation();
+    const action = btn.dataset.action;
+    if (action === 'select') {
+      toggleCustomerSelection(customer.id);
+      hideMarkerTooltip();
+    } else if (action === 'weekplan') {
+      hideMarkerTooltip();
+      if (typeof addToWeekPlanFromMap === 'function') addToWeekPlanFromMap(customer.id);
+    } else if (action === 'calendar') {
+      hideMarkerTooltip();
+      if (typeof openNewAvtaleForCustomer === 'function') openNewAvtaleForCustomer(customer.id);
+    }
+  });
 
   document.body.appendChild(tooltip);
 
@@ -21833,24 +22835,33 @@ function hideMarkerTooltip() {
 
 // === AREA SELECT (dra-for-å-velge kunder på kartet) ===
 let areaSelectMode = false;
-let areaSelectRect = null;
 let areaSelectStart = null;
 
 function initAreaSelect() {
   if (!map) return;
 
-  // Legg til flytende knapp over kartet
+  // Legg til flytende knapp over kartet (inne i map-toolbar-center)
   const mapContainer = document.getElementById('sharedMapContainer');
   if (!mapContainer) return;
   const existingBtn = document.getElementById('areaSelectToggle');
   if (existingBtn) existingBtn.remove();
+
+  // Opprett eller finn delt toolbar-container
+  let toolbar = document.getElementById('mapToolbarCenter');
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = 'mapToolbarCenter';
+    toolbar.className = 'map-toolbar-center';
+    mapContainer.appendChild(toolbar);
+  }
+
   const btn = document.createElement('button');
   btn.id = 'areaSelectToggle';
   btn.className = 'area-select-toggle-btn';
   btn.title = 'Velg område';
   btn.innerHTML = '<i class="fas fa-expand"></i>';
   btn.addEventListener('click', () => toggleAreaSelect());
-  mapContainer.appendChild(btn);
+  toolbar.appendChild(btn);
 
   // Mouse events for area selection
   map.on('mousedown', onAreaSelectStart);
@@ -21866,65 +22877,94 @@ function toggleAreaSelect() {
   if (areaSelectMode) {
     btn?.classList.add('active');
     mapEl.style.cursor = 'crosshair';
-    map.dragging.disable();
+    map.dragPan.disable();
     showToast('Dra over kunder for å velge dem', 'info');
   } else {
     btn?.classList.remove('active');
     mapEl.style.cursor = '';
-    map.dragging.enable();
-    if (areaSelectRect) {
-      map.removeLayer(areaSelectRect);
-      areaSelectRect = null;
-    }
+    map.dragPan.enable();
+    // Remove selection rectangle layers
+    removeLayerAndSource('area-select-fill');
+    removeLayerAndSource('area-select-line');
+    removeLayerAndSource('area-select-rect');
   }
 }
 
 function onAreaSelectStart(e) {
   if (!areaSelectMode) return;
-  areaSelectStart = e.latlng;
-  if (areaSelectRect) {
-    map.removeLayer(areaSelectRect);
-  }
-  areaSelectRect = L.rectangle([e.latlng, e.latlng], {
-    color: '#3b82f6',
-    weight: 2,
-    fillOpacity: 0.15,
-    dashArray: '6, 4'
-  }).addTo(map);
+  areaSelectStart = e.lngLat;
+
+  // Remove existing rectangle
+  removeLayerAndSource('area-select-fill');
+  removeLayerAndSource('area-select-line');
+  removeLayerAndSource('area-select-rect');
+
+  // Create rectangle source
+  const geojson = rectangleGeoJSON(areaSelectStart, areaSelectStart);
+  map.addSource('area-select-rect', { type: 'geojson', data: geojson });
+  map.addLayer({
+    id: 'area-select-fill',
+    type: 'fill',
+    source: 'area-select-rect',
+    paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.15 }
+  });
+  map.addLayer({
+    id: 'area-select-line',
+    type: 'line',
+    source: 'area-select-rect',
+    paint: { 'line-color': '#3b82f6', 'line-width': 2, 'line-dasharray': [3, 2] }
+  });
 }
 
 function onAreaSelectMove(e) {
-  if (!areaSelectMode || !areaSelectStart || !areaSelectRect) return;
-  areaSelectRect.setBounds(L.latLngBounds(areaSelectStart, e.latlng));
+  if (!areaSelectMode || !areaSelectStart) return;
+  const source = map.getSource('area-select-rect');
+  if (source) {
+    source.setData(rectangleGeoJSON(areaSelectStart, e.lngLat));
+  }
 }
 
 function onAreaSelectEnd(e) {
-  if (!areaSelectMode || !areaSelectStart || !areaSelectRect) return;
+  if (!areaSelectMode || !areaSelectStart) return;
 
-  const bounds = areaSelectRect.getBounds();
+  const end = e.lngLat;
+  const start = areaSelectStart;
   areaSelectStart = null;
+
+  // Bounding box check
+  const minLng = Math.min(start.lng, end.lng);
+  const maxLng = Math.max(start.lng, end.lng);
+  const minLat = Math.min(start.lat, end.lat);
+  const maxLat = Math.max(start.lat, end.lat);
 
   // Finn kunder innenfor rektangelet
   const selected = customers.filter(c =>
-    c.lat && c.lng && bounds.contains(L.latLng(c.lat, c.lng))
+    c.lat && c.lng &&
+    c.lng >= minLng && c.lng <= maxLng &&
+    c.lat >= minLat && c.lat <= maxLat
   );
 
   if (selected.length === 0) {
-    map.removeLayer(areaSelectRect);
-    areaSelectRect = null;
+    removeLayerAndSource('area-select-fill');
+    removeLayerAndSource('area-select-line');
+    removeLayerAndSource('area-select-rect');
     showToast('Ingen kunder i valgt område', 'info');
     return;
   }
 
-  // Vis handlingsmeny (alltid vis valg)
-  showAreaSelectMenu(selected, bounds.getCenter());
+  // Vis handlingsmeny
+  const center = {
+    lng: (minLng + maxLng) / 2,
+    lat: (minLat + maxLat) / 2
+  };
+  showAreaSelectMenu(selected, center);
 }
 
 function showAreaSelectMenu(selectedCustomersList, center) {
   // Fjern eksisterende meny
   document.getElementById('areaSelectMenu')?.remove();
 
-  // Initialize weekplan if not yet (so button is always available)
+  // Initialize weekplan if not yet
   if (!weekPlanState.weekStart) {
     initWeekPlanState(new Date());
   }
@@ -21932,7 +22972,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
   const wpDayLabel = wpDayActive ? weekDayLabels[weekDayKeys.indexOf(wpDayActive)] : '';
   const showWpButton = true;
 
-  // Build weekplan day picker if no active day but tab is open
+  // Build weekplan day picker if no active day
   let wpDayPickerHtml = '';
   if (showWpButton && !wpDayActive) {
     wpDayPickerHtml = `
@@ -21994,26 +23034,20 @@ function showAreaSelectMenu(selectedCustomersList, center) {
   if (wpBtn) {
     wpBtn.addEventListener('click', () => {
       if (wpDayActive) {
-        // Aktiv dag finnes — legg til direkte
         addCustomersToWeekPlan(selectedCustomersList);
         closeAreaSelectMenu();
         renderWeeklyPlan();
       } else {
-        // Vis dag-picker
         const picker = document.getElementById('asmDayPicker');
-        if (picker) {
-          picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
-        }
+        if (picker) picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
       }
     });
 
-    // Dag-picker knapper
     const dayPicker = document.getElementById('asmDayPicker');
     if (dayPicker) {
       dayPicker.querySelectorAll('.asm-day-option').forEach(btn => {
         btn.addEventListener('click', () => {
-          const dayKey = btn.dataset.wpDay;
-          weekPlanState.activeDay = dayKey;
+          weekPlanState.activeDay = btn.dataset.wpDay;
           addCustomersToWeekPlan(selectedCustomersList);
           closeAreaSelectMenu();
           renderWeeklyPlan();
@@ -22022,7 +23056,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     }
   }
 
-  // Legg til split-view aktiv dag — vis varighetssteg
+  // Split-view day button
   const splitDayBtn = document.getElementById('areaAddToSplitDay');
   if (splitDayBtn) {
     splitDayBtn.addEventListener('click', () => {
@@ -22073,11 +23107,8 @@ function showAreaSelectMenu(selectedCustomersList, center) {
             const response = await apiFetch('/api/avtaler', {
               method: 'POST',
               body: JSON.stringify({
-                kunde_id: c.id,
-                dato,
-                type: avtaleType,
-                beskrivelse: avtaleType,
-                varighet,
+                kunde_id: c.id, dato, type: avtaleType,
+                beskrivelse: avtaleType, varighet,
                 opprettet_av: localStorage.getItem('userName') || 'admin'
               })
             });
@@ -22105,7 +23136,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     showToast(`${selectedCustomersList.length} kunder lagt til rute`, 'success');
   });
 
-  // Legg i kalender - vis datepicker med tidspunkt
+  // Legg i kalender
   document.getElementById('areaAddToCalendar').addEventListener('click', () => {
     const actionsDiv = menu.querySelector('.area-select-menu-actions');
     actionsDiv.innerHTML = `
@@ -22131,17 +23162,13 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     `;
 
     document.getElementById('areaCalBack').addEventListener('click', () => {
-      // Gjenoppbygg opprinnelig meny
       showAreaSelectMenu(selectedCustomersList, center);
     });
 
     document.getElementById('areaCalConfirm').addEventListener('click', async () => {
       const dato = document.getElementById('areaCalDate').value;
       const type = document.getElementById('areaCalType').value || 'Kontroll';
-      if (!dato) {
-        showToast('Velg en dato', 'error');
-        return;
-      }
+      if (!dato) { showToast('Velg en dato', 'error'); return; }
       const confirmBtn = document.getElementById('areaCalConfirm');
       confirmBtn.disabled = true;
       confirmBtn.textContent = 'Oppretter...';
@@ -22149,37 +23176,27 @@ function showAreaSelectMenu(selectedCustomersList, center) {
       let lastError = '';
       for (const c of selectedCustomersList) {
         try {
-          // Bruk kundens kategori som type hvis mulig, ellers valgt type
           const avtaleType = c.kategori || type || undefined;
           const response = await apiFetch('/api/avtaler', {
             method: 'POST',
             body: JSON.stringify({
-              kunde_id: c.id,
-              dato,
-              type: avtaleType,
+              kunde_id: c.id, dato, type: avtaleType,
               beskrivelse: avtaleType || 'Kontroll',
               opprettet_av: localStorage.getItem('userName') || 'admin'
             })
           });
-          if (response.ok) {
-            created++;
-          } else {
+          if (response.ok) { created++; }
+          else {
             const errData = await response.json().catch(() => ({}));
             lastError = errData.error?.message || errData.error || response.statusText;
-            console.error(`Avtale-feil for ${c.navn} (${response.status}):`, errData);
           }
         } catch (err) {
-          console.error('Feil ved opprettelse av avtale:', err);
           lastError = err.message;
         }
       }
-      if (created > 0) {
-        showToast(`${created} avtaler opprettet for ${dato}`, 'success');
-      } else {
-        showToast(`Kunne ikke opprette avtaler: ${lastError}`, 'error');
-      }
+      if (created > 0) showToast(`${created} avtaler opprettet for ${dato}`, 'success');
+      else showToast(`Kunne ikke opprette avtaler: ${lastError}`, 'error');
       closeAreaSelectMenu();
-      // Oppdater kalender
       await loadAvtaler();
       renderCalendar();
     });
@@ -22198,11 +23215,10 @@ function showAreaSelectMenu(selectedCustomersList, center) {
 
 function closeAreaSelectMenu() {
   document.getElementById('areaSelectMenu')?.remove();
-  if (areaSelectRect) {
-    map.removeLayer(areaSelectRect);
-    areaSelectRect = null;
-  }
-  if (areaSelectMode) toggleAreaSelect(); // Gå ut av velg-modus kun hvis aktiv
+  removeLayerAndSource('area-select-fill');
+  removeLayerAndSource('area-select-line');
+  removeLayerAndSource('area-select-rect');
+  if (areaSelectMode) toggleAreaSelect();
 }
 
 
@@ -22785,54 +23801,41 @@ function updateControlSectionsVisibility(kategori) {
   renderDynamicServiceSections();
 }
 
-// Auto-geocode address
+// Auto-geocode address via backend proxy (Mapbox → Kartverket → Nominatim)
 async function geocodeAddressAuto(adresse, postnummer, poststed) {
-  const fullAddress = `${adresse}, ${postnummer} ${poststed}, Norway`;
+  const query = `${adresse || ''}, ${postnummer || ''} ${poststed || ''}`.trim();
+  if (!query || query.length < 3) return null;
 
-  // Try Kartverket first
+  // Try Kartverket directly first (fast)
   try {
-    const kartverketUrl = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(fullAddress)}&fuzzy=true&treffPerSide=1`;
-    const response = await fetch(kartverketUrl);
-    const data = await response.json();
-
-    if (data.adresser && data.adresser.length > 0) {
-      const addr = data.adresser[0];
-      if (addr.representasjonspunkt) {
+    const url = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(query)}&fuzzy=true&treffPerSide=1`;
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      const addr = data.adresser?.[0];
+      if (addr?.representasjonspunkt) {
         return { lat: addr.representasjonspunkt.lat, lng: addr.representasjonspunkt.lon };
       }
     }
   } catch (error) {
-    Logger.log('Kartverket geocode failed:', error);
+    // Kartverket failed, fall through to backend
   }
 
-  // Try with just poststed
+  // Fallback to backend proxy (Mapbox → Kartverket)
   try {
-    const simpleAddress = `${postnummer} ${poststed}`;
-    const kartverketUrl = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(simpleAddress)}&fuzzy=true&treffPerSide=1`;
-    const response = await fetch(kartverketUrl);
-    const data = await response.json();
-
-    if (data.adresser && data.adresser.length > 0) {
-      const addr = data.adresser[0];
-      if (addr.representasjonspunkt) {
-        return { lat: addr.representasjonspunkt.lat, lng: addr.representasjonspunkt.lon };
+    const response = await apiFetch('/api/geocode/forward', {
+      method: 'POST',
+      body: JSON.stringify({ query, limit: 1 })
+    });
+    if (response.ok) {
+      const result = await response.json();
+      const suggestion = result.data?.suggestions?.[0];
+      if (suggestion) {
+        return { lat: suggestion.lat, lng: suggestion.lng };
       }
     }
   } catch (error) {
-    Logger.log('Kartverket poststed geocode failed:', error);
-  }
-
-  // Fallback to Nominatim
-  try {
-    const nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddress)}&limit=1`;
-    const response = await fetch(nominatimUrl);
-    const data = await response.json();
-
-    if (data && data.length > 0) {
-      return { lat: Number.parseFloat(data[0].lat), lng: Number.parseFloat(data[0].lon) };
-    }
-  } catch (error) {
-    Logger.log('Nominatim geocode failed:', error);
+    Logger.log('Geocode auto failed:', error);
   }
 
   return null;
@@ -22862,6 +23865,7 @@ async function saveCustomer(e) {
     }
   }
 
+
   // Bruk kategori-checkboxes for alle (MVP + Full)
   let kategori = serviceTypeRegistry.getSelectedCategories() || null;
 
@@ -22887,19 +23891,20 @@ async function saveCustomer(e) {
     estimert_tid: Number.parseInt(document.getElementById('estimert_tid').value) || null,
     lat: lat,
     lng: lng,
-    siste_kontroll: normalizeDateValue(document.getElementById('siste_kontroll').value) || null,
-    neste_kontroll: normalizeDateValue(document.getElementById('neste_kontroll').value) || null,
-    kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || 12,
+    // Legacy date fields: prefer form value, fallback to existing customer data (hidden inputs may be empty)
+    siste_kontroll: normalizeDateValue(document.getElementById('siste_kontroll').value) || (_editingCustomer?.siste_kontroll || null),
+    neste_kontroll: normalizeDateValue(document.getElementById('neste_kontroll').value) || (_editingCustomer?.neste_kontroll || null),
+    kontroll_intervall_mnd: Number.parseInt(document.getElementById('kontroll_intervall').value) || (_editingCustomer?.kontroll_intervall_mnd || 12),
     kategori: kategori,
     notater: (document.getElementById('notater').value || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').trim(),
-    // Separate El-Kontroll felt — null ut hvis el-kontroll ikke er valgt
-    siste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('siste_el_kontroll').value) || null) : null,
-    neste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('neste_el_kontroll').value) || null) : null,
-    el_kontroll_intervall: hasEl ? (Number.parseInt(document.getElementById('el_kontroll_intervall').value) || 36) : null,
-    // Separate Brannvarsling felt — null ut hvis brannvarsling ikke er valgt
-    siste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || null) : null,
-    neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || null) : null,
-    brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || 12) : null,
+    // Separate El-Kontroll felt — null ut hvis el-kontroll ikke er valgt, bevar eksisterende verdier
+    siste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('siste_el_kontroll').value) || (_editingCustomer?.siste_el_kontroll || null)) : null,
+    neste_el_kontroll: hasEl ? (normalizeDateValue(document.getElementById('neste_el_kontroll').value) || (_editingCustomer?.neste_el_kontroll || null)) : null,
+    el_kontroll_intervall: hasEl ? (Number.parseInt(document.getElementById('el_kontroll_intervall').value) || (_editingCustomer?.el_kontroll_intervall || 36)) : null,
+    // Separate Brannvarsling felt — null ut hvis brannvarsling ikke er valgt, bevar eksisterende verdier
+    siste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('siste_brann_kontroll').value) || (_editingCustomer?.siste_brann_kontroll || null)) : null,
+    neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || (_editingCustomer?.neste_brann_kontroll || null)) : null,
+    brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || (_editingCustomer?.brann_kontroll_intervall || 12)) : null,
     // Dynamiske tjeneste-datoer fra dynamiske seksjoner
     services: serviceTypeRegistry.parseServiceFormData(),
     // Custom organization fields
@@ -22931,26 +23936,26 @@ async function saveCustomer(e) {
 
     const savedCustomerId = customerId || result.id;
 
-    // Save subcategory assignments
-    if (savedCustomerId) {
-      const subcatAssignments = collectSubcategoryAssignments();
-      try {
-        await apiFetch(`/api/subcategories/kunde/${savedCustomerId}`, {
-          method: 'PUT',
-          body: JSON.stringify({ assignments: subcatAssignments })
-        });
-      } catch (err) {
-        console.error('Error saving subcategory assignments:', err);
-      }
-    }
-
-    // Save email settings
-    if (savedCustomerId) {
-      await saveCustomerEmailSettings(savedCustomerId);
-    }
-
+    // Close modal and show notification immediately — don't block on secondary saves
     releaseCustomer(currentClaimedKundeId);
     customerModal.classList.add('hidden');
+    showNotification('Kunde lagret!');
+
+    // Fire secondary saves and data reload in parallel (non-blocking for UX)
+    const secondarySaves = [];
+    if (savedCustomerId) {
+      const subcatAssignments = collectSubcategoryAssignments();
+      secondarySaves.push(
+        apiFetch(`/api/subcategories/kunde/${savedCustomerId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ assignments: subcatAssignments })
+        }).catch(err => console.error('Error saving subcategory assignments:', err))
+      );
+      secondarySaves.push(
+        saveCustomerEmailSettings(savedCustomerId).catch(err => console.error('Error saving email settings:', err))
+      );
+    }
+    await Promise.all(secondarySaves);
 
     // Reset filter to show all customers so the new/updated one is visible
     currentFilter = 'alle';
@@ -22958,9 +23963,20 @@ async function saveCustomer(e) {
     const omradeSelect = document.getElementById('omradeSelect');
     if (omradeSelect) omradeSelect.value = 'alle';
 
-    await loadCustomers();
-    await loadOmrader();
-    showNotification('Kunde lagret!');
+    // Reload data in parallel
+    await Promise.all([loadCustomers(), loadOmrader()]);
+
+    // Refresh open popup with updated customer data
+    if (savedCustomerId) {
+      const updatedCustomer = customers.find(c => c.id === Number(savedCustomerId));
+      if (updatedCustomer && updatedCustomer.lat && updatedCustomer.lng) {
+        showMapPopup(
+          [updatedCustomer.lng, updatedCustomer.lat],
+          generatePopupContent(updatedCustomer),
+          { maxWidth: '350px', offset: [0, -35] }
+        );
+      }
+    }
   } catch (error) {
     console.error('Lagring feilet:', error);
     showMessage('Kunne ikke lagre kunden: ' + error.message, 'error');
@@ -23056,9 +24072,9 @@ function enableCoordinatePicking() {
   document.addEventListener('keydown', handlePickingEscape);
 }
 
-function handleMapPick(e) {
-  const lat = e.latlng.lat;
-  const lng = e.latlng.lng;
+async function handleMapPick(e) {
+  const lat = e.lngLat.lat;
+  const lng = e.lngLat.lng;
 
   // Update form fields
   document.getElementById('lat').value = lat.toFixed(6);
@@ -23067,15 +24083,46 @@ function handleMapPick(e) {
   // Update quality badge
   updateGeocodeQualityBadge('manual');
 
-  // Show notification
-  showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
-
   // Clean up and show modal again
   disableCoordinatePicking();
-
-  // Show modal again
   const customerModal = document.getElementById('customerModal');
   openModal(customerModal);
+
+  // Reverse geocode to fill address fields
+  try {
+    const response = await apiFetch('/api/geocode/reverse', {
+      method: 'POST',
+      body: JSON.stringify({ lat, lng })
+    });
+    if (response.ok) {
+      const result = await response.json();
+      const addr = result.data;
+      if (addr) {
+        const adresseInput = document.getElementById('adresse');
+        const postnummerInput = document.getElementById('postnummer');
+        const poststedInput = document.getElementById('poststed');
+
+        if (adresseInput && addr.address && !adresseInput.value) {
+          adresseInput.value = addr.address;
+        }
+        if (postnummerInput && addr.postnummer && !postnummerInput.value) {
+          postnummerInput.value = addr.postnummer;
+        }
+        if (poststedInput && addr.poststed && !poststedInput.value) {
+          poststedInput.value = addr.poststed;
+          poststedInput.classList.add('auto-filled');
+        }
+        showNotification(`Adresse funnet: ${escapeHtml(addr.address || `${lat.toFixed(4)}, ${lng.toFixed(4)}`)}`, 'success');
+      } else {
+        showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
+      }
+    } else {
+      showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
+    }
+  } catch (err) {
+    Logger.log('Reverse geocode failed:', err);
+    showNotification(`Koordinater valgt: ${lat.toFixed(4)}, ${lng.toFixed(4)}`, 'success');
+  }
 }
 
 function handlePickingEscape(e) {
@@ -23417,11 +24464,10 @@ function clusterCustomersByProximity(customerList) {
 let map;
 // Single map architecture - map is always visible behind login/app overlays
 let markers = {};
-let markerClusterGroup = null;
+// Clustering now handled by Supercluster (cluster-manager.js)
 let selectedCustomers = new Set();
 let customers = [];
-let routeLayer = null;
-let routeMarkers = [];
+let routeMarkers = []; // Used by route-planning.js for stop markers
 let avtaler = [];
 let omrader = [];
 let currentFilter = 'alle';
@@ -23538,7 +24584,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyBranding();
 
   // ALWAYS initialize the shared map first (it's visible behind login overlay)
-  initSharedMap();
+  // Check localStorage hint — if user was logged in before, skip globe animation
+  // and start at app view to avoid black screen while satellite tiles load
+  const likelyReturningUser = !!localStorage.getItem('userName');
+  initSharedMap({ skipGlobe: likelyReturningUser });
 
   // Set up login form handler
   initLoginView();
@@ -23579,17 +24628,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentView = 'app';
     appInitialized = true;
 
-    // Enable map interactivity for app mode
+    // Enable map interactivity (already at app view position via skipGlobe)
     if (map) {
-      map.dragging.enable();
-      map.scrollWheelZoom.enable();
-      map.doubleClickZoom.enable();
-      map.touchZoom.enable();
-      map.keyboard.enable();
-      L.control.zoom({ position: 'topright' }).addTo(map);
-
-      // Set to app view position
-      map.setView([67.5, 15.0], 6, { animate: false });
+      setMapInteractive(true);
+      if (!map._zoomControl) {
+        map._zoomControl = new mapboxgl.NavigationControl({ showCompass: false });
+        map.addControl(map._zoomControl, 'top-right');
+      }
+      stopGlobeSpin(); // Safety: ensure globe spin is stopped
     }
 
     // Initialize DOM and app
@@ -23616,6 +24662,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Not logged in - login overlay is already visible by default
     currentView = 'login';
 
+    // If we skipped the globe (thought user was returning) but auth failed,
+    // fly back to globe view and start spinning
+    if (likelyReturningUser && map) {
+      map.flyTo({ center: [15.0, 65.0], zoom: 3.0, duration: 1500 });
+      setMapInteractive(false);
+      setTimeout(() => startGlobeSpin(), 1500);
+    }
+
     // Hide tab navigation and sidebar toggle when not logged in
     const tabNavigation = document.querySelector('.tab-navigation');
     if (tabNavigation) {
@@ -23634,13 +24688,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initializeApp() {
   Logger.log('initializeApp() starting...');
 
+  // Reload config now that user is authenticated
+  // (initial loadConfig() ran before login, so org-specific data like subcategories was missing)
+  await loadConfig();
+
   // Initialize DOM references
   initDOMElements();
 
   // Initialize map features (clustering, borders, etc.)
   // The base map is already created by initSharedMap()
   initMap();
-  Logger.log('initializeApp() after initMap, markerClusterGroup:', !!markerClusterGroup);
+  Logger.log('initializeApp() after initMap, supercluster:', !!supercluster);
 
   // Load categories and fields first so markers render with correct icons
   try {
@@ -23900,7 +24958,35 @@ function setupEventListeners() {
     }
   }
 
-  // Upcoming controls widget
+  // Right-click context menu on customer list items
+  document.getElementById('customerList')?.addEventListener('contextmenu', (e) => {
+    const item = e.target.closest('.customer-item[data-id]');
+    if (!item) return;
+    e.preventDefault();
+    const customerId = Number(item.dataset.id);
+    const customer = typeof customers !== 'undefined' ? customers.find(c => c.id === customerId) : null;
+    if (customer) showCustomerListContextMenu(customer, e.clientX, e.clientY);
+  });
+
+  // Right-click context menu on calendar events
+  document.getElementById('calendarContainer')?.addEventListener('contextmenu', (e) => {
+    const avtaleEl = e.target.closest('.calendar-avtale[data-avtale-id], .week-avtale-card[data-avtale-id], .upcoming-item[data-avtale-id]');
+    if (!avtaleEl) return;
+    e.preventDefault();
+    const avtaleId = Number(avtaleEl.dataset.avtaleId);
+    const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+    if (avtale) showCalendarContextMenu(avtale, e.clientX, e.clientY);
+  });
+
+  // Right-click context menu on split-view calendar events
+  document.getElementById('calendarSplitOverlay')?.addEventListener('contextmenu', (e) => {
+    const avtaleEl = e.target.closest('.split-avtale-card[data-avtale-id]');
+    if (!avtaleEl) return;
+    e.preventDefault();
+    const avtaleId = Number(avtaleEl.dataset.avtaleId);
+    const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+    if (avtale) showCalendarContextMenu(avtale, e.clientX, e.clientY);
+  });
 
   // Close modals on escape
   document.addEventListener('keydown', (e) => {
@@ -24187,7 +25273,7 @@ function setupEventListeners() {
           wpFocusedTeamMember = null;
           wpFocusedMemberIds = null;
           applyTeamFocusToMarkers();
-          if (markerClusterGroup) markerClusterGroup.refreshClusters();
+          if (typeof refreshClusters === 'function') refreshClusters();
         }
         // Close route summary if open
         closeWpRouteSummary();
@@ -24419,6 +25505,39 @@ function setupEventListeners() {
   ];
   document.addEventListener('change', (e) => {
     const id = e.target.id;
+
+    // Handle dynamic service sections (service_<slug>_siste / service_<slug>_intervall)
+    const dynSisteMatch = id.match(/^service_(.+)_siste$/);
+    const dynIntervallMatch = id.match(/^service_(.+)_intervall$/);
+    if (dynSisteMatch || dynIntervallMatch) {
+      const slug = (dynSisteMatch || dynIntervallMatch)[1];
+      const sisteEl = document.getElementById(`service_${slug}_siste`);
+      const nesteEl = document.getElementById(`service_${slug}_neste`);
+      const intervallEl = document.getElementById(`service_${slug}_intervall`);
+      if (!sisteEl?.value || !intervallEl?.value) return;
+      // When changing siste: only auto-fill if neste is empty
+      if (dynSisteMatch && nesteEl?.value) return;
+
+      const siste = new Date(sisteEl.value);
+      if (isNaN(siste.getTime())) return;
+
+      const intervall = parseInt(intervallEl.value);
+      const neste = new Date(siste);
+      if (intervall < 0) {
+        neste.setDate(neste.getDate() + Math.abs(intervall));
+      } else {
+        neste.setMonth(neste.getMonth() + intervall);
+      }
+
+      if (nesteEl) {
+        nesteEl.value = appConfig?.datoModus === 'month_year'
+          ? neste.toISOString().substring(0, 7)
+          : neste.toISOString().substring(0, 10);
+      }
+      return;
+    }
+
+    // Handle legacy kontroll groups
     for (const g of kontrollGroups) {
       if (id === g.siste || id === g.intervall) {
         const sisteEl = document.getElementById(g.siste);

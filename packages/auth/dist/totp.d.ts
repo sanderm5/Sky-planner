@@ -25,14 +25,16 @@ export declare function verifyTOTPWithCounter(secret: string, code: string, wind
  */
 export declare function generateBackupCodes(): string[];
 /**
- * Hash a backup code for storage
+ * Hash a backup code for storage using HMAC-SHA256 when key is provided.
+ * Falls back to plain SHA-256 for backward compatibility with existing codes.
  */
-export declare function hashBackupCode(code: string): string;
+export declare function hashBackupCode(code: string, hmacKey?: string): string;
 /**
- * Verify a backup code against hashed codes
- * Returns the index of the matched code, or -1 if not found
+ * Verify a backup code against hashed codes.
+ * Tries HMAC hash first (new format), then falls back to plain SHA-256 (legacy).
+ * Returns the index of the matched code, or -1 if not found.
  */
-export declare function verifyBackupCode(code: string, hashedCodes: string[]): number;
+export declare function verifyBackupCode(code: string, hashedCodes: string[], hmacKey?: string): number;
 /**
  * Generate otpauth:// URI for QR code generation
  */

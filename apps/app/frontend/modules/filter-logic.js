@@ -9,15 +9,12 @@ async function applyFilters() {
   let filtered = [...customers];
   const searchQuery = searchInput?.value?.toLowerCase() || '';
 
-  // Category filter - matches if customer has the selected category (supports multi-category customers)
+  // Category filter - exact match on kategori string
   if (selectedCategory !== 'all') {
     const beforeCount = filtered.length;
-    const filterKats = selectedCategory.split(' + ').map(s => s.trim());
     filtered = filtered.filter(c => {
       if (!c.kategori) return false;
-      const kundeKategorier = c.kategori.split(' + ').map(s => s.trim());
-      // Customer must have ALL selected filter categories
-      return filterKats.every(fk => kundeKategorier.includes(fk));
+      return c.kategori === selectedCategory;
     });
     Logger.log(`applyFilters: "${selectedCategory}" - ${beforeCount} -> ${filtered.length} kunder`);
   }
@@ -144,11 +141,8 @@ function updateCategoryFilterCounts() {
 
   // Update each service type button/tab dynamically
   serviceTypes.forEach(st => {
-    // Count customers that have this category (supports multi-category customers)
-    const count = customers.filter(c => {
-      if (!c.kategori) return false;
-      return c.kategori.split(' + ').map(s => s.trim()).includes(st.name);
-    }).length;
+    // Count customers with exactly this category
+    const count = customers.filter(c => c.kategori === st.name).length;
     const icon = serviceTypeRegistry.getIcon(st);
 
     // Left sidebar category buttons
@@ -163,12 +157,8 @@ function updateCategoryFilterCounts() {
   // Combined category (when org has 2+ service types)
   if (serviceTypes.length >= 2) {
     const combinedName = serviceTypes.map(st => st.name).join(' + ');
-    // Count customers that have ALL categories
-    const beggeCount = customers.filter(c => {
-      if (!c.kategori) return false;
-      const kundeKats = c.kategori.split(' + ').map(s => s.trim());
-      return serviceTypes.every(st => kundeKats.includes(st.name));
-    }).length;
+    // Count customers with the exact combined category
+    const beggeCount = customers.filter(c => c.kategori === combinedName).length;
     const combinedIcons = serviceTypes.map(st => serviceTypeRegistry.getIcon(st)).join('');
 
     const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';

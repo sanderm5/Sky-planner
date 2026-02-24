@@ -17,7 +17,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
   // Verify authentication
   const token = cookies.get('skyplanner_session')?.value;
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Ikke autentisert' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ikke autentisert' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -28,7 +28,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
   const ENCRYPTION_SALT = import.meta.env.ENCRYPTION_SALT;
 
   if (!JWT_SECRET || !ENCRYPTION_KEY || !ENCRYPTION_SALT) {
-    return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -36,7 +36,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
 
   const result = auth.verifyToken(token, JWT_SECRET);
   if (!result.success || !result.payload) {
-    return new Response(JSON.stringify({ error: 'Ugyldig token' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig token' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -54,7 +54,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
       .single();
 
     if (fetchError || !klient) {
-      return new Response(JSON.stringify({ error: 'Bruker ikke funnet' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -63,7 +63,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
     // Check if 2FA is already enabled
     if (klient.totp_enabled) {
       return new Response(
-        JSON.stringify({ error: '2FA er allerede aktivert. Deaktiver først for å sette opp på nytt.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: '2FA er allerede aktivert. Deaktiver først for å sette opp på nytt.' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -76,8 +76,8 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
     // Encrypt the secret before storing
     const encryptedSecret = auth.encryptTOTPSecret(secret, ENCRYPTION_KEY, ENCRYPTION_SALT);
 
-    // Hash backup codes for storage
-    const hashedBackupCodes = backupCodes.map((code) => auth.hashBackupCode(code));
+    // Hash backup codes for storage with HMAC using ENCRYPTION_SALT as key
+    const hashedBackupCodes = backupCodes.map((code) => auth.hashBackupCode(code, ENCRYPTION_SALT));
     await client
       .from('klient')
       .update({
@@ -119,7 +119,7 @@ export const POST: APIRoute = async ({ cookies }): Promise<Response> => {
     );
   } catch (error) {
     console.error('2FA setup error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: '2FA-oppsett feilet' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: '2FA-oppsett feilet' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

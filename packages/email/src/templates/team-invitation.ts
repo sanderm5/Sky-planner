@@ -3,7 +3,7 @@
  * Sent when an admin invites a new team member
  */
 
-import { baseTemplate, emailButton, infoBox } from './base';
+import { baseTemplate, emailButton, infoBox, escapeHtmlEmail } from './base';
 
 export interface TeamInvitationData {
   inviteeName: string;
@@ -18,7 +18,7 @@ export function teamInvitationEmail(data: TeamInvitationData): { subject: string
 
   const passwordSection = tempPassword
     ? `
-${infoBox(`Ditt midlertidige passord: <strong>${tempPassword}</strong><br>Du bør endre passordet etter første innlogging.`, 'warning')}
+${infoBox(`Ditt midlertidige passord: <strong>${escapeHtmlEmail(tempPassword)}</strong><br>Du bør endre passordet etter første innlogging.`, 'warning')}
 `
     : '';
 
@@ -28,11 +28,11 @@ ${infoBox(`Ditt midlertidige passord: <strong>${tempPassword}</strong><br>Du bø
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${inviteeName},
+  Hei ${escapeHtmlEmail(inviteeName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  ${inviterName} har lagt deg til som teammedlem i <strong>${organizationName}</strong> på Sky Planner.
+  ${escapeHtmlEmail(inviterName)} har lagt deg til som teammedlem i <strong>${escapeHtmlEmail(organizationName)}</strong> på Sky Planner.
 </p>
 
 ${passwordSection}
@@ -44,14 +44,14 @@ ${passwordSection}
 ${emailButton('Logg inn på Sky Planner', loginUrl)}
 
 <p style="margin: 20px 0 0 0; color: #71717a; font-size: 14px; line-height: 1.5;">
-  Har du spørsmål? Kontakt ${inviterName} eller svar på denne e-posten.
+  Har du spørsmål? Kontakt ${escapeHtmlEmail(inviterName)} eller svar på denne e-posten.
 </p>
 `.trim();
 
   return {
-    subject: `Du er invitert til ${organizationName} på Sky Planner`,
+    subject: `Du er invitert til ${escapeHtmlEmail(organizationName)} på Sky Planner`,
     html: baseTemplate(content, {
-      previewText: `${inviterName} har invitert deg til ${organizationName} på Sky Planner.`,
+      previewText: `${escapeHtmlEmail(inviterName)} har invitert deg til ${escapeHtmlEmail(organizationName)} på Sky Planner.`,
     }),
   };
 }

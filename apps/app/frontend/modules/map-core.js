@@ -1,5 +1,5 @@
 // ========================================
-// SPA VIEW MANAGEMENT
+// SPA VIEW MANAGEMENT — Mapbox GL JS v3
 // ========================================
 
 // Get Mapbox access token from server config
@@ -11,45 +11,31 @@ function getMapboxToken() {
   return '';
 }
 
-// Initialize the shared map (used for both login background and app)
-// Get map tile layer - Mapbox Satellite Streets (satellite with roads and labels)
-function getMapTileUrl() {
-  // Mapbox Satellite Streets - satellittbilder med veier og stedsnavn
-  return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`;
-}
-
-// Get attribution for current tile layer
-function getMapAttribution() {
-  return '&copy; <a href="https://mapbox.com/">Mapbox</a> &copy; <a href="https://openstreetmap.org/">OpenStreetMap</a>';
-}
-
-// Variable to store current tile layer for later switching
-let currentTileLayer = null;
-
 // Refresh map tiles when Mapbox token becomes available (e.g. after auth)
 function refreshMapTiles() {
-  if (!map || !currentTileLayer) return;
+  if (!map) return;
   const token = getMapboxToken();
   if (!token) return;
-  // Skip if current layer already uses the correct token
-  if (currentTileLayer._url && currentTileLayer._url.includes(token)) return;
-  Logger.log('Refreshing map tiles with updated Mapbox token');
-  map.removeLayer(currentTileLayer);
-  currentTileLayer = L.tileLayer(getMapTileUrl(), {
-    minZoom: 3,
-    maxZoom: 19,
-    tileSize: 512,
-    zoomOffset: -1,
-    attribution: getMapAttribution()
-  }).addTo(map);
+  if (mapboxgl.accessToken === token) return;
+  Logger.log('Refreshing map with updated Mapbox token');
+  mapboxgl.accessToken = token;
 }
 
-// Map mode: 'satellite' only (dark mode removed)
+// Map mode: 'satellite' or 'dark'
 let mapMode = 'satellite';
 
-// Toggle between street map and satellite view
+// Track whether custom layers need re-adding after style change
+let _pendingStyleReload = false;
+
+// 3D terrain state
+let terrainEnabled = false;
+const TERRAIN_EXAGGERATION = 1.5;
+const TERRAIN_PITCH = 60;
+const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
+
+// Toggle between satellite and dark map style
 function toggleNightMode() {
-  if (!map || !currentTileLayer) return;
+  if (!map) return;
 
   const btn = document.getElementById('nightmodeBtn');
   const icon = btn?.querySelector('i');
@@ -64,116 +50,271 @@ function toggleNightMode() {
 
   setTimeout(() => {
     if (mapMode === 'dark') {
-      // Switch to Mapbox Satellite Streets (satellite with all roads and labels)
-      map.removeLayer(currentTileLayer);
-      currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
-        minZoom: 3,
-        maxZoom: 19,
-        tileSize: 512,
-        zoomOffset: -1,
-        attribution: '&copy; Mapbox'
-      }).addTo(map);
-
+      map.setStyle('mapbox://styles/mapbox/satellite-streets-v12');
       mapMode = 'satellite';
       btn?.classList.add('satellite-active');
-      if (icon) {
-        icon.className = 'fas fa-sun';
-      }
+      if (icon) icon.className = 'fas fa-sun';
       btn?.setAttribute('title', 'Bytt til mørkt kart');
     } else {
-      // Switch to Mapbox Navigation Night (dark with visible roads)
-      map.removeLayer(currentTileLayer);
-      currentTileLayer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/navigation-night-v1/tiles/{z}/{x}/{y}?access_token=${getMapboxToken()}`, {
-        minZoom: 3,
-        maxZoom: 19,
-        tileSize: 512,
-        zoomOffset: -1,
-        attribution: '&copy; Mapbox'
-      }).addTo(map);
-
+      map.setStyle('mapbox://styles/mapbox/navigation-night-v1');
       mapMode = 'dark';
       btn?.classList.remove('satellite-active');
-      if (icon) {
-        icon.className = 'fas fa-moon';
-      }
+      if (icon) icon.className = 'fas fa-moon';
       btn?.setAttribute('title', 'Bytt til satellittkart');
     }
+
+    // Re-add custom layers after style loads
+    map.once('style.load', () => {
+      addNorwayBorder();
+      reapplyTerrain();
+      // Re-add cluster source/layers (native GL layers are lost on style change)
+      if (typeof readdClusterLayers === 'function') readdClusterLayers();
+    });
 
     // Fade back in
     setTimeout(() => {
       mapContainer.style.opacity = '1';
       if (btn) btn.disabled = false;
-    }, 100);
+    }, 300);
   }, 400);
+}
+
+// ========================================
+// 3D TERRAIN TOGGLE
+// ========================================
+
+function enableTerrain(animate = true) {
+  if (!map) return;
+
+  // Add Mapbox DEM source if not present
+  if (!map.getSource('mapbox-dem')) {
+    map.addSource('mapbox-dem', {
+      type: 'raster-dem',
+      url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+      tileSize: 512,
+      maxzoom: 14
+    });
+  }
+
+  // Enable terrain with exaggeration
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+
+  // Add sky layer for atmosphere effect
+  if (!map.getLayer('sky-layer')) {
+    map.addLayer({
+      id: 'sky-layer',
+      type: 'sky',
+      paint: {
+        'sky-type': 'atmosphere',
+        'sky-atmosphere-sun': [0.0, 0.0],
+        'sky-atmosphere-sun-intensity': 15
+      }
+    });
+  }
+
+  // Animate or set pitch for 3D viewing angle
+  if (animate) {
+    map.easeTo({ pitch: TERRAIN_PITCH, duration: 1000 });
+  } else {
+    map.setPitch(TERRAIN_PITCH);
+  }
+
+  // Enable compass on NavigationControl for pitch reset
+  if (map._zoomControl) {
+    map.removeControl(map._zoomControl);
+    map._zoomControl = new mapboxgl.NavigationControl({ showCompass: true, visualizePitch: true });
+    map.addControl(map._zoomControl, 'top-right');
+  }
+
+  terrainEnabled = true;
+  localStorage.setItem(TERRAIN_LS_KEY, 'true');
+  updateTerrainButton(true);
+  Logger.log('3D terreng aktivert');
+}
+
+function disableTerrain() {
+  if (!map) return;
+
+  map.setTerrain(null);
+
+  if (map.getLayer('sky-layer')) {
+    map.removeLayer('sky-layer');
+  }
+
+  // Animate pitch back to flat
+  map.easeTo({ pitch: 0, duration: 1000 });
+
+  // Restore NavigationControl without compass
+  if (map._zoomControl) {
+    map.removeControl(map._zoomControl);
+    map._zoomControl = new mapboxgl.NavigationControl({ showCompass: false });
+    map.addControl(map._zoomControl, 'top-right');
+  }
+
+  terrainEnabled = false;
+  localStorage.setItem(TERRAIN_LS_KEY, 'false');
+  updateTerrainButton(false);
+  Logger.log('3D terreng deaktivert');
+}
+
+function toggleTerrain() {
+  if (terrainEnabled) {
+    disableTerrain();
+  } else {
+    enableTerrain();
+  }
+}
+
+function updateTerrainButton(active) {
+  const btn = document.getElementById('terrainToggle');
+  if (!btn) return;
+  if (active) {
+    btn.classList.add('active');
+    btn.title = 'Slå av 3D-terreng';
+  } else {
+    btn.classList.remove('active');
+    btn.title = 'Slå på 3D-terreng';
+  }
+}
+
+function reapplyTerrain() {
+  if (!terrainEnabled || !map) return;
+  if (!map.getSource('mapbox-dem')) {
+    map.addSource('mapbox-dem', {
+      type: 'raster-dem',
+      url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+      tileSize: 512,
+      maxzoom: 14
+    });
+  }
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+  if (!map.getLayer('sky-layer')) {
+    map.addLayer({
+      id: 'sky-layer',
+      type: 'sky',
+      paint: {
+        'sky-type': 'atmosphere',
+        'sky-atmosphere-sun': [0.0, 0.0],
+        'sky-atmosphere-sun-intensity': 15
+      }
+    });
+  }
 }
 
 // Office location marker (glowing house icon)
 let officeMarker = null;
 
-function initSharedMap() {
+function initSharedMap(options = {}) {
   const mapEl = document.getElementById('map');
   if (mapEl && !map) {
-    // Start zoomed in on Troms region (company location) for login view
-    map = L.map('map', {
-      zoomControl: false,
-      attributionControl: false,
-      minZoom: 3,
-      dragging: false,
-      scrollWheelZoom: false,
-      doubleClickZoom: false,
-      touchZoom: false,
-      keyboard: false
-    }).setView([69.06888, 17.65274], 11);
+    // Set Mapbox GL JS access token
+    mapboxgl.accessToken = getMapboxToken();
 
-    // Always use Mapbox satellite tiles
-    const tileUrl = getMapTileUrl();
-    Logger.log('Map tile URL:', tileUrl);
+    // If returning user, skip globe view and start at app position
+    const skipGlobe = options.skipGlobe || false;
+    const initialCenter = skipGlobe ? [15.0, 67.5] : [15.0, 65.0];
+    const initialZoom = skipGlobe ? 6 : 3.0;
 
-    currentTileLayer = L.tileLayer(tileUrl, {
-      minZoom: 3,
+    // Create Mapbox GL JS map with globe projection
+    map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/satellite-streets-v12',
+      center: initialCenter,
+      zoom: initialZoom,
+      minZoom: 1,
       maxZoom: 19,
-      tileSize: 512,
-      zoomOffset: -1,
-      attribution: getMapAttribution()
-    }).addTo(map);
-
-    // Add glowing office marker (Brøstadveien 343, 9311 Brøstadbotn)
-    const officeIcon = L.divIcon({
-      className: 'office-marker-glow',
-      html: `
-        <div class="office-marker-container">
-          <div class="office-glow-ring"></div>
-          <div class="office-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-              <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-          </div>
-        </div>
-      `,
-      iconSize: [60, 60],
-      iconAnchor: [30, 30]
+      projection: 'globe',
+      interactive: skipGlobe, // Enable immediately for returning users
+      attributionControl: false
     });
 
-    officeMarker = L.marker([69.06888, 17.65274], {
-      icon: officeIcon,
-      interactive: false,  // Not clickable - just visual decoration
-      keyboard: false
-    }).addTo(map);
+    // Add fog/atmosphere for globe effect
+    map.on('style.load', () => {
+      map.setFog({
+        color: 'rgb(186, 210, 235)',
+        'high-color': 'rgb(36, 92, 223)',
+        'horizon-blend': 0.02,
+        'space-color': 'rgb(11, 11, 25)',
+        'star-intensity': 0.6
+      });
 
-    // Mark decorative marker as hidden from assistive tech
-    const el = officeMarker.getElement();
-    if (el) {
-      el.setAttribute('aria-hidden', 'true');
-      el.removeAttribute('tabindex');
-      el.removeAttribute('role');
+      // Add Norway border on first load
+      addNorwayBorder();
+    });
+
+    // Only spin globe on login screen (not for returning users)
+    if (!skipGlobe) {
+      startGlobeSpin();
     }
+
+    // Speed up scroll-wheel zoom (default is ~1/450, higher = faster)
+    map.scrollZoom.setWheelZoomRate(1 / 200);
+    map.scrollZoom.setZoomRate(1 / 50);
+
+    Logger.log('Mapbox GL JS map initialized with globe projection');
+
+    // Add glowing office marker (Brøstadveien 343, 9311 Brøstadbotn)
+    const officeEl = createMarkerElement('office-marker-glow', `
+      <div class="office-marker-container">
+        <div class="office-glow-ring"></div>
+        <div class="office-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </div>
+      </div>
+    `, [60, 60]);
+    officeEl.setAttribute('aria-hidden', 'true');
+
+    const homeLng = appConfig.routeStartLng || 17.65274;
+    const homeLat = appConfig.routeStartLat || 69.06888;
+    officeMarker = new mapboxgl.Marker({ element: officeEl, anchor: 'center' })
+      .setLngLat([homeLng, homeLat])
+      .addTo(map);
+  }
+}
+
+// Update office marker position when org-specific config is loaded after auth
+function updateOfficeMarkerPosition() {
+  if (!officeMarker) return;
+  const homeLng = appConfig.routeStartLng || 17.65274;
+  const homeLat = appConfig.routeStartLat || 69.06888;
+  officeMarker.setLngLat([homeLng, homeLat]);
+}
+
+// Globe spin animation for login screen
+let globeSpinRAF = null;
+
+function startGlobeSpin() {
+  if (!map) return;
+  const secondsPerRevolution = 480; // Very slow: 8 minutes per full rotation
+  const degreesPerSecond = 360 / secondsPerRevolution;
+  let lastTime = performance.now();
+
+  function spin() {
+    const now = performance.now();
+    const delta = (now - lastTime) / 1000;
+    lastTime = now;
+
+    const center = map.getCenter();
+    center.lng += degreesPerSecond * delta;
+    map.setCenter(center);
+
+    globeSpinRAF = requestAnimationFrame(spin);
+  }
+  globeSpinRAF = requestAnimationFrame(spin);
+}
+
+function stopGlobeSpin() {
+  if (globeSpinRAF) {
+    cancelAnimationFrame(globeSpinRAF);
+    globeSpinRAF = null;
   }
 }
 
 // Initialize login view (just set up form handler, map is already initialized)
 function initLoginView() {
-  // Set up login form handler
   const loginForm = document.getElementById('spaLoginForm');
   if (loginForm) {
     loginForm.addEventListener('submit', handleSpaLogin);
@@ -206,217 +347,157 @@ function initDOMElements() {
   routeInfo = document.getElementById('routeInfo');
 }
 
-// Initialize map features (clustering, borders, etc.)
+// Initialize map features (clustering, borders, controls, etc.)
 // Note: The base map is created in initSharedMap() at page load
 let mapInitialized = false;
 function initMap() {
-  if (mapInitialized) return; // Guard against double initialization (login + already-authenticated paths)
+  if (mapInitialized) {
+    // Controls already added — just re-init clusters (needed after logout → login)
+    initClusterManager();
+    return;
+  }
   mapInitialized = true;
   Logger.log('initMap() starting, map exists:', !!map);
-  // Map should already exist from initSharedMap()
+
   if (!map) {
-    mapInitialized = false; // Reset so it can retry
+    mapInitialized = false;
     console.error('Map not initialized - call initSharedMap() first');
     return;
   }
 
-  // Add Norway border overlay from Kartverket
-  addNorwayBorder();
-
   // Add scale control
-  L.control.scale({
-    metric: true,
-    imperial: false,
-    position: 'bottomleft'
-  }).addTo(map);
+  map.addControl(new mapboxgl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
-  // Add "My location" button
-  const LocateControl = L.Control.extend({
-    options: { position: 'topleft' },
-    onAdd: function() {
-      const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-      btn.innerHTML = '<a href="#" title="Min posisjon" role="button" aria-label="Min posisjon" style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:16px;"><i class="fas fa-location-crosshairs"></i></a>';
+  // Add "My location" button (custom IControl)
+  class LocateControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+      this._container = document.createElement('div');
+      this._container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = 'Min posisjon';
+      btn.setAttribute('aria-label', 'Min posisjon');
+      btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:16px;cursor:pointer;';
+      btn.innerHTML = '<i class="fas fa-location-crosshairs"></i>';
+
       let locationMarker = null;
-      L.DomEvent.on(btn, 'click', function(e) {
-        L.DomEvent.preventDefault(e);
-        L.DomEvent.stopPropagation(e);
-        map.locate({ setView: true, maxZoom: 15 });
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const coords = [pos.coords.longitude, pos.coords.latitude];
+            mapInstance.flyTo({ center: coords, zoom: 15, duration: 1500 });
+            if (locationMarker) locationMarker.remove();
+            const el = document.createElement('div');
+            el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#4285F4;border:2px solid #fff;box-shadow:0 0 6px rgba(66,133,244,0.5);';
+            locationMarker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+              .setLngLat(coords)
+              .setPopup(new mapboxgl.Popup({ offset: 10 }).setText('Du er her'))
+              .addTo(mapInstance);
+          },
+          () => showNotification('Kunne ikke finne posisjonen din', 'error'),
+          { enableHighAccuracy: true }
+        );
       });
-      map.on('locationfound', function(e) {
-        if (locationMarker) map.removeLayer(locationMarker);
-        locationMarker = L.circleMarker(e.latlng, {
-          radius: 8, fillColor: '#4285F4', fillOpacity: 1,
-          color: '#fff', weight: 2
-        }).addTo(map).bindPopup('Du er her');
-      });
-      map.on('locationerror', function() {
-        showNotification('Kunne ikke finne posisjonen din', 'error');
-      });
-      return btn;
+
+      this._container.appendChild(btn);
+      return this._container;
     }
-  });
-  new LocateControl().addTo(map);
+    onRemove() {
+      this._container.parentNode?.removeChild(this._container);
+      this._map = undefined;
+    }
+  }
+  map.addControl(new LocateControl(), 'top-left');
 
-  // Initialize marker cluster group - reduced radius for better overview
-  const clusterRadius = appConfig.mapClusterRadius || 60;
-  markerClusterGroup = L.markerClusterGroup({
-    maxClusterRadius: clusterRadius,
-    iconCreateFunction: createClusterIcon,
-    // Disable clustering at zoom 14 - keep clustering longer for better performance
-    disableClusteringAtZoom: 14,
-    // Enable spiderfy only at max zoom (not on every zoom)
-    spiderfyOnMaxZoom: true,
-    spiderfyOnEveryZoom: false,
-    spiderfyDistanceMultiplier: 2.5,
-    showCoverageOnHover: false,
-    zoomToBoundsOnClick: false, // Disabled - popup has "Zoom inn" button instead
-    // Animate cluster split
-    animate: true,
-    animateAddingMarkers: false,
-    // Keep single markers visible (not clustered alone)
-    singleMarkerMode: false
-  });
-  map.addLayer(markerClusterGroup);
+  // Initialize clustering — must wait for map style to be loaded
+  if (map.isStyleLoaded()) {
+    initClusterManager();
+  } else {
+    map.once('style.load', () => initClusterManager());
+  }
 
-  // Handle spiderfied markers - make them compact
-  markerClusterGroup.on('spiderfied', (e) => {
-    e.markers.forEach(marker => {
-      if (marker._icon) {
-        marker._icon.classList.add('spiderfied-marker');
-      }
-    });
-  });
-
-  markerClusterGroup.on('unspiderfied', (e) => {
-    e.markers.forEach(marker => {
-      if (marker._icon) {
-        marker._icon.classList.remove('spiderfied-marker');
-      }
-    });
-  });
-
-  // Re-apply badges and focus styling on ANY map zoom/pan (new marker DOM elements appear)
+  // Update clusters after map movement completes (not during zoom — markers are
+  // geo-anchored and follow the map automatically, updating mid-zoom causes jitter)
   map.on('moveend', () => {
     requestAnimationFrame(() => {
-      reapplyPlanBadges();
-      if (wpFocusedMemberIds || wpRouteActive) applyTeamFocusToMarkers();
-    });
-  });
-  markerClusterGroup.on('animationend', () => {
-    reapplyPlanBadges();
-    if (wpFocusedMemberIds || wpRouteActive) applyTeamFocusToMarkers();
-  });
-
-  Logger.log('initMap() markerClusterGroup created and added to map');
-
-  // Handle cluster click - show popup with options
-  markerClusterGroup.on('clusterclick', function(e) {
-    const cluster = e.layer;
-    const childMarkers = cluster.getAllChildMarkers();
-    const customerIds = [];
-    const customerNames = [];
-
-    // Extract customer IDs from markers
-    childMarkers.forEach(marker => {
-      // Find customer ID by matching marker position
-      for (const [id, m] of Object.entries(markers)) {
-        if (m === marker) {
-          customerIds.push(Number.parseInt(id));
-          const customer = customers.find(c => c.id === Number.parseInt(id));
-          if (customer) {
-            customerNames.push(customer.navn);
-          }
-          break;
-        }
+      if (typeof updateClusters === 'function') updateClusters();
+      if (typeof reapplyPlanBadges === 'function') reapplyPlanBadges();
+      if (wpFocusedMemberIds || wpRouteActive) {
+        if (typeof applyTeamFocusToMarkers === 'function') applyTeamFocusToMarkers();
       }
     });
-
-    // Create popup content with options
-    const areaNames = new Set();
-    const subcatCounts = {}; // { "groupName: subcatName": count }
-
-    customerIds.forEach(id => {
-      const customer = customers.find(c => c.id === id);
-      if (customer) {
-        if (customer.poststed) areaNames.add(customer.poststed);
-
-        // Count subcategory assignments
-        const assignments = kundeSubcatMap[id] || [];
-        for (const a of assignments) {
-          for (const group of allSubcategoryGroups) {
-            if (group.id !== a.group_id) continue;
-            const sub = (group.subcategories || []).find(s => s.id === a.subcategory_id);
-            if (sub) {
-              const key = `${group.navn}|${sub.navn}`;
-              subcatCounts[key] = (subcatCounts[key] || 0) + 1;
-            }
-          }
-        }
-      }
-    });
-
-    // Build category summary HTML from subcategory counts
-    let categoryHtml = '';
-    const grouped = {};
-    for (const [key, count] of Object.entries(subcatCounts)) {
-      const [groupName, subcatName] = key.split('|');
-      if (!grouped[groupName]) grouped[groupName] = [];
-      grouped[groupName].push([subcatName, count]);
-    }
-
-    const groupEntries = Object.entries(grouped);
-    if (groupEntries.length > 0) {
-      categoryHtml = '<div class="cluster-categories">';
-      for (const [groupName, items] of groupEntries) {
-        items.sort((a, b) => b[1] - a[1]);
-        categoryHtml += `<div class="cluster-category-group"><strong>${escapeHtml(groupName)}:</strong> `;
-        categoryHtml += items.map(([name, count]) => `<span class="cluster-tag">${escapeHtml(name)} (${count})</span>`).join(' ');
-        categoryHtml += '</div>';
-      }
-      categoryHtml += '</div>';
-    }
-
-    const areaText = Array.from(areaNames).slice(0, 2).join(' / ') || 'Område';
-    const popupContent = `
-      <div class="cluster-popup">
-        <h3>${escapeHtml(areaText)}</h3>
-        <p><strong>${customerIds.length}</strong> kunder i dette området</p>
-        ${categoryHtml}
-        <div class="cluster-popup-actions">
-          <button class="btn btn-primary btn-small" data-action="addClusterToRoute" data-customer-ids="${customerIds.join(',')}">
-            <i class="fas fa-route"></i> Legg til rute
-          </button>
-          <button class="btn btn-secondary btn-small" data-action="zoomToCluster" data-lat="${e.latlng.lat}" data-lng="${e.latlng.lng}">
-            <i class="fas fa-search-plus"></i> Zoom inn
-          </button>
-        </div>
-        <div class="cluster-customer-list">
-          ${customerNames.slice(0, 5).map(name => `<span class="cluster-customer-name">${escapeHtml(name)}</span>`).join('')}
-          ${customerNames.length > 5 ? `<span class="cluster-more">+${customerNames.length - 5} flere...</span>` : ''}
-        </div>
-      </div>
-    `;
-
-    L.popup()
-      .setLatLng(e.latlng)
-      .setContent(popupContent)
-      .openOn(map);
   });
 
   // Update marker labels visibility based on zoom level
   map.on('zoomend', updateMarkerLabelsVisibility);
 
+  // Listen for popup actions via event delegation on map container
+  map.getContainer().addEventListener('click', handlePopupAction);
+
   // Init area select (dra-for-å-velge)
   initAreaSelect();
+
+  // Add 3D terrain toggle button (inside shared toolbar container)
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer && !document.getElementById('terrainToggle')) {
+    // Opprett eller finn delt toolbar-container
+    let toolbar = document.getElementById('mapToolbarCenter');
+    if (!toolbar) {
+      toolbar = document.createElement('div');
+      toolbar.id = 'mapToolbarCenter';
+      toolbar.className = 'map-toolbar-center';
+      mapContainer.appendChild(toolbar);
+    }
+    const terrainBtn = document.createElement('button');
+    terrainBtn.id = 'terrainToggle';
+    terrainBtn.className = 'terrain-toggle-btn';
+    terrainBtn.title = 'Slå på 3D-terreng';
+    terrainBtn.innerHTML = '<i class="fas fa-mountain"></i>';
+    terrainBtn.addEventListener('click', () => toggleTerrain());
+    toolbar.appendChild(terrainBtn);
+  }
+
+  // Restore terrain preference from localStorage (only after login)
+  if (localStorage.getItem(TERRAIN_LS_KEY) === 'true') {
+    if (map.isStyleLoaded()) {
+      enableTerrain(false);
+    } else {
+      map.once('style.load', () => enableTerrain(false));
+    }
+  }
+
+  Logger.log('initMap() complete — Mapbox GL JS with Supercluster clustering');
+}
+
+// Handle popup button clicks via event delegation
+function handlePopupAction(e) {
+  const actionEl = e.target.closest('[data-action]');
+  if (!actionEl) return;
+  const action = actionEl.dataset.action;
+
+  if (action === 'zoomToCluster') {
+    const lat = parseFloat(actionEl.dataset.lat);
+    const lng = parseFloat(actionEl.dataset.lng);
+    map.flyTo({ center: [lng, lat], zoom: map.getZoom() + 3, duration: 500 });
+    closeMapPopup();
+  } else if (action === 'addClusterToRoute') {
+    const ids = actionEl.dataset.customerIds.split(',').map(Number);
+    ids.forEach(id => selectedCustomers.add(id));
+    updateSelectionUI();
+    closeMapPopup();
+    showNotification(`${ids.length} kunder lagt til rute`, 'success');
+  }
 }
 
 // Show/hide marker labels based on zoom level
 function updateMarkerLabelsVisibility() {
+  if (!map) return;
   const zoom = map.getZoom();
   const mapContainer = document.getElementById('map');
 
-  // At low zoom levels (zoomed out), hide labels to reduce clutter
-  // Show labels when zoomed in (zoom >= 10) so names and addresses are visible
   if (zoom < 10) {
     mapContainer.classList.add('hide-marker-labels');
   } else {
@@ -424,141 +505,67 @@ function updateMarkerLabelsVisibility() {
   }
 }
 
-// Add Norway border visualization
+// Add Norway border visualization using GeoJSON sources and layers
 function addNorwayBorder() {
-  // Norge-Sverige grense (forenklet men synlig)
+  if (!map) return;
+
+  // Remove existing layers if present (needed after style change)
+  ['norway-border-line', 'sweden-overlay', 'sweden-overlay-fill'].forEach(id => {
+    if (map.getLayer(id)) map.removeLayer(id);
+    if (map.getSource(id)) map.removeSource(id);
+  });
+
+  // Norge-Sverige grense coordinates [lng, lat] for GeoJSON
   const borderCoords = [
-    [69.06, 20.55], // Treriksrøysa (Norge-Sverige-Finland)
-    [68.95, 20.10],
-    [68.45, 18.10],
-    [68.15, 17.90],
-    [67.95, 17.15],
-    [67.50, 16.40],
-    [66.60, 15.50],
-    [66.15, 14.60],
-    [65.10, 14.25],
-    [64.15, 13.95],
-    [63.70, 12.70],
-    [62.65, 12.30],
-    [61.80, 12.10],
-    [61.00, 12.15],
-    [59.80, 11.80],
-    [59.10, 11.45],
-    [58.95, 11.15]  // Svinesund
+    [20.55, 69.06], [20.10, 68.95], [18.10, 68.45], [17.90, 68.15],
+    [17.15, 67.95], [16.40, 67.50], [15.50, 66.60], [14.60, 66.15],
+    [14.25, 65.10], [13.95, 64.15], [12.70, 63.70], [12.30, 62.65],
+    [12.10, 61.80], [12.15, 61.00], [11.80, 59.80], [11.45, 59.10],
+    [11.15, 58.95]
   ];
 
-  // Grense som stiplet linje
-  L.polyline(borderCoords, {
-    color: '#ef4444',
-    weight: 2,
-    opacity: 0.7,
-    dashArray: '8, 4'
-  }).addTo(map);
-
-  // Sverige-etikett (nærmere grensen i Troms-området)
-  L.marker([68.5, 19.5], {
-    icon: L.divIcon({
-      className: 'country-label',
-      html: '<span>SVERIGE</span>',
-      iconSize: [100, 20]
-    })
-  }).addTo(map);
-
-  // Dim overlay over Sverige (øst for grensen)
-  L.polygon([
-    [71.5, 20.5], [71.5, 32.0], [58.0, 32.0], [58.0, 11.0],
-    [59.0, 11.5], [61.0, 12.2], [63.5, 12.5], [66.0, 14.5],
-    [68.0, 17.5], [69.0, 20.0], [71.5, 20.5]
-  ], {
-    color: 'transparent',
-    fillColor: '#000',
-    fillOpacity: 0.25,
-    interactive: false
-  }).addTo(map);
-}
-
-// Create custom cluster icon with area name and warning count
-function createClusterIcon(cluster) {
-  const childMarkers = cluster.getAllChildMarkers();
-  const areaNames = new Set();
-  let warningCount = 0;
-
-  // Collect all unique area names, count warnings and planned markers
-  const plannedByUser = new Map(); // initials → count
-  let plannedCount = 0;
-  let focusedInCluster = 0; // how many of the focused member's markers are in this cluster
-  let routeStopsInCluster = 0; // how many route stop markers are in this cluster
-
-  childMarkers.forEach(marker => {
-    const customerData = marker.options.customerData;
-    if (customerData) {
-      if (customerData.poststed) {
-        areaNames.add(customerData.poststed);
-      }
-      if (customerData.hasWarning) {
-        warningCount++;
-      }
-      if (customerData.planned) {
-        plannedCount++;
-        const initials = customerData.plannedInitials || '?';
-        plannedByUser.set(initials, (plannedByUser.get(initials) || 0) + 1);
-      }
-      // Check if this marker belongs to the focused team member
-      if (wpFocusedMemberIds && customerData.id != null && wpFocusedMemberIds.has(Number(customerData.id))) {
-        focusedInCluster++;
-      }
-      // Check if this marker is a route stop
-      if (wpRouteStopIds && customerData.id != null && wpRouteStopIds.has(Number(customerData.id))) {
-        routeStopsInCluster++;
-      }
+  // Border line
+  map.addSource('norway-border-line', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: borderCoords }
+    }
+  });
+  map.addLayer({
+    id: 'norway-border-line',
+    type: 'line',
+    source: 'norway-border-line',
+    paint: {
+      'line-color': '#ef4444',
+      'line-width': 2,
+      'line-opacity': 0.7,
+      'line-dasharray': [4, 2]
     }
   });
 
-  const size = childMarkers.length;
-  const warningBadge = warningCount > 0 ? `<div class="cluster-warning">${warningCount}</div>` : '';
+  // Sweden dim overlay (east of border)
+  const swedenCoords = [[
+    [20.5, 71.5], [32.0, 71.5], [32.0, 58.0], [11.0, 58.0],
+    [11.5, 59.0], [12.2, 61.0], [12.5, 63.5], [14.5, 66.0],
+    [17.5, 68.0], [20.0, 69.0], [20.5, 71.5]
+  ]];
 
-  // Plan badge on cluster: shows initials and count
-  let planBadge = '';
-  if (plannedCount > 0) {
-    const entries = Array.from(plannedByUser.entries());
-    const badgeText = entries.map(([init, count]) => `${init} ${count}`).join(' · ');
-    planBadge = `<div class="cluster-plan-badge">${badgeText}</div>`;
-  }
-
-  // Use "Region Nord" only when nearly all customers are clustered (zoomed fully out)
-  let areaText;
-  if (size >= 100) {
-    areaText = 'Region Nord';
-  } else {
-    areaText = Array.from(areaNames).slice(0, 2).join(' / ');
-  }
-
-  // Size class determines color gradient (green → blue → orange → red)
-  let sizeClass = 'cluster-small';
-  if (size >= 50) sizeClass = 'cluster-xlarge';
-  else if (size >= 20) sizeClass = 'cluster-large';
-  else if (size >= 8) sizeClass = 'cluster-medium';
-
-  // Dim cluster if route/focus is active and this cluster has none of the highlighted markers
-  let dimStyle = '';
-  if (wpRouteActive && wpRouteStopIds) {
-    dimStyle = routeStopsInCluster === 0 ? 'opacity:0.3;filter:grayscale(0.8);pointer-events:none;' : '';
-  } else if (wpFocusedMemberIds) {
-    dimStyle = focusedInCluster === 0 ? 'opacity:0.15;filter:grayscale(1);pointer-events:none;' : '';
-  }
-
-  return L.divIcon({
-    html: `
-      <div class="cluster-icon ${sizeClass}" style="${dimStyle}">
-        <div class="cluster-count">${wpFocusedMemberIds && focusedInCluster > 0 ? focusedInCluster : size}</div>
-        <div class="cluster-area">${areaText}</div>
-        ${warningBadge}
-        ${planBadge}
-      </div>
-    `,
-    className: 'custom-cluster',
-    iconSize: [70, 70],
-    iconAnchor: [35, 35]
+  map.addSource('sweden-overlay', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: swedenCoords }
+    }
+  });
+  map.addLayer({
+    id: 'sweden-overlay-fill',
+    type: 'fill',
+    source: 'sweden-overlay',
+    paint: {
+      'fill-color': '#000',
+      'fill-opacity': 0.25
+    }
   });
 }
 

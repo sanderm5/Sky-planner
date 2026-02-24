@@ -5,7 +5,6 @@
 
 // Helper function to make authenticated API calls
 // Token refresh state to prevent multiple simultaneous refresh attempts
-let isRefreshingToken = false;
 let refreshPromise = null;
 
 // Check if access token is expiring soon (within 2 minutes)
@@ -19,12 +18,11 @@ function isAccessTokenExpiringSoon() {
 
 // Refresh the access token using refresh token
 async function refreshAccessToken() {
-  // If already refreshing, wait for that promise
-  if (isRefreshingToken && refreshPromise) {
+  // If already refreshing, reuse the existing promise (prevents race condition)
+  if (refreshPromise) {
     return refreshPromise;
   }
 
-  isRefreshingToken = true;
   refreshPromise = (async () => {
     try {
       const refreshHeaders = { 'Content-Type': 'application/json' };
@@ -55,7 +53,6 @@ async function refreshAccessToken() {
       console.error('Token refresh error:', error);
       return false;
     } finally {
-      isRefreshingToken = false;
       refreshPromise = null;
     }
   })();

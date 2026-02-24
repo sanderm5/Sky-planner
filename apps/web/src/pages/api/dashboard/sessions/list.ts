@@ -14,7 +14,7 @@ export const GET: APIRoute = async ({ cookies }): Promise<Response> => {
 
   const token = cookies.get('skyplanner_session')?.value;
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Ikke autentisert' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ikke autentisert' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -22,7 +22,7 @@ export const GET: APIRoute = async ({ cookies }): Promise<Response> => {
 
   const JWT_SECRET = import.meta.env.JWT_SECRET;
   if (!JWT_SECRET) {
-    return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -30,7 +30,7 @@ export const GET: APIRoute = async ({ cookies }): Promise<Response> => {
 
   const result = auth.verifyToken(token, JWT_SECRET);
   if (!result.success || !result.payload) {
-    return new Response(JSON.stringify({ error: 'Ugyldig token' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig token' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -50,7 +50,7 @@ export const GET: APIRoute = async ({ cookies }): Promise<Response> => {
 
     if (error) {
       console.error('Sessions list error:', error.message);
-      return new Response(JSON.stringify({ error: 'Kunne ikke hente sesjoner' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke hente sesjoner' } }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -76,7 +76,7 @@ export const GET: APIRoute = async ({ cookies }): Promise<Response> => {
     );
   } catch (error) {
     console.error('Sessions list error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: 'Kunne ikke hente sesjoner' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke hente sesjoner' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

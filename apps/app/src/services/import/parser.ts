@@ -435,6 +435,20 @@ function isEmptyRow(row: unknown[]): boolean {
 }
 
 /**
+ * Sanitize a string value to prevent formula injection
+ * Strips leading characters that spreadsheet apps interpret as formulas: = + - @ \t \r
+ * These could execute arbitrary commands when data is re-exported and opened in Excel
+ */
+function sanitizeFormulaInjection(value: string): string {
+  // Strip formula-prefix characters from beginning of string
+  let sanitized = value;
+  while (sanitized.length > 0 && /^[=+\-@\t\r]/.test(sanitized)) {
+    sanitized = sanitized.substring(1);
+  }
+  return sanitized.trim();
+}
+
+/**
  * Normalize a cell value
  */
 function normalizeValue(value: unknown): unknown {
@@ -444,7 +458,8 @@ function normalizeValue(value: unknown): unknown {
 
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    return trimmed === '' ? null : trimmed;
+    if (trimmed === '') return null;
+    return sanitizeFormulaInjection(trimmed);
   }
 
   if (value instanceof Date) {

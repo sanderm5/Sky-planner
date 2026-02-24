@@ -3,92 +3,538 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import GlassCard from '../components/ui/GlassCard.astro';
 ---
 
-<BaseLayout title="Personvern" description="Les vår personvernerklæring og hvordan vi behandler dine data.">
+<BaseLayout title="Personvernerklæring" description="Les vår personvernerklæring og hvordan vi behandler dine personopplysninger i samsvar med GDPR og norsk personvernlovgivning.">
   <section class="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
     <div class="container-narrow">
-      <h1 class="text-4xl font-bold text-white mb-8">Personvernerklæring</h1>
+      <h1 class="text-4xl font-bold text-white mb-4">Personvernerklæring</h1>
+      <p class="text-dark-400 mb-8">for Sky Planner – levert av Efffekt AS</p>
 
       <GlassCard class="prose prose-invert max-w-none">
         <p class="text-dark-300 mb-6">
-          Sist oppdatert: Januar 2026
+          Sist oppdatert: Februar 2026
         </p>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">1. Innledning</h2>
+        <!-- 1. Innledning -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">1. Innledning og behandlingsansvarlig</h2>
         <p class="text-dark-300 mb-4">
-          Efffekt AS ("vi", "oss", "vår") er ansvarlig for behandlingen av personopplysninger
-          i forbindelse med Sky Planner-tjenesten. Vi tar personvern på alvor og er forpliktet til
-          å beskytte personopplysningene dine i samsvar med gjeldende personvernlovgivning, inkludert
-          EUs personvernforordning (GDPR).
+          Efffekt AS, org.nr. [ORG.NR] («vi», «oss», «vår»), er behandlingsansvarlig for behandlingen
+          av personopplysninger som beskrevet i denne personvernerklæringen, jf. EUs personvernforordning
+          (forordning (EU) 2016/679, «GDPR») artikkel 4 nr. 7 og lov om behandling av personopplysninger
+          (personopplysningsloven) § 1.
+        </p>
+        <p class="text-dark-300 mb-4">
+          Denne personvernerklæringen beskriver hvordan vi samler inn, bruker, lagrer, deler og
+          beskytter personopplysninger i forbindelse med vår skybaserte tjeneste Sky Planner («Tjenesten»),
+          vår nettside skyplanner.no og tilhørende tjenester.
+        </p>
+        <p class="text-dark-300 mb-4">
+          Vi oppfordrer deg til å lese denne erklæringen nøye. Ved å bruke Tjenesten bekrefter du at du
+          har gjort deg kjent med innholdet. Denne erklæringen utfyller våre
+          <a href="/vilkar" class="text-primary-400 hover:text-primary-300">brukervilkår</a>.
         </p>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">2. Hvilke opplysninger vi samler inn</h2>
-        <p class="text-dark-300 mb-4">Vi samler inn følgende typer personopplysninger:</p>
+        <!-- 2. Rettslig grunnlag -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">2. Rettslig grunnlag for behandlingen</h2>
+        <p class="text-dark-300 mb-4">
+          Vi behandler personopplysninger basert på følgende rettslige grunnlag i henhold til GDPR artikkel 6(1):
+        </p>
+        <div class="overflow-x-auto mb-4">
+          <table class="w-full text-dark-300 text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-dark-700">
+                <th class="text-left py-3 pr-4 text-white font-semibold">Behandlingsaktivitet</th>
+                <th class="text-left py-3 pr-4 text-white font-semibold">Rettslig grunnlag</th>
+                <th class="text-left py-3 text-white font-semibold">GDPR-artikkel</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Oppfylle abonnementsavtalen</td>
+                <td class="py-3 pr-4">Avtale</td>
+                <td class="py-3">Art. 6(1)(b)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Betalingsbehandling og fakturering</td>
+                <td class="py-3 pr-4">Avtale + rettslig forpliktelse</td>
+                <td class="py-3">Art. 6(1)(b) og (c)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Bokføring og regnskap</td>
+                <td class="py-3 pr-4">Rettslig forpliktelse (bokføringsloven)</td>
+                <td class="py-3">Art. 6(1)(c)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Sikkerhetstiltak og svindelforebygging</td>
+                <td class="py-3 pr-4">Berettiget interesse</td>
+                <td class="py-3">Art. 6(1)(f)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Tjenestekommunikasjon (driftsrelatert)</td>
+                <td class="py-3 pr-4">Berettiget interesse</td>
+                <td class="py-3">Art. 6(1)(f)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Produktforbedring og feilretting</td>
+                <td class="py-3 pr-4">Berettiget interesse</td>
+                <td class="py-3">Art. 6(1)(f)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Markedsføring (nyhetsbrev o.l.)</td>
+                <td class="py-3 pr-4">Samtykke</td>
+                <td class="py-3">Art. 6(1)(a)</td>
+              </tr>
+              <tr>
+                <td class="py-3 pr-4">Overholdelse av rettslige pålegg</td>
+                <td class="py-3 pr-4">Rettslig forpliktelse</td>
+                <td class="py-3">Art. 6(1)(c)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-dark-300 mb-4">
+          Der behandlingen er basert på berettiget interesse (GDPR art. 6(1)(f)), har vi gjennomført
+          en interesseavveining og konkludert med at vår berettigede interesse ikke overstyres av den
+          registrertes interesser, rettigheter og friheter. Du kan be om innsyn i våre interesseavveininger
+          ved å kontakte oss.
+        </p>
+
+        <!-- 3. Hvilke opplysninger vi samler inn -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">3. Hvilke personopplysninger vi samler inn</h2>
+
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">3.1 Opplysninger du oppgir direkte</h3>
         <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
-          <li>Kontaktinformasjon: Navn, e-postadresse, telefonnummer</li>
-          <li>Bedriftsinformasjon: Firmanavn, organisasjonsnummer</li>
-          <li>Kontoinformasjon: Brukernavn, passord (kryptert)</li>
-          <li>Betalingsinformasjon: Behandles av Stripe (vår betalingsleverandør)</li>
-          <li>Bruksdata: Hvordan du bruker tjenesten</li>
+          <li><strong>Kontoinformasjon:</strong> Navn, e-postadresse, telefonnummer, passord (lagret kryptert med bcrypt-hashing)</li>
+          <li><strong>Bedriftsinformasjon:</strong> Firmanavn, organisasjonsnummer, adresse, bransje</li>
+          <li><strong>Betalingsinformasjon:</strong> Behandles direkte av Stripe, Inc. Vi lagrer aldri fulle kortnumre, CVC eller kortutløpsdato på våre servere</li>
+          <li><strong>Kundedata:</strong> Informasjon du legger inn om dine kunder (adresser, kontaktinfo, notater, tjenestetype)</li>
+          <li><strong>Kommunikasjon:</strong> Innhold i meldinger du sender til oss via e-post eller chat</li>
         </ul>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">3. Hvordan vi bruker opplysningene</h2>
-        <p class="text-dark-300 mb-4">Vi bruker personopplysningene dine til å:</p>
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">3.2 Opplysninger som samles inn automatisk</h3>
         <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
-          <li>Levere og vedlikeholde tjenesten</li>
-          <li>Kommunisere med deg om tjenesten</li>
-          <li>Behandle betalinger</li>
-          <li>Forbedre tjenesten basert på bruksmønstre</li>
-          <li>Overholde juridiske forpliktelser</li>
+          <li><strong>Teknisk informasjon:</strong> IP-adresse, nettlesertype og -versjon, operativsystem, enhetsinformasjon</li>
+          <li><strong>Bruksdata:</strong> Tidspunkt for innlogging, funksjoner som benyttes, feilmeldinger (for diagnostikk)</li>
+          <li><strong>Sesjonsdata:</strong> Autentiseringstokens og sesjonsinformasjon nødvendig for sikker pålogging</li>
         </ul>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">4. Deling av opplysninger</h2>
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">3.3 Opplysninger vi <em>ikke</em> samler inn</h3>
         <p class="text-dark-300 mb-4">
-          Vi deler ikke personopplysningene dine med tredjeparter, bortsett fra:
+          Vi samler ikke inn sensitive personopplysninger (særlige kategorier) som definert i GDPR artikkel 9,
+          herunder helseopplysninger, biometriske data, politisk tilhørighet, religiøs overbevisning,
+          fagforeningsmedlemskap eller opplysninger om seksualitet. Vi ber Kunden om ikke å laste opp
+          slike opplysninger til Tjenesten.
         </p>
+
+        <!-- 4. Hvordan vi bruker opplysningene -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">4. Hvordan vi bruker opplysningene</h2>
+        <p class="text-dark-300 mb-4">Vi bruker personopplysningene dine til følgende formål:</p>
         <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
-          <li>Tjenesteleverandører som hjelper oss med å levere tjenesten (f.eks. Stripe for betaling, Supabase for datalagring)</li>
-          <li>Når det kreves av lov</li>
-          <li>Med ditt samtykke</li>
+          <li><strong>Tjenesteleveranse:</strong> Opprette og administrere din konto, levere og vedlikeholde Tjenestens funksjoner</li>
+          <li><strong>Betalingsbehandling:</strong> Håndtere abonnementer, fakturaer og betalingstransaksjoner via Stripe</li>
+          <li><strong>Kommunikasjon:</strong> Sende driftsrelaterte varsler, sikkerhetsadvarsler, og oppdateringer om Tjenesten</li>
+          <li><strong>Sikkerhet:</strong> Beskytte mot uautorisert tilgang, misbruk, svindel og sikkerhetstrusler</li>
+          <li><strong>Forbedring:</strong> Analysere aggregerte bruksmønstre for å forbedre Tjenestens funksjonalitet og ytelse</li>
+          <li><strong>Juridisk overholdelse:</strong> Oppfylle lovpålagte krav, herunder bokføringsloven og skattelovgivningen</li>
+          <li><strong>Kundesupport:</strong> Besvare henvendelser og gi teknisk støtte</li>
+        </ul>
+        <p class="text-dark-300 mb-4">
+          Vi gjennomfører <strong>ikke</strong> automatisert individuell beslutningstaking eller profilering
+          som har rettsvirkning eller tilsvarende betydelig virkning for deg, jf. GDPR artikkel 22.
+        </p>
+
+        <!-- 5. Formålsbegrensning -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">5. Formålsbegrensning og dataminimering</h2>
+        <p class="text-dark-300 mb-4">
+          I samsvar med GDPR artikkel 5(1)(b) og (c) behandler vi personopplysninger utelukkende for de
+          formål som er angitt i denne erklæringen. Vi samler ikke inn flere personopplysninger enn det
+          som er nødvendig for å oppfylle de angitte formålene (dataminimeringsprinsippet).
+        </p>
+        <p class="text-dark-300 mb-4">
+          Dersom vi ønsker å bruke personopplysninger til nye formål som ikke er forenlige med det
+          opprinnelige innsamlingsformålet, vil vi informere deg og om nødvendig innhente ditt samtykke
+          før slik ny behandling finner sted.
+        </p>
+
+        <!-- 6. Deling av opplysninger -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">6. Deling av opplysninger med tredjeparter</h2>
+        <p class="text-dark-300 mb-4">
+          Vi selger aldri dine personopplysninger. Vi deler personopplysninger kun i følgende tilfeller:
+        </p>
+
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">6.1 Databehandlere (underdatabehandlere)</h3>
+        <p class="text-dark-300 mb-4">
+          Vi bruker følgende tredjepartsleverandører som behandler personopplysninger på våre vegne,
+          i henhold til GDPR artikkel 28:
+        </p>
+        <div class="overflow-x-auto mb-4">
+          <table class="w-full text-dark-300 text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-dark-700">
+                <th class="text-left py-3 pr-4 text-white font-semibold">Leverandør</th>
+                <th class="text-left py-3 pr-4 text-white font-semibold">Formål</th>
+                <th class="text-left py-3 pr-4 text-white font-semibold">Dataoverføring</th>
+                <th class="text-left py-3 text-white font-semibold">Grunnlag</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Supabase, Inc.</td>
+                <td class="py-3 pr-4">Databaselagring, autentisering</td>
+                <td class="py-3 pr-4">EU (Frankfurt)</td>
+                <td class="py-3">Databehandleravtale</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Stripe, Inc.</td>
+                <td class="py-3 pr-4">Betalingsbehandling</td>
+                <td class="py-3 pr-4">EU/USA</td>
+                <td class="py-3">EU–US DPF + DPA</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Railway Corp.</td>
+                <td class="py-3 pr-4">Applikasjonshosting</td>
+                <td class="py-3 pr-4">EU/USA</td>
+                <td class="py-3">SCC + DPA</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Vercel, Inc.</td>
+                <td class="py-3 pr-4">Nettsidehosting</td>
+                <td class="py-3 pr-4">EU/USA</td>
+                <td class="py-3">SCC + DPA</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Resend, Inc.</td>
+                <td class="py-3 pr-4">E-postutsendelse</td>
+                <td class="py-3 pr-4">USA</td>
+                <td class="py-3">SCC + DPA</td>
+              </tr>
+              <tr>
+                <td class="py-3 pr-4">Mapbox / OpenRouteService</td>
+                <td class="py-3 pr-4">Karttjenester, geokoding</td>
+                <td class="py-3 pr-4">EU/USA</td>
+                <td class="py-3">SCC + DPA</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-dark-300 mb-4 text-sm">
+          <em>DPA = Data Processing Agreement (databehandleravtale). SCC = Standard Contractual Clauses
+          (EUs standardkontraktsklausuler). EU–US DPF = EU–US Data Privacy Framework.</em>
+        </p>
+
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">6.2 Andre tilfeller for deling</h3>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li><strong>Rettslige pålegg:</strong> Når utlevering kreves av norsk lov, domstolsbeslutning, eller pålegg fra tilsynsmyndighet (f.eks. Datatilsynet, politiet)</li>
+          <li><strong>Beskyttelse av rettigheter:</strong> For å beskytte våre rettigheter, eiendom eller sikkerhet, eller tredjeparters rettigheter, der dette er nødvendig og forholdsmessig</li>
+          <li><strong>Virksomhetsoverdragelse:</strong> Ved fusjon, oppkjøp eller salg av virksomheten, der kjøper overtar behandlingsansvaret, jf. GDPR artikkel 6(1)(f) og arbeidsmiljøloven kap. 16</li>
+          <li><strong>Med ditt samtykke:</strong> I øvrige tilfeller kun med ditt uttrykkelige forutgående samtykke</li>
         </ul>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">5. Lagring av data</h2>
+        <!-- 7. Overføring til tredjeland -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">7. Overføring av personopplysninger til tredjeland</h2>
         <p class="text-dark-300 mb-4">
-          Dataene dine lagres sikkert hos Supabase med servere i EU. Vi bruker kryptering for
-          data i transit (HTTPS) og i hvile. Vi oppbevarer dataene dine så lenge du har en aktiv
-          konto, og sletter dem innen rimelig tid etter at kontoen avsluttes.
+          Noen av våre tjenesteleverandører er etablert utenfor EØS-området, primært i USA. For
+          overføring av personopplysninger til land utenfor EØS benytter vi følgende overføringsgrunnlag
+          i henhold til GDPR kapittel V:
+        </p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li><strong>Adekvansbeslutning:</strong> EU–US Data Privacy Framework (DPF) for leverandører som er sertifisert under rammeverket, jf. GDPR artikkel 45 og Europakommisjonens adekvansbeslutning av 10. juli 2023</li>
+          <li><strong>Standardkontraktsklausuler (SCC):</strong> EUs vedtatte standardklausuler i henhold til GDPR artikkel 46(2)(c) og Europakommisjonens gjennomføringsbeslutning (EU) 2021/914</li>
+          <li><strong>Tilleggstiltak:</strong> Der nødvendig implementerer vi supplerende tekniske og organisatoriske tiltak (f.eks. kryptering, pseudonymisering) i samsvar med anbefalingene fra Det europeiske personvernrådet (EDPB)</li>
+        </ul>
+        <p class="text-dark-300 mb-4">
+          Du kan be om innsyn i de spesifikke overføringsmekanismene vi benytter ved å kontakte oss.
         </p>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">6. Dine rettigheter</h2>
-        <p class="text-dark-300 mb-4">Du har rett til å:</p>
+        <!-- 8. Lagring og oppbevaring -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">8. Lagring, oppbevaring og sletting</h2>
+        <p class="text-dark-300 mb-4">
+          I samsvar med GDPR artikkel 5(1)(e) (lagringsbegrensning) oppbevarer vi personopplysninger
+          kun så lenge det er nødvendig for de angitte formålene:
+        </p>
+        <div class="overflow-x-auto mb-4">
+          <table class="w-full text-dark-300 text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-dark-700">
+                <th class="text-left py-3 pr-4 text-white font-semibold">Datatype</th>
+                <th class="text-left py-3 pr-4 text-white font-semibold">Oppbevaringstid</th>
+                <th class="text-left py-3 text-white font-semibold">Hjemmel</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Kontoinformasjon</td>
+                <td class="py-3 pr-4">Så lenge kontoen er aktiv + 30 dager etter sletting</td>
+                <td class="py-3">GDPR art. 6(1)(b)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Kundedata (dine forretningsdata)</td>
+                <td class="py-3 pr-4">Så lenge kontoen er aktiv + 30 dager etter oppsigelse</td>
+                <td class="py-3">GDPR art. 6(1)(b)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Betalingsinformasjon (transaksjonslogg)</td>
+                <td class="py-3 pr-4">5 år etter regnskapsårets slutt</td>
+                <td class="py-3">Bokføringsloven § 13</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Fakturaer og regnskapsdokumenter</td>
+                <td class="py-3 pr-4">5 år etter regnskapsårets slutt</td>
+                <td class="py-3">Bokføringsloven § 13</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Sikkerhetslogger (innlogging, tilgang)</td>
+                <td class="py-3 pr-4">12 måneder</td>
+                <td class="py-3">GDPR art. 6(1)(f)</td>
+              </tr>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4">Supporthenvendelser</td>
+                <td class="py-3 pr-4">2 år etter løsning</td>
+                <td class="py-3">GDPR art. 6(1)(f)</td>
+              </tr>
+              <tr>
+                <td class="py-3 pr-4">Sikkerhetskopier</td>
+                <td class="py-3 pr-4">Slettes innen 90 dager etter datasletting fra aktive systemer</td>
+                <td class="py-3">GDPR art. 6(1)(f)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-dark-300 mb-4">
+          Etter utløp av oppbevaringstiden slettes eller anonymiseres opplysningene. Anonymiserte
+          data (som ikke kan tilbakeføres til enkeltpersoner) kan oppbevares tidsubegrenset for
+          statistiske formål, jf. GDPR artikkel 89.
+        </p>
+
+        <!-- 9. Dine rettigheter -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">9. Dine rettigheter som registrert</h2>
+        <p class="text-dark-300 mb-4">
+          I henhold til GDPR kapittel III har du følgende rettigheter. Vi besvarer henvendelser
+          uten ugrunnet opphold og senest innen 30 dager, jf. GDPR artikkel 12(3):
+        </p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-3">
+          <li>
+            <strong>Rett til innsyn (art. 15):</strong> Du kan be om en kopi av alle personopplysninger
+            vi behandler om deg, samt informasjon om behandlingsformål, kategorier av opplysninger,
+            mottakere og oppbevaringstid.
+          </li>
+          <li>
+            <strong>Rett til retting (art. 16):</strong> Du kan kreve at uriktige eller ufullstendige
+            personopplysninger om deg rettes eller suppleres.
+          </li>
+          <li>
+            <strong>Rett til sletting (art. 17):</strong> Du kan kreve at dine personopplysninger
+            slettes («retten til å bli glemt»), med mindre vi har lovpålagt plikt til å oppbevare dem.
+            Kontosletting kan iverksettes via Tjenestens kontrollpanel med 30 dagers angrefrist.
+          </li>
+          <li>
+            <strong>Rett til begrensning av behandling (art. 18):</strong> Du kan kreve at behandlingen
+            av dine opplysninger begrenses, f.eks. mens vi undersøker en innsigelse om nøyaktighet.
+          </li>
+          <li>
+            <strong>Rett til dataportabilitet (art. 20):</strong> Du kan be om å motta dine
+            personopplysninger i et strukturert, alminnelig brukt og maskinlesbart format (JSON/CSV),
+            og du kan kreve at opplysningene overføres til en annen behandlingsansvarlig.
+            Eksportfunksjonen er tilgjengelig direkte i Tjenestens kontrollpanel.
+          </li>
+          <li>
+            <strong>Rett til å protestere (art. 21):</strong> Du kan protestere mot behandling som
+            er basert på berettiget interesse. Vi vil da vurdere om det foreligger tvingende berettigede
+            grunner som veier tyngre enn dine interesser.
+          </li>
+          <li>
+            <strong>Rett til å trekke tilbake samtykke (art. 7(3)):</strong> Der behandlingen er basert
+            på samtykke, kan du når som helst trekke dette tilbake. Tilbaketrekking påvirker ikke
+            lovligheten av behandling utført før tilbaketrekkingen.
+          </li>
+          <li>
+            <strong>Rett til å klage (art. 77):</strong> Du har rett til å klage til Datatilsynet
+            (datatilsynet.no) dersom du mener at vår behandling av personopplysninger er i strid med
+            personvernlovgivningen.
+          </li>
+        </ul>
+        <p class="text-dark-300 mb-4">
+          For å utøve dine rettigheter, kontakt oss på
+          <a href="mailto:personvern@skyplanner.no" class="text-primary-400 hover:text-primary-300">personvern@skyplanner.no</a>.
+          Vi kan be om å verifisere din identitet før vi behandler forespørselen, jf. GDPR artikkel 12(6).
+        </p>
+
+        <!-- 10. Informasjonskapsler -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">10. Informasjonskapsler (cookies)</h2>
+        <p class="text-dark-300 mb-4">
+          I henhold til lov om elektronisk kommunikasjon (ekomloven) § 2-7b og ePrivacy-direktivet
+          (2002/58/EF) artikkel 5(3) informerer vi om følgende bruk av informasjonskapsler:
+        </p>
+
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">10.1 Strengt nødvendige informasjonskapsler</h3>
+        <p class="text-dark-300 mb-4">
+          Disse krever ikke samtykke da de er nødvendige for at Tjenesten skal fungere:
+        </p>
+        <div class="overflow-x-auto mb-4">
+          <table class="w-full text-dark-300 text-sm border-collapse">
+            <thead>
+              <tr class="border-b border-dark-700">
+                <th class="text-left py-3 pr-4 text-white font-semibold">Navn</th>
+                <th class="text-left py-3 pr-4 text-white font-semibold">Formål</th>
+                <th class="text-left py-3 pr-4 text-white font-semibold">Varighet</th>
+                <th class="text-left py-3 text-white font-semibold">Type</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-dark-800">
+                <td class="py-3 pr-4"><code class="text-primary-400">skyplanner_session</code></td>
+                <td class="py-3 pr-4">Autentisering og sesjonshåndtering</td>
+                <td class="py-3 pr-4">Sesjon / 7 dager</td>
+                <td class="py-3">Førstepartskapsel</td>
+              </tr>
+              <tr>
+                <td class="py-3 pr-4"><code class="text-primary-400">skyplanner_csrf</code></td>
+                <td class="py-3 pr-4">CSRF-beskyttelse</td>
+                <td class="py-3 pr-4">Sesjon</td>
+                <td class="py-3">Førstepartskapsel</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">10.2 Fravær av sporings- og markedsføringscookies</h3>
+        <p class="text-dark-300 mb-4">
+          Vi bruker <strong>ikke</strong> sporings-, analyse- eller markedsføringscookies.
+          Vi bruker ikke Google Analytics, Facebook Pixel eller lignende tredjepartssporingsteknologier.
+          Vi respekterer «Do Not Track»-signaler fra nettleseren din.
+        </p>
+
+        <!-- 11. Sikkerhetstiltak -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">11. Sikkerhetstiltak</h2>
+        <p class="text-dark-300 mb-4">
+          I henhold til GDPR artikkel 32 har vi implementert følgende tekniske og organisatoriske
+          tiltak for å beskytte personopplysningene dine:
+        </p>
+
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">11.1 Tekniske tiltak</h3>
         <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
-          <li>Få innsyn i dine personopplysninger</li>
-          <li>Korrigere unøyaktige opplysninger</li>
-          <li>Slette dine opplysninger</li>
-          <li>Begrense behandlingen av dine opplysninger</li>
-          <li>Dataportabilitet</li>
-          <li>Trekke tilbake samtykke</li>
+          <li>Kryptering av data i transit med TLS 1.2+ (HTTPS) for all kommunikasjon</li>
+          <li>Kryptering av data i hvile i databasen</li>
+          <li>Passord lagres med bcrypt-hashing (aldri i klartekst)</li>
+          <li>Tofaktorautentisering (TOTP/2FA) tilgjengelig for alle kontoer</li>
+          <li>CSRF-beskyttelse på alle skjemaer og API-endepunkter</li>
+          <li>Automatisk kontolåsing ved gjentatte feilede innloggingsforsøk</li>
+          <li>Automatisk utlogging etter 15 minutters inaktivitet</li>
+          <li>Rate limiting for å forhindre brute-force-angrep</li>
+          <li>Sikkerhetshoder (Helmet, Content-Security-Policy, X-Frame-Options m.m.)</li>
+          <li>Row Level Security (RLS) i databasen for dataisolering mellom organisasjoner</li>
         </ul>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">7. Informasjonskapsler (cookies)</h2>
+        <h3 class="text-lg font-medium text-white mt-6 mb-3">11.2 Organisatoriske tiltak</h3>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Tilgangskontroll basert på minste privilegiums prinsipp</li>
+          <li>Regelmessig gjennomgang av sikkerhetstiltak og tilganger</li>
+          <li>Prosedyrer for håndtering av sikkerhetsbrudd (jf. punkt 12)</li>
+          <li>Hemmeligheter og nøkler lagres i miljøvariabler, aldri i kildekode</li>
+        </ul>
+
+        <!-- 12. Sikkerhetsbrudd -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">12. Varsling ved sikkerhetsbrudd</h2>
         <p class="text-dark-300 mb-4">
-          Vi bruker nødvendige informasjonskapsler for å sikre at tjenesten fungerer korrekt,
-          inkludert autentisering og øktadministrasjon. Vi bruker ikke sporings- eller
-          markedsføringscookies.
+          I henhold til GDPR artikkel 33 og 34 har vi prosedyrer for håndtering av brudd på
+          personopplysningssikkerheten:
+        </p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Datatilsynet varsles uten ugrunnet opphold og senest innen 72 timer etter at bruddet ble oppdaget, med mindre det er usannsynlig at bruddet medfører risiko for den registrertes rettigheter og friheter</li>
+          <li>Berørte registrerte varsles uten ugrunnet opphold dersom bruddet sannsynligvis medfører høy risiko for deres rettigheter og friheter</li>
+          <li>Alle sikkerhetsbrudd dokumenteres i samsvar med GDPR artikkel 33(5)</li>
+        </ul>
+
+        <!-- 13. Barn -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">13. Barn og mindreårige</h2>
+        <p class="text-dark-300 mb-4">
+          Tjenesten er rettet mot bedrifter og er ikke beregnet for bruk av personer under 18 år.
+          Vi samler ikke bevisst inn personopplysninger fra mindreårige. Dersom vi blir kjent med
+          at vi har samlet inn personopplysninger fra en person under 18 år uten foreldres samtykke,
+          vil vi slette opplysningene umiddelbart, jf. GDPR artikkel 8 og
+          personopplysningsloven § 5.
         </p>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">8. Sikkerhet</h2>
+        <!-- 14. Kundens ansvar som behandlingsansvarlig -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">14. Kundens ansvar som behandlingsansvarlig</h2>
         <p class="text-dark-300 mb-4">
-          Vi tar sikkerheten til dataene dine på alvor og har implementert passende tekniske
-          og organisatoriske tiltak for å beskytte mot uautorisert tilgang, endring eller
-          ødeleggelse av data.
+          Når du bruker Tjenesten til å lagre og behandle personopplysninger om dine kunder
+          (sluttbrukere), er du selv behandlingsansvarlig for denne behandlingen etter GDPR artikkel 4 nr. 7.
+          Du er ansvarlig for å:
+        </p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Sikre gyldig rettslig grunnlag for behandlingen (GDPR art. 6)</li>
+          <li>Informere dine registrerte om behandlingen (GDPR art. 13/14)</li>
+          <li>Svare på innsynsforespørsler og andre rettighetshenvendelser fra dine registrerte (GDPR kapittel III)</li>
+          <li>Gjennomføre nødvendige vurderinger av personvernkonsekvenser (DPIA) der dette er påkrevd (GDPR art. 35)</li>
+          <li>Ikke lagre sensitive personopplysninger (GDPR art. 9) i Tjenesten uten tilstrekkelig rettslig grunnlag</li>
+        </ul>
+        <p class="text-dark-300 mb-4">
+          Efffekt AS opptrer som databehandler for slike opplysninger, og behandler dem utelukkende
+          etter dokumenterte instrukser fra deg som behandlingsansvarlig, jf. GDPR artikkel 28 og 29.
         </p>
 
-        <h2 class="text-xl font-semibold text-white mt-8 mb-4">9. Kontakt oss</h2>
+        <!-- 15. Endringer -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">15. Endringer i personvernerklæringen</h2>
         <p class="text-dark-300 mb-4">
-          Har du spørsmål om vår behandling av personopplysninger, kan du kontakte oss på:
+          Vi kan oppdatere denne personvernerklæringen for å reflektere endringer i vår praksis,
+          ny lovgivning eller nye retningslinjer fra tilsynsmyndigheter. Ved vesentlige endringer vil vi:
         </p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li>Varsle deg via e-post minst 30 dager før endringene trer i kraft</li>
+          <li>Tydelig angi «Sist oppdatert»-datoen øverst i erklæringen</li>
+          <li>Dersom endringene krever nytt samtykke, vil vi innhente dette eksplisitt</li>
+        </ul>
+        <p class="text-dark-300 mb-4">
+          Vi anbefaler at du jevnlig gjennomgår denne erklæringen for å holde deg informert om
+          hvordan vi beskytter personopplysningene dine.
+        </p>
+
+        <!-- 16. Gjeldende lovgivning -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">16. Gjeldende lovgivning</h2>
+        <p class="text-dark-300 mb-4">
+          Denne personvernerklæringen er utarbeidet i samsvar med følgende lovgivning:
+        </p>
+        <ul class="list-disc list-inside text-dark-300 mb-4 space-y-2">
+          <li><strong>Personvernforordningen (GDPR)</strong> – Europaparlaments- og rådsforordning (EU) 2016/679 av 27. april 2016</li>
+          <li><strong>Personopplysningsloven</strong> – Lov om behandling av personopplysninger (LOV-2018-06-15-38)</li>
+          <li><strong>Ekomloven</strong> – Lov om elektronisk kommunikasjon (LOV-2003-07-04-83), særlig § 2-7b om informasjonskapsler</li>
+          <li><strong>E-handelsloven</strong> – Lov om visse sider av elektronisk handel og andre informasjonssamfunnstjenester (LOV-2003-05-23-35)</li>
+          <li><strong>Bokføringsloven</strong> – Lov om bokføring (LOV-2004-11-19-73), for oppbevaringskrav</li>
+          <li><strong>Markedsføringsloven</strong> – Lov om kontroll med markedsføring og avtalevilkår mv. (LOV-2009-01-09-2)</li>
+          <li><strong>Sikkerhetsloven</strong> – for relevante sikkerhets- og beredskapskrav</li>
+          <li><strong>ePrivacy-direktivet</strong> – Europaparlaments- og rådsdirektiv 2002/58/EF (implementert i norsk lov via ekomloven)</li>
+        </ul>
+        <p class="text-dark-300 mb-4">
+          Ved motstrid mellom denne erklæringen og preseptorisk lovgivning, skal lovgivningen gå foran.
+        </p>
+
+        <!-- 17. Tilsynsmyndighet -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">17. Tilsynsmyndighet</h2>
+        <p class="text-dark-300 mb-4">
+          Datatilsynet er tilsynsmyndighet for behandling av personopplysninger i Norge:
+        </p>
+        <div class="text-dark-300 mb-4 space-y-1">
+          <p><strong>Datatilsynet</strong></p>
+          <p>Postboks 458 Sentrum, 0105 Oslo</p>
+          <p>Telefon: 22 39 69 00</p>
+          <p>Nettside: datatilsynet.no</p>
+        </div>
+
+        <!-- 18. Kontakt -->
+        <h2 class="text-xl font-semibold text-white mt-8 mb-4">18. Kontaktinformasjon</h2>
+        <p class="text-dark-300 mb-4">
+          For spørsmål om personvern og denne erklæringen, kontakt oss:
+        </p>
+        <div class="text-dark-300 mb-4 space-y-1">
+          <p><strong>Efffekt AS</strong> – Behandlingsansvarlig</p>
+          <p>E-post (personvern): <a href="mailto:personvern@skyplanner.no" class="text-primary-400 hover:text-primary-300">personvern@skyplanner.no</a></p>
+          <p>E-post (generelt): <a href="mailto:kontakt@skyplanner.no" class="text-primary-400 hover:text-primary-300">kontakt@skyplanner.no</a></p>
+          <p>Nettside: <a href="https://skyplanner.no" class="text-primary-400 hover:text-primary-300">skyplanner.no</a></p>
+        </div>
         <p class="text-dark-300">
-          E-post: <a href="mailto:personvern@skyplanner.no" class="text-primary-400 hover:text-primary-300">personvern@skyplanner.no</a>
+          Vi besvarer personvernhenvendelser innen 30 dager i samsvar med GDPR artikkel 12(3).
+          Ved komplekse forespørsler kan fristen forlenges med ytterligere 60 dager, der vi vil
+          informere deg om forlengelsen innen den opprinnelige 30-dagersfristen.
         </p>
       </GlassCard>
     </div>

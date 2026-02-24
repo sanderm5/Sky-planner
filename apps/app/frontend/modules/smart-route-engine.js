@@ -245,7 +245,9 @@ const SmartRouteEngine = {
 
     // Effektivitetsscore (0-100)
     // Høyere er bedre: belønner tetthet og antall, straffer lang avstand
-    const rawScore = (density * n * 10) / (1 + distanceToStart * 0.05 + avgDistanceFromCentroid * 0.3);
+    let rawScore = (density * n * 10) / (1 + distanceToStart * 0.05 + avgDistanceFromCentroid * 0.3);
+
+
     const efficiencyScore = Math.min(100, Math.round(rawScore * 10));
 
     // Finn primært område (mest vanlige poststed)
@@ -275,6 +277,56 @@ const SmartRouteEngine = {
       avgDistanceFromCentroid: Math.round(avgDistanceFromCentroid * 10) / 10,
       distanceToStart: Math.round(distanceToStart)
     };
+  },
+
+  // Enhanced efficiency calculation using Mapbox Matrix API (real travel times)
+  async calculateClusterEfficiencyWithMatrix(cluster) {
+    const basic = this.calculateClusterEfficiency(cluster);
+    if (!basic || cluster.length < 2) return basic;
+
+    if (typeof MatrixService === 'undefined') return basic;
+
+    const startLng = appConfig.routeStartLng || 17.65274;
+    const startLat = appConfig.routeStartLat || 69.06888;
+
+    const coords = [
+      [startLng, startLat],
+      ...cluster.filter(c => c.lat && c.lng).map(c => [c.lng, c.lat])
+    ];
+
+    // Only use matrix for clusters up to 24 customers (25 - 1 office)
+    if (coords.length > 25 || coords.length < 3) return basic;
+
+    const matrix = await MatrixService.getMatrix(coords, {
+      sources: '0',
+      destinations: 'all'
+    });
+
+    if (!matrix || !matrix.durations || !matrix.durations[0]) return basic;
+
+    // Office → each customer times
+    const officeTimes = matrix.durations[0].slice(1);
+    const officeDistances = matrix.distances ? matrix.distances[0].slice(1) : [];
+    const validTimes = officeTimes.filter(t => t !== null && t > 0);
+
+    if (validTimes.length === 0) return basic;
+
+    const avgTravelToCluster = validTimes.reduce((a, b) => a + b, 0) / validTimes.length;
+
+    // Override estimated minutes with real data
+    const serviceTime = cluster.length * this.params.serviceTimeMinutes;
+    const travelToClusterMin = Math.round(avgTravelToCluster / 60) * 2; // round trip
+    basic.estimatedMinutes = travelToClusterMin + serviceTime;
+
+    if (officeDistances.length > 0) {
+      const validDist = officeDistances.filter(d => d !== null && d > 0);
+      if (validDist.length > 0) {
+        basic.estimatedKm = Math.round(validDist.reduce((a, b) => a + b, 0) / 1000 * 2);
+      }
+    }
+
+    basic.matrixBased = true;
+    return basic;
   },
 
   // Generer anbefalinger
@@ -375,58 +427,79 @@ const SmartRouteEngine = {
     this.selectedClusterId = clusterId;
     this.updateClusterButtons(); // Oppdater knapper
 
-    // Lag layer group for visualisering
-    this.clusterLayer = L.layerGroup().addTo(map);
+    // Track layer IDs for cleanup
+    this.clusterLayerIds = [];
+    this._clusterMarkers = [];
 
     // Tegn convex hull polygon rundt kundene
     const positions = cluster.customers.map(c => [c.lat, c.lng]);
     if (positions.length >= 3) {
       const hull = this.convexHull(positions);
-      const polygon = L.polygon(hull, {
-        color: '#ff6b00',
-        weight: 2,
-        fillColor: '#ff6b00',
-        fillOpacity: 0.15,
-        dashArray: '5, 5'
-      }).addTo(this.clusterLayer);
+      const hullCoords = hull.map(p => [p[1], p[0]]);
+      hullCoords.push(hullCoords[0]); // close the ring
+      const srcId = 'sre-cluster-hull';
+      map.addSource(srcId, {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [hullCoords] } }
+      });
+      map.addLayer({ id: srcId + '-fill', type: 'fill', source: srcId, paint: { 'fill-color': '#ff6b00', 'fill-opacity': 0.15 } });
+      map.addLayer({ id: srcId + '-line', type: 'line', source: srcId, paint: { 'line-color': '#ff6b00', 'line-width': 2, 'line-dasharray': [5, 5] } });
+      this.clusterLayerIds.push(srcId + '-fill', srcId + '-line', srcId);
     }
 
     // Marker kunder i klyngen
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    cluster.customers.forEach((c, idx) => {
+    const dotFeatures = cluster.customers.map(c => {
       const nextDate = getNextControlDate(c);
       const isOverdue = nextDate && nextDate < today;
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
+        properties: {
+          color: isOverdue ? '#e74c3c' : '#f39c12',
+          navn: c.navn, adresse: c.adresse || '',
+          status: isOverdue ? 'Forfalt' : 'Kommende'
+        }
+      };
+    });
+    const dotSrcId = 'sre-cluster-dots';
+    map.addSource(dotSrcId, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: dotFeatures }
+    });
+    map.addLayer({
+      id: dotSrcId, type: 'circle', source: dotSrcId,
+      paint: {
+        'circle-radius': 10, 'circle-color': ['get', 'color'],
+        'circle-stroke-width': 2, 'circle-stroke-color': ['get', 'color'],
+        'circle-opacity': 0.8
+      }
+    });
+    this.clusterLayerIds.push(dotSrcId);
 
-      const marker = L.circleMarker([c.lat, c.lng], {
-        radius: 10,
-        color: isOverdue ? '#e74c3c' : '#f39c12',
-        weight: 2,
-        fillColor: isOverdue ? '#e74c3c' : '#f39c12',
-        fillOpacity: 0.8
-      }).addTo(this.clusterLayer);
-
-      marker.bindPopup(`
-        <strong>${escapeHtml(c.navn)}</strong><br>
-        ${escapeHtml(c.adresse || '')}<br>
-        <small>${isOverdue ? 'Forfalt' : 'Kommende'}</small>
+    // Click on dot shows popup
+    map.on('click', dotSrcId, (e) => {
+      const props = e.features[0].properties;
+      showMapPopup(e.lngLat, `
+        <strong>${escapeHtml(props.navn)}</strong><br>
+        ${escapeHtml(props.adresse)}<br>
+        <small>${props.status}</small>
       `);
     });
 
     // Marker sentroiden
-    const centroidMarker = L.marker([cluster.centroid.lat, cluster.centroid.lng], {
-      icon: L.divIcon({
-        className: 'cluster-centroid-marker',
-        html: `<div class="centroid-icon"><i class="fas fa-crosshairs"></i></div>`,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15]
-      })
-    }).addTo(this.clusterLayer);
+    const centroidEl = createMarkerElement('cluster-centroid-marker',
+      '<div class="centroid-icon"><i class="fas fa-crosshairs"></i></div>', [30, 30]);
+    const centroidMarker = new mapboxgl.Marker({ element: centroidEl })
+      .setLngLat([cluster.centroid.lng, cluster.centroid.lat])
+      .addTo(map);
+    this._clusterMarkers.push(centroidMarker);
 
     // Zoom til klyngen
-    const bounds = L.latLngBounds(positions);
-    map.fitBounds(bounds, { padding: [50, 50] });
+    const bounds = boundsFromLatLngArray(positions);
+    map.fitBounds(bounds, { padding: 50 });
 
     // Oppdater knapper etter visning
     this.updateClusterButtons();
@@ -434,9 +507,19 @@ const SmartRouteEngine = {
 
   // Fjern klynge-visualisering
   clearClusterVisualization() {
-    if (this.clusterLayer && map) {
-      map.removeLayer(this.clusterLayer);
-      this.clusterLayer = null;
+    if (this.clusterLayerIds && map) {
+      // Remove layers first, then sources
+      for (const id of this.clusterLayerIds) {
+        if (map.getLayer(id)) map.removeLayer(id);
+      }
+      for (const id of this.clusterLayerIds) {
+        if (map.getSource(id)) map.removeSource(id);
+      }
+      this.clusterLayerIds = [];
+    }
+    if (this._clusterMarkers) {
+      this._clusterMarkers.forEach(m => m.remove());
+      this._clusterMarkers = [];
     }
     this.selectedClusterId = null;
   },
@@ -887,19 +970,17 @@ function showAreaOnMap(area) {
   const areaCustomers = customers.filter(c => c.poststed === area);
   if (areaCustomers.length === 0) return;
 
-  // Get valid coordinates
-  const coords = areaCustomers
-    .filter(c => c.lat && c.lng)
-    .map(c => [c.lat, c.lng]);
+  // Get valid customers with coordinates
+  const validCustomers = areaCustomers.filter(c => c.lat && c.lng);
 
-  if (coords.length === 0) {
+  if (validCustomers.length === 0) {
     showToast('Ingen kunder med koordinater i dette området', 'warning');
     return;
   }
 
   // Fit map to bounds
-  const bounds = L.latLngBounds(coords);
-  map.fitBounds(bounds, { padding: [50, 50] });
+  const bounds = boundsFromCustomers(validCustomers);
+  map.fitBounds(bounds, { padding: 50 });
 
   // Highlight the customers
   highlightCustomersOnMap(areaCustomers.map(c => c.id));
@@ -929,15 +1010,14 @@ function highlightCustomersOnMap(customerIds) {
   // Clear previous highlights
   clearMapHighlights();
 
-  // Create a layer group for highlight rings
-  window.highlightLayer = L.layerGroup().addTo(map);
   window.highlightedCustomerIds = customerIds;
+  window._highlightLayerIds = [];
 
   // Get positions of all customers to highlight
   const positions = [];
   customers.forEach(c => {
     if (customerIds.includes(c.id) && c.lat && c.lng) {
-      positions.push([c.lat, c.lng]);
+      positions.push([c.lng, c.lat]); // [lng, lat] for GeoJSON
     }
   });
 
@@ -946,49 +1026,59 @@ function highlightCustomersOnMap(customerIds) {
     return;
   }
 
-  // Add small marker at each position
-  positions.forEach(pos => {
-    const dot = L.circleMarker(pos, {
-      radius: 8,
-      color: '#ff6b00',
-      weight: 2,
-      fillColor: '#ff6b00',
-      fillOpacity: 0.8,
-      className: 'highlight-dot'
-    }).addTo(window.highlightLayer);
+  // Add dot markers at each position
+  const dotFeatures = positions.map(p => ({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: p }
+  }));
+  map.addSource('sre-highlight-dots', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: dotFeatures }
   });
+  map.addLayer({
+    id: 'sre-highlight-dots', type: 'circle', source: 'sre-highlight-dots',
+    paint: {
+      'circle-radius': 8, 'circle-color': '#ff6b00',
+      'circle-stroke-width': 2, 'circle-stroke-color': '#ff6b00',
+      'circle-opacity': 0.8
+    }
+  });
+  window._highlightLayerIds.push('sre-highlight-dots');
 
   // Create area highlight around all points
   if (positions.length >= 3) {
-    // Use convex hull for 3+ points
-    const hull = getConvexHull(positions);
-    const polygon = L.polygon(hull, {
-      color: '#ff6b00',
-      weight: 3,
-      fillColor: '#ff6b00',
-      fillOpacity: 0.1,
-      dashArray: '8, 8',
-      className: 'highlight-area'
-    }).addTo(window.highlightLayer);
+    const hull = getConvexHull(positions.map(p => [p[1], p[0]])); // hull expects [lat,lng]
+    const hullCoords = hull.map(p => [p[1], p[0]]);
+    hullCoords.push(hullCoords[0]);
+    map.addSource('sre-highlight-area', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [hullCoords] } }
+    });
+    map.addLayer({ id: 'sre-highlight-area-fill', type: 'fill', source: 'sre-highlight-area', paint: { 'fill-color': '#ff6b00', 'fill-opacity': 0.1 } });
+    map.addLayer({ id: 'sre-highlight-area-line', type: 'line', source: 'sre-highlight-area', paint: { 'line-color': '#ff6b00', 'line-width': 3, 'line-dasharray': [8, 8] } });
+    window._highlightLayerIds.push('sre-highlight-area-fill', 'sre-highlight-area-line', 'sre-highlight-area');
   } else if (positions.length === 2) {
-    // Draw line between 2 points with buffer
-    const line = L.polyline(positions, {
-      color: '#ff6b00',
-      weight: 4,
-      dashArray: '8, 8',
-      className: 'highlight-area'
-    }).addTo(window.highlightLayer);
+    map.addSource('sre-highlight-line', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'LineString', coordinates: positions } }
+    });
+    map.addLayer({ id: 'sre-highlight-line', type: 'line', source: 'sre-highlight-line', paint: { 'line-color': '#ff6b00', 'line-width': 4, 'line-dasharray': [8, 8] } });
+    window._highlightLayerIds.push('sre-highlight-line');
   } else {
-    // Single point - draw larger circle
-    const circle = L.circle(positions[0], {
-      radius: 500,
-      color: '#ff6b00',
-      weight: 2,
-      fillColor: '#ff6b00',
-      fillOpacity: 0.1,
-      dashArray: '8, 8',
-      className: 'highlight-area'
-    }).addTo(window.highlightLayer);
+    // Single point - draw larger circle (approximate 500m radius)
+    map.addSource('sre-highlight-circle', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Point', coordinates: positions[0] } }
+    });
+    map.addLayer({
+      id: 'sre-highlight-circle', type: 'circle', source: 'sre-highlight-circle',
+      paint: {
+        'circle-radius': 30, 'circle-color': '#ff6b00',
+        'circle-stroke-width': 2, 'circle-stroke-color': '#ff6b00',
+        'circle-opacity': 0.1
+      }
+    });
+    window._highlightLayerIds.push('sre-highlight-circle');
   }
 
   // Show count
@@ -1041,10 +1131,14 @@ function crossProduct(o, a, b) {
  * Clear all map highlights
  */
 function clearMapHighlights() {
-  if (window.highlightLayer) {
-    window.highlightLayer.clearLayers();
-    map.removeLayer(window.highlightLayer);
-    window.highlightLayer = null;
+  if (window._highlightLayerIds && map) {
+    for (const id of window._highlightLayerIds) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    }
+    for (const id of window._highlightLayerIds) {
+      if (map.getSource(id)) map.removeSource(id);
+    }
+    window._highlightLayerIds = [];
   }
   window.highlightedCustomerIds = [];
 }
@@ -1065,31 +1159,32 @@ function syncMapToTab(tabName) {
 
   switch (tabName) {
     case 'customers': {
-      const positions = customers
-        .filter(c => c.lat && c.lng)
-        .map(c => [c.lat, c.lng]);
-      if (positions.length > 0) {
-        map.fitBounds(L.latLngBounds(positions), { padding: [30, 30] });
+      const validCustomers = customers.filter(c => c.lat && c.lng);
+      if (validCustomers.length > 0) {
+        map.fitBounds(boundsFromCustomers(validCustomers), { padding: 30 });
       }
       break;
     }
     case 'routes': {
-      if (routeLayer && routeLayer.getBounds) {
-        try {
-          map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
-        } catch (e) {
-          // routeLayer may be empty
+      // Route is now a GeoJSON source — try to get its bounds
+      try {
+        const src = map.getSource('route-line');
+        if (src && src._data?.geometry?.coordinates) {
+          const coords = src._data.geometry.coordinates;
+          const b = new mapboxgl.LngLatBounds();
+          coords.forEach(c => b.extend(c));
+          map.fitBounds(b, { padding: 30 });
         }
+      } catch (e) {
+        // route source may not exist
       }
       break;
     }
     case 'overdue': {
       const now = new Date();
-      const overduePositions = customers
-        .filter(c => c.neste_kontroll && c.lat && c.lng && new Date(c.neste_kontroll) < now)
-        .map(c => [c.lat, c.lng]);
-      if (overduePositions.length > 0) {
-        map.fitBounds(L.latLngBounds(overduePositions), { padding: [30, 30] });
+      const overdueCustomers = customers.filter(c => c.neste_kontroll && c.lat && c.lng && new Date(c.neste_kontroll) < now);
+      if (overdueCustomers.length > 0) {
+        map.fitBounds(boundsFromCustomers(overdueCustomers), { padding: 30 });
       }
       break;
     }

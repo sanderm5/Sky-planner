@@ -2,7 +2,7 @@
  * Subscription-related email templates
  */
 
-import { baseTemplate, emailButton, infoBox } from './base';
+import { baseTemplate, emailButton, infoBox, escapeHtmlEmail } from './base';
 
 // ============ Subscription Activated ============
 
@@ -24,14 +24,14 @@ export function subscriptionActivatedEmail(data: SubscriptionActivatedData): { s
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${userName},
+  Hei ${escapeHtmlEmail(userName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Takk for betalingen! Ditt <strong>${planName}</strong>-abonnement er nå aktivert.
+  Takk for betalingen! Ditt <strong>${escapeHtmlEmail(planName)}</strong>-abonnement er nå aktivert.
 </p>
 
-${infoBox(`<strong>Plan:</strong> ${planName}<br><strong>Pris:</strong> ${price} (${cycleText})`, 'success')}
+${infoBox(`<strong>Plan:</strong> ${escapeHtmlEmail(planName)}<br><strong>Pris:</strong> ${escapeHtmlEmail(price)} (${cycleText})`, 'success')}
 
 <p style="margin: 20px 0 0 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
   Du har nå full tilgang til alle funksjoner i din plan. Vi sender deg en faktura på e-post.
@@ -47,7 +47,7 @@ ${emailButton('Gå til dashboardet', dashboardUrl)}
   return {
     subject: 'Abonnementet ditt er aktivert - Sky Planner',
     html: baseTemplate(content, {
-      previewText: `Ditt ${planName}-abonnement er nå aktivert.`,
+      previewText: `Ditt ${escapeHtmlEmail(planName)}-abonnement er nå aktivert.`,
     }),
   };
 }
@@ -69,7 +69,7 @@ export function trialEndingEmail(data: TrialEndingData): { subject: string; html
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${userName},
+  Hei ${escapeHtmlEmail(userName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
@@ -115,11 +115,11 @@ export function paymentFailedEmail(data: PaymentFailedData): { subject: string; 
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${userName},
+  Hei ${escapeHtmlEmail(userName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Vi kunne dessverre ikke belaste betalingsmetoden din for ${planName}-abonnementet.
+  Vi kunne dessverre ikke belaste betalingsmetoden din for ${escapeHtmlEmail(planName)}-abonnementet.
 </p>
 
 ${infoBox(`Du har ${gracePeriodDays} dager på å oppdatere betalingsinformasjonen din før kontoen blir begrenset.`, 'warning')}
@@ -166,11 +166,11 @@ export function subscriptionCanceledEmail(data: SubscriptionCanceledData): { sub
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${userName},
+  Hei ${escapeHtmlEmail(userName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Vi bekrefter at abonnementet ditt er avsluttet. Du vil ha tilgang frem til <strong>${endDate}</strong>.
+  Vi bekrefter at abonnementet ditt er avsluttet. Du vil ha tilgang frem til <strong>${escapeHtmlEmail(endDate)}</strong>.
 </p>
 
 ${infoBox('Dataene dine lagres trygt i 30 dager etter at abonnementet avsluttes.', 'info')}
@@ -189,7 +189,7 @@ ${emailButton('Reaktiver abonnementet', reactivateUrl)}
   return {
     subject: 'Abonnementet ditt er avsluttet - Sky Planner',
     html: baseTemplate(content, {
-      previewText: `Abonnementet ditt er avsluttet. Du har tilgang frem til ${endDate}.`,
+      previewText: `Abonnementet ditt er avsluttet. Du har tilgang frem til ${escapeHtmlEmail(endDate)}.`,
     }),
   };
 }

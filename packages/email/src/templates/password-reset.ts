@@ -3,7 +3,7 @@
  * Sent when a user requests a password reset
  */
 
-import { baseTemplate, emailButton, infoBox } from './base';
+import { baseTemplate, emailButton, infoBox, escapeHtmlEmail } from './base';
 
 export interface PasswordResetData {
   userName: string;
@@ -20,7 +20,7 @@ export function passwordResetEmail(data: PasswordResetData): { subject: string; 
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${userName},
+  Hei ${escapeHtmlEmail(userName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
@@ -36,7 +36,7 @@ ${infoBox(`Denne lenken utløper om ${expiresInMinutes} minutter. Hvis du ikke b
   Hvis knappen ikke fungerer, kopier og lim inn denne lenken i nettleseren:
 </p>
 <p style="margin: 4px 0 0 0; color: #71717a; font-size: 12px; line-height: 1.5; word-break: break-all;">
-  ${resetUrl}
+  ${escapeHtmlEmail(resetUrl)}
 </p>
 `.trim();
 

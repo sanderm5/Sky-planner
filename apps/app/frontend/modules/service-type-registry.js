@@ -244,10 +244,15 @@ class ServiceTypeRegistry {
   renderCategoryCheckboxes(selectedValue = '') {
     const serviceTypes = this.getAll();
     const selectedNames = selectedValue.split(' + ').map(s => s.trim()).filter(Boolean);
+    const selectedNamesLower = selectedNames.map(s => s.toLowerCase());
     let html = '';
 
     serviceTypes.forEach(st => {
-      const checked = selectedNames.includes(st.name) || selectedNames.includes(st.slug) ? 'checked' : '';
+      // Match by name or slug (case-insensitive)
+      const nameMatch = selectedNamesLower.includes(st.name.toLowerCase()) || selectedNamesLower.includes(st.slug.toLowerCase());
+      // Auto-check if only one service type and customer has any category
+      const autoCheck = serviceTypes.length === 1 && selectedNames.length > 0;
+      const checked = nameMatch || autoCheck ? 'checked' : '';
       html += `
         <label class="kategori-checkbox-label">
           <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
@@ -636,18 +641,17 @@ class ServiceTypeRegistry {
       const subtype = subtypeSelect?.value || null;
       const equipment = equipmentSelect?.value || null;
 
-      // Only include service if it has dates
-      if (siste || neste) {
-        services.push({
-          service_type_id: st.id,
-          service_type_slug: st.slug,
-          siste_kontroll: siste,
-          neste_kontroll: neste,
-          intervall_months: intervall,
-          subtype_name: subtype,
-          equipment_name: equipment
-        });
-      }
+      // Always include rendered service sections (even without dates)
+      // Null dates = "service type selected but no dates set yet"
+      services.push({
+        service_type_id: st.id,
+        service_type_slug: st.slug,
+        siste_kontroll: siste,
+        neste_kontroll: neste,
+        intervall_months: intervall,
+        subtype_name: subtype,
+        equipment_name: equipment
+      });
     });
 
     return services;
@@ -781,12 +785,32 @@ class ServiceTypeRegistry {
       }
 
       // Single service type - simple view
-      const sisteKontroll = customer.siste_kontroll || customer.siste_el_kontroll;
+      const st = serviceTypes[0];
+      let nesteKontroll = null;
+      let sisteKontroll = null;
+
+      const serviceData = (customer.services || []).find(s =>
+        s.service_type_slug === st.slug || s.service_type_id === st.id
+      );
+      if (serviceData) {
+        nesteKontroll = serviceData.neste_kontroll;
+        sisteKontroll = serviceData.siste_kontroll;
+      }
+      if (st.slug === 'el-kontroll') {
+        if (!nesteKontroll) nesteKontroll = customer.neste_el_kontroll;
+        if (!sisteKontroll) sisteKontroll = customer.siste_el_kontroll;
+      } else if (st.slug === 'brannvarsling') {
+        if (!nesteKontroll) nesteKontroll = customer.neste_brann_kontroll;
+        if (!sisteKontroll) sisteKontroll = customer.siste_brann_kontroll;
+      }
+      if (!nesteKontroll) nesteKontroll = customer.neste_kontroll;
+      if (!sisteKontroll) sisteKontroll = customer.siste_kontroll || customer.last_visit_date;
+
       return `
         <div class="popup-control-info">
           <p class="popup-status ${controlStatus.class}">
-            <strong><span class="marker-svg-icon" style="display:inline-block;width:14px;height:14px;vertical-align:middle;color:#3B82F6;">${svgIcons['service']}</span> Neste kontroll:</strong>
-            <span class="control-days">${escapeHtml(controlStatus.label)}</span>
+            <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+            <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
           </p>
           ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
         </div>`;

@@ -370,6 +370,27 @@ export interface Organization {
   opprettet?: string;
 }
 
+// ============ Coverage Areas (Dekningsområder) ============
+
+export interface CoverageArea {
+  id: number;
+  organization_id: number;
+  navn: string;
+  coverage_type: 'isochrone' | 'radius';
+  coverage_value: number;
+  origin_lat?: number;
+  origin_lng?: number;
+  polygon_geojson?: Record<string, unknown> | null;
+  polygon_cached_at?: string;
+  fill_color: string;
+  fill_opacity: number;
+  line_color: string;
+  zone_priority: number;
+  aktiv: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 // ============ Chat / Messaging ============
 
 export interface ChatConversation {
@@ -532,6 +553,7 @@ export interface AppConfig {
   orsApiKeyConfigured: boolean;
   routeStartLat?: number;
   routeStartLng?: number;
+  routeStartAddress?: string;
   enableRoutePlanning: boolean;
   emailNotificationsEnabled: boolean;
   organizationName?: string;
@@ -560,6 +582,19 @@ export interface AppConfig {
     description?: string;
   }>;
   mapboxAccessToken?: string;
+  coverageAreas?: Array<{
+    id: number;
+    navn: string;
+    coverageType: 'isochrone' | 'radius';
+    coverageValue: number;
+    originLat?: number;
+    originLng?: number;
+    polygonGeojson?: Record<string, unknown> | null;
+    fillColor: string;
+    fillOpacity: number;
+    lineColor: string;
+    zonePriority: number;
+  }>;
   subcategoryGroups?: Array<{
     id: number;
     navn: string;
@@ -588,6 +623,7 @@ export interface EnvConfig {
   ENABLE_ROUTE_PLANNING: boolean;
   ROUTE_START_LAT?: number;
   ROUTE_START_LNG?: number;
+  ROUTE_START_ADDRESS?: string;
 
   // Email
   EMAIL_NOTIFICATIONS_ENABLED: boolean;

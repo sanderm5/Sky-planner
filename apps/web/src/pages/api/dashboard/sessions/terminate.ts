@@ -14,7 +14,7 @@ export const POST: APIRoute = async ({ cookies, request }): Promise<Response> =>
 
   const token = cookies.get('skyplanner_session')?.value;
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Ikke autentisert' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ikke autentisert' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -22,7 +22,7 @@ export const POST: APIRoute = async ({ cookies, request }): Promise<Response> =>
 
   const JWT_SECRET = import.meta.env.JWT_SECRET;
   if (!JWT_SECRET) {
-    return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -30,7 +30,7 @@ export const POST: APIRoute = async ({ cookies, request }): Promise<Response> =>
 
   const result = auth.verifyToken(token, JWT_SECRET);
   if (!result.success || !result.payload) {
-    return new Response(JSON.stringify({ error: 'Ugyldig token' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig token' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -42,7 +42,7 @@ export const POST: APIRoute = async ({ cookies, request }): Promise<Response> =>
     const body = await request.json();
     const sessionId = body.sessionId;
     if (!sessionId || typeof sessionId !== 'number') {
-      return new Response(JSON.stringify({ error: 'Ugyldig sesjons-ID' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig sesjons-ID' } }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -60,7 +60,7 @@ export const POST: APIRoute = async ({ cookies, request }): Promise<Response> =>
       .single();
 
     if (fetchError || !session) {
-      return new Response(JSON.stringify({ error: 'Sesjon ikke funnet' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Sesjon ikke funnet' } }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -69,7 +69,7 @@ export const POST: APIRoute = async ({ cookies, request }): Promise<Response> =>
     // Prevent terminating current session (use logout instead)
     const currentJti = payload.jti || null;
     if (session.jti === currentJti) {
-      return new Response(JSON.stringify({ error: 'Bruk logg ut for å avslutte nåværende sesjon' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruk logg ut for å avslutte nåværende sesjon' } }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -108,7 +108,7 @@ export const POST: APIRoute = async ({ cookies, request }): Promise<Response> =>
     );
   } catch (error) {
     console.error('Session terminate error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: 'Kunne ikke avslutte sesjonen' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke avslutte sesjonen' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

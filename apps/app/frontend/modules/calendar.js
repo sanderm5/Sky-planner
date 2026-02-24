@@ -1,3 +1,39 @@
+// Build Google Maps directions URL for a list of avtaler on a given date
+// Route: Kontor → kunde1 → kunde2 → ... → Kontor
+function buildGoogleMapsUrl(dayAvtaler) {
+  // Office start/end point
+  const officeLat = appConfig.routeStartLat;
+  const officeLng = appConfig.routeStartLng;
+  const officeAddr = appConfig.routeStartAddress;
+  let officeWaypoint = null;
+  if (officeLat && officeLng) {
+    officeWaypoint = `${officeLat},${officeLng}`;
+  } else if (officeAddr) {
+    officeWaypoint = officeAddr;
+  }
+
+  const stops = [];
+  for (const a of dayAvtaler) {
+    const kunde = customers.find(c => c.id === a.kunde_id);
+    if (!kunde) continue;
+    if (kunde.lat && kunde.lng) {
+      stops.push(`${kunde.lat},${kunde.lng}`);
+    } else {
+      const parts = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean);
+      if (parts.length > 0) stops.push(parts.join(', '));
+    }
+  }
+  if (stops.length === 0) return null;
+
+  // Build route: office → stops → office
+  const waypoints = [];
+  if (officeWaypoint) waypoints.push(officeWaypoint);
+  waypoints.push(...stops);
+  if (officeWaypoint) waypoints.push(officeWaypoint);
+
+  return 'https://www.google.com/maps/dir/' + waypoints.map(a => encodeURIComponent(a)).join('/');
+}
+
 function getAvtaleServiceColor(avtale) {
   const kunde = customers.find(c => c.id === avtale.kunde_id);
   const kategori = kunde?.kategori || avtale.type || '';
@@ -107,8 +143,11 @@ async function renderCalendar() {
     html += `
       <div class="calendar-day ${isToday ? 'today' : ''} ${isPast ? 'past' : ''} ${hasContent ? 'has-content' : ''}"
            data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
-        <span class="day-number">${day}</span>
-        ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} ${areaCount === 1 ? 'omr.' : 'omr.'}</span>` : ''}
+        <div class="day-top-row">
+          <span class="day-number">${day}</span>
+          ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} omr.</span>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+        </div>
         <div class="calendar-events">
           ${dayAvtaler.map(a => {
             const serviceColor = getAvtaleServiceColor(a);
@@ -185,6 +224,7 @@ async function renderCalendar() {
             <span class="week-day-name">${weekDayNames[i].substring(0, 3)}</span>
             <span class="week-day-date">${dayDate.getDate()}</span>
             ${dayMinutes > 0 ? `<span class="week-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
+            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
           </div>
           ${renderAreaBadges(dayAvtaler)}
           <div class="week-day-content">
@@ -470,7 +510,7 @@ function openCalendarSplitView() {
 
   // Invalidate map size so tiles re-render in the visible area
   setTimeout(() => {
-    if (window.map) window.map.invalidateSize();
+    if (window.map) window.map.resize();
   }, 100);
 }
 
@@ -496,7 +536,7 @@ function closeCalendarSplitView() {
 
   // Invalidate map size
   setTimeout(() => {
-    if (window.map) window.map.invalidateSize();
+    if (window.map) window.map.resize();
   }, 100);
 }
 
@@ -544,6 +584,7 @@ function renderSplitWeekContent() {
           ${isActive ? '<i class="fas fa-crosshairs split-active-icon" aria-hidden="true"></i>' : ''}
           ${dayMinutes > 0 ? `<span class="split-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
           ${dayAvtaler.length > 0 ? `<span class="split-day-count">${dayAvtaler.length} avtale${dayAvtaler.length !== 1 ? 'r' : ''}</span>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
         </div>
         ${dayAvtaler.length > 0 ? renderAreaBadges(dayAvtaler) : ''}
         <div class="split-day-content">
@@ -821,7 +862,7 @@ function setupSplitDivider() {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     // Re-render map
-    setTimeout(() => { if (window.map) window.map.invalidateSize(); }, 50);
+    setTimeout(() => { if (window.map) window.map.resize(); }, 50);
   };
 
   divider.addEventListener('mousedown', onMouseDown);
@@ -942,6 +983,23 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
 
   // Focus on search field
   setTimeout(() => kundeSearch.focus(), 100);
+}
+
+// Open new avtale with preselected customer (from map tooltip/context menu)
+function openNewAvtaleForCustomer(customerId) {
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+  openAvtaleModal(null, null);
+  // Pre-fill customer
+  const kundeSearch = document.getElementById('avtaleKundeSearch');
+  const kundeInput = document.getElementById('avtaleKunde');
+  if (kundeSearch) kundeSearch.value = `${customer.navn} (${customer.poststed || 'Ukjent'})`;
+  if (kundeInput) kundeInput.value = customer.id;
+  // Set today's date
+  const datoInput = document.getElementById('avtaleDato');
+  if (datoInput && !datoInput.value) {
+    datoInput.value = new Date().toISOString().split('T')[0];
+  }
 }
 
 // Kunde search for avtale modal

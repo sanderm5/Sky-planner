@@ -1975,79 +1975,32 @@ async function getAllServiceTypes(templateId = null) {
  * Create customer services for a new or updated customer
  */
 async function createOrUpdateCustomerServices(kundeId, servicesData) {
-  // Delete existing inactive services first (cleanup)
-  await getClient()
+  // Use upsert (ON CONFLICT on unique(kunde_id, service_type_id)) — single DB call instead of N×(SELECT+UPDATE/INSERT)
+  const rows = servicesData.map(s => ({
+    kunde_id: kundeId,
+    service_type_id: s.service_type_id,
+    siste_kontroll: s.siste_kontroll || null,
+    neste_kontroll: s.neste_kontroll || null,
+    intervall_months: s.intervall_months || null,
+    notater: s.notater || null,
+    aktiv: true
+  }));
+
+  const { data, error } = await getClient()
     .from('customer_services')
-    .delete()
-    .eq('kunde_id', kundeId)
-    .eq('aktiv', false);
+    .upsert(rows, { onConflict: 'kunde_id,service_type_id' })
+    .select();
 
-  const results = [];
-
-  for (const serviceData of servicesData) {
-    // Check if service already exists
-    const { data: existing } = await getClient()
-      .from('customer_services')
-      .select('id')
-      .eq('kunde_id', kundeId)
-      .eq('service_type_id', serviceData.service_type_id)
-      .single();
-
-    if (existing) {
-      // Update existing service
-      const { data, error } = await getClient()
-        .from('customer_services')
-        .update({
-          subtype_id: serviceData.subtype_id || null,
-          equipment_type_id: serviceData.equipment_type_id || null,
-          siste_kontroll: serviceData.siste_kontroll || null,
-          neste_kontroll: serviceData.neste_kontroll || null,
-          intervall_months: serviceData.intervall_months || null,
-          driftstype: serviceData.driftstype || null,
-          notater: serviceData.notater || null,
-          aktiv: true
-        })
-        .eq('id', existing.id)
-        .select()
-        .single();
-
-      if (!error) results.push(data);
-    } else {
-      // Insert new service
-      const { data, error } = await getClient()
-        .from('customer_services')
-        .insert({
-          kunde_id: kundeId,
-          service_type_id: serviceData.service_type_id,
-          subtype_id: serviceData.subtype_id || null,
-          equipment_type_id: serviceData.equipment_type_id || null,
-          siste_kontroll: serviceData.siste_kontroll || null,
-          neste_kontroll: serviceData.neste_kontroll || null,
-          intervall_months: serviceData.intervall_months || null,
-          driftstype: serviceData.driftstype || null,
-          notater: serviceData.notater || null,
-          aktiv: true
-        })
-        .select()
-        .single();
-
-      if (!error) results.push(data);
-    }
-  }
-
-  return results;
+  if (error) throw new Error(`Failed to upsert customer services (kunde_id=${kundeId}): ${error.message}`);
+  return data || [];
 }
 
 /**
  * Deactivate customer services that are no longer selected
  */
 async function deactivateCustomerServices(kundeId, activeServiceTypeIds) {
+  // Empty array = no changes requested, preserve existing services
   if (!activeServiceTypeIds || activeServiceTypeIds.length === 0) {
-    // Deactivate all services for this customer
-    await getClient()
-      .from('customer_services')
-      .update({ aktiv: false })
-      .eq('kunde_id', kundeId);
     return;
   }
 

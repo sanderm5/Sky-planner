@@ -203,7 +203,12 @@ function attachCategoryFilterHandlers() {
  * Always visible when organization has service types.
  */
 let subcatAdminMode = false;
-let collapsedSubcatGroups = {};
+let collapsedSubcatGroups = (() => {
+  try {
+    const saved = localStorage.getItem('skyplanner_subcatCollapsed');
+    return saved ? JSON.parse(saved) : null;
+  } catch { return null; }
+})();
 
 function renderSubcategoryFilter() {
   const contentEl = document.getElementById('subcategoryFilterContent');
@@ -238,12 +243,20 @@ function renderSubcategoryFilter() {
     });
   });
 
+  // Initialize collapsed state: default all groups to collapsed on first render
+  if (!collapsedSubcatGroups) {
+    collapsedSubcatGroups = {};
+    groups.forEach(g => { collapsedSubcatGroups[g.id] = true; });
+    try { localStorage.setItem('skyplanner_subcatCollapsed', JSON.stringify(collapsedSubcatGroups)); } catch {}
+  }
+
   let html = '';
 
   groups.forEach(group => {
     const subs = group.subcategories || [];
     const activeSubcatId = selectedSubcategories[group.id];
-    const isCollapsed = collapsedSubcatGroups[group.id];
+    // Default new groups to collapsed
+    const isCollapsed = collapsedSubcatGroups[group.id] !== false;
     const activeSub = activeSubcatId ? subs.find(s => s.id === activeSubcatId) : null;
 
     // Group heading (clickable for collapse)
@@ -329,7 +342,9 @@ function attachSubcategoryHandlers() {
     const groupToggle = e.target.closest('[data-toggle-group]');
     if (groupToggle) {
       const groupId = parseInt(groupToggle.dataset.toggleGroup, 10);
-      collapsedSubcatGroups[groupId] = !collapsedSubcatGroups[groupId];
+      // Toggle: if currently collapsed (true or undefined), open it (false); if open (false), collapse it (true)
+      collapsedSubcatGroups[groupId] = collapsedSubcatGroups[groupId] === false;
+      try { localStorage.setItem('skyplanner_subcatCollapsed', JSON.stringify(collapsedSubcatGroups)); } catch {}
       renderSubcategoryFilter();
       return;
     }

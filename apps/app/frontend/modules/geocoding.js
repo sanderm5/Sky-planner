@@ -1,34 +1,20 @@
 async function geocodeAddress(address, postnummer, poststed) {
-  const fullAddress = `${address}, ${postnummer || ''} ${poststed || ''}`.trim();
+  const query = `${address || ''}, ${postnummer || ''} ${poststed || ''}`.trim();
 
   try {
-    // Try Kartverket first (best for Norwegian addresses)
-    const response = await fetch(
-      `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(fullAddress)}&fuzzy=true&treffPerSide=1`
-    );
-    if (response.ok) {
-      const data = await response.json();
-      if (data.adresser && data.adresser.length > 0) {
-        const result = data.adresser[0];
-        return {
-          lat: result.representasjonspunkt.lat,
-          lng: result.representasjonspunkt.lon,
-          formatted: `${result.adressetekst}, ${result.postnummer} ${result.poststed}`
-        };
-      }
-    }
+    const response = await apiFetch('/api/geocode/forward', {
+      method: 'POST',
+      body: JSON.stringify({ query, limit: 1 })
+    });
 
-    // Fallback to Nominatim
-    const nomResponse = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json&countrycodes=no&limit=1`
-    );
-    if (nomResponse.ok) {
-      const nomData = await nomResponse.json();
-      if (nomData.length > 0) {
+    if (response.ok) {
+      const result = await response.json();
+      const suggestion = result.data?.suggestions?.[0];
+      if (suggestion) {
         return {
-          lat: Number.parseFloat(nomData[0].lat),
-          lng: Number.parseFloat(nomData[0].lon),
-          formatted: nomData[0].display_name
+          lat: suggestion.lat,
+          lng: suggestion.lng,
+          formatted: `${suggestion.adresse}, ${suggestion.postnummer} ${suggestion.poststed}`.trim()
         };
       }
     }
@@ -56,35 +42,121 @@ function debounce(func, wait) {
 // AbortController for canceling in-flight address searches
 let addressSearchController = null;
 
-// Search addresses using Kartverket API
+// Client-side cache for address search results
+const _addressSearchCache = new Map();
+const _ADDRESS_CACHE_MAX = 50;
+const _ADDRESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getCachedAddressSearch(key) {
+  const entry = _addressSearchCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > _ADDRESS_CACHE_TTL) {
+    _addressSearchCache.delete(key);
+    return null;
+  }
+  return entry.results;
+}
+
+function setCachedAddressSearch(key, results) {
+  if (_addressSearchCache.size >= _ADDRESS_CACHE_MAX) {
+    const firstKey = _addressSearchCache.keys().next().value;
+    if (firstKey) _addressSearchCache.delete(firstKey);
+  }
+  _addressSearchCache.set(key, { results, ts: Date.now() });
+}
+
+// Parse Kartverket response into suggestion objects
+function parseKartverketResults(data) {
+  if (!data.adresser || data.adresser.length === 0) return [];
+  return data.adresser
+    .filter(addr => addr.representasjonspunkt)
+    .map(addr => ({
+      adresse: addr.adressetekst || '',
+      postnummer: addr.postnummer || '',
+      poststed: addr.poststed || '',
+      lat: addr.representasjonspunkt.lat,
+      lng: addr.representasjonspunkt.lon,
+      kommune: addr.kommunenavn || ''
+    }));
+}
+
+// Search addresses directly via Kartverket API (fast, public, no backend round-trip)
+// Falls back to backend proxy (Mapbox) if Kartverket fails
 async function searchAddresses(query) {
-  if (!query || query.length < 3) return [];
+  if (!query || query.length < 2) return [];
+
+  // Check client-side cache first
+  const cacheKey = query.trim().toLowerCase();
+  const cached = getCachedAddressSearch(cacheKey);
+  if (cached) return cached;
 
   // Cancel any in-flight request to prevent stale results
   if (addressSearchController) {
     addressSearchController.abort();
   }
   addressSearchController = new AbortController();
+  const signal = addressSearchController.signal;
 
+  const encoded = encodeURIComponent(query.trim());
+
+  // Try Kartverket exact search first (very fast, no fuzzy)
   try {
-    const url = `https://ws.geonorge.no/adresser/v1/sok?sok=${encodeURIComponent(query)}&fuzzy=true&treffPerSide=5`;
-    const response = await fetch(url, { signal: addressSearchController.signal });
-    const data = await response.json();
-
-    if (data.adresser && data.adresser.length > 0) {
-      return data.adresser.map(a => ({
-        adresse: a.adressetekst,
-        postnummer: a.postnummer,
-        poststed: a.poststed,
-        lat: a.representasjonspunkt.lat,
-        lng: a.representasjonspunkt.lon,
-        kommune: a.kommunenavn || ''
-      }));
+    const response = await fetch(
+      `https://ws.geonorge.no/adresser/v1/sok?sok=${encoded}&treffPerSide=5`,
+      { signal }
+    );
+    if (response.ok) {
+      const results = parseKartverketResults(await response.json());
+      if (results.length > 0) {
+        setCachedAddressSearch(cacheKey, results);
+        return results;
+      }
     }
-    return [];
   } catch (error) {
     if (error.name === 'AbortError') return [];
-    console.error('Adressesøk feilet:', error);
+  }
+
+  // Fallback: Kartverket with fuzzy (slower but catches typos)
+  try {
+    const response = await fetch(
+      `https://ws.geonorge.no/adresser/v1/sok?sok=${encoded}&fuzzy=true&treffPerSide=5`,
+      { signal }
+    );
+    if (response.ok) {
+      const results = parseKartverketResults(await response.json());
+      if (results.length > 0) {
+        setCachedAddressSearch(cacheKey, results);
+        return results;
+      }
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') return [];
+  }
+
+  // Last resort: backend proxy (Mapbox)
+  try {
+    const proximity = map ? [map.getCenter().lng, map.getCenter().lat] : undefined;
+    const response = await apiFetch('/api/geocode/forward', {
+      method: 'POST',
+      body: JSON.stringify({ query, limit: 5, proximity }),
+      signal
+    });
+    if (!response.ok) return [];
+    const result = await response.json();
+    const suggestions = (result.data?.suggestions || []).map(s => ({
+      adresse: s.adresse,
+      postnummer: s.postnummer,
+      poststed: s.poststed,
+      lat: s.lat,
+      lng: s.lng,
+      kommune: s.kommune || ''
+    }));
+    if (suggestions.length > 0) {
+      setCachedAddressSearch(cacheKey, suggestions);
+    }
+    return suggestions;
+  } catch (error) {
+    if (error.name === 'AbortError') return [];
     return [];
   }
 }
@@ -108,6 +180,18 @@ async function lookupPostnummer(postnummer) {
   }
 }
 
+// Position the address suggestions dropdown relative to the input (fixed positioning)
+function positionAddressSuggestions() {
+  const container = document.getElementById('addressSuggestions');
+  const adresseInput = document.getElementById('adresse');
+  if (!container || !adresseInput) return;
+
+  const rect = adresseInput.getBoundingClientRect();
+  container.style.top = `${rect.bottom}px`;
+  container.style.left = `${rect.left}px`;
+  container.style.width = `${rect.width}px`;
+}
+
 // Render address suggestions dropdown
 function renderAddressSuggestions(results) {
   const container = document.getElementById('addressSuggestions');
@@ -123,7 +207,6 @@ function renderAddressSuggestions(results) {
   }
 
   container.setAttribute('role', 'listbox');
-  container.setAttribute('id', 'addressSuggestionsList');
 
   container.innerHTML = results.map((addr, index) => `
     <div class="address-suggestion-item" role="option" data-index="${index}">
@@ -134,6 +217,9 @@ function renderAddressSuggestions(results) {
       </div>
     </div>
   `).join('');
+
+  // Position dropdown below the input using fixed positioning
+  positionAddressSuggestions();
 
   container.classList.add('visible');
   if (adresseInput) adresseInput.setAttribute('aria-expanded', 'true');
@@ -231,11 +317,23 @@ function setupAddressAutocomplete() {
   adresseInput.setAttribute('role', 'combobox');
   adresseInput.setAttribute('aria-autocomplete', 'list');
   adresseInput.setAttribute('aria-expanded', 'false');
-  adresseInput.setAttribute('aria-controls', 'addressSuggestionsList');
+  adresseInput.setAttribute('aria-controls', 'addressSuggestions');
+
+  // Show loading state in dropdown
+  function showSearchLoading() {
+    suggestionsContainer.innerHTML = `
+      <div class="address-suggestion-item" style="justify-content:center;opacity:0.6;pointer-events:none;">
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Søker...</span>
+      </div>`;
+    positionAddressSuggestions();
+    suggestionsContainer.classList.add('visible');
+    adresseInput.setAttribute('aria-expanded', 'true');
+  }
 
   // Debounced search function
   const debouncedSearch = debounce(async (query) => {
-    if (query.length < 3) {
+    if (query.length < 2) {
       suggestionsContainer.classList.remove('visible');
       adresseInput.setAttribute('aria-expanded', 'false');
       return;
@@ -244,11 +342,13 @@ function setupAddressAutocomplete() {
     addressSuggestions = await searchAddresses(query);
     selectedSuggestionIndex = -1;
     renderAddressSuggestions(addressSuggestions);
-  }, 300);
+  }, 150);
 
   // Input event for address search
   adresseInput.addEventListener('input', (e) => {
-    debouncedSearch(e.target.value);
+    const val = e.target.value;
+    if (val.length >= 2) showSearchLoading();
+    debouncedSearch(val);
   });
 
   // Keyboard navigation
@@ -293,13 +393,31 @@ function setupAddressAutocomplete() {
     }
   });
 
-  // Hide suggestions when clicking outside
+  // Hide suggestions when clicking outside (check both wrapper and fixed dropdown)
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.address-autocomplete-wrapper')) {
+    if (!e.target.closest('.address-autocomplete-wrapper') && !e.target.closest('.address-suggestions')) {
       suggestionsContainer.classList.remove('visible');
       adresseInput.setAttribute('aria-expanded', 'false');
     }
   });
+
+  // Reposition or hide dropdown on modal scroll
+  const modalContent = adresseInput.closest('.modal-content');
+  if (modalContent) {
+    modalContent.addEventListener('scroll', () => {
+      if (suggestionsContainer.classList.contains('visible')) {
+        // Hide if input scrolled out of view
+        const rect = adresseInput.getBoundingClientRect();
+        const modalRect = modalContent.getBoundingClientRect();
+        if (rect.bottom < modalRect.top || rect.top > modalRect.bottom) {
+          suggestionsContainer.classList.remove('visible');
+          adresseInput.setAttribute('aria-expanded', 'false');
+        } else {
+          positionAddressSuggestions();
+        }
+      }
+    });
+  }
 
   // Postnummer auto-lookup
   if (postnummerInput && poststedInput) {

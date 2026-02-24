@@ -2,6 +2,19 @@
  * Base email template with Sky Planner branding
  */
 
+/**
+ * Escape user-controlled text for safe HTML rendering in email templates.
+ * Must be used for all user-provided data (names, org names, etc.).
+ */
+export function escapeHtmlEmail(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export interface BaseTemplateOptions {
   previewText?: string;
 }
@@ -63,7 +76,7 @@ export function baseTemplate(content: string, options: BaseTemplateOptions = {})
   </style>
 </head>
 <body id="body" style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-  ${previewText ? `<div style="display: none; max-height: 0px; overflow: hidden;">${previewText}</div>` : ''}
+  ${previewText ? `<div style="display: none; max-height: 0px; overflow: hidden;">${escapeHtmlEmail(previewText)}</div>` : ''}
 
   <table role="presentation" cellpadding="0" cellspacing="0" style="width: 100%; background-color: #f4f4f5;">
     <tr>
@@ -111,12 +124,14 @@ export function baseTemplate(content: string, options: BaseTemplateOptions = {})
  * Create a styled button for emails
  */
 export function emailButton(text: string, href: string, color = '#667eea'): string {
+  // Validate href is a safe URL (only allow https)
+  const safeHref = href.startsWith('https://') ? escapeHtmlEmail(href) : '#';
   return `
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 30px auto;">
   <tr>
     <td style="border-radius: 8px; background-color: ${color};">
-      <a href="${href}" target="_blank" style="display: inline-block; padding: 14px 32px; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600; border-radius: 8px;">
-        ${text}
+      <a href="${safeHref}" target="_blank" style="display: inline-block; padding: 14px 32px; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600; border-radius: 8px;">
+        ${escapeHtmlEmail(text)}
       </a>
     </td>
   </tr>

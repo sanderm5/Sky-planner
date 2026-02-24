@@ -149,7 +149,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!navn || !epost || !passord || !firma) {
       return new Response(
-        JSON.stringify({ error: 'Alle felt er påkrevd' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Alle felt er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -171,7 +171,7 @@ export const POST: APIRoute = async ({ request }) => {
 
       if (industryError || !industry) {
         return new Response(
-          JSON.stringify({ error: 'Ugyldig bransje valgt' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig bransje valgt' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -179,7 +179,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!isValidEmail(epost)) {
       return new Response(
-        JSON.stringify({ error: 'Ugyldig e-postadresse' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig e-postadresse' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -187,7 +187,7 @@ export const POST: APIRoute = async ({ request }) => {
     const passwordValidation = validatePassword(passord, epost, navn);
     if (!passwordValidation.isValid) {
       return new Response(
-        JSON.stringify({ error: passwordValidation.errors.join('. ') }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: passwordValidation.errors.join('. ') } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -195,7 +195,7 @@ export const POST: APIRoute = async ({ request }) => {
     const emailExists = await db.isEmailRegistered(epost.toLowerCase());
     if (emailExists) {
       return new Response(
-        JSON.stringify({ error: 'E-postadressen er allerede registrert' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'E-postadressen er allerede registrert' } }),
         { status: 409, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -208,7 +208,7 @@ export const POST: APIRoute = async ({ request }) => {
       // Use timing-safe comparison to prevent timing attacks on enterprise code
       if (!ENTERPRISE_SECRET || !enterpriseCode || !timingSafeCompare(enterpriseCode, ENTERPRISE_SECRET)) {
         return new Response(
-          JSON.stringify({ error: 'Ugyldig enterprise-kode' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig enterprise-kode' } }),
           { status: 403, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -324,7 +324,7 @@ export const POST: APIRoute = async ({ request }) => {
     if (!STRIPE_SECRET_KEY || !STRIPE_PRICE_STANDARD || !STRIPE_PRICE_PREMIUM) {
       console.warn('Stripe not configured - registration disabled');
       return new Response(
-        JSON.stringify({ error: 'Registrering er midlertidig utilgjengelig' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Registrering er midlertidig utilgjengelig' } }),
         { status: 503, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -348,7 +348,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!priceId) {
       return new Response(
-        JSON.stringify({ error: 'Ugyldig abonnementsplan' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig abonnementsplan' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -428,7 +428,7 @@ export const POST: APIRoute = async ({ request }) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Registration error:', errorMessage);
     return new Response(
-      JSON.stringify({ error: 'Registrering feilet' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Registrering feilet' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

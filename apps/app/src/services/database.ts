@@ -1005,14 +1005,16 @@ class DatabaseService {
     }>,
     organizationId: number
   ): Promise<void> {
+    // Empty array = no service sections rendered, preserve existing data
+    if (services.length === 0) return;
+
     if (this.type === 'supabase' && this.supabase) {
-      // Save/update provided services
-      if (services.length > 0) {
-        await this.supabase.createOrUpdateCustomerServices(kundeId, services);
-      }
-      // Deactivate services that are not in the active list
+      // Upsert and deactivate in parallel — both are independent operations
       const activeIds = services.map(s => s.service_type_id).filter(Boolean);
-      await this.supabase.deactivateCustomerServices(kundeId, activeIds);
+      await Promise.all([
+        this.supabase.createOrUpdateCustomerServices(kundeId, services),
+        this.supabase.deactivateCustomerServices(kundeId, activeIds),
+      ]);
       return;
     }
 
@@ -7695,6 +7697,161 @@ class DatabaseService {
     this.validateTenantContext(organizationId, 'getChatTotalUnread');
     const counts = await this.getChatUnreadCounts(userId, organizationId);
     return counts.reduce((sum, c) => sum + c.count, 0);
+  }
+
+  // ============ Coverage Areas (Dekningsområder) ============
+
+  async getCoverageAreas(organizationId: number): Promise<import('../types').CoverageArea[]> {
+    this.validateTenantContext(organizationId, 'getCoverageAreas');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('coverage_areas')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .order('zone_priority', { ascending: true });
+      if (error) throw new Error(`Failed to fetch coverage areas: ${error.message}`);
+      return data || [];
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    return this.sqlite.prepare(
+      'SELECT * FROM coverage_areas WHERE organization_id = ? ORDER BY zone_priority ASC'
+    ).all(organizationId) as import('../types').CoverageArea[];
+  }
+
+  async getCoverageAreaById(id: number, organizationId: number): Promise<import('../types').CoverageArea | null> {
+    this.validateTenantContext(organizationId, 'getCoverageAreaById');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data, error } = await supabase
+        .from('coverage_areas')
+        .select('*')
+        .eq('id', id)
+        .eq('organization_id', organizationId)
+        .single();
+      if (error || !data) return null;
+      return data;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare(
+      'SELECT * FROM coverage_areas WHERE id = ? AND organization_id = ?'
+    ).get(id, organizationId);
+    return (result as import('../types').CoverageArea) || null;
+  }
+
+  async createCoverageArea(organizationId: number, data: Partial<import('../types').CoverageArea>): Promise<import('../types').CoverageArea> {
+    this.validateTenantContext(organizationId, 'createCoverageArea');
+
+    // Enforce max 5 zones per org
+    const existing = await this.getCoverageAreas(organizationId);
+    if (existing.length >= 5) {
+      throw new Error('Maks 5 dekningsområder per organisasjon');
+    }
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data: created, error } = await supabase
+        .from('coverage_areas')
+        .insert({
+          organization_id: organizationId,
+          navn: data.navn || 'Hovedområde',
+          coverage_type: data.coverage_type,
+          coverage_value: data.coverage_value,
+          origin_lat: data.origin_lat,
+          origin_lng: data.origin_lng,
+          polygon_geojson: data.polygon_geojson || null,
+          polygon_cached_at: data.polygon_geojson ? new Date().toISOString() : null,
+          fill_color: data.fill_color || '#2563eb',
+          fill_opacity: data.fill_opacity ?? 0.1,
+          line_color: data.line_color || '#2563eb',
+          zone_priority: data.zone_priority ?? 0,
+          aktiv: data.aktiv ?? true,
+        })
+        .select()
+        .single();
+      if (error || !created) throw new Error(`Failed to create coverage area: ${error?.message}`);
+      return created;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare(`
+      INSERT INTO coverage_areas (organization_id, navn, coverage_type, coverage_value, origin_lat, origin_lng, polygon_geojson, polygon_cached_at, fill_color, fill_opacity, line_color, zone_priority, aktiv)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      organizationId,
+      data.navn || 'Hovedområde',
+      data.coverage_type,
+      data.coverage_value,
+      data.origin_lat ?? null,
+      data.origin_lng ?? null,
+      data.polygon_geojson ? JSON.stringify(data.polygon_geojson) : null,
+      data.polygon_geojson ? new Date().toISOString() : null,
+      data.fill_color || '#2563eb',
+      data.fill_opacity ?? 0.1,
+      data.line_color || '#2563eb',
+      data.zone_priority ?? 0,
+      data.aktiv ?? true
+    );
+    return this.sqlite.prepare('SELECT * FROM coverage_areas WHERE id = ?').get(result.lastInsertRowid) as import('../types').CoverageArea;
+  }
+
+  async updateCoverageArea(id: number, organizationId: number, data: Partial<import('../types').CoverageArea>): Promise<import('../types').CoverageArea | null> {
+    this.validateTenantContext(organizationId, 'updateCoverageArea');
+
+    const allowedFields: Record<string, unknown> = {};
+    if (data.navn !== undefined) allowedFields.navn = data.navn;
+    if (data.coverage_type !== undefined) allowedFields.coverage_type = data.coverage_type;
+    if (data.coverage_value !== undefined) allowedFields.coverage_value = data.coverage_value;
+    if (data.origin_lat !== undefined) allowedFields.origin_lat = data.origin_lat;
+    if (data.origin_lng !== undefined) allowedFields.origin_lng = data.origin_lng;
+    if (data.polygon_geojson !== undefined) {
+      allowedFields.polygon_geojson = data.polygon_geojson;
+      allowedFields.polygon_cached_at = new Date().toISOString();
+    }
+    if (data.fill_color !== undefined) allowedFields.fill_color = data.fill_color;
+    if (data.fill_opacity !== undefined) allowedFields.fill_opacity = data.fill_opacity;
+    if (data.line_color !== undefined) allowedFields.line_color = data.line_color;
+    if (data.zone_priority !== undefined) allowedFields.zone_priority = data.zone_priority;
+    if (data.aktiv !== undefined) allowedFields.aktiv = data.aktiv;
+    allowedFields.updated_at = new Date().toISOString();
+
+    if (Object.keys(allowedFields).length <= 1) return this.getCoverageAreaById(id, organizationId);
+
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { data: updated, error } = await supabase
+        .from('coverage_areas')
+        .update(allowedFields)
+        .eq('id', id)
+        .eq('organization_id', organizationId)
+        .select()
+        .single();
+      if (error || !updated) return null;
+      return updated;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const sets = Object.keys(allowedFields).map(k => `${k} = ?`).join(', ');
+    const values = Object.values(allowedFields).map(v =>
+      typeof v === 'object' && v !== null ? JSON.stringify(v) : v
+    );
+    this.sqlite.prepare(`UPDATE coverage_areas SET ${sets} WHERE id = ? AND organization_id = ?`).run(...values, id, organizationId);
+    return this.getCoverageAreaById(id, organizationId);
+  }
+
+  async deleteCoverageArea(id: number, organizationId: number): Promise<boolean> {
+    this.validateTenantContext(organizationId, 'deleteCoverageArea');
+    if (this.type === 'supabase') {
+      const supabase = await this.getSupabaseClient();
+      const { error } = await supabase
+        .from('coverage_areas')
+        .delete()
+        .eq('id', id)
+        .eq('organization_id', organizationId);
+      if (error) throw new Error(`Failed to delete coverage area: ${error.message}`);
+      return true;
+    }
+    if (!this.sqlite) throw new Error('Database not initialized');
+    const result = this.sqlite.prepare('DELETE FROM coverage_areas WHERE id = ? AND organization_id = ?').run(id, organizationId);
+    return result.changes > 0;
   }
 }
 

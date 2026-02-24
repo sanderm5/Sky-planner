@@ -2,16 +2,16 @@
  * Welcome email template
  * Sent after successful registration
  */
-import { baseTemplate, emailButton, infoBox } from './base';
+import { baseTemplate, emailButton, infoBox, escapeHtmlEmail } from './base';
 export function welcomeEmail(data) {
     const { userName, organizationName, loginUrl, trialDays = 14 } = data;
     const content = `
 <h2 style="margin: 0 0 20px 0; color: #18181b; font-size: 24px; font-weight: 600;">
-  Velkommen til Sky Planner, ${userName}!
+  Velkommen til Sky Planner, ${escapeHtmlEmail(userName)}!
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Takk for at du valgte Sky Planner for <strong>${organizationName}</strong>.
+  Takk for at du valgte Sky Planner for <strong>${escapeHtmlEmail(organizationName)}</strong>.
   Vi er glade for å ha deg med!
 </p>
 
@@ -39,7 +39,7 @@ ${emailButton('Logg inn på Sky Planner', loginUrl)}
 </p>
 `.trim();
     return {
-        subject: `Velkommen til Sky Planner, ${userName}!`,
+        subject: `Velkommen til Sky Planner, ${escapeHtmlEmail(userName)}!`,
         html: baseTemplate(content, {
             previewText: `Takk for at du valgte Sky Planner. Du har ${trialDays} dagers gratis prøveperiode.`,
         }),

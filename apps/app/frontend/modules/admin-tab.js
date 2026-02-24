@@ -604,3 +604,4 @@ function renderBrannsystemStats() {
 
   renderBarStats('brannsystemStats', systems, { barClass: 'brannsystem' });
 }
+

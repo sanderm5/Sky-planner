@@ -16,7 +16,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
   // Verify authentication
   const token = cookies.get('skyplanner_session')?.value;
   if (!token) {
-    return new Response(JSON.stringify({ error: 'Ikke autentisert' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ikke autentisert' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -27,7 +27,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
   const ENCRYPTION_SALT = import.meta.env.ENCRYPTION_SALT;
 
   if (!JWT_SECRET || !ENCRYPTION_KEY || !ENCRYPTION_SALT) {
-    return new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -35,7 +35,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
   const result = auth.verifyToken(token, JWT_SECRET);
   if (!result.success || !result.payload) {
-    return new Response(JSON.stringify({ error: 'Ugyldig token' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig token' } }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -48,7 +48,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     const { code } = body;
 
     if (!code || code.length !== 6) {
-      return new Response(JSON.stringify({ error: 'Ugyldig kode. Koden m\u00e5 v\u00e6re 6 siffer.' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig kode. Koden m\u00e5 v\u00e6re 6 siffer.' } }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -63,14 +63,14 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
       .single();
 
     if (fetchError || !klient) {
-      return new Response(JSON.stringify({ error: 'Bruker ikke funnet' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
     if (klient.totp_enabled) {
-      return new Response(JSON.stringify({ error: '2FA er allerede aktivert' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: '2FA er allerede aktivert' } }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -78,7 +78,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
     if (!klient.totp_secret_encrypted) {
       return new Response(
-        JSON.stringify({ error: 'Start 2FA-oppsett f\u00f8rst ved \u00e5 kalle /api/dashboard/2fa/setup' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Start 2FA-oppsett f\u00f8rst ved \u00e5 kalle /api/dashboard/2fa/setup' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -96,7 +96,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
         metadata: { reason: 'invalid_code_during_setup' },
       });
 
-      return new Response(JSON.stringify({ error: 'Feil kode. Pr\u00f8v igjen.' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil kode. Pr\u00f8v igjen.' } }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -131,7 +131,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     );
   } catch (error) {
     console.error('2FA verify error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: 'Verifisering feilet' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Verifisering feilet' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

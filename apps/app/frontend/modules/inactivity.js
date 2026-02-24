@@ -74,9 +74,12 @@ function dismissInactivityWarning() {
   }
 }
 
+const INACTIVITY_EVENTS = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+
 function startInactivityTracking() {
-  const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
-  events.forEach(event => {
+  // Remove any existing listeners first to prevent duplicates
+  stopInactivityTracking();
+  INACTIVITY_EVENTS.forEach(event => {
     document.addEventListener(event, resetInactivityTimers, { passive: true });
   });
   resetInactivityTimers();
@@ -85,5 +88,9 @@ function startInactivityTracking() {
 function stopInactivityTracking() {
   clearTimeout(inactivityTimer);
   clearTimeout(inactivityWarningTimer);
+  // Remove event listeners to prevent memory leaks
+  INACTIVITY_EVENTS.forEach(event => {
+    document.removeEventListener(event, resetInactivityTimers);
+  });
   dismissInactivityWarning();
 }

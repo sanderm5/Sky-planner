@@ -251,6 +251,7 @@ router.post(
         await dbService.saveCustomerServices(kunde.id, req.body.services, req.organizationId);
       } catch (err) {
         apiLogger.error({ err, kundeId: kunde.id }, 'Failed to save customer services');
+        throw Errors.internal('Kunne ikke lagre kontrolldata. Prøv igjen.');
       }
     }
 
@@ -312,19 +313,41 @@ router.put(
       throw Errors.validationError(validationErrors);
     }
 
-    // Fetch current customer data before update for webhook change tracking
-    const kundeBeforeUpdate = await dbService.getKundeById(id, req.organizationId);
+    // Fetch current customer data and org in parallel
+    const [kundeBeforeUpdate, org] = await Promise.all([
+      dbService.getKundeById(id, req.organizationId),
+      req.organizationId ? dbService.getOrganizationById(req.organizationId) : Promise.resolve(null),
+    ]);
     if (!kundeBeforeUpdate) {
       throw Errors.notFound('Kunde');
     }
 
-    // Determine app mode
-    const org = req.organizationId ? await dbService.getOrganizationById(req.organizationId) : null;
     const appMode = (org?.app_mode ?? 'mvp') as 'mvp' | 'full';
 
-    // Prepare data (without organization_id - can't change tenant)
+    // Prepare data — merge legacy sync from services into main update to avoid extra DB call
     const kundeData = prepareKundeData(req.body, undefined, appMode);
+    if (req.body.services && Array.isArray(req.body.services)) {
+      for (const svc of req.body.services) {
+        const slug = svc.service_type_slug;
+        if (slug === 'el-kontroll') {
+          if (svc.siste_kontroll !== undefined) kundeData.siste_el_kontroll = svc.siste_kontroll;
+          if (svc.neste_kontroll !== undefined) kundeData.neste_el_kontroll = svc.neste_kontroll;
+          if (svc.intervall_months !== undefined) kundeData.el_kontroll_intervall = svc.intervall_months;
+        } else if (slug === 'brannvarsling') {
+          if (svc.siste_kontroll !== undefined) kundeData.siste_brann_kontroll = svc.siste_kontroll;
+          if (svc.neste_kontroll !== undefined) kundeData.neste_brann_kontroll = svc.neste_kontroll;
+          if (svc.intervall_months !== undefined) kundeData.brann_kontroll_intervall = svc.intervall_months;
+        }
+        if (!kundeData.neste_kontroll && svc.neste_kontroll) {
+          kundeData.neste_kontroll = svc.neste_kontroll;
+        }
+        if (!kundeData.siste_kontroll && svc.siste_kontroll) {
+          kundeData.siste_kontroll = svc.siste_kontroll;
+        }
+      }
+    }
 
+    // Single DB update with customer data + legacy sync combined
     const kunde = await dbService.updateKunde(id, kundeData, req.organizationId);
     if (!kunde) {
       throw Errors.notFound('Kunde');
@@ -336,6 +359,7 @@ router.put(
         await dbService.saveCustomerServices(id, req.body.services, req.organizationId);
       } catch (err) {
         apiLogger.error({ err, kundeId: id }, 'Failed to save customer services');
+        throw Errors.internal('Kunne ikke lagre kontrolldata. Prøv igjen.');
       }
     }
 

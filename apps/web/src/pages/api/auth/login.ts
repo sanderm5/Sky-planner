@@ -212,7 +212,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   if (!JWT_SECRET) {
     console.error('JWT_SECRET not configured');
     return new Response(
-      JSON.stringify({ error: 'Innlogging er midlertidig utilgjengelig' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Innlogging er midlertidig utilgjengelig' } }),
       { status: 503, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -230,7 +230,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     if (!epost || !passord) {
       return new Response(
-        JSON.stringify({ error: 'E-post og passord er påkrevd' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'E-post og passord er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -251,7 +251,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     if (recentFailures && recentFailures >= ACCOUNT_LOCKOUT_MAX_ATTEMPTS) {
       return new Response(
         JSON.stringify({
-          error: `Kontoen er midlertidig låst på grunn av for mange mislykkede innloggingsforsøk. Prøv igjen om ${ACCOUNT_LOCKOUT_WINDOW_MINUTES} minutter, eller bruk «Glemt passord» for å tilbakestille.`,
+          error: `For mange innloggingsforsøk. Prøv igjen senere, eller bruk «Glemt passord» for å tilbakestille.`,
         }),
         {
           status: 429,
@@ -292,14 +292,14 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
         epost: epost.toLowerCase(), ip_address: ip, success: false,
       }).then(() => {}, () => {});
       return new Response(
-        JSON.stringify({ error: 'Feil e-post eller passord' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil e-post eller passord' } }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     if (!user.aktiv) {
       return new Response(
-        JSON.stringify({ error: 'Kontoen er deaktivert' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kontoen er deaktivert' } }),
         { status: 403, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -311,7 +311,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
         epost: epost.toLowerCase(), ip_address: ip, success: false,
       }).then(() => {}, () => {});
       return new Response(
-        JSON.stringify({ error: 'Feil e-post eller passord' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil e-post eller passord' } }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -421,7 +421,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Login error:', errorMessage);
     return new Response(
-      JSON.stringify({ error: 'Innlogging feilet' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Innlogging feilet' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

@@ -186,6 +186,7 @@ export function validateEnvironment(): EnvConfig {
     ROUTE_START_LNG: process.env.ROUTE_START_LNG
       ? getEnvNumber('ROUTE_START_LNG', 17.65274)
       : undefined,
+    ROUTE_START_ADDRESS: getEnvString('ROUTE_START_ADDRESS'),
 
     // Email
     EMAIL_NOTIFICATIONS_ENABLED: emailEnabled,

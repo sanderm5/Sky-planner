@@ -39,7 +39,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!token || !passord) {
       return new Response(
-        JSON.stringify({ error: 'Token og passord er påkrevd' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Token og passord er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -48,7 +48,7 @@ export const POST: APIRoute = async ({ request }) => {
     const passwordValidation = validatePassword(passord);
     if (!passwordValidation.isValid) {
       return new Response(
-        JSON.stringify({ error: passwordValidation.errors.join('. ') }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: passwordValidation.errors.join('. ') } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -61,7 +61,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!resetToken) {
       return new Response(
-        JSON.stringify({ error: 'Ugyldig eller utløpt lenke. Vennligst be om en ny tilbakestillingslenke.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig eller utløpt lenke. Vennligst be om en ny tilbakestillingslenke.' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -100,7 +100,7 @@ export const POST: APIRoute = async ({ request }) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Password reset error:', errorMessage);
     return new Response(
-      JSON.stringify({ error: 'Noe gikk galt. Prøv igjen senere.' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Noe gikk galt. Prøv igjen senere.' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

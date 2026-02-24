@@ -72,29 +72,26 @@ function updateWeekPlanBadges() {
     }
   }
 
-  // Refresh cluster icons so they pick up planned data
-  if (markerClusterGroup) {
-    // Store plan data on marker options for cluster icon access
-    for (const [kundeId, plan] of planMap) {
-      if (markers[kundeId]) {
-        markers[kundeId].options.customerData = {
-          ...markers[kundeId].options.customerData,
-          planned: true,
-          plannedInitials: plan.initials,
-          plannedColor: plan.color
-        };
-      }
+  // Store plan data on markers for cluster icon access
+  for (const [kundeId, plan] of planMap) {
+    if (markers[kundeId]) {
+      markers[kundeId]._customerData = {
+        ...markers[kundeId]._customerData,
+        planned: true,
+        plannedInitials: plan.initials,
+        plannedColor: plan.color
+      };
     }
-    // Clear planned flag for non-planned markers
-    for (const kundeId of Object.keys(markers)) {
-      if (!planMap.has(Number(kundeId)) && markers[kundeId].options.customerData) {
-        delete markers[kundeId].options.customerData.planned;
-        delete markers[kundeId].options.customerData.plannedInitials;
-        delete markers[kundeId].options.customerData.plannedColor;
-      }
-    }
-    markerClusterGroup.refreshClusters();
   }
+  // Clear planned flag for non-planned markers
+  for (const kundeId of Object.keys(markers)) {
+    if (!planMap.has(Number(kundeId)) && markers[kundeId]._customerData) {
+      delete markers[kundeId]._customerData.planned;
+      delete markers[kundeId]._customerData.plannedInitials;
+      delete markers[kundeId]._customerData.plannedColor;
+    }
+  }
+  if (typeof refreshClusters === 'function') refreshClusters();
 }
 
 // Lightweight re-apply of plan badges on visible markers (uses data stored on marker.options)
@@ -109,7 +106,7 @@ function reapplyPlanBadges() {
     // Skip if badge already exists
     if (el.querySelector('.wp-plan-badge')) continue;
 
-    const cd = marker.options.customerData;
+    const cd = marker._customerData;
     if (cd && cd.planned && cd.plannedInitials) {
       const badge = document.createElement('div');
       badge.className = 'wp-plan-badge';

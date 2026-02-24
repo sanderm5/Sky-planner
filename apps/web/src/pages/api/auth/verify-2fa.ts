@@ -33,7 +33,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
   if (!JWT_SECRET || !ENCRYPTION_KEY || !ENCRYPTION_SALT) {
     return new Response(
-      JSON.stringify({ error: 'Server-konfigurasjonsfeil' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -51,7 +51,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     if (!sessionToken || !code) {
       return new Response(
-        JSON.stringify({ error: 'Session-token og kode er påkrevd' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Session-token og kode er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -70,7 +70,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     if (sessionError || !session) {
       return new Response(
-        JSON.stringify({ error: 'Ugyldig eller utløpt sesjon. Logg inn på nytt.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig eller utløpt sesjon. Logg inn på nytt.' } }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -79,7 +79,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     if (new Date(session.expires_at) < new Date()) {
       await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
       return new Response(
-        JSON.stringify({ error: 'Sesjonen har utløpt. Logg inn på nytt.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Sesjonen har utløpt. Logg inn på nytt.' } }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -90,7 +90,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     if (currentAttempts >= MAX_ATTEMPTS) {
       await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
       return new Response(
-        JSON.stringify({ error: 'For mange forsøk. Logg inn på nytt.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'For mange forsøk. Logg inn på nytt.' } }),
         { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '300' } }
       );
     }
@@ -111,7 +111,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
 
     if (userError || !user || !user.totp_secret_encrypted) {
       return new Response(
-        JSON.stringify({ error: 'Bruker ikke funnet' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -120,28 +120,27 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
     let verified = false;
     let usedBackupCode = false;
 
-    // Try TOTP code first (6 digits) with replay prevention
+    // Try TOTP code first (6 digits) with atomic replay prevention
     if (/^\d{6}$/.test(codeStr)) {
       const secret = auth.decryptTOTPSecret(user.totp_secret_encrypted, ENCRYPTION_KEY, ENCRYPTION_SALT);
       const matchedStep = auth.verifyTOTPWithCounter(secret, codeStr);
       if (matchedStep !== null) {
-        // Reject replay: same code (or earlier) already used
-        if (user.totp_last_used_step && matchedStep <= user.totp_last_used_step) {
-          verified = false;
-        } else {
-          verified = true;
-          // Record the used step to prevent replay
-          await supabase
-            .from(tableName)
-            .update({ totp_last_used_step: matchedStep })
-            .eq('id', user.id);
-        }
+        // Atomic update: only succeeds if no concurrent request used this step.
+        // The WHERE clause acts as both check and guard against race conditions.
+        const { data: updateResult } = await supabase
+          .from(tableName)
+          .update({ totp_last_used_step: matchedStep })
+          .eq('id', user.id)
+          .or(`totp_last_used_step.is.null,totp_last_used_step.lt.${matchedStep}`)
+          .select('id');
+
+        verified = !!(updateResult && updateResult.length > 0);
       }
     }
 
     // Try backup code if TOTP failed (format: XXXX-XXXX or 8 chars)
     if (!verified && user.backup_codes_hash) {
-      const backupIndex = auth.verifyBackupCode(codeStr, user.backup_codes_hash);
+      const backupIndex = auth.verifyBackupCode(codeStr, user.backup_codes_hash, ENCRYPTION_SALT);
       if (backupIndex >= 0) {
         verified = true;
         usedBackupCode = true;
@@ -170,7 +169,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
       });
 
       return new Response(
-        JSON.stringify({ error: 'Feil kode. Prøv igjen.' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil kode. Prøv igjen.' } }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -250,7 +249,7 @@ export const POST: APIRoute = async ({ request, clientAddress }) => {
   } catch (error) {
     console.error('2FA verify error:', error instanceof Error ? error.message : 'Unknown');
     return new Response(
-      JSON.stringify({ error: 'Verifisering feilet' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Verifisering feilet' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

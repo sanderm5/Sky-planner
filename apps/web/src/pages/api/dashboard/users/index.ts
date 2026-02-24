@@ -43,7 +43,7 @@ export const GET: APIRoute = async ({ request }) => {
   } catch (error) {
     console.error('Error fetching users:', error);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke hente brukere' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke hente brukere' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -63,7 +63,7 @@ export const POST: APIRoute = async ({ request }) => {
     // Validation
     if (!navn || !epost || !passord) {
       return new Response(
-        JSON.stringify({ error: 'Navn, e-post og passord er påkrevd' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Navn, e-post og passord er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -79,7 +79,7 @@ export const POST: APIRoute = async ({ request }) => {
     });
     if (!passwordResult.valid) {
       return new Response(
-        JSON.stringify({ error: passwordResult.errors[0] }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: passwordResult.errors[0] } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -93,7 +93,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (!isValidEmail) {
       return new Response(
-        JSON.stringify({ error: 'Ugyldig e-postformat' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig e-postformat' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -115,7 +115,7 @@ export const POST: APIRoute = async ({ request }) => {
     const existingUser = await db.getKlientByEmail(epost.toLowerCase());
     if (existingUser) {
       return new Response(
-        JSON.stringify({ error: 'E-postadressen er allerede registrert' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'E-postadressen er allerede registrert' } }),
         { status: 409, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -156,7 +156,7 @@ export const POST: APIRoute = async ({ request }) => {
   } catch (error) {
     console.error('Error creating user:', error);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke opprette bruker' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke opprette bruker' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

@@ -1,7 +1,7 @@
 /**
  * Email verification template
  */
-import { baseTemplate, emailButton, infoBox } from './base';
+import { baseTemplate, emailButton, infoBox, escapeHtmlEmail } from './base';
 export function emailVerificationEmail(data) {
     const { userName, verificationUrl, expiresInMinutes = 60 } = data;
     const content = `
@@ -10,7 +10,7 @@ export function emailVerificationEmail(data) {
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${userName},
+  Hei ${escapeHtmlEmail(userName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">

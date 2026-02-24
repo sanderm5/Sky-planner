@@ -2,7 +2,7 @@
  * Email verification template
  */
 
-import { baseTemplate, emailButton, infoBox } from './base';
+import { baseTemplate, emailButton, infoBox, escapeHtmlEmail } from './base';
 
 export interface EmailVerificationData {
   userName: string;
@@ -19,7 +19,7 @@ export function emailVerificationEmail(data: EmailVerificationData): { subject: 
 </h2>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">
-  Hei ${userName},
+  Hei ${escapeHtmlEmail(userName)},
 </p>
 
 <p style="margin: 0 0 16px 0; color: #3f3f46; font-size: 16px; line-height: 1.6;">

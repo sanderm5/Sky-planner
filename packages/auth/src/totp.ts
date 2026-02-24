@@ -98,23 +98,39 @@ export function generateBackupCodes(): string[] {
 }
 
 /**
- * Hash a backup code for storage
+ * Hash a backup code for storage using HMAC-SHA256 when key is provided.
+ * Falls back to plain SHA-256 for backward compatibility with existing codes.
  */
-export function hashBackupCode(code: string): string {
+export function hashBackupCode(code: string, hmacKey?: string): string {
   // Normalize: remove dashes and uppercase
   const normalized = code.replace(/-/g, '').toUpperCase();
+  if (hmacKey) {
+    return crypto.createHmac('sha256', hmacKey).update(normalized).digest('hex');
+  }
+  // Legacy fallback (no HMAC key)
   return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
 /**
- * Verify a backup code against hashed codes
- * Returns the index of the matched code, or -1 if not found
+ * Verify a backup code against hashed codes.
+ * Tries HMAC hash first (new format), then falls back to plain SHA-256 (legacy).
+ * Returns the index of the matched code, or -1 if not found.
  */
-export function verifyBackupCode(code: string, hashedCodes: string[]): number {
-  const inputHash = hashBackupCode(code);
+export function verifyBackupCode(code: string, hashedCodes: string[], hmacKey?: string): number {
+  // Try HMAC hash first (new format)
+  if (hmacKey) {
+    const hmacHash = hashBackupCode(code, hmacKey);
+    for (let i = 0; i < hashedCodes.length; i++) {
+      if (hashedCodes[i] && timingSafeCompare(hmacHash, hashedCodes[i])) {
+        return i;
+      }
+    }
+  }
 
+  // Fallback: try plain SHA-256 hash (legacy format)
+  const plainHash = hashBackupCode(code);
   for (let i = 0; i < hashedCodes.length; i++) {
-    if (hashedCodes[i] && timingSafeCompare(inputHash, hashedCodes[i])) {
+    if (hashedCodes[i] && timingSafeCompare(plainHash, hashedCodes[i])) {
       return i;
     }
   }
@@ -168,6 +184,7 @@ export function decryptTOTPSecret(encryptedData: string, encryptionKey: string, 
     return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, salt);
   } catch {
     // Fall back to legacy default salt for secrets encrypted before salt was required
+    console.warn('TOTP: Decrypting with legacy fallback salt — secret should be re-encrypted with proper salt');
     return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, 'totp-salt');
   }
 }

@@ -27,7 +27,7 @@ function verifyAuth(cookies: { get: (name: string) => { value: string } | undefi
   if (!token) {
     return {
       success: false,
-      error: new Response(JSON.stringify({ error: 'Ikke autentisert' }), {
+      error: new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ikke autentisert' } }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -38,7 +38,7 @@ function verifyAuth(cookies: { get: (name: string) => { value: string } | undefi
   if (!JWT_SECRET) {
     return {
       success: false,
-      error: new Response(JSON.stringify({ error: 'Server-konfigurasjonsfeil' }), {
+      error: new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -49,7 +49,7 @@ function verifyAuth(cookies: { get: (name: string) => { value: string } | undefi
   if (!result.success || !result.payload) {
     return {
       success: false,
-      error: new Response(JSON.stringify({ error: 'Ugyldig token' }), {
+      error: new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig token' } }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -59,7 +59,7 @@ function verifyAuth(cookies: { get: (name: string) => { value: string } | undefi
   if (!result.payload.organizationId) {
     return {
       success: false,
-      error: new Response(JSON.stringify({ error: 'Ingen organisasjon tilknyttet' }), {
+      error: new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ingen organisasjon tilknyttet' } }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -92,7 +92,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
     // Verify password for security
     if (!confirmPassword) {
-      return new Response(JSON.stringify({ error: 'Passord er påkrevd for å slette kontoen' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Passord er påkrevd for å slette kontoen' } }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -101,7 +101,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     // Get the user and verify password
     const klient = await db.getKlientById(payload.userId);
     if (!klient) {
-      return new Response(JSON.stringify({ error: 'Bruker ikke funnet' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -111,7 +111,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     const bcrypt = await import('bcryptjs');
     const passwordValid = await bcrypt.compare(confirmPassword, klient.passord_hash);
     if (!passwordValid) {
-      return new Response(JSON.stringify({ error: 'Feil passord' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil passord' } }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -120,7 +120,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     // Get the organization
     const organization = await db.getOrganizationById(payload.organizationId!);
     if (!organization) {
-      return new Response(JSON.stringify({ error: 'Organisasjon ikke funnet' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Organisasjon ikke funnet' } }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -138,7 +138,8 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     if (existingRequest) {
       return new Response(
         JSON.stringify({
-          error: 'Det finnes allerede en ventende sletteforespørsel',
+          success: false,
+          error: { code: 'PENDING_DELETION_EXISTS', message: 'Det finnes allerede en ventende sletteforespørsel' },
           scheduledDeletionAt: existingRequest.scheduled_deletion_at,
         }),
         {
@@ -192,7 +193,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
 
     if (insertError) {
       console.error('Failed to create deletion request:', insertError.message);
-      return new Response(JSON.stringify({ error: 'Kunne ikke opprette sletteforespørsel' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke opprette sletteforespørsel' } }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -248,7 +249,7 @@ export const POST: APIRoute = async ({ request, cookies }): Promise<Response> =>
     );
   } catch (error) {
     console.error('Delete account error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: 'Sletting feilet' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Sletting feilet' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -284,7 +285,7 @@ export const DELETE: APIRoute = async ({ cookies }): Promise<Response> => {
       .maybeSingle();
 
     if (!deletionRequest) {
-      return new Response(JSON.stringify({ error: 'Ingen ventende sletteforespørsel funnet' }), {
+      return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ingen ventende sletteforespørsel funnet' } }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -340,7 +341,7 @@ export const DELETE: APIRoute = async ({ cookies }): Promise<Response> => {
     );
   } catch (error) {
     console.error('Cancel deletion error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: 'Kansellering feilet' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kansellering feilet' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -406,7 +407,7 @@ export const GET: APIRoute = async ({ cookies }): Promise<Response> => {
     );
   } catch (error) {
     console.error('Get deletion status error:', error instanceof Error ? error.message : 'Unknown');
-    return new Response(JSON.stringify({ error: 'Kunne ikke hente status' }), {
+    return new Response(JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke hente status' } }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

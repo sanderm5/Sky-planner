@@ -8,7 +8,7 @@ export const GET: APIRoute = async ({ request }) => {
   if (!STRIPE_SECRET_KEY) {
     console.warn('Stripe not configured - invoices unavailable');
     return new Response(
-      JSON.stringify({ error: 'Fakturatjenesten er midlertidig utilgjengelig' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Fakturatjenesten er midlertidig utilgjengelig' } }),
       { status: 503, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -63,7 +63,7 @@ export const GET: APIRoute = async ({ request }) => {
   } catch (error) {
     console.error('Stripe invoices error:', error);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke hente fakturaer' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke hente fakturaer' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }

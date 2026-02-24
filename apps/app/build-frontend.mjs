@@ -19,6 +19,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // When extracting a module from app-legacy.js, add the new file here BEFORE app-legacy.js
 const SOURCE_FILES = [
   // -- Extracted modules go here (in dependency order) --
+  'frontend/modules/map-compat.js',
+  'frontend/modules/cluster-manager.js',
+  'frontend/modules/mapbox-matrix.js',
   'frontend/utils/escape.js',
   'frontend/utils/logger.js',
   'frontend/utils/csrf.js',

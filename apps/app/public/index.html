@@ -28,22 +28,13 @@
       height: 100%;
       background: #1a1a1a; /* Fallback while tiles load */
     }
-    /* Elevate Leaflet interactive elements above appView */
-    #sharedMapContainer .leaflet-pane,
-    #sharedMapContainer .leaflet-control-container {
-      z-index: 200 !important;
-    }
-    #sharedMapContainer .leaflet-popup-pane {
-      z-index: 250 !important;
-    }
-
     /* === LOGIN OVERLAY === */
     #loginOverlay {
       position: fixed;
       inset: 0;
       z-index: 1000;
       display: flex;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     #loginOverlay.hidden {
       pointer-events: none;
@@ -606,15 +597,13 @@
       to { transform: translateX(0); opacity: 1; }
     }
   </style>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Google Fonts - Inter -->
+  <!-- Google Fonts - Plus Jakarta Sans (matches apps/web) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+" crossorigin="anonymous" />
+  <!-- Mapbox GL JS v3 -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" />
   <link rel="stylesheet" href="polarnatt.css" />
   <link rel="stylesheet" href="style.css?v=20260216-splitview4" />
@@ -1853,7 +1842,6 @@
           <label for="adresse">Adresse *</label>
           <div class="address-autocomplete-wrapper">
             <input type="text" id="adresse" required autocomplete="off" placeholder="Begynn å skrive adresse...">
-            <div class="address-suggestions" id="addressSuggestions"></div>
           </div>
           <button type="button" id="geocodeBtn" class="btn btn-small">Finn koordinater</button>
         </div>
@@ -2454,11 +2442,12 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
+  <!-- Mapbox GL JS v3 + Supercluster -->
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.js"></script>
+  <script src="https://unpkg.com/supercluster@8.0.1/dist/supercluster.min.js"></script>
   <script src="offline-storage.js?v=1"></script>
   <script src="sync-manager.js?v=1"></script>
-  <script src="app.js?v=20260219-taggroups"></script>
+  <script src="app.js?v=20260222-autocomplete-v2"></script>
   <script>
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {
@@ -2469,6 +2458,9 @@
       });
     }
   </script>
+
+  <!-- Address autocomplete portal (outside modal to avoid backdrop-filter containing block) -->
+  <div class="address-suggestions" id="addressSuggestions"></div>
 </body>
 </html>
 <!-- redeploy Sat Dec 27 17:54:50 CET 2025 -->

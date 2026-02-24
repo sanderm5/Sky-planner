@@ -1,14 +1,13 @@
 // Load customers from API
 async function loadCustomers() {
-  Logger.log('loadCustomers() called, markerClusterGroup:', !!markerClusterGroup);
+  Logger.log('loadCustomers() called, supercluster:', !!supercluster);
   try {
     const response = await apiFetch('/api/kunder');
     if (!response.ok) throw new Error(`HTTP ${response.status}: Kunne ikke laste kunder`);
     const result = await response.json();
     customers = result.data || result; // Handle both { data: [...] } and direct array
     Logger.log('loadCustomers() fetched', customers.length, 'customers');
-    applyFilters();
-    renderMarkers(customers);
+    applyFilters(); // Handles both renderCustomerList(filtered) and renderMarkers(filtered)
     renderCustomerAdmin();
     updateOverdueBadge();
     renderMissingData(); // Update missing data badge and lists

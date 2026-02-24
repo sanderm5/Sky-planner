@@ -3,11 +3,10 @@
 let map;
 // Single map architecture - map is always visible behind login/app overlays
 let markers = {};
-let markerClusterGroup = null;
+// Clustering now handled by Supercluster (cluster-manager.js)
 let selectedCustomers = new Set();
 let customers = [];
-let routeLayer = null;
-let routeMarkers = [];
+let routeMarkers = []; // Used by route-planning.js for stop markers
 let avtaler = [];
 let omrader = [];
 let currentFilter = 'alle';
@@ -124,7 +123,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyBranding();
 
   // ALWAYS initialize the shared map first (it's visible behind login overlay)
-  initSharedMap();
+  // Check localStorage hint — if user was logged in before, skip globe animation
+  // and start at app view to avoid black screen while satellite tiles load
+  const likelyReturningUser = !!localStorage.getItem('userName');
+  initSharedMap({ skipGlobe: likelyReturningUser });
 
   // Set up login form handler
   initLoginView();
@@ -165,17 +167,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentView = 'app';
     appInitialized = true;
 
-    // Enable map interactivity for app mode
+    // Enable map interactivity (already at app view position via skipGlobe)
     if (map) {
-      map.dragging.enable();
-      map.scrollWheelZoom.enable();
-      map.doubleClickZoom.enable();
-      map.touchZoom.enable();
-      map.keyboard.enable();
-      L.control.zoom({ position: 'topright' }).addTo(map);
-
-      // Set to app view position
-      map.setView([67.5, 15.0], 6, { animate: false });
+      setMapInteractive(true);
+      if (!map._zoomControl) {
+        map._zoomControl = new mapboxgl.NavigationControl({ showCompass: false });
+        map.addControl(map._zoomControl, 'top-right');
+      }
+      stopGlobeSpin(); // Safety: ensure globe spin is stopped
     }
 
     // Initialize DOM and app
@@ -202,6 +201,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Not logged in - login overlay is already visible by default
     currentView = 'login';
 
+    // If we skipped the globe (thought user was returning) but auth failed,
+    // fly back to globe view and start spinning
+    if (likelyReturningUser && map) {
+      map.flyTo({ center: [15.0, 65.0], zoom: 3.0, duration: 1500 });
+      setMapInteractive(false);
+      setTimeout(() => startGlobeSpin(), 1500);
+    }
+
     // Hide tab navigation and sidebar toggle when not logged in
     const tabNavigation = document.querySelector('.tab-navigation');
     if (tabNavigation) {
@@ -220,13 +227,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initializeApp() {
   Logger.log('initializeApp() starting...');
 
+  // Reload config now that user is authenticated
+  // (initial loadConfig() ran before login, so org-specific data like subcategories was missing)
+  await loadConfig();
+
   // Initialize DOM references
   initDOMElements();
 
   // Initialize map features (clustering, borders, etc.)
   // The base map is already created by initSharedMap()
   initMap();
-  Logger.log('initializeApp() after initMap, markerClusterGroup:', !!markerClusterGroup);
+  Logger.log('initializeApp() after initMap, supercluster:', !!supercluster);
 
   // Load categories and fields first so markers render with correct icons
   try {
@@ -486,7 +497,35 @@ function setupEventListeners() {
     }
   }
 
-  // Upcoming controls widget
+  // Right-click context menu on customer list items
+  document.getElementById('customerList')?.addEventListener('contextmenu', (e) => {
+    const item = e.target.closest('.customer-item[data-id]');
+    if (!item) return;
+    e.preventDefault();
+    const customerId = Number(item.dataset.id);
+    const customer = typeof customers !== 'undefined' ? customers.find(c => c.id === customerId) : null;
+    if (customer) showCustomerListContextMenu(customer, e.clientX, e.clientY);
+  });
+
+  // Right-click context menu on calendar events
+  document.getElementById('calendarContainer')?.addEventListener('contextmenu', (e) => {
+    const avtaleEl = e.target.closest('.calendar-avtale[data-avtale-id], .week-avtale-card[data-avtale-id], .upcoming-item[data-avtale-id]');
+    if (!avtaleEl) return;
+    e.preventDefault();
+    const avtaleId = Number(avtaleEl.dataset.avtaleId);
+    const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+    if (avtale) showCalendarContextMenu(avtale, e.clientX, e.clientY);
+  });
+
+  // Right-click context menu on split-view calendar events
+  document.getElementById('calendarSplitOverlay')?.addEventListener('contextmenu', (e) => {
+    const avtaleEl = e.target.closest('.split-avtale-card[data-avtale-id]');
+    if (!avtaleEl) return;
+    e.preventDefault();
+    const avtaleId = Number(avtaleEl.dataset.avtaleId);
+    const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+    if (avtale) showCalendarContextMenu(avtale, e.clientX, e.clientY);
+  });
 
   // Close modals on escape
   document.addEventListener('keydown', (e) => {
@@ -773,7 +812,7 @@ function setupEventListeners() {
           wpFocusedTeamMember = null;
           wpFocusedMemberIds = null;
           applyTeamFocusToMarkers();
-          if (markerClusterGroup) markerClusterGroup.refreshClusters();
+          if (typeof refreshClusters === 'function') refreshClusters();
         }
         // Close route summary if open
         closeWpRouteSummary();
@@ -1005,6 +1044,39 @@ function setupEventListeners() {
   ];
   document.addEventListener('change', (e) => {
     const id = e.target.id;
+
+    // Handle dynamic service sections (service_<slug>_siste / service_<slug>_intervall)
+    const dynSisteMatch = id.match(/^service_(.+)_siste$/);
+    const dynIntervallMatch = id.match(/^service_(.+)_intervall$/);
+    if (dynSisteMatch || dynIntervallMatch) {
+      const slug = (dynSisteMatch || dynIntervallMatch)[1];
+      const sisteEl = document.getElementById(`service_${slug}_siste`);
+      const nesteEl = document.getElementById(`service_${slug}_neste`);
+      const intervallEl = document.getElementById(`service_${slug}_intervall`);
+      if (!sisteEl?.value || !intervallEl?.value) return;
+      // When changing siste: only auto-fill if neste is empty
+      if (dynSisteMatch && nesteEl?.value) return;
+
+      const siste = new Date(sisteEl.value);
+      if (isNaN(siste.getTime())) return;
+
+      const intervall = parseInt(intervallEl.value);
+      const neste = new Date(siste);
+      if (intervall < 0) {
+        neste.setDate(neste.getDate() + Math.abs(intervall));
+      } else {
+        neste.setMonth(neste.getMonth() + intervall);
+      }
+
+      if (nesteEl) {
+        nesteEl.value = appConfig?.datoModus === 'month_year'
+          ? neste.toISOString().substring(0, 7)
+          : neste.toISOString().substring(0, 10);
+      }
+      return;
+    }
+
+    // Handle legacy kontroll groups
     for (const g of kontrollGroups) {
       if (id === g.siste || id === g.intervall) {
         const sisteEl = document.getElementById(g.siste);

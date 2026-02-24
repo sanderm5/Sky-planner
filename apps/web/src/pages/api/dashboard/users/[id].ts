@@ -19,7 +19,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
 
   if (isNaN(userId)) {
     return new Response(
-      JSON.stringify({ error: 'Ugyldig bruker-ID' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig bruker-ID' } }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -29,7 +29,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
     const targetUser = await db.getKlientById(userId);
     if (!targetUser || targetUser.organization_id !== organization.id) {
       return new Response(
-        JSON.stringify({ error: 'Bruker ikke funnet' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -43,7 +43,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
     if (navn !== undefined) {
       if (!navn.trim()) {
         return new Response(
-          JSON.stringify({ error: 'Navn kan ikke være tomt' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Navn kan ikke være tomt' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -54,7 +54,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(epost)) {
         return new Response(
-          JSON.stringify({ error: 'Ugyldig e-postformat' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig e-postformat' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -63,7 +63,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
       const existingUser = await db.getKlientByEmail(epost.toLowerCase());
       if (existingUser && existingUser.id !== userId) {
         return new Response(
-          JSON.stringify({ error: 'E-postadressen er allerede i bruk' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'E-postadressen er allerede i bruk' } }),
           { status: 409, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -78,7 +78,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
       // Prevent deactivating yourself
       if (userId === currentUser.id && !aktiv) {
         return new Response(
-          JSON.stringify({ error: 'Du kan ikke deaktivere din egen konto' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Du kan ikke deaktivere din egen konto' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -105,7 +105,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
       const validRoles = ['admin', 'redigerer', 'leser'];
       if (!validRoles.includes(rolle)) {
         return new Response(
-          JSON.stringify({ error: 'Ugyldig rolle. Gyldige roller: admin, redigerer, leser' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig rolle. Gyldige roller: admin, redigerer, leser' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -116,7 +116,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
         const adminCount = orgUsers.filter(u => u.aktiv && u.rolle === 'admin').length;
         if (adminCount <= 1) {
           return new Response(
-            JSON.stringify({ error: 'Kan ikke endre rolle. Du er den eneste administratoren.' }),
+            JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kan ikke endre rolle. Du er den eneste administratoren.' } }),
             { status: 400, headers: { 'Content-Type': 'application/json' } }
           );
         }
@@ -128,7 +128,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
     if (passord !== undefined) {
       if (passord.length < 8) {
         return new Response(
-          JSON.stringify({ error: 'Passord må være minst 8 tegn' }),
+          JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Passord må være minst 8 tegn' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
@@ -137,7 +137,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
 
     if (Object.keys(updateData).length === 0) {
       return new Response(
-        JSON.stringify({ error: 'Ingen felter å oppdatere' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ingen felter å oppdatere' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -163,7 +163,7 @@ export const PUT: APIRoute = async ({ request, params }) => {
   } catch (error) {
     console.error('Error updating user:', error);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke oppdatere bruker' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke oppdatere bruker' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -179,7 +179,7 @@ export const DELETE: APIRoute = async ({ request, params }) => {
 
   if (isNaN(userId)) {
     return new Response(
-      JSON.stringify({ error: 'Ugyldig bruker-ID' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig bruker-ID' } }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -187,7 +187,7 @@ export const DELETE: APIRoute = async ({ request, params }) => {
   // Prevent deleting yourself
   if (userId === currentUser.id) {
     return new Response(
-      JSON.stringify({ error: 'Du kan ikke slette din egen konto' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Du kan ikke slette din egen konto' } }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -197,7 +197,7 @@ export const DELETE: APIRoute = async ({ request, params }) => {
     const targetUser = await db.getKlientById(userId);
     if (!targetUser || targetUser.organization_id !== organization.id) {
       return new Response(
-        JSON.stringify({ error: 'Bruker ikke funnet' }),
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -212,7 +212,7 @@ export const DELETE: APIRoute = async ({ request, params }) => {
   } catch (error) {
     console.error('Error deleting user:', error);
     return new Response(
-      JSON.stringify({ error: 'Kunne ikke deaktivere bruker' }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Kunne ikke deaktivere bruker' } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
