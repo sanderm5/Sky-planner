@@ -417,6 +417,10 @@ function initMap() {
     initClusterManager();
   } else {
     map.once('style.load', () => initClusterManager());
+    // Fallback: 'load' event fires after style + tiles are ready
+    map.once('load', () => {
+      if (!_clusterSourceReady) initClusterManager();
+    });
   }
 
   // Update clusters after map movement completes (not during zoom — markers are

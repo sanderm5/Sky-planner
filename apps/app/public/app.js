@@ -136,9 +136,15 @@ let clusterMarkers = new Map(); // HTML marker cache for individual cluster mark
 function initClusterManager() {
   if (!map) return;
   if (map.getSource(CLUSTER_SOURCE)) { _clusterSourceReady = true; return; }
-  // Style must be loaded before adding sources/layers
+  // Style must be loaded before adding sources/layers.
+  // Use both 'style.load' and 'load' events as fallback — on some systems
+  // (especially Windows) 'style.load' may have already fired before this runs.
   if (!map.isStyleLoaded()) {
     map.once('style.load', () => initClusterManager());
+    // Fallback: if style.load already fired, 'load' (full map load) will catch it
+    map.once('load', () => {
+      if (!_clusterSourceReady) initClusterManager();
+    });
     return;
   }
   try {
@@ -19244,6 +19250,10 @@ function initMap() {
     initClusterManager();
   } else {
     map.once('style.load', () => initClusterManager());
+    // Fallback: 'load' event fires after style + tiles are ready
+    map.once('load', () => {
+      if (!_clusterSourceReady) initClusterManager();
+    });
   }
 
   // Update clusters after map movement completes (not during zoom — markers are
