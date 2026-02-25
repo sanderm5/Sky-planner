@@ -135,7 +135,7 @@ import Badge from '../../components/ui/Badge.astro';
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Registrering feilet');
+        throw new Error(data.error?.message || data.error || 'Registrering feilet');
       }
 
       if (data.redirectUrl) {

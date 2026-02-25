@@ -255,12 +255,15 @@ function transitionToAppView() {
     }
   }, 200);
 
-  // PHASE 3: Stop globe spin and fly to Norway
+  // PHASE 3: Stop globe spin and fly to office location (or Norway center as fallback)
   setTimeout(() => {
     if (map) {
       stopGlobeSpin();
+      const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
       map.flyTo({
-        center: [15.0, 67.5],
+        center: hasOfficeLocation
+          ? [appConfig.routeStartLng, appConfig.routeStartLat]
+          : [15.0, 67.5],
         zoom: 6,
         duration: 1600,
         essential: true,

@@ -8,6 +8,17 @@ async function loadCustomers() {
     customers = result.data || result; // Handle both { data: [...] } and direct array
     Logger.log('loadCustomers() fetched', customers.length, 'customers');
     applyFilters(); // Handles both renderCustomerList(filtered) and renderMarkers(filtered)
+
+    // If no office location is configured, fit map to all customers
+    if (!appConfig.routeStartLat && !appConfig.routeStartLng && customers.length > 0 && map) {
+      const customersWithCoords = customers.filter(c => c.lat && c.lng);
+      if (customersWithCoords.length > 0) {
+        const bounds = boundsFromCustomers(customersWithCoords);
+        if (!bounds.isEmpty()) {
+          map.fitBounds(bounds, { padding: 60, maxZoom: 12, duration: 1000 });
+        }
+      }
+    }
     renderCustomerAdmin();
     updateOverdueBadge();
     renderMissingData(); // Update missing data badge and lists

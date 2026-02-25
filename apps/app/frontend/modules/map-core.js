@@ -210,9 +210,12 @@ function initSharedMap(options = {}) {
     // Set Mapbox GL JS access token
     mapboxgl.accessToken = getMapboxToken();
 
-    // If returning user, skip globe view and start at app position
+    // If returning user, skip globe view and start at office location (or Norway center)
     const skipGlobe = options.skipGlobe || false;
-    const initialCenter = skipGlobe ? [15.0, 67.5] : [15.0, 65.0];
+    const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
+    const initialCenter = skipGlobe
+      ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : [15.0, 67.5])
+      : [15.0, 65.0];
     const initialZoom = skipGlobe ? 6 : 3.0;
 
     // Create Mapbox GL JS map with globe projection

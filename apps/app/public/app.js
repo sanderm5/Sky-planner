@@ -19075,9 +19075,12 @@ function initSharedMap(options = {}) {
     // Set Mapbox GL JS access token
     mapboxgl.accessToken = getMapboxToken();
 
-    // If returning user, skip globe view and start at app position
+    // If returning user, skip globe view and start at office location (or Norway center)
     const skipGlobe = options.skipGlobe || false;
-    const initialCenter = skipGlobe ? [15.0, 67.5] : [15.0, 65.0];
+    const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
+    const initialCenter = skipGlobe
+      ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : [15.0, 67.5])
+      : [15.0, 65.0];
     const initialZoom = skipGlobe ? 6 : 3.0;
 
     // Create Mapbox GL JS map with globe projection
@@ -19819,12 +19822,15 @@ function transitionToAppView() {
     }
   }, 200);
 
-  // PHASE 3: Stop globe spin and fly to Norway
+  // PHASE 3: Stop globe spin and fly to office location (or Norway center as fallback)
   setTimeout(() => {
     if (map) {
       stopGlobeSpin();
+      const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
       map.flyTo({
-        center: [15.0, 67.5],
+        center: hasOfficeLocation
+          ? [appConfig.routeStartLng, appConfig.routeStartLat]
+          : [15.0, 67.5],
         zoom: 6,
         duration: 1600,
         essential: true,
@@ -21676,6 +21682,17 @@ async function loadCustomers() {
     customers = result.data || result; // Handle both { data: [...] } and direct array
     Logger.log('loadCustomers() fetched', customers.length, 'customers');
     applyFilters(); // Handles both renderCustomerList(filtered) and renderMarkers(filtered)
+
+    // If no office location is configured, fit map to all customers
+    if (!appConfig.routeStartLat && !appConfig.routeStartLng && customers.length > 0 && map) {
+      const customersWithCoords = customers.filter(c => c.lat && c.lng);
+      if (customersWithCoords.length > 0) {
+        const bounds = boundsFromCustomers(customersWithCoords);
+        if (!bounds.isEmpty()) {
+          map.fitBounds(bounds, { padding: 60, maxZoom: 12, duration: 1000 });
+        }
+      }
+    }
     renderCustomerAdmin();
     updateOverdueBadge();
     renderMissingData(); // Update missing data badge and lists
