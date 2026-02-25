@@ -95,14 +95,17 @@ function validatePassword(password: string, email?: string, navn?: string): { is
 }
 
 function generateSlug(name: string): string {
-  return name
+  const base = name
     .toLowerCase()
     .replace(/[æ]/g, 'ae')
     .replace(/[ø]/g, 'o')
     .replace(/[å]/g, 'a')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '')
-    .slice(0, 50);
+    .slice(0, 40);
+  // Add random suffix to avoid unique constraint violations
+  const suffix = crypto.randomBytes(3).toString('hex');
+  return `${base}-${suffix}`;
 }
 
 export const POST: APIRoute = async ({ request }) => {
@@ -424,11 +427,22 @@ export const POST: APIRoute = async ({ request }) => {
     );
     */
   } catch (error) {
-    // Log sanitized error - avoid exposing user data or internal details
+    // Log error details for debugging (no user data)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
     console.error('Registration error:', errorMessage);
+    if (errorStack) console.error('Stack:', errorStack);
+
+    // Return specific message if it's a known database error
+    let userMessage = 'Registrering feilet';
+    if (errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+      userMessage = 'En organisasjon med dette navnet finnes allerede. Prøv et annet bedriftsnavn.';
+    } else if (errorMessage.includes('Failed to create')) {
+      userMessage = errorMessage.replace('Failed to create organization: ', '').replace('Failed to create klient: ', '');
+    }
+
     return new Response(
-      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Registrering feilet' } }),
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: userMessage } }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
