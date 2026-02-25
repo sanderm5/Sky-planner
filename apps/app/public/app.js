@@ -144,6 +144,19 @@ function initClusterManager() {
     map.once('load', () => {
       if (!_clusterSourceReady) initClusterManager();
     });
+    // Fallback: poll isStyleLoaded() in case events already fired
+    let pollCount = 0;
+    const pollInterval = setInterval(() => {
+      pollCount++;
+      if (_clusterSourceReady || pollCount > 50) {
+        clearInterval(pollInterval);
+        return;
+      }
+      if (map.isStyleLoaded()) {
+        clearInterval(pollInterval);
+        if (!_clusterSourceReady) initClusterManager();
+      }
+    }, 100);
     return;
   }
   console.log('initClusterManager: creating source and layers');
@@ -206,8 +219,20 @@ function initClusterManager() {
     }
   } catch (err) {
     console.error('initClusterManager failed:', err);
-    // Retry once after style is loaded
+    // Retry after style is loaded (event + polling fallback)
     map.once('style.load', () => initClusterManager());
+    let pollCount = 0;
+    const pollInterval = setInterval(() => {
+      pollCount++;
+      if (_clusterSourceReady || pollCount > 50) {
+        clearInterval(pollInterval);
+        return;
+      }
+      if (map.isStyleLoaded()) {
+        clearInterval(pollInterval);
+        if (!_clusterSourceReady) initClusterManager();
+      }
+    }, 100);
   }
 }
 
