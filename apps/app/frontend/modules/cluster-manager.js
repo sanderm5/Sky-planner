@@ -9,11 +9,11 @@ let supercluster = null; // Legacy reference (kept for compatibility with loggin
 let clusterMarkers = new Map(); // HTML marker cache for individual cluster markers
 
 function initClusterManager() {
-  if (!map) { Logger.log('initClusterManager: no map'); return; }
-  if (map.getSource(CLUSTER_SOURCE)) { Logger.log('initClusterManager: source exists, ready'); _clusterSourceReady = true; return; }
+  if (!map) { console.log('initClusterManager: no map'); return; }
+  if (map.getSource(CLUSTER_SOURCE)) { console.log('initClusterManager: source exists, ready'); _clusterSourceReady = true; return; }
   // Style must be loaded before adding sources/layers.
   if (!map.isStyleLoaded()) {
-    Logger.log('initClusterManager: style not loaded, deferring');
+    console.log('initClusterManager: style not loaded, deferring');
     map.once('style.load', () => initClusterManager());
     // Fallback: 'load' event fires after style + tiles are ready
     map.once('load', () => {
@@ -21,7 +21,7 @@ function initClusterManager() {
     });
     return;
   }
-  Logger.log('initClusterManager: creating source and layers');
+  console.log('initClusterManager: creating source and layers');
   try {
     map.addSource(CLUSTER_SOURCE, {
       type: 'geojson', data: { type: 'FeatureCollection', features: [] },
@@ -73,10 +73,10 @@ function initClusterManager() {
       }
     });
     _clusterSourceReady = true;
-    Logger.log('initClusterManager: ready, source created');
+    console.log('initClusterManager: ready, source created');
     // If customers were loaded while we waited for style, render them now
     if (typeof customers !== 'undefined' && customers.length > 0 && typeof applyFilters === 'function') {
-      Logger.log('initClusterManager: triggering applyFilters for', customers.length, 'customers');
+      console.log('initClusterManager: triggering applyFilters for', customers.length, 'customers');
       applyFilters();
     }
   } catch (err) {
