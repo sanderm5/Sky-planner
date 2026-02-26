@@ -113,13 +113,15 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * - Webhook endpoints
  * - Public API
  */
+// Note: When mounted via app.use('/api', csrfProtection()), Express strips
+// the '/api' prefix from req.path. Paths here must match the STRIPPED path.
 const EXEMPT_PATH_PREFIXES = [
-  '/api/v1/', // Public API uses API key auth
-  '/api/webhooks', // Webhooks use signature verification
-  '/api/integration-webhooks', // External integration webhooks use token verification
-  '/api/cron', // Cron jobs use secret verification
-  '/api/docs', // API documentation is read-only
-  '/api/klient/sso', // SSO uses one-time token + IP binding for cross-domain auth
+  '/v1/', // Public API uses API key auth
+  '/webhooks', // Webhooks use signature verification
+  '/integration-webhooks', // External integration webhooks use token verification
+  '/cron', // Cron jobs use secret verification
+  '/docs', // API documentation is read-only
+  '/klient/sso', // SSO uses one-time token + IP binding for cross-domain auth
 ];
 
 /**

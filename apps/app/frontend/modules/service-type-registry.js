@@ -265,6 +265,17 @@ class ServiceTypeRegistry {
   }
 
   /**
+   * Render <option> elements for a <select> dropdown
+   */
+  renderCategoryOptions(selectedValue = '') {
+    const serviceTypes = this.getAll();
+    return serviceTypes.map(st => {
+      const selected = st.name === selectedValue || st.slug === selectedValue ? 'selected' : '';
+      return `<option value="${escapeHtml(st.name)}" ${selected}>${escapeHtml(st.name)}</option>`;
+    }).join('');
+  }
+
+  /**
    * Get selected categories from checkboxes as " + " joined string
    */
   getSelectedCategories() {

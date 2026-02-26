@@ -42,8 +42,15 @@ const IsochroneManager = {
     document.getElementById('isochroneToggle')?.classList.add('active');
 
     // Default origin: company/office location
-    this.originLng = appConfig.routeStartLng || 17.65274;
-    this.originLat = appConfig.routeStartLat || 69.06888;
+    const routeStart = getRouteStartLocation();
+    if (!routeStart) {
+      showNotification('Sett firmaadresse i admin for å bruke rekkeviddeanalyse', 'warning');
+      this.active = false;
+      document.getElementById('isochroneToggle')?.classList.remove('active');
+      return;
+    }
+    this.originLng = routeStart.lng;
+    this.originLat = routeStart.lat;
 
     this.showControlPanel();
     this.addOriginMarker();

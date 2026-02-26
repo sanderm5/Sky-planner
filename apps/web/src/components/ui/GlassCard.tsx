@@ -1,7 +1,6 @@
 import clsx from 'clsx';
 
-interface GlassCardProps {
-  className?: string;
+interface GlassCardProps extends React.HTMLAttributes<HTMLDivElement> {
   hover?: boolean;
   glow?: boolean;
   padding?: 'none' | 'sm' | 'md' | 'lg';
@@ -21,6 +20,7 @@ export default function GlassCard({
   glow = false,
   padding = 'md',
   children,
+  ...rest
 }: GlassCardProps) {
   return (
     <div
@@ -31,6 +31,7 @@ export default function GlassCard({
         paddingClasses[padding],
         className
       )}
+      {...rest}
     >
       {children}
     </div>

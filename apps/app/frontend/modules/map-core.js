@@ -2,6 +2,10 @@
 // SPA VIEW MANAGEMENT — Mapbox GL JS v3
 // ========================================
 
+// Default view: show all of Norway (used when no office address is configured)
+const NORWAY_CENTER = [10.0, 64.0]; // [lng, lat]
+const NORWAY_ZOOM = 4.0;
+
 // Get Mapbox access token from server config
 function getMapboxToken() {
   if (appConfig.mapboxAccessToken) {
@@ -29,9 +33,19 @@ let _pendingStyleReload = false;
 
 // 3D terrain state
 let terrainEnabled = false;
-const TERRAIN_EXAGGERATION = 1.5;
-const TERRAIN_PITCH = 72;
+let terrainExaggeration = 1.5;
+const TERRAIN_EXAGGERATION_DEFAULT = 1.5;
+const TERRAIN_EXAGGERATION_MIN = 0.3;
+const TERRAIN_EXAGGERATION_MAX = 3.0;
+const TERRAIN_EXAGGERATION_STEP = 0.1;
+let terrainPitch = 72;
+const TERRAIN_PITCH_DEFAULT = 72;
+const TERRAIN_PITCH_MIN = 0;
+const TERRAIN_PITCH_MAX = 85;
+const TERRAIN_PITCH_STEP = 1;
 const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
+const TERRAIN_EXAG_LS_KEY = 'skyplanner_terrainExaggeration';
+const TERRAIN_PITCH_LS_KEY = 'skyplanner_terrainPitch';
 
 // Toggle between satellite and dark map style
 function toggleNightMode() {
@@ -86,6 +100,24 @@ function toggleNightMode() {
 function enableTerrain(animate = true) {
   if (!map) return;
 
+  // Restore saved exaggeration from localStorage
+  const savedExag = localStorage.getItem(TERRAIN_EXAG_LS_KEY);
+  if (savedExag) {
+    const parsed = parseFloat(savedExag);
+    if (!isNaN(parsed) && parsed >= TERRAIN_EXAGGERATION_MIN && parsed <= TERRAIN_EXAGGERATION_MAX) {
+      terrainExaggeration = parsed;
+    }
+  }
+
+  // Restore saved pitch from localStorage
+  const savedPitch = localStorage.getItem(TERRAIN_PITCH_LS_KEY);
+  if (savedPitch) {
+    const parsed = parseFloat(savedPitch);
+    if (!isNaN(parsed) && parsed >= TERRAIN_PITCH_MIN && parsed <= TERRAIN_PITCH_MAX) {
+      terrainPitch = parsed;
+    }
+  }
+
   // Add Mapbox DEM source if not present
   if (!map.getSource('mapbox-dem')) {
     map.addSource('mapbox-dem', {
@@ -97,7 +129,7 @@ function enableTerrain(animate = true) {
   }
 
   // Enable terrain with exaggeration
-  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: terrainExaggeration });
 
   // Add sky layer for atmosphere effect
   if (!map.getLayer('sky-layer')) {
@@ -114,9 +146,9 @@ function enableTerrain(animate = true) {
 
   // Animate or set pitch for 3D viewing angle
   if (animate) {
-    map.easeTo({ pitch: TERRAIN_PITCH, duration: 1000 });
+    map.easeTo({ pitch: terrainPitch, duration: 1000 });
   } else {
-    map.setPitch(TERRAIN_PITCH);
+    map.setPitch(terrainPitch);
   }
 
   // Enable compass on NavigationControl for pitch reset
@@ -129,6 +161,7 @@ function enableTerrain(animate = true) {
   terrainEnabled = true;
   localStorage.setItem(TERRAIN_LS_KEY, 'true');
   updateTerrainButton(true);
+  show3DIndicator(true);
   Logger.log('3D terreng aktivert');
 }
 
@@ -154,6 +187,7 @@ function disableTerrain() {
   terrainEnabled = false;
   localStorage.setItem(TERRAIN_LS_KEY, 'false');
   updateTerrainButton(false);
+  show3DIndicator(false);
   Logger.log('3D terreng deaktivert');
 }
 
@@ -175,7 +209,63 @@ function updateTerrainButton(active) {
     btn.classList.remove('active');
     btn.title = 'Slå på 3D-terreng';
   }
+  showTerrainSlider(active);
+  // Sync slider values
+  const exagSlider = document.getElementById('terrainExagRange');
+  if (exagSlider) exagSlider.value = terrainExaggeration;
+  const exagLabel = document.getElementById('terrainExagLabel');
+  if (exagLabel) exagLabel.textContent = terrainExaggeration.toFixed(1) + 'x';
+  const pitchSlider = document.getElementById('terrainPitchRange');
+  if (pitchSlider) pitchSlider.value = terrainPitch;
+  const pitchLabel = document.getElementById('terrainPitchLabel');
+  if (pitchLabel) pitchLabel.textContent = Math.round(terrainPitch) + '°';
 }
+
+function setTerrainExaggeration(value) {
+  terrainExaggeration = Math.max(TERRAIN_EXAGGERATION_MIN, Math.min(TERRAIN_EXAGGERATION_MAX, value));
+  localStorage.setItem(TERRAIN_EXAG_LS_KEY, terrainExaggeration.toString());
+  if (terrainEnabled && map) {
+    map.setTerrain({ source: 'mapbox-dem', exaggeration: terrainExaggeration });
+  }
+  // Update slider label
+  const label = document.getElementById('terrainExagLabel');
+  if (label) label.textContent = terrainExaggeration.toFixed(1) + 'x';
+}
+
+function setTerrainPitch(value) {
+  terrainPitch = Math.max(TERRAIN_PITCH_MIN, Math.min(TERRAIN_PITCH_MAX, value));
+  localStorage.setItem(TERRAIN_PITCH_LS_KEY, terrainPitch.toString());
+  if (terrainEnabled && map) {
+    map.easeTo({ pitch: terrainPitch, duration: 200 });
+  }
+  const label = document.getElementById('terrainPitchLabel');
+  if (label) label.textContent = Math.round(terrainPitch) + '°';
+}
+
+function showTerrainSlider(show) {
+  const slider = document.getElementById('terrainExagSlider');
+  if (slider) {
+    slider.classList.toggle('visible', show);
+  }
+}
+
+function show3DIndicator(show) {
+  let indicator = document.getElementById('terrain3dIndicator');
+  if (show) {
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = 'terrain3dIndicator';
+      indicator.className = 'terrain-3d-indicator';
+      indicator.innerHTML = '<i class="fas fa-mountain" aria-hidden="true"></i> 3D-modus aktivert';
+      document.body.appendChild(indicator);
+    }
+    requestAnimationFrame(() => indicator.classList.add('visible'));
+  } else if (indicator) {
+    indicator.classList.remove('visible');
+    setTimeout(() => indicator.remove(), 300);
+  }
+}
+
 
 function reapplyTerrain() {
   if (!terrainEnabled || !map) return;
@@ -187,7 +277,7 @@ function reapplyTerrain() {
       maxzoom: 14
     });
   }
-  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: terrainExaggeration });
   if (!map.getLayer('sky-layer')) {
     map.addLayer({
       id: 'sky-layer',
@@ -210,13 +300,13 @@ function initSharedMap(options = {}) {
     // Set Mapbox GL JS access token
     mapboxgl.accessToken = getMapboxToken();
 
-    // If returning user, skip globe view and start at office location (or Norway center)
+    // If returning user, skip globe view and start at office location (or Norway overview)
     const skipGlobe = options.skipGlobe || false;
     const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
     const initialCenter = skipGlobe
-      ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : [15.0, 67.5])
-      : [15.0, 65.0];
-    const initialZoom = skipGlobe ? 6 : 3.0;
+      ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : NORWAY_CENTER)
+      : NORWAY_CENTER;
+    const initialZoom = skipGlobe ? (hasOfficeLocation ? 6 : NORWAY_ZOOM) : 3.0;
 
     // Create Mapbox GL JS map with globe projection
     map = new mapboxgl.Map({
@@ -256,34 +346,162 @@ function initSharedMap(options = {}) {
 
     Logger.log('Mapbox GL JS map initialized with globe projection');
 
-    // Add glowing office marker (Brøstadveien 343, 9311 Brøstadbotn)
-    const officeEl = createMarkerElement('office-marker-glow', `
-      <div class="office-marker-container">
-        <div class="office-glow-ring"></div>
-        <div class="office-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-            <polyline points="9 22 9 12 15 12 15 22"/>
-          </svg>
-        </div>
-      </div>
-    `, [60, 60]);
-    officeEl.setAttribute('aria-hidden', 'true');
-
-    const homeLng = appConfig.routeStartLng || 17.65274;
-    const homeLat = appConfig.routeStartLat || 69.06888;
-    officeMarker = new mapboxgl.Marker({ element: officeEl, anchor: 'center' })
-      .setLngLat([homeLng, homeLat])
-      .addTo(map);
+    // Office marker is added after login via updateOfficeMarkerPosition()
+    // (pre-login config may contain env fallback coords that don't belong to the user)
   }
+}
+
+function createOfficeMarkerElement() {
+  const el = createMarkerElement('office-marker-glow', `
+    <div class="office-marker-container">
+      <div class="office-glow-ring"></div>
+      <div class="office-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+      </div>
+    </div>
+  `, [60, 60]);
+  el.setAttribute('aria-hidden', 'true');
+  return el;
 }
 
 // Update office marker position when org-specific config is loaded after auth
 function updateOfficeMarkerPosition() {
-  if (!officeMarker) return;
-  const homeLng = appConfig.routeStartLng || 17.65274;
-  const homeLat = appConfig.routeStartLat || 69.06888;
-  officeMarker.setLngLat([homeLng, homeLat]);
+  const homeLng = appConfig.routeStartLng;
+  const homeLat = appConfig.routeStartLat;
+
+  if (homeLng && homeLat) {
+    if (officeMarker) {
+      officeMarker.setLngLat([homeLng, homeLat]);
+    } else if (map) {
+      const officeEl = createOfficeMarkerElement();
+      officeMarker = new mapboxgl.Marker({ element: officeEl, anchor: 'center' })
+        .setLngLat([homeLng, homeLat])
+        .addTo(map);
+    }
+  } else if (officeMarker) {
+    officeMarker.remove();
+    officeMarker = null;
+  }
+}
+
+// Get configured route start location, or null if not set
+function getRouteStartLocation() {
+  if (appConfig.routeStartLat && appConfig.routeStartLng) {
+    return { lat: appConfig.routeStartLat, lng: appConfig.routeStartLng };
+  }
+  return null;
+}
+
+// Show prominent prompt to set office address
+function showAddressBannerIfNeeded() {
+  // Only show if no address is configured
+  if (getRouteStartLocation()) return;
+
+  // If already dismissed this session, show persistent nudge instead
+  if (sessionStorage.getItem('addressBannerDismissed')) {
+    showPersistentAddressNudge();
+    const adminBadge = document.getElementById('adminAddressBadge');
+    if (adminBadge) adminBadge.style.display = 'inline-flex';
+    return;
+  }
+
+  // Remove any existing prompt
+  const existing = document.getElementById('addressSetupBanner');
+  if (existing) existing.remove();
+
+  const prompt = document.createElement('div');
+  prompt.id = 'addressSetupBanner';
+  prompt.className = 'address-setup-prompt';
+  prompt.innerHTML = `
+    <div class="address-prompt-backdrop" onclick="dismissAddressBanner()"></div>
+    <div class="address-prompt-card">
+      <div class="address-prompt-step-indicator">Kom i gang</div>
+      <div class="address-prompt-icon address-prompt-icon-animated">
+        <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+      </div>
+      <h2>Hvor holder dere til?</h2>
+      <p>Legg inn firmaadresse for å se kontoret ditt på kartet og bruke ruteplanlegging. Det tar bare et øyeblikk.</p>
+      <div class="address-prompt-actions">
+        <button class="address-prompt-btn-primary" onclick="openAdminAddressTab()">
+          <i class="fas fa-map-marker-alt" aria-hidden="true"></i> Legg inn adresse nå
+        </button>
+        <button class="address-prompt-btn-secondary" onclick="dismissAddressBanner()">
+          Jeg gjør det senere
+        </button>
+      </div>
+    </div>
+  `;
+
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer) {
+    mapContainer.appendChild(prompt);
+    requestAnimationFrame(() => prompt.classList.add('visible'));
+  }
+
+  // Show action-needed badge on admin tab
+  const adminBadge = document.getElementById('adminAddressBadge');
+  if (adminBadge) adminBadge.style.display = 'inline-flex';
+}
+
+function dismissAddressBanner() {
+  const prompt = document.getElementById('addressSetupBanner');
+  if (prompt) {
+    prompt.classList.remove('visible');
+    setTimeout(() => prompt.remove(), 300);
+  }
+  sessionStorage.setItem('addressBannerDismissed', 'true');
+
+  // Show persistent nudge pill after banner is dismissed
+  setTimeout(() => showPersistentAddressNudge(), 400);
+}
+
+function openAdminAddressTab() {
+  dismissAddressBanner();
+  // Switch to admin tab
+  const adminTab = document.getElementById('adminTab');
+  if (adminTab) {
+    adminTab.click();
+    // Scroll to address section after tab renders
+    setTimeout(() => {
+      const section = document.getElementById('companyAddressSection');
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+  }
+}
+
+// Persistent floating nudge pill (visible after banner dismissal if address still not set)
+function showPersistentAddressNudge() {
+  if (getRouteStartLocation()) return;
+  if (document.getElementById('addressNudgePill')) return;
+
+  const nudge = document.createElement('div');
+  nudge.id = 'addressNudgePill';
+  nudge.className = 'address-nudge-pill';
+  nudge.innerHTML = `
+    <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+    <span>Firmaadresse ikke satt</span>
+  `;
+  nudge.addEventListener('click', () => {
+    openAdminAddressTab();
+    removeAddressNudge();
+  });
+
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer) {
+    mapContainer.appendChild(nudge);
+    requestAnimationFrame(() => nudge.classList.add('visible'));
+  }
+}
+
+function removeAddressNudge() {
+  const nudge = document.getElementById('addressNudgePill');
+  if (nudge) {
+    nudge.classList.remove('visible');
+    setTimeout(() => nudge.remove(), 300);
+  }
 }
 
 // Globe spin animation for login screen
@@ -471,6 +689,36 @@ function initMap() {
     terrainBtn.innerHTML = '<i aria-hidden="true" class="fas fa-mountain"></i>';
     terrainBtn.addEventListener('click', () => toggleTerrain());
     toolbar.appendChild(terrainBtn);
+
+    // Terrain controls panel (shown when 3D is active)
+    const sliderPanel = document.createElement('div');
+    sliderPanel.id = 'terrainExagSlider';
+    sliderPanel.className = 'terrain-exag-slider';
+    sliderPanel.innerHTML = `
+      <div class="terrain-slider-row">
+        <label for="terrainExagRange" class="terrain-exag-title">Skarphet</label>
+        <input type="range" id="terrainExagRange"
+          min="${TERRAIN_EXAGGERATION_MIN}" max="${TERRAIN_EXAGGERATION_MAX}"
+          step="${TERRAIN_EXAGGERATION_STEP}" value="${terrainExaggeration}">
+        <span id="terrainExagLabel" class="terrain-exag-label">${terrainExaggeration.toFixed(1)}x</span>
+      </div>
+      <div class="terrain-slider-row">
+        <label for="terrainPitchRange" class="terrain-exag-title">Vinkel</label>
+        <input type="range" id="terrainPitchRange"
+          min="${TERRAIN_PITCH_MIN}" max="${TERRAIN_PITCH_MAX}"
+          step="${TERRAIN_PITCH_STEP}" value="${terrainPitch}">
+        <span id="terrainPitchLabel" class="terrain-exag-label">${Math.round(terrainPitch)}°</span>
+      </div>
+    `;
+    toolbar.appendChild(sliderPanel);
+
+    // Slider input handlers
+    sliderPanel.querySelector('#terrainExagRange').addEventListener('input', (e) => {
+      setTerrainExaggeration(parseFloat(e.target.value));
+    });
+    sliderPanel.querySelector('#terrainPitchRange').addEventListener('input', (e) => {
+      setTerrainPitch(parseFloat(e.target.value));
+    });
   }
 
   // Restore terrain preference from localStorage (only after login)

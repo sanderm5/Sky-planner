@@ -15,6 +15,7 @@ const router: Router = Router();
 // Database service interface (will be injected)
 interface ConfigDbService {
   getOrganizationById(id: number): Promise<Organization | null>;
+  updateOrganization(id: number, data: Partial<Organization>): Promise<Organization | null>;
   getIndustryTemplateById?(id: number): Promise<IndustryTemplate | null>;
   getEnabledFeatureKeys?(organizationId: number): Promise<string[]>;
   getEnabledFeaturesWithConfig?(organizationId: number): Promise<{ key: string; config: Record<string, unknown> }[]>;
@@ -135,9 +136,9 @@ router.get(
       mapZoom: envConfig.MAP_ZOOM,
       mapboxAccessToken: envConfig.MAPBOX_ACCESS_TOKEN || undefined,
       orsApiKeyConfigured: Boolean(envConfig.ORS_API_KEY),
-      routeStartLat: organization?.route_start_lat || envConfig.ROUTE_START_LAT,
-      routeStartLng: organization?.route_start_lng || envConfig.ROUTE_START_LNG,
-      routeStartAddress: organization?.company_address || envConfig.ROUTE_START_ADDRESS,
+      routeStartLat: organization ? (organization.route_start_lat || undefined) : envConfig.ROUTE_START_LAT,
+      routeStartLng: organization ? (organization.route_start_lng || undefined) : envConfig.ROUTE_START_LNG,
+      routeStartAddress: organization ? (organization.route_start_address || undefined) : envConfig.ROUTE_START_ADDRESS,
       enableRoutePlanning: envConfig.ENABLE_ROUTE_PLANNING,
       emailNotificationsEnabled: envConfig.EMAIL_NOTIFICATIONS_ENABLED,
       organizationName: organization?.navn,
@@ -164,6 +165,68 @@ router.get(
     const response: ApiResponse<typeof appConfig> = {
       success: true,
       data: appConfig,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * PUT /api/organization/address
+ * Update company address and route start coordinates
+ */
+router.put(
+  '/organization/address',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const orgId = req.organizationId;
+    if (!orgId) {
+      throw Errors.unauthorized('Ingen organisasjon funnet');
+    }
+
+    const { company_address, company_postnummer, company_poststed, route_start_lat, route_start_lng } = req.body;
+
+    // Validate lat/lng ranges if provided
+    if (route_start_lat !== undefined && route_start_lat !== null) {
+      const lat = Number(route_start_lat);
+      if (isNaN(lat) || lat < -90 || lat > 90) {
+        throw Errors.badRequest('Ugyldig breddegrad (må være mellom -90 og 90)');
+      }
+    }
+    if (route_start_lng !== undefined && route_start_lng !== null) {
+      const lng = Number(route_start_lng);
+      if (isNaN(lng) || lng < -180 || lng > 180) {
+        throw Errors.badRequest('Ugyldig lengdegrad (må være mellom -180 og 180)');
+      }
+    }
+
+    // Validate postnummer format if provided
+    if (company_postnummer !== undefined && company_postnummer !== null && company_postnummer !== '') {
+      if (!/^\d{4}$/.test(company_postnummer)) {
+        throw Errors.badRequest('Postnummer må være 4 siffer');
+      }
+    }
+
+    const updateData: Record<string, unknown> = {};
+    // Use existing DB columns: route_start_address (street), firma_adresse (full address with postal)
+    if (company_address !== undefined) {
+      updateData.route_start_address = company_address || null;
+      // Build full address for firma_adresse
+      const parts = [company_address, company_postnummer, company_poststed].filter(Boolean);
+      updateData.firma_adresse = parts.length > 0 ? parts.join(', ') : null;
+    }
+    if (route_start_lat !== undefined) updateData.route_start_lat = route_start_lat || null;
+    if (route_start_lng !== undefined) updateData.route_start_lng = route_start_lng || null;
+
+    if (Object.keys(updateData).length === 0) {
+      throw Errors.badRequest('Ingen felter å oppdatere');
+    }
+
+    await dbService.updateOrganization(orgId, updateData);
+
+    const response: ApiResponse = {
+      success: true,
+      data: { message: 'Firmaadresse oppdatert' },
     };
 
     res.json(response);

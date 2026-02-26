@@ -269,6 +269,7 @@ async function loadOrganizationCategories() {
             defaultInterval: cat.default_interval_months,
         }));
         serviceTypeRegistry.loadFromConfig(appConfig);
+        injectDynamicMarkerStyles();
       }
 
       // Re-render category UI to reflect loaded categories

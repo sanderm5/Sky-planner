@@ -1,8 +1,7 @@
 import clsx from 'clsx';
 
-interface BadgeProps {
+interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: 'default' | 'success' | 'warning' | 'danger';
-  className?: string;
   children: React.ReactNode;
 }
 
@@ -17,6 +16,7 @@ export default function Badge({
   variant = 'default',
   className = '',
   children,
+  ...rest
 }: BadgeProps) {
   return (
     <span
@@ -25,6 +25,7 @@ export default function Badge({
         variantClasses[variant],
         className
       )}
+      {...rest}
     >
       {children}
     </span>

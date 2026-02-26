@@ -354,9 +354,8 @@ export interface Organization {
   map_zoom?: number;
   route_start_lat?: number;
   route_start_lng?: number;
-  company_address?: string;
-  company_postnummer?: string;
-  company_poststed?: string;
+  route_start_address?: string;
+  firma_adresse?: string;
   industry_template_id?: number | null;
   onboarding_completed?: boolean;
   onboarding_stage?: OnboardingStage;

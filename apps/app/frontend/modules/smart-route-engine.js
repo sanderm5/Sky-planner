@@ -286,11 +286,11 @@ const SmartRouteEngine = {
 
     if (typeof MatrixService === 'undefined') return basic;
 
-    const startLng = appConfig.routeStartLng || 17.65274;
-    const startLat = appConfig.routeStartLat || 69.06888;
+    const routeStart = getRouteStartLocation();
+    if (!routeStart) return basic;
 
     const coords = [
-      [startLng, startLat],
+      [routeStart.lng, routeStart.lat],
       ...cluster.filter(c => c.lat && c.lng).map(c => [c.lng, c.lat])
     ];
 

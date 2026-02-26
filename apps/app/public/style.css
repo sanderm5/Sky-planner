@@ -10100,6 +10100,104 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   background: #10b981;
   color: white;
   box-shadow: 0 2px 12px rgba(16, 185, 129, 0.5);
+  animation: terrain-pulse 2s ease-in-out infinite;
+}
+@keyframes terrain-pulse {
+  0%, 100% { box-shadow: 0 2px 12px rgba(16, 185, 129, 0.5); }
+  50% { box-shadow: 0 2px 20px rgba(16, 185, 129, 0.8); }
+}
+
+/* 3D mode persistent indicator */
+.terrain-3d-indicator {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.4);
+  z-index: 1000;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.3s, transform 0.3s;
+}
+.terrain-3d-indicator.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.terrain-3d-indicator i {
+  font-size: 11px;
+}
+
+/* === 3D TERRAIN CONTROLS PANEL === */
+.terrain-exag-slider {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  background: white;
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  white-space: nowrap;
+}
+.terrain-exag-slider.visible {
+  display: flex;
+}
+.terrain-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.terrain-exag-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  min-width: 52px;
+  cursor: default;
+}
+.terrain-exag-slider input[type="range"] {
+  width: 100px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #d1d5db;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.terrain-exag-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #10b981;
+  border: 2px solid white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  cursor: pointer;
+}
+.terrain-exag-slider input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #10b981;
+  border: 2px solid white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  cursor: pointer;
+}
+.terrain-exag-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #10b981;
+  min-width: 30px;
+  text-align: right;
 }
 
 /* === WEEKPLAN DRIVE TIME SEPARATORS === */
@@ -11724,6 +11822,344 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   font-size: var(--font-size-sm);
   margin-bottom: 16px;
   margin-top: -8px;
+}
+
+/* ========================================
+   ADMIN COMPANY ADDRESS
+   ======================================== */
+
+.company-address-form .form-group {
+  margin-bottom: 16px;
+}
+
+.company-address-form .form-group label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--color-text-secondary);
+}
+
+.company-address-form .form-group label i {
+  margin-right: 6px;
+  color: var(--color-primary);
+}
+
+.company-address-form .form-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 12px;
+}
+
+.company-address-form input[type="text"] {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  box-sizing: border-box;
+}
+
+.company-address-form input[type="text"]:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.15);
+}
+
+.admin-address-wrapper {
+  position: relative;
+}
+
+.admin-address-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 100;
+  display: none;
+  margin-top: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.admin-address-suggestions.visible {
+  display: block;
+}
+
+.admin-address-suggestion {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border);
+  transition: background 0.15s;
+  font-size: var(--font-size-sm);
+}
+
+.admin-address-suggestion:last-child {
+  border-bottom: none;
+}
+
+.admin-address-suggestion:hover,
+.admin-address-suggestion.selected {
+  background: var(--color-bg-hover);
+}
+
+.admin-address-suggestion i {
+  color: var(--color-primary);
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.admin-postnummer-wrapper {
+  position: relative;
+}
+
+.admin-postnummer-wrapper input {
+  padding-right: 36px;
+}
+
+.admin-postnummer-status {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+}
+
+.admin-postnummer-status.valid {
+  color: #22c55e;
+}
+
+.admin-postnummer-status.invalid {
+  color: #ef4444;
+}
+
+.admin-postnummer-status.loading {
+  color: var(--color-text-secondary);
+}
+
+.admin-coordinates {
+  padding: 8px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: var(--font-size-sm);
+  font-family: monospace;
+}
+
+.admin-coordinates .not-set {
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-family: inherit;
+}
+
+.company-address-form .form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ========================================
+   ADDRESS SETUP PROMPT (centered on map)
+   ======================================== */
+
+.address-setup-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.address-setup-prompt.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.address-prompt-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.address-prompt-card {
+  position: relative;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 40px 36px;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  transform: scale(0.95) translateY(10px);
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.address-setup-prompt.visible .address-prompt-card {
+  transform: scale(1) translateY(0);
+}
+
+.address-prompt-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 20px;
+  background: rgba(16, 185, 129, 0.15);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.address-prompt-icon i {
+  font-size: 28px;
+  color: var(--color-primary);
+}
+
+.address-prompt-card h2 {
+  margin: 0 0 10px;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.address-prompt-card p {
+  margin: 0 0 28px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.address-prompt-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.address-prompt-btn-primary {
+  padding: 12px 24px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.address-prompt-btn-primary:hover {
+  background: var(--color-primary-hover);
+  transform: translateY(-1px);
+}
+
+.address-prompt-btn-primary i {
+  margin-right: 8px;
+}
+
+.address-prompt-btn-secondary {
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  transition: color 0.15s;
+}
+
+.address-prompt-btn-secondary:hover {
+  color: var(--color-text-primary);
+}
+
+/* "Kom i gang" step indicator pill */
+.address-prompt-step-indicator {
+  display: inline-block;
+  padding: 4px 14px;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-primary);
+  border-radius: 20px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 16px;
+}
+
+/* Bouncing icon animation */
+.address-prompt-icon-animated i {
+  animation: address-icon-bounce 2s ease-in-out infinite;
+}
+
+@keyframes address-icon-bounce {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-6px); }
+  50% { transform: translateY(0); }
+  70% { transform: translateY(-3px); }
+}
+
+/* Persistent address nudge pill (floating on map after banner dismissal) */
+.address-nudge-pill {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: 24px;
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease, background 0.15s, color 0.15s;
+  pointer-events: none;
+}
+
+.address-nudge-pill.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.address-nudge-pill:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.address-nudge-pill i {
+  font-size: 14px;
+  animation: address-nudge-pulse 3s ease-in-out infinite;
+}
+
+@keyframes address-nudge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Admin tab – address action needed badge (green instead of red) */
+.address-action-badge {
+  background: var(--color-primary) !important;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.4) !important;
+  font-size: 10px !important;
+  min-width: 16px !important;
+  height: 16px !important;
 }
 
 .sortable-list {

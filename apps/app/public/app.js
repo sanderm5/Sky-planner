@@ -2397,6 +2397,17 @@ class ServiceTypeRegistry {
   }
 
   /**
+   * Render <option> elements for a <select> dropdown
+   */
+  renderCategoryOptions(selectedValue = '') {
+    const serviceTypes = this.getAll();
+    return serviceTypes.map(st => {
+      const selected = st.name === selectedValue || st.slug === selectedValue ? 'selected' : '';
+      return `<option value="${escapeHtml(st.name)}" ${selected}>${escapeHtml(st.name)}</option>`;
+    }).join('');
+  }
+
+  /**
    * Get selected categories from checkboxes as " + " joined string
    */
   getSelectedCategories() {
@@ -3409,11 +3420,11 @@ const SmartRouteEngine = {
 
     if (typeof MatrixService === 'undefined') return basic;
 
-    const startLng = appConfig.routeStartLng || 17.65274;
-    const startLat = appConfig.routeStartLat || 69.06888;
+    const routeStart = getRouteStartLocation();
+    if (!routeStart) return basic;
 
     const coords = [
-      [startLng, startLat],
+      [routeStart.lng, routeStart.lat],
       ...cluster.filter(c => c.lat && c.lng).map(c => [c.lng, c.lat])
     ];
 
@@ -9726,6 +9737,8 @@ let loginLogOffset = 0;
 const LOGIN_LOG_LIMIT = 20;
 
 async function loadAdminData() {
+  // Initialize company address UI
+  initCompanyAddressUI();
   // Initialize team members UI
   initTeamMembersUI();
   // Initialize fields management UI
@@ -10323,6 +10336,299 @@ function renderBrannsystemStats() {
   });
 
   renderBarStats('brannsystemStats', systems, { barClass: 'brannsystem' });
+}
+
+// ========================================
+// COMPANY ADDRESS FUNCTIONS
+// ========================================
+
+let adminAddressSuggestions = [];
+let adminSelectedIndex = -1;
+let adminAddressDebounceTimer = null;
+
+function initCompanyAddressUI() {
+  loadCompanyAddress();
+  setupAdminAddressAutocomplete();
+  setupAdminPostnummerLookup();
+}
+
+function loadCompanyAddress() {
+  const addressInput = document.getElementById('adminCompanyAddress');
+  const postnummerInput = document.getElementById('adminCompanyPostnummer');
+  const poststedInput = document.getElementById('adminCompanyPoststed');
+  const coordsDisplay = document.getElementById('adminCoordinates');
+  const clearBtn = document.getElementById('clearCompanyAddressBtn');
+
+  if (!addressInput) return;
+
+  // Fill from appConfig
+  if (appConfig.routeStartAddress) {
+    addressInput.value = appConfig.routeStartAddress;
+  }
+  if (appConfig.routeStartLat && appConfig.routeStartLng) {
+    coordsDisplay.innerHTML = `<span>${appConfig.routeStartLat.toFixed(5)}, ${appConfig.routeStartLng.toFixed(5)}</span>`;
+    clearBtn.style.display = '';
+  } else {
+    coordsDisplay.innerHTML = '<span class="not-set">Ikke satt</span>';
+    clearBtn.style.display = 'none';
+  }
+}
+
+function setupAdminAddressAutocomplete() {
+  const input = document.getElementById('adminCompanyAddress');
+  const suggestionsContainer = document.getElementById('adminAddressSuggestions');
+  if (!input || !suggestionsContainer) return;
+
+  input.addEventListener('input', () => {
+    const query = input.value.trim();
+    clearTimeout(adminAddressDebounceTimer);
+    if (query.length < 3) {
+      suggestionsContainer.classList.remove('visible');
+      adminAddressSuggestions = [];
+      return;
+    }
+    adminAddressDebounceTimer = setTimeout(async () => {
+      try {
+        const results = await searchAddresses(query);
+        adminAddressSuggestions = results;
+        adminSelectedIndex = -1;
+        renderAdminAddressSuggestions(results);
+      } catch (err) {
+        Logger.warn('Address search error:', err);
+      }
+    }, 300);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (!adminAddressSuggestions.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      adminSelectedIndex = Math.min(adminSelectedIndex + 1, adminAddressSuggestions.length - 1);
+      highlightAdminSuggestion();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      adminSelectedIndex = Math.max(adminSelectedIndex - 1, 0);
+      highlightAdminSuggestion();
+    } else if (e.key === 'Enter' && adminSelectedIndex >= 0) {
+      e.preventDefault();
+      selectAdminAddressSuggestion(adminAddressSuggestions[adminSelectedIndex]);
+    } else if (e.key === 'Escape') {
+      suggestionsContainer.classList.remove('visible');
+    }
+  });
+
+  // Close on click outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.admin-address-wrapper')) {
+      suggestionsContainer.classList.remove('visible');
+    }
+  });
+}
+
+function renderAdminAddressSuggestions(results) {
+  const container = document.getElementById('adminAddressSuggestions');
+  if (!container) return;
+
+  if (!results.length) {
+    container.classList.remove('visible');
+    return;
+  }
+
+  container.innerHTML = results.map((r, i) => `
+    <div class="admin-address-suggestion${i === adminSelectedIndex ? ' selected' : ''}"
+         onclick="selectAdminAddressSuggestion(adminAddressSuggestions[${i}])">
+      <i class="fas fa-map-marker-alt"></i>
+      <span>${escapeHtml(r.adresse)} &mdash; ${escapeHtml(r.postnummer)} ${escapeHtml(r.poststed)}</span>
+    </div>
+  `).join('');
+  container.classList.add('visible');
+}
+
+function highlightAdminSuggestion() {
+  const items = document.querySelectorAll('.admin-address-suggestion');
+  items.forEach((item, i) => {
+    item.classList.toggle('selected', i === adminSelectedIndex);
+  });
+}
+
+function selectAdminAddressSuggestion(suggestion) {
+  if (!suggestion) return;
+
+  const addressInput = document.getElementById('adminCompanyAddress');
+  const postnummerInput = document.getElementById('adminCompanyPostnummer');
+  const poststedInput = document.getElementById('adminCompanyPoststed');
+  const coordsDisplay = document.getElementById('adminCoordinates');
+  const suggestionsContainer = document.getElementById('adminAddressSuggestions');
+
+  addressInput.value = suggestion.adresse || '';
+  postnummerInput.value = suggestion.postnummer || '';
+  poststedInput.value = suggestion.poststed || '';
+
+  if (suggestion.lat && suggestion.lng) {
+    coordsDisplay.innerHTML = `<span>${Number(suggestion.lat).toFixed(5)}, ${Number(suggestion.lng).toFixed(5)}</span>`;
+    coordsDisplay.dataset.lat = suggestion.lat;
+    coordsDisplay.dataset.lng = suggestion.lng;
+  }
+
+  suggestionsContainer.classList.remove('visible');
+  adminAddressSuggestions = [];
+  adminSelectedIndex = -1;
+}
+
+function setupAdminPostnummerLookup() {
+  const input = document.getElementById('adminCompanyPostnummer');
+  const status = document.getElementById('adminPostnummerStatus');
+  const poststedInput = document.getElementById('adminCompanyPoststed');
+  if (!input) return;
+
+  input.addEventListener('input', async () => {
+    const value = input.value.trim();
+    if (!/^\d{4}$/.test(value)) {
+      if (status) status.textContent = '';
+      return;
+    }
+
+    if (status) { status.textContent = '⟳'; status.className = 'admin-postnummer-status loading'; }
+
+    try {
+      const result = await lookupPostnummer(value);
+      if (result && result.poststed) {
+        poststedInput.value = result.poststed;
+        if (status) { status.textContent = '✓'; status.className = 'admin-postnummer-status valid'; }
+      } else {
+        if (status) { status.textContent = '✗'; status.className = 'admin-postnummer-status invalid'; }
+      }
+    } catch {
+      if (status) { status.textContent = '✗'; status.className = 'admin-postnummer-status invalid'; }
+    }
+  });
+}
+
+async function saveCompanyAddress() {
+  const address = document.getElementById('adminCompanyAddress')?.value.trim() || '';
+  const postnummer = document.getElementById('adminCompanyPostnummer')?.value.trim() || '';
+  const poststed = document.getElementById('adminCompanyPoststed')?.value.trim() || '';
+  const coordsDisplay = document.getElementById('adminCoordinates');
+
+  let lat = coordsDisplay?.dataset?.lat ? Number(coordsDisplay.dataset.lat) : null;
+  let lng = coordsDisplay?.dataset?.lng ? Number(coordsDisplay.dataset.lng) : null;
+
+  // If we have address but no coords, try to geocode
+  if (address && (!lat || !lng)) {
+    try {
+      const fullAddress = `${address}, ${postnummer} ${poststed}, Norge`;
+      const geoResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddress)}&limit=1`);
+      const geoData = await geoResponse.json();
+      if (geoData.length > 0) {
+        lat = Number(geoData[0].lat);
+        lng = Number(geoData[0].lon);
+      }
+    } catch (err) {
+      Logger.warn('Geocoding failed:', err);
+    }
+  }
+
+  const saveBtn = document.getElementById('saveCompanyAddressBtn');
+  saveBtn.disabled = true;
+  saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Lagrer...';
+
+  try {
+    const response = await apiFetch('/api/organization/address', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company_address: address || null,
+        company_postnummer: postnummer || null,
+        company_poststed: poststed || null,
+        route_start_lat: lat,
+        route_start_lng: lng,
+      }),
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      // Update appConfig in memory
+      appConfig.routeStartAddress = address || undefined;
+      appConfig.routeStartLat = lat || undefined;
+      appConfig.routeStartLng = lng || undefined;
+
+      // Update office marker on map
+      updateOfficeMarkerPosition();
+
+      // Fly map to the newly saved office location
+      if (lat && lng && map) {
+        map.flyTo({ center: [lng, lat], zoom: 6, duration: 1600, essential: true });
+      }
+
+      // Update coordinates display
+      if (lat && lng) {
+        coordsDisplay.innerHTML = `<span>${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+        coordsDisplay.dataset.lat = lat;
+        coordsDisplay.dataset.lng = lng;
+        document.getElementById('clearCompanyAddressBtn').style.display = '';
+      }
+
+      // Remove address banner, nudge pill and admin badge
+      dismissAddressBanner();
+      removeAddressNudge();
+      const adminBadge = document.getElementById('adminAddressBadge');
+      if (adminBadge) adminBadge.style.display = 'none';
+
+      showToast('Firmaadresse lagret', 'success');
+    } else {
+      showToast(result.error?.message || 'Kunne ikke lagre adresse', 'error');
+    }
+  } catch (err) {
+    Logger.error('Save company address error:', err);
+    showToast('Feil ved lagring av adresse', 'error');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = '<i class="fas fa-save"></i> Lagre adresse';
+  }
+}
+
+async function clearCompanyAddress() {
+  if (!confirm('Er du sikker på at du vil fjerne firmaadresse?')) return;
+
+  try {
+    const response = await apiFetch('/api/organization/address', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company_address: null,
+        company_postnummer: null,
+        company_poststed: null,
+        route_start_lat: null,
+        route_start_lng: null,
+      }),
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      // Clear appConfig
+      appConfig.routeStartAddress = undefined;
+      appConfig.routeStartLat = undefined;
+      appConfig.routeStartLng = undefined;
+
+      // Clear form
+      document.getElementById('adminCompanyAddress').value = '';
+      document.getElementById('adminCompanyPostnummer').value = '';
+      document.getElementById('adminCompanyPoststed').value = '';
+      const coordsDisplay = document.getElementById('adminCoordinates');
+      coordsDisplay.innerHTML = '<span class="not-set">Ikke satt</span>';
+      delete coordsDisplay.dataset.lat;
+      delete coordsDisplay.dataset.lng;
+      document.getElementById('clearCompanyAddressBtn').style.display = 'none';
+
+      // Hide office marker
+      updateOfficeMarkerPosition();
+
+      showToast('Firmaadresse fjernet', 'success');
+    }
+  } catch (err) {
+    Logger.error('Clear company address error:', err);
+    showToast('Feil ved fjerning av adresse', 'error');
+  }
 }
 
 
@@ -12992,14 +13298,17 @@ async function planRoute() {
     return;
   }
 
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showMessage('Sett firmaadresse i admin-innstillinger for å bruke ruteplanlegging.', 'warning');
+    return;
+  }
+
   planRouteBtn.classList.add('loading');
   planRouteBtn.disabled = true;
 
   // Get start location from config (company address)
-  const startLocation = [
-    appConfig.routeStartLng || 17.65274,
-    appConfig.routeStartLat || 69.06888
-  ];
+  const startLocation = [routeStart.lng, routeStart.lat];
 
   try {
     const optimizeHeaders = { 'Content-Type': 'application/json' };
@@ -13059,11 +13368,13 @@ async function planRoute() {
 // Simple route without optimization
 async function planSimpleRoute(customerData) {
   try {
-    const startLocation = [
-      appConfig.routeStartLng || 17.65274,
-      appConfig.routeStartLat || 69.06888
-    ];
-    const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
+    const routeStart = getRouteStartLocation();
+    if (!routeStart) {
+      showMessage('Sett firmaadresse i admin-innstillinger for å bruke ruteplanlegging.', 'warning');
+      return;
+    }
+    const startLocation = [routeStart.lng, routeStart.lat];
+    const startLngLat = [routeStart.lng, routeStart.lat];
 
     const coordinates = [
       startLocation,
@@ -13148,11 +13459,10 @@ async function planSimpleRoute(customerData) {
 async function drawRoute(orderedCustomers) {
   clearRoute();
 
-  const startLocation = [
-    appConfig.routeStartLng || 17.65274,
-    appConfig.routeStartLat || 69.06888
-  ];
-  const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) return;
+  const startLocation = [routeStart.lng, routeStart.lat];
+  const startLngLat = [routeStart.lng, routeStart.lat];
 
   const coordinates = [
     startLocation,
@@ -13241,8 +13551,13 @@ let currentRouteData = null;
 // Navigate to a single customer using device maps app
 function navigateToCustomer(lat, lng, _name) {
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showMessage('Sett firmaadresse i admin-innstillinger for å bruke navigasjon.', 'warning');
+    return;
+  }
+  const startLat = routeStart.lat;
+  const startLng = routeStart.lng;
 
   if (isIOS) {
     window.open(`https://maps.apple.com/?saddr=${startLat},${startLng}&daddr=${lat},${lng}&dirflg=d`, '_blank');
@@ -14641,11 +14956,11 @@ async function wpLoadTravelTimes(dayKey) {
   if (!dayData) return;
 
   const dateStr = dayData.date;
-  const startLng = appConfig.routeStartLng || 17.65274;
-  const startLat = appConfig.routeStartLat || 69.06888;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) return;
 
   // Build coordinate array: [office, stop1, stop2, ..., office]
-  const coords = [[startLng, startLat]];
+  const coords = [[routeStart.lng, routeStart.lat]];
 
   for (const c of dayData.planned) {
     if (c.lat && c.lng) coords.push([c.lng, c.lat]);
@@ -14960,8 +15275,11 @@ async function wpOptimizeOrder(dayKey) {
     return;
   }
 
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showToast('Sett firmaadresse i admin for å optimalisere rekkefølge', 'warning');
+    return;
+  }
   const loadingToast = showToast('Optimaliserer rekkefølge...', 'info', 0);
 
   try {
@@ -14974,8 +15292,8 @@ async function wpOptimizeOrder(dayKey) {
       vehicles: [{
         id: 1,
         profile: 'driving-car',
-        start: [startLng, startLat],
-        end: [startLng, startLat]
+        start: [routeStart.lng, routeStart.lat],
+        end: [routeStart.lng, routeStart.lat]
       }]
     };
 
@@ -15054,9 +15372,12 @@ async function wpNavigateDay(dayKey) {
     return;
   }
 
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
-  const startLatLng = [startLat, startLng];
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showToast('Sett firmaadresse i admin for å tegne rute', 'warning');
+    return;
+  }
+  const startLatLng = [routeStart.lat, routeStart.lng];
 
   // Loading toast
   const loadingToast = showToast('Optimaliserer rute...', 'info', 0);
@@ -15073,8 +15394,8 @@ async function wpNavigateDay(dayKey) {
         vehicles: [{
           id: 1,
           profile: 'driving-car',
-          start: [startLng, startLat],
-          end: [startLng, startLat]
+          start: [routeStart.lng, routeStart.lat],
+          end: [routeStart.lng, routeStart.lat]
         }]
       };
 
@@ -15121,9 +15442,9 @@ async function wpNavigateDay(dayKey) {
   // Step 2: Build coordinates and get directions
   if (loadingToast) loadingToast.textContent = 'Beregner rute...';
   const coordinates = [
-    [startLng, startLat],
+    [routeStart.lng, routeStart.lat],
     ...stops.map(s => [s.lng, s.lat]),
-    [startLng, startLat]
+    [routeStart.lng, routeStart.lat]
   ];
 
   try {
@@ -15298,9 +15619,12 @@ function wpExportToMaps() {
   if (!currentRouteData || !currentRouteData.customers.length) return;
 
   const stops = currentRouteData.customers;
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
-  const startCoord = `${startLat},${startLng}`;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showToast('Sett firmaadresse i admin for å eksportere rute', 'warning');
+    return;
+  }
+  const startCoord = `${routeStart.lat},${routeStart.lng}`;
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
   if (isIOS) {
@@ -19004,6 +19328,10 @@ function renderDashboardAreas() {
 // SPA VIEW MANAGEMENT — Mapbox GL JS v3
 // ========================================
 
+// Default view: show all of Norway (used when no office address is configured)
+const NORWAY_CENTER = [10.0, 64.0]; // [lng, lat]
+const NORWAY_ZOOM = 4.0;
+
 // Get Mapbox access token from server config
 function getMapboxToken() {
   if (appConfig.mapboxAccessToken) {
@@ -19031,9 +19359,19 @@ let _pendingStyleReload = false;
 
 // 3D terrain state
 let terrainEnabled = false;
-const TERRAIN_EXAGGERATION = 1.5;
-const TERRAIN_PITCH = 72;
+let terrainExaggeration = 1.5;
+const TERRAIN_EXAGGERATION_DEFAULT = 1.5;
+const TERRAIN_EXAGGERATION_MIN = 0.3;
+const TERRAIN_EXAGGERATION_MAX = 3.0;
+const TERRAIN_EXAGGERATION_STEP = 0.1;
+let terrainPitch = 72;
+const TERRAIN_PITCH_DEFAULT = 72;
+const TERRAIN_PITCH_MIN = 0;
+const TERRAIN_PITCH_MAX = 85;
+const TERRAIN_PITCH_STEP = 1;
 const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
+const TERRAIN_EXAG_LS_KEY = 'skyplanner_terrainExaggeration';
+const TERRAIN_PITCH_LS_KEY = 'skyplanner_terrainPitch';
 
 // Toggle between satellite and dark map style
 function toggleNightMode() {
@@ -19088,6 +19426,24 @@ function toggleNightMode() {
 function enableTerrain(animate = true) {
   if (!map) return;
 
+  // Restore saved exaggeration from localStorage
+  const savedExag = localStorage.getItem(TERRAIN_EXAG_LS_KEY);
+  if (savedExag) {
+    const parsed = parseFloat(savedExag);
+    if (!isNaN(parsed) && parsed >= TERRAIN_EXAGGERATION_MIN && parsed <= TERRAIN_EXAGGERATION_MAX) {
+      terrainExaggeration = parsed;
+    }
+  }
+
+  // Restore saved pitch from localStorage
+  const savedPitch = localStorage.getItem(TERRAIN_PITCH_LS_KEY);
+  if (savedPitch) {
+    const parsed = parseFloat(savedPitch);
+    if (!isNaN(parsed) && parsed >= TERRAIN_PITCH_MIN && parsed <= TERRAIN_PITCH_MAX) {
+      terrainPitch = parsed;
+    }
+  }
+
   // Add Mapbox DEM source if not present
   if (!map.getSource('mapbox-dem')) {
     map.addSource('mapbox-dem', {
@@ -19099,7 +19455,7 @@ function enableTerrain(animate = true) {
   }
 
   // Enable terrain with exaggeration
-  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: terrainExaggeration });
 
   // Add sky layer for atmosphere effect
   if (!map.getLayer('sky-layer')) {
@@ -19116,9 +19472,9 @@ function enableTerrain(animate = true) {
 
   // Animate or set pitch for 3D viewing angle
   if (animate) {
-    map.easeTo({ pitch: TERRAIN_PITCH, duration: 1000 });
+    map.easeTo({ pitch: terrainPitch, duration: 1000 });
   } else {
-    map.setPitch(TERRAIN_PITCH);
+    map.setPitch(terrainPitch);
   }
 
   // Enable compass on NavigationControl for pitch reset
@@ -19131,6 +19487,7 @@ function enableTerrain(animate = true) {
   terrainEnabled = true;
   localStorage.setItem(TERRAIN_LS_KEY, 'true');
   updateTerrainButton(true);
+  show3DIndicator(true);
   Logger.log('3D terreng aktivert');
 }
 
@@ -19156,6 +19513,7 @@ function disableTerrain() {
   terrainEnabled = false;
   localStorage.setItem(TERRAIN_LS_KEY, 'false');
   updateTerrainButton(false);
+  show3DIndicator(false);
   Logger.log('3D terreng deaktivert');
 }
 
@@ -19177,7 +19535,63 @@ function updateTerrainButton(active) {
     btn.classList.remove('active');
     btn.title = 'Slå på 3D-terreng';
   }
+  showTerrainSlider(active);
+  // Sync slider values
+  const exagSlider = document.getElementById('terrainExagRange');
+  if (exagSlider) exagSlider.value = terrainExaggeration;
+  const exagLabel = document.getElementById('terrainExagLabel');
+  if (exagLabel) exagLabel.textContent = terrainExaggeration.toFixed(1) + 'x';
+  const pitchSlider = document.getElementById('terrainPitchRange');
+  if (pitchSlider) pitchSlider.value = terrainPitch;
+  const pitchLabel = document.getElementById('terrainPitchLabel');
+  if (pitchLabel) pitchLabel.textContent = Math.round(terrainPitch) + '°';
 }
+
+function setTerrainExaggeration(value) {
+  terrainExaggeration = Math.max(TERRAIN_EXAGGERATION_MIN, Math.min(TERRAIN_EXAGGERATION_MAX, value));
+  localStorage.setItem(TERRAIN_EXAG_LS_KEY, terrainExaggeration.toString());
+  if (terrainEnabled && map) {
+    map.setTerrain({ source: 'mapbox-dem', exaggeration: terrainExaggeration });
+  }
+  // Update slider label
+  const label = document.getElementById('terrainExagLabel');
+  if (label) label.textContent = terrainExaggeration.toFixed(1) + 'x';
+}
+
+function setTerrainPitch(value) {
+  terrainPitch = Math.max(TERRAIN_PITCH_MIN, Math.min(TERRAIN_PITCH_MAX, value));
+  localStorage.setItem(TERRAIN_PITCH_LS_KEY, terrainPitch.toString());
+  if (terrainEnabled && map) {
+    map.easeTo({ pitch: terrainPitch, duration: 200 });
+  }
+  const label = document.getElementById('terrainPitchLabel');
+  if (label) label.textContent = Math.round(terrainPitch) + '°';
+}
+
+function showTerrainSlider(show) {
+  const slider = document.getElementById('terrainExagSlider');
+  if (slider) {
+    slider.classList.toggle('visible', show);
+  }
+}
+
+function show3DIndicator(show) {
+  let indicator = document.getElementById('terrain3dIndicator');
+  if (show) {
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = 'terrain3dIndicator';
+      indicator.className = 'terrain-3d-indicator';
+      indicator.innerHTML = '<i class="fas fa-mountain" aria-hidden="true"></i> 3D-modus aktivert';
+      document.body.appendChild(indicator);
+    }
+    requestAnimationFrame(() => indicator.classList.add('visible'));
+  } else if (indicator) {
+    indicator.classList.remove('visible');
+    setTimeout(() => indicator.remove(), 300);
+  }
+}
+
 
 function reapplyTerrain() {
   if (!terrainEnabled || !map) return;
@@ -19189,7 +19603,7 @@ function reapplyTerrain() {
       maxzoom: 14
     });
   }
-  map.setTerrain({ source: 'mapbox-dem', exaggeration: TERRAIN_EXAGGERATION });
+  map.setTerrain({ source: 'mapbox-dem', exaggeration: terrainExaggeration });
   if (!map.getLayer('sky-layer')) {
     map.addLayer({
       id: 'sky-layer',
@@ -19212,13 +19626,13 @@ function initSharedMap(options = {}) {
     // Set Mapbox GL JS access token
     mapboxgl.accessToken = getMapboxToken();
 
-    // If returning user, skip globe view and start at office location (or Norway center)
+    // If returning user, skip globe view and start at office location (or Norway overview)
     const skipGlobe = options.skipGlobe || false;
     const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
     const initialCenter = skipGlobe
-      ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : [15.0, 67.5])
-      : [15.0, 65.0];
-    const initialZoom = skipGlobe ? 6 : 3.0;
+      ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : NORWAY_CENTER)
+      : NORWAY_CENTER;
+    const initialZoom = skipGlobe ? (hasOfficeLocation ? 6 : NORWAY_ZOOM) : 3.0;
 
     // Create Mapbox GL JS map with globe projection
     map = new mapboxgl.Map({
@@ -19258,34 +19672,162 @@ function initSharedMap(options = {}) {
 
     Logger.log('Mapbox GL JS map initialized with globe projection');
 
-    // Add glowing office marker (Brøstadveien 343, 9311 Brøstadbotn)
-    const officeEl = createMarkerElement('office-marker-glow', `
-      <div class="office-marker-container">
-        <div class="office-glow-ring"></div>
-        <div class="office-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-            <polyline points="9 22 9 12 15 12 15 22"/>
-          </svg>
-        </div>
-      </div>
-    `, [60, 60]);
-    officeEl.setAttribute('aria-hidden', 'true');
-
-    const homeLng = appConfig.routeStartLng || 17.65274;
-    const homeLat = appConfig.routeStartLat || 69.06888;
-    officeMarker = new mapboxgl.Marker({ element: officeEl, anchor: 'center' })
-      .setLngLat([homeLng, homeLat])
-      .addTo(map);
+    // Office marker is added after login via updateOfficeMarkerPosition()
+    // (pre-login config may contain env fallback coords that don't belong to the user)
   }
+}
+
+function createOfficeMarkerElement() {
+  const el = createMarkerElement('office-marker-glow', `
+    <div class="office-marker-container">
+      <div class="office-glow-ring"></div>
+      <div class="office-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+      </div>
+    </div>
+  `, [60, 60]);
+  el.setAttribute('aria-hidden', 'true');
+  return el;
 }
 
 // Update office marker position when org-specific config is loaded after auth
 function updateOfficeMarkerPosition() {
-  if (!officeMarker) return;
-  const homeLng = appConfig.routeStartLng || 17.65274;
-  const homeLat = appConfig.routeStartLat || 69.06888;
-  officeMarker.setLngLat([homeLng, homeLat]);
+  const homeLng = appConfig.routeStartLng;
+  const homeLat = appConfig.routeStartLat;
+
+  if (homeLng && homeLat) {
+    if (officeMarker) {
+      officeMarker.setLngLat([homeLng, homeLat]);
+    } else if (map) {
+      const officeEl = createOfficeMarkerElement();
+      officeMarker = new mapboxgl.Marker({ element: officeEl, anchor: 'center' })
+        .setLngLat([homeLng, homeLat])
+        .addTo(map);
+    }
+  } else if (officeMarker) {
+    officeMarker.remove();
+    officeMarker = null;
+  }
+}
+
+// Get configured route start location, or null if not set
+function getRouteStartLocation() {
+  if (appConfig.routeStartLat && appConfig.routeStartLng) {
+    return { lat: appConfig.routeStartLat, lng: appConfig.routeStartLng };
+  }
+  return null;
+}
+
+// Show prominent prompt to set office address
+function showAddressBannerIfNeeded() {
+  // Only show if no address is configured
+  if (getRouteStartLocation()) return;
+
+  // If already dismissed this session, show persistent nudge instead
+  if (sessionStorage.getItem('addressBannerDismissed')) {
+    showPersistentAddressNudge();
+    const adminBadge = document.getElementById('adminAddressBadge');
+    if (adminBadge) adminBadge.style.display = 'inline-flex';
+    return;
+  }
+
+  // Remove any existing prompt
+  const existing = document.getElementById('addressSetupBanner');
+  if (existing) existing.remove();
+
+  const prompt = document.createElement('div');
+  prompt.id = 'addressSetupBanner';
+  prompt.className = 'address-setup-prompt';
+  prompt.innerHTML = `
+    <div class="address-prompt-backdrop" onclick="dismissAddressBanner()"></div>
+    <div class="address-prompt-card">
+      <div class="address-prompt-step-indicator">Kom i gang</div>
+      <div class="address-prompt-icon address-prompt-icon-animated">
+        <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+      </div>
+      <h2>Hvor holder dere til?</h2>
+      <p>Legg inn firmaadresse for å se kontoret ditt på kartet og bruke ruteplanlegging. Det tar bare et øyeblikk.</p>
+      <div class="address-prompt-actions">
+        <button class="address-prompt-btn-primary" onclick="openAdminAddressTab()">
+          <i class="fas fa-map-marker-alt" aria-hidden="true"></i> Legg inn adresse nå
+        </button>
+        <button class="address-prompt-btn-secondary" onclick="dismissAddressBanner()">
+          Jeg gjør det senere
+        </button>
+      </div>
+    </div>
+  `;
+
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer) {
+    mapContainer.appendChild(prompt);
+    requestAnimationFrame(() => prompt.classList.add('visible'));
+  }
+
+  // Show action-needed badge on admin tab
+  const adminBadge = document.getElementById('adminAddressBadge');
+  if (adminBadge) adminBadge.style.display = 'inline-flex';
+}
+
+function dismissAddressBanner() {
+  const prompt = document.getElementById('addressSetupBanner');
+  if (prompt) {
+    prompt.classList.remove('visible');
+    setTimeout(() => prompt.remove(), 300);
+  }
+  sessionStorage.setItem('addressBannerDismissed', 'true');
+
+  // Show persistent nudge pill after banner is dismissed
+  setTimeout(() => showPersistentAddressNudge(), 400);
+}
+
+function openAdminAddressTab() {
+  dismissAddressBanner();
+  // Switch to admin tab
+  const adminTab = document.getElementById('adminTab');
+  if (adminTab) {
+    adminTab.click();
+    // Scroll to address section after tab renders
+    setTimeout(() => {
+      const section = document.getElementById('companyAddressSection');
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+  }
+}
+
+// Persistent floating nudge pill (visible after banner dismissal if address still not set)
+function showPersistentAddressNudge() {
+  if (getRouteStartLocation()) return;
+  if (document.getElementById('addressNudgePill')) return;
+
+  const nudge = document.createElement('div');
+  nudge.id = 'addressNudgePill';
+  nudge.className = 'address-nudge-pill';
+  nudge.innerHTML = `
+    <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+    <span>Firmaadresse ikke satt</span>
+  `;
+  nudge.addEventListener('click', () => {
+    openAdminAddressTab();
+    removeAddressNudge();
+  });
+
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer) {
+    mapContainer.appendChild(nudge);
+    requestAnimationFrame(() => nudge.classList.add('visible'));
+  }
+}
+
+function removeAddressNudge() {
+  const nudge = document.getElementById('addressNudgePill');
+  if (nudge) {
+    nudge.classList.remove('visible');
+    setTimeout(() => nudge.remove(), 300);
+  }
 }
 
 // Globe spin animation for login screen
@@ -19473,6 +20015,36 @@ function initMap() {
     terrainBtn.innerHTML = '<i aria-hidden="true" class="fas fa-mountain"></i>';
     terrainBtn.addEventListener('click', () => toggleTerrain());
     toolbar.appendChild(terrainBtn);
+
+    // Terrain controls panel (shown when 3D is active)
+    const sliderPanel = document.createElement('div');
+    sliderPanel.id = 'terrainExagSlider';
+    sliderPanel.className = 'terrain-exag-slider';
+    sliderPanel.innerHTML = `
+      <div class="terrain-slider-row">
+        <label for="terrainExagRange" class="terrain-exag-title">Skarphet</label>
+        <input type="range" id="terrainExagRange"
+          min="${TERRAIN_EXAGGERATION_MIN}" max="${TERRAIN_EXAGGERATION_MAX}"
+          step="${TERRAIN_EXAGGERATION_STEP}" value="${terrainExaggeration}">
+        <span id="terrainExagLabel" class="terrain-exag-label">${terrainExaggeration.toFixed(1)}x</span>
+      </div>
+      <div class="terrain-slider-row">
+        <label for="terrainPitchRange" class="terrain-exag-title">Vinkel</label>
+        <input type="range" id="terrainPitchRange"
+          min="${TERRAIN_PITCH_MIN}" max="${TERRAIN_PITCH_MAX}"
+          step="${TERRAIN_PITCH_STEP}" value="${terrainPitch}">
+        <span id="terrainPitchLabel" class="terrain-exag-label">${Math.round(terrainPitch)}°</span>
+      </div>
+    `;
+    toolbar.appendChild(sliderPanel);
+
+    // Slider input handlers
+    sliderPanel.querySelector('#terrainExagRange').addEventListener('input', (e) => {
+      setTerrainExaggeration(parseFloat(e.target.value));
+    });
+    sliderPanel.querySelector('#terrainPitchRange').addEventListener('input', (e) => {
+      setTerrainPitch(parseFloat(e.target.value));
+    });
   }
 
   // Restore terrain preference from localStorage (only after login)
@@ -19977,8 +20549,8 @@ function transitionToAppView() {
       map.flyTo({
         center: hasOfficeLocation
           ? [appConfig.routeStartLng, appConfig.routeStartLat]
-          : [15.0, 67.5],
-        zoom: 6,
+          : NORWAY_CENTER,
+        zoom: hasOfficeLocation ? 6 : NORWAY_ZOOM,
         duration: 1600,
         essential: true,
         curve: 1.42
@@ -22419,6 +22991,8 @@ function renderCustomerList(customerData) {
 let activeContextMenu = null;
 let activeContextMenuContext = null;
 const contextMenuActions = new Map();
+let _ctxCloseClickHandler = null;
+let _ctxCloseContextHandler = null;
 
 // ── Generisk motor ──────────────────────────────────────────
 
@@ -22509,9 +23083,11 @@ function showContextMenu({ header, items, x, y, context }) {
   menu.addEventListener('click', handleContextMenuClick);
 
   // Lukk ved klikk utenfor (utsatt for å unngå umiddelbar lukking)
+  _ctxCloseClickHandler = () => closeContextMenu();
+  _ctxCloseContextHandler = () => closeContextMenu();
   requestAnimationFrame(() => {
-    document.addEventListener('click', closeContextMenu, { once: true });
-    document.addEventListener('contextmenu', closeContextMenu, { once: true });
+    document.addEventListener('click', _ctxCloseClickHandler, { once: true });
+    document.addEventListener('contextmenu', _ctxCloseContextHandler, { once: true });
   });
 
   // Tastaturnavigasjon
@@ -22557,6 +23133,14 @@ function showContextMenu({ header, items, x, y, context }) {
 }
 
 function closeContextMenu() {
+  if (_ctxCloseClickHandler) {
+    document.removeEventListener('click', _ctxCloseClickHandler);
+    _ctxCloseClickHandler = null;
+  }
+  if (_ctxCloseContextHandler) {
+    document.removeEventListener('contextmenu', _ctxCloseContextHandler);
+    _ctxCloseContextHandler = null;
+  }
   if (activeContextMenu) {
     activeContextMenu.remove();
     activeContextMenu = null;
@@ -22571,11 +23155,19 @@ function handleContextMenuClick(e) {
   const action = item.dataset.action;
   const ctx = activeContextMenuContext || {};
 
+  console.log('[ContextMenu] click action:', action, 'ctx:', ctx);
+
   closeContextMenu();
 
   const handler = contextMenuActions.get(action);
   if (handler) {
-    handler(item.dataset, ctx);
+    try {
+      handler(item.dataset, ctx);
+    } catch (err) {
+      console.error('[ContextMenu] action error:', action, err);
+    }
+  } else {
+    console.warn('[ContextMenu] no handler for action:', action);
   }
 }
 
@@ -22649,11 +23241,13 @@ registerContextMenuAction('ctx-push-tripletex', (data) => {
 
 // Avtale-actions (kalender + ukeplan)
 registerContextMenuAction('ctx-edit-avtale', (data, ctx) => {
+  console.log('[ctx-edit-avtale] ctx:', ctx, 'data:', data, 'openAvtaleModal:', typeof openAvtaleModal);
   if (ctx.avtale && typeof openAvtaleModal === 'function') {
     openAvtaleModal(ctx.avtale);
   } else {
     const avtaleId = ctx.avtaleId || Number(data.avtaleId);
     const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+    console.log('[ctx-edit-avtale] fallback, avtaleId:', avtaleId, 'avtale:', avtale);
     if (avtale && typeof openAvtaleModal === 'function') openAvtaleModal(avtale);
   }
 });
@@ -23705,6 +24299,7 @@ async function loadOrganizationCategories() {
             defaultInterval: cat.default_interval_months,
         }));
         serviceTypeRegistry.loadFromConfig(appConfig);
+        injectDynamicMarkerStyles();
       }
 
       // Re-render category UI to reflect loaded categories
@@ -24863,21 +25458,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       stopGlobeSpin(); // Safety: ensure globe spin is stopped
 
-      // Fly to office location (needed for SSO login where skipGlobe may be false)
+      // Always fly to office location or Norway overview
       const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
-      if (hasOfficeLocation) {
-        map.flyTo({
-          center: [appConfig.routeStartLng, appConfig.routeStartLat],
-          zoom: 6,
-          duration: 1600,
-          essential: true
-        });
-      }
+      map.flyTo({
+        center: hasOfficeLocation
+          ? [appConfig.routeStartLng, appConfig.routeStartLat]
+          : NORWAY_CENTER,
+        zoom: hasOfficeLocation ? 6 : NORWAY_ZOOM,
+        duration: 1600,
+        essential: true
+      });
     }
 
     // Initialize DOM and app
     initDOMElements();
     initMap(); // Add map features (clustering, borders, etc.)
+
+    // Show office marker if company address is configured
+    updateOfficeMarkerPosition();
+
     // Wait for cluster source before loading customers (prevents blank map)
     if (!_clusterSourceReady && typeof waitForClusterReady === 'function') {
       await waitForClusterReady(8000);
@@ -24939,6 +25538,10 @@ async function initializeApp() {
   // Initialize map features (clustering, borders, etc.)
   // The base map is already created by initSharedMap()
   initMap();
+
+  // Show office marker if company address is configured
+  updateOfficeMarkerPosition();
+
   Logger.log('initializeApp() after initMap, _clusterSourceReady:', _clusterSourceReady);
 
   // Wait for cluster source to be ready before loading customers
@@ -24989,6 +25592,9 @@ async function initializeApp() {
   // Initialize chat system
   initChat();
   initChatEventListeners();
+
+  // Show address setup banner if no office address is configured
+  showAddressBannerIfNeeded();
 
   Logger.log('initializeApp() complete');
 }

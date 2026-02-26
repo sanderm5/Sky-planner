@@ -6,6 +6,8 @@
 let activeContextMenu = null;
 let activeContextMenuContext = null;
 const contextMenuActions = new Map();
+let _ctxCloseClickHandler = null;
+let _ctxCloseContextHandler = null;
 
 // ── Generisk motor ──────────────────────────────────────────
 
@@ -96,9 +98,11 @@ function showContextMenu({ header, items, x, y, context }) {
   menu.addEventListener('click', handleContextMenuClick);
 
   // Lukk ved klikk utenfor (utsatt for å unngå umiddelbar lukking)
+  _ctxCloseClickHandler = () => closeContextMenu();
+  _ctxCloseContextHandler = () => closeContextMenu();
   requestAnimationFrame(() => {
-    document.addEventListener('click', closeContextMenu, { once: true });
-    document.addEventListener('contextmenu', closeContextMenu, { once: true });
+    document.addEventListener('click', _ctxCloseClickHandler, { once: true });
+    document.addEventListener('contextmenu', _ctxCloseContextHandler, { once: true });
   });
 
   // Tastaturnavigasjon
@@ -144,6 +148,14 @@ function showContextMenu({ header, items, x, y, context }) {
 }
 
 function closeContextMenu() {
+  if (_ctxCloseClickHandler) {
+    document.removeEventListener('click', _ctxCloseClickHandler);
+    _ctxCloseClickHandler = null;
+  }
+  if (_ctxCloseContextHandler) {
+    document.removeEventListener('contextmenu', _ctxCloseContextHandler);
+    _ctxCloseContextHandler = null;
+  }
   if (activeContextMenu) {
     activeContextMenu.remove();
     activeContextMenu = null;
@@ -158,11 +170,19 @@ function handleContextMenuClick(e) {
   const action = item.dataset.action;
   const ctx = activeContextMenuContext || {};
 
+  console.log('[ContextMenu] click action:', action, 'ctx:', ctx);
+
   closeContextMenu();
 
   const handler = contextMenuActions.get(action);
   if (handler) {
-    handler(item.dataset, ctx);
+    try {
+      handler(item.dataset, ctx);
+    } catch (err) {
+      console.error('[ContextMenu] action error:', action, err);
+    }
+  } else {
+    console.warn('[ContextMenu] no handler for action:', action);
   }
 }
 
@@ -236,11 +256,13 @@ registerContextMenuAction('ctx-push-tripletex', (data) => {
 
 // Avtale-actions (kalender + ukeplan)
 registerContextMenuAction('ctx-edit-avtale', (data, ctx) => {
+  console.log('[ctx-edit-avtale] ctx:', ctx, 'data:', data, 'openAvtaleModal:', typeof openAvtaleModal);
   if (ctx.avtale && typeof openAvtaleModal === 'function') {
     openAvtaleModal(ctx.avtale);
   } else {
     const avtaleId = ctx.avtaleId || Number(data.avtaleId);
     const avtale = typeof avtaler !== 'undefined' ? avtaler.find(a => a.id === avtaleId) : null;
+    console.log('[ctx-edit-avtale] fallback, avtaleId:', avtaleId, 'avtale:', avtale);
     if (avtale && typeof openAvtaleModal === 'function') openAvtaleModal(avtale);
   }
 });

@@ -176,21 +176,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       stopGlobeSpin(); // Safety: ensure globe spin is stopped
 
-      // Fly to office location (needed for SSO login where skipGlobe may be false)
+      // Always fly to office location or Norway overview
       const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
-      if (hasOfficeLocation) {
-        map.flyTo({
-          center: [appConfig.routeStartLng, appConfig.routeStartLat],
-          zoom: 6,
-          duration: 1600,
-          essential: true
-        });
-      }
+      map.flyTo({
+        center: hasOfficeLocation
+          ? [appConfig.routeStartLng, appConfig.routeStartLat]
+          : NORWAY_CENTER,
+        zoom: hasOfficeLocation ? 6 : NORWAY_ZOOM,
+        duration: 1600,
+        essential: true
+      });
     }
 
     // Initialize DOM and app
     initDOMElements();
     initMap(); // Add map features (clustering, borders, etc.)
+
+    // Show office marker if company address is configured
+    updateOfficeMarkerPosition();
+
     // Wait for cluster source before loading customers (prevents blank map)
     if (!_clusterSourceReady && typeof waitForClusterReady === 'function') {
       await waitForClusterReady(8000);
@@ -252,6 +256,10 @@ async function initializeApp() {
   // Initialize map features (clustering, borders, etc.)
   // The base map is already created by initSharedMap()
   initMap();
+
+  // Show office marker if company address is configured
+  updateOfficeMarkerPosition();
+
   Logger.log('initializeApp() after initMap, _clusterSourceReady:', _clusterSourceReady);
 
   // Wait for cluster source to be ready before loading customers
@@ -302,6 +310,9 @@ async function initializeApp() {
   // Initialize chat system
   initChat();
   initChatEventListeners();
+
+  // Show address setup banner if no office address is configured
+  showAddressBannerIfNeeded();
 
   Logger.log('initializeApp() complete');
 }

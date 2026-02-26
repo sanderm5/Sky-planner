@@ -807,6 +807,7 @@
         <button class="tab-item admin-only" data-tab="admin" id="adminTab" role="tab" aria-selected="false" aria-controls="tab-admin" style="display: none;">
           <i class="fas fa-shield-alt" aria-hidden="true"></i>
           <span>Admin</span>
+          <span class="tab-badge address-action-badge" id="adminAddressBadge" style="display: none;">!</span>
         </button>
       </nav>
 
@@ -1329,6 +1330,54 @@
         <div class="tab-pane" id="tab-admin" role="tabpanel" aria-labelledby="adminTab">
           <div class="tab-header">
             <h2><i class="fas fa-shield-alt"></i> Admin</h2>
+          </div>
+
+          <!-- Company Address Section -->
+          <div class="admin-section" id="companyAddressSection">
+            <div class="section-header-with-actions">
+              <h3><i class="fas fa-map-marker-alt"></i> Firmaadresse</h3>
+            </div>
+            <p class="admin-section-description">Brukes som startpunkt for ruteplanlegging og kontormarkør på kartet.</p>
+
+            <div class="company-address-form" id="companyAddressForm">
+              <div class="form-group">
+                <label for="adminCompanyAddress"><i class="fas fa-map-marker-alt"></i> Adresse</label>
+                <div class="admin-address-wrapper">
+                  <input type="text" id="adminCompanyAddress" placeholder="Begynn å skrive adresse..." autocomplete="off">
+                  <div class="admin-address-suggestions" id="adminAddressSuggestions"></div>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="adminCompanyPostnummer"><i class="fas fa-hashtag"></i> Postnummer</label>
+                  <div class="admin-postnummer-wrapper">
+                    <input type="text" id="adminCompanyPostnummer" placeholder="0000" maxlength="4" autocomplete="off">
+                    <span class="admin-postnummer-status" id="adminPostnummerStatus"></span>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="adminCompanyPoststed"><i class="fas fa-city"></i> Poststed</label>
+                  <input type="text" id="adminCompanyPoststed" placeholder="Fylles automatisk" readonly>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label><i class="fas fa-crosshairs"></i> Koordinater (rute-startpunkt)</label>
+                <div class="admin-coordinates" id="adminCoordinates">
+                  <span class="not-set">Ikke satt</span>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button class="btn btn-primary btn-small" id="saveCompanyAddressBtn" onclick="saveCompanyAddress()">
+                  <i class="fas fa-save"></i> Lagre adresse
+                </button>
+                <button class="btn btn-danger btn-small" id="clearCompanyAddressBtn" onclick="clearCompanyAddress()" style="display: none;">
+                  <i class="fas fa-times"></i> Fjern adresse
+                </button>
+              </div>
+            </div>
           </div>
 
           <!-- Team Members Section -->

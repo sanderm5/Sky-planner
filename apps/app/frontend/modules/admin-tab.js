@@ -6,6 +6,8 @@ let loginLogOffset = 0;
 const LOGIN_LOG_LIMIT = 20;
 
 async function loadAdminData() {
+  // Initialize company address UI
+  initCompanyAddressUI();
   // Initialize team members UI
   initTeamMembersUI();
   // Initialize fields management UI
@@ -603,5 +605,298 @@ function renderBrannsystemStats() {
   });
 
   renderBarStats('brannsystemStats', systems, { barClass: 'brannsystem' });
+}
+
+// ========================================
+// COMPANY ADDRESS FUNCTIONS
+// ========================================
+
+let adminAddressSuggestions = [];
+let adminSelectedIndex = -1;
+let adminAddressDebounceTimer = null;
+
+function initCompanyAddressUI() {
+  loadCompanyAddress();
+  setupAdminAddressAutocomplete();
+  setupAdminPostnummerLookup();
+}
+
+function loadCompanyAddress() {
+  const addressInput = document.getElementById('adminCompanyAddress');
+  const postnummerInput = document.getElementById('adminCompanyPostnummer');
+  const poststedInput = document.getElementById('adminCompanyPoststed');
+  const coordsDisplay = document.getElementById('adminCoordinates');
+  const clearBtn = document.getElementById('clearCompanyAddressBtn');
+
+  if (!addressInput) return;
+
+  // Fill from appConfig
+  if (appConfig.routeStartAddress) {
+    addressInput.value = appConfig.routeStartAddress;
+  }
+  if (appConfig.routeStartLat && appConfig.routeStartLng) {
+    coordsDisplay.innerHTML = `<span>${appConfig.routeStartLat.toFixed(5)}, ${appConfig.routeStartLng.toFixed(5)}</span>`;
+    clearBtn.style.display = '';
+  } else {
+    coordsDisplay.innerHTML = '<span class="not-set">Ikke satt</span>';
+    clearBtn.style.display = 'none';
+  }
+}
+
+function setupAdminAddressAutocomplete() {
+  const input = document.getElementById('adminCompanyAddress');
+  const suggestionsContainer = document.getElementById('adminAddressSuggestions');
+  if (!input || !suggestionsContainer) return;
+
+  input.addEventListener('input', () => {
+    const query = input.value.trim();
+    clearTimeout(adminAddressDebounceTimer);
+    if (query.length < 3) {
+      suggestionsContainer.classList.remove('visible');
+      adminAddressSuggestions = [];
+      return;
+    }
+    adminAddressDebounceTimer = setTimeout(async () => {
+      try {
+        const results = await searchAddresses(query);
+        adminAddressSuggestions = results;
+        adminSelectedIndex = -1;
+        renderAdminAddressSuggestions(results);
+      } catch (err) {
+        Logger.warn('Address search error:', err);
+      }
+    }, 300);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (!adminAddressSuggestions.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      adminSelectedIndex = Math.min(adminSelectedIndex + 1, adminAddressSuggestions.length - 1);
+      highlightAdminSuggestion();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      adminSelectedIndex = Math.max(adminSelectedIndex - 1, 0);
+      highlightAdminSuggestion();
+    } else if (e.key === 'Enter' && adminSelectedIndex >= 0) {
+      e.preventDefault();
+      selectAdminAddressSuggestion(adminAddressSuggestions[adminSelectedIndex]);
+    } else if (e.key === 'Escape') {
+      suggestionsContainer.classList.remove('visible');
+    }
+  });
+
+  // Close on click outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.admin-address-wrapper')) {
+      suggestionsContainer.classList.remove('visible');
+    }
+  });
+}
+
+function renderAdminAddressSuggestions(results) {
+  const container = document.getElementById('adminAddressSuggestions');
+  if (!container) return;
+
+  if (!results.length) {
+    container.classList.remove('visible');
+    return;
+  }
+
+  container.innerHTML = results.map((r, i) => `
+    <div class="admin-address-suggestion${i === adminSelectedIndex ? ' selected' : ''}"
+         onclick="selectAdminAddressSuggestion(adminAddressSuggestions[${i}])">
+      <i class="fas fa-map-marker-alt"></i>
+      <span>${escapeHtml(r.adresse)} &mdash; ${escapeHtml(r.postnummer)} ${escapeHtml(r.poststed)}</span>
+    </div>
+  `).join('');
+  container.classList.add('visible');
+}
+
+function highlightAdminSuggestion() {
+  const items = document.querySelectorAll('.admin-address-suggestion');
+  items.forEach((item, i) => {
+    item.classList.toggle('selected', i === adminSelectedIndex);
+  });
+}
+
+function selectAdminAddressSuggestion(suggestion) {
+  if (!suggestion) return;
+
+  const addressInput = document.getElementById('adminCompanyAddress');
+  const postnummerInput = document.getElementById('adminCompanyPostnummer');
+  const poststedInput = document.getElementById('adminCompanyPoststed');
+  const coordsDisplay = document.getElementById('adminCoordinates');
+  const suggestionsContainer = document.getElementById('adminAddressSuggestions');
+
+  addressInput.value = suggestion.adresse || '';
+  postnummerInput.value = suggestion.postnummer || '';
+  poststedInput.value = suggestion.poststed || '';
+
+  if (suggestion.lat && suggestion.lng) {
+    coordsDisplay.innerHTML = `<span>${Number(suggestion.lat).toFixed(5)}, ${Number(suggestion.lng).toFixed(5)}</span>`;
+    coordsDisplay.dataset.lat = suggestion.lat;
+    coordsDisplay.dataset.lng = suggestion.lng;
+  }
+
+  suggestionsContainer.classList.remove('visible');
+  adminAddressSuggestions = [];
+  adminSelectedIndex = -1;
+}
+
+function setupAdminPostnummerLookup() {
+  const input = document.getElementById('adminCompanyPostnummer');
+  const status = document.getElementById('adminPostnummerStatus');
+  const poststedInput = document.getElementById('adminCompanyPoststed');
+  if (!input) return;
+
+  input.addEventListener('input', async () => {
+    const value = input.value.trim();
+    if (!/^\d{4}$/.test(value)) {
+      if (status) status.textContent = '';
+      return;
+    }
+
+    if (status) { status.textContent = '⟳'; status.className = 'admin-postnummer-status loading'; }
+
+    try {
+      const result = await lookupPostnummer(value);
+      if (result && result.poststed) {
+        poststedInput.value = result.poststed;
+        if (status) { status.textContent = '✓'; status.className = 'admin-postnummer-status valid'; }
+      } else {
+        if (status) { status.textContent = '✗'; status.className = 'admin-postnummer-status invalid'; }
+      }
+    } catch {
+      if (status) { status.textContent = '✗'; status.className = 'admin-postnummer-status invalid'; }
+    }
+  });
+}
+
+async function saveCompanyAddress() {
+  const address = document.getElementById('adminCompanyAddress')?.value.trim() || '';
+  const postnummer = document.getElementById('adminCompanyPostnummer')?.value.trim() || '';
+  const poststed = document.getElementById('adminCompanyPoststed')?.value.trim() || '';
+  const coordsDisplay = document.getElementById('adminCoordinates');
+
+  let lat = coordsDisplay?.dataset?.lat ? Number(coordsDisplay.dataset.lat) : null;
+  let lng = coordsDisplay?.dataset?.lng ? Number(coordsDisplay.dataset.lng) : null;
+
+  // If we have address but no coords, try to geocode
+  if (address && (!lat || !lng)) {
+    try {
+      const fullAddress = `${address}, ${postnummer} ${poststed}, Norge`;
+      const geoResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddress)}&limit=1`);
+      const geoData = await geoResponse.json();
+      if (geoData.length > 0) {
+        lat = Number(geoData[0].lat);
+        lng = Number(geoData[0].lon);
+      }
+    } catch (err) {
+      Logger.warn('Geocoding failed:', err);
+    }
+  }
+
+  const saveBtn = document.getElementById('saveCompanyAddressBtn');
+  saveBtn.disabled = true;
+  saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Lagrer...';
+
+  try {
+    const response = await apiFetch('/api/organization/address', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company_address: address || null,
+        company_postnummer: postnummer || null,
+        company_poststed: poststed || null,
+        route_start_lat: lat,
+        route_start_lng: lng,
+      }),
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      // Update appConfig in memory
+      appConfig.routeStartAddress = address || undefined;
+      appConfig.routeStartLat = lat || undefined;
+      appConfig.routeStartLng = lng || undefined;
+
+      // Update office marker on map
+      updateOfficeMarkerPosition();
+
+      // Fly map to the newly saved office location
+      if (lat && lng && map) {
+        map.flyTo({ center: [lng, lat], zoom: 6, duration: 1600, essential: true });
+      }
+
+      // Update coordinates display
+      if (lat && lng) {
+        coordsDisplay.innerHTML = `<span>${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+        coordsDisplay.dataset.lat = lat;
+        coordsDisplay.dataset.lng = lng;
+        document.getElementById('clearCompanyAddressBtn').style.display = '';
+      }
+
+      // Remove address banner, nudge pill and admin badge
+      dismissAddressBanner();
+      removeAddressNudge();
+      const adminBadge = document.getElementById('adminAddressBadge');
+      if (adminBadge) adminBadge.style.display = 'none';
+
+      showToast('Firmaadresse lagret', 'success');
+    } else {
+      showToast(result.error?.message || 'Kunne ikke lagre adresse', 'error');
+    }
+  } catch (err) {
+    Logger.error('Save company address error:', err);
+    showToast('Feil ved lagring av adresse', 'error');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = '<i class="fas fa-save"></i> Lagre adresse';
+  }
+}
+
+async function clearCompanyAddress() {
+  if (!confirm('Er du sikker på at du vil fjerne firmaadresse?')) return;
+
+  try {
+    const response = await apiFetch('/api/organization/address', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company_address: null,
+        company_postnummer: null,
+        company_poststed: null,
+        route_start_lat: null,
+        route_start_lng: null,
+      }),
+    });
+
+    const result = await response.json();
+    if (result.success) {
+      // Clear appConfig
+      appConfig.routeStartAddress = undefined;
+      appConfig.routeStartLat = undefined;
+      appConfig.routeStartLng = undefined;
+
+      // Clear form
+      document.getElementById('adminCompanyAddress').value = '';
+      document.getElementById('adminCompanyPostnummer').value = '';
+      document.getElementById('adminCompanyPoststed').value = '';
+      const coordsDisplay = document.getElementById('adminCoordinates');
+      coordsDisplay.innerHTML = '<span class="not-set">Ikke satt</span>';
+      delete coordsDisplay.dataset.lat;
+      delete coordsDisplay.dataset.lng;
+      document.getElementById('clearCompanyAddressBtn').style.display = 'none';
+
+      // Hide office marker
+      updateOfficeMarkerPosition();
+
+      showToast('Firmaadresse fjernet', 'success');
+    }
+  } catch (err) {
+    Logger.error('Clear company address error:', err);
+    showToast('Feil ved fjerning av adresse', 'error');
+  }
 }
 

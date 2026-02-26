@@ -1337,30 +1337,27 @@ async function createOrganization(org) {
 }
 
 async function updateOrganization(id, org) {
+  // Build update object dynamically — only include fields that were provided
+  const allowedFields = [
+    'navn', 'logo_url', 'primary_color', 'secondary_color',
+    'brand_title', 'brand_subtitle',
+    'firma_adresse', 'firma_telefon', 'firma_epost', 'firma_orgnr',
+    'map_center_lat', 'map_center_lng', 'map_zoom',
+    'route_start_lat', 'route_start_lng', 'route_start_address',
+    'firma_adresse',
+    'plan_type', 'max_kunder', 'max_brukere'
+  ];
+
+  const updateData = { updated_at: new Date().toISOString() };
+  for (const field of allowedFields) {
+    if (field in org) {
+      updateData[field] = org[field];
+    }
+  }
+
   const { data, error } = await getClient()
     .from('organizations')
-    .update({
-      navn: org.navn,
-      logo_url: org.logo_url,
-      primary_color: org.primary_color,
-      secondary_color: org.secondary_color,
-      brand_title: org.brand_title,
-      brand_subtitle: org.brand_subtitle,
-      firma_adresse: org.firma_adresse,
-      firma_telefon: org.firma_telefon,
-      firma_epost: org.firma_epost,
-      firma_orgnr: org.firma_orgnr,
-      map_center_lat: org.map_center_lat,
-      map_center_lng: org.map_center_lng,
-      map_zoom: org.map_zoom,
-      route_start_lat: org.route_start_lat,
-      route_start_lng: org.route_start_lng,
-      route_start_address: org.route_start_address,
-      plan_type: org.plan_type,
-      max_kunder: org.max_kunder,
-      max_brukere: org.max_brukere,
-      updated_at: new Date().toISOString()
-    })
+    .update(updateData)
     .eq('id', id)
     .select()
     .single();

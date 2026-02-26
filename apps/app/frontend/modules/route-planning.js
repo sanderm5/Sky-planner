@@ -12,14 +12,17 @@ async function planRoute() {
     return;
   }
 
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showMessage('Sett firmaadresse i admin-innstillinger for å bruke ruteplanlegging.', 'warning');
+    return;
+  }
+
   planRouteBtn.classList.add('loading');
   planRouteBtn.disabled = true;
 
   // Get start location from config (company address)
-  const startLocation = [
-    appConfig.routeStartLng || 17.65274,
-    appConfig.routeStartLat || 69.06888
-  ];
+  const startLocation = [routeStart.lng, routeStart.lat];
 
   try {
     const optimizeHeaders = { 'Content-Type': 'application/json' };
@@ -79,11 +82,13 @@ async function planRoute() {
 // Simple route without optimization
 async function planSimpleRoute(customerData) {
   try {
-    const startLocation = [
-      appConfig.routeStartLng || 17.65274,
-      appConfig.routeStartLat || 69.06888
-    ];
-    const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
+    const routeStart = getRouteStartLocation();
+    if (!routeStart) {
+      showMessage('Sett firmaadresse i admin-innstillinger for å bruke ruteplanlegging.', 'warning');
+      return;
+    }
+    const startLocation = [routeStart.lng, routeStart.lat];
+    const startLngLat = [routeStart.lng, routeStart.lat];
 
     const coordinates = [
       startLocation,
@@ -168,11 +173,10 @@ async function planSimpleRoute(customerData) {
 async function drawRoute(orderedCustomers) {
   clearRoute();
 
-  const startLocation = [
-    appConfig.routeStartLng || 17.65274,
-    appConfig.routeStartLat || 69.06888
-  ];
-  const startLngLat = [appConfig.routeStartLng || 17.65274, appConfig.routeStartLat || 69.06888];
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) return;
+  const startLocation = [routeStart.lng, routeStart.lat];
+  const startLngLat = [routeStart.lng, routeStart.lat];
 
   const coordinates = [
     startLocation,
@@ -261,8 +265,13 @@ let currentRouteData = null;
 // Navigate to a single customer using device maps app
 function navigateToCustomer(lat, lng, _name) {
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showMessage('Sett firmaadresse i admin-innstillinger for å bruke navigasjon.', 'warning');
+    return;
+  }
+  const startLat = routeStart.lat;
+  const startLng = routeStart.lng;
 
   if (isIOS) {
     window.open(`https://maps.apple.com/?saddr=${startLat},${startLng}&daddr=${lat},${lng}&dirflg=d`, '_blank');

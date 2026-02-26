@@ -652,11 +652,11 @@ async function wpLoadTravelTimes(dayKey) {
   if (!dayData) return;
 
   const dateStr = dayData.date;
-  const startLng = appConfig.routeStartLng || 17.65274;
-  const startLat = appConfig.routeStartLat || 69.06888;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) return;
 
   // Build coordinate array: [office, stop1, stop2, ..., office]
-  const coords = [[startLng, startLat]];
+  const coords = [[routeStart.lng, routeStart.lat]];
 
   for (const c of dayData.planned) {
     if (c.lat && c.lng) coords.push([c.lng, c.lat]);
@@ -971,8 +971,11 @@ async function wpOptimizeOrder(dayKey) {
     return;
   }
 
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showToast('Sett firmaadresse i admin for å optimalisere rekkefølge', 'warning');
+    return;
+  }
   const loadingToast = showToast('Optimaliserer rekkefølge...', 'info', 0);
 
   try {
@@ -985,8 +988,8 @@ async function wpOptimizeOrder(dayKey) {
       vehicles: [{
         id: 1,
         profile: 'driving-car',
-        start: [startLng, startLat],
-        end: [startLng, startLat]
+        start: [routeStart.lng, routeStart.lat],
+        end: [routeStart.lng, routeStart.lat]
       }]
     };
 
@@ -1065,9 +1068,12 @@ async function wpNavigateDay(dayKey) {
     return;
   }
 
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
-  const startLatLng = [startLat, startLng];
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showToast('Sett firmaadresse i admin for å tegne rute', 'warning');
+    return;
+  }
+  const startLatLng = [routeStart.lat, routeStart.lng];
 
   // Loading toast
   const loadingToast = showToast('Optimaliserer rute...', 'info', 0);
@@ -1084,8 +1090,8 @@ async function wpNavigateDay(dayKey) {
         vehicles: [{
           id: 1,
           profile: 'driving-car',
-          start: [startLng, startLat],
-          end: [startLng, startLat]
+          start: [routeStart.lng, routeStart.lat],
+          end: [routeStart.lng, routeStart.lat]
         }]
       };
 
@@ -1132,9 +1138,9 @@ async function wpNavigateDay(dayKey) {
   // Step 2: Build coordinates and get directions
   if (loadingToast) loadingToast.textContent = 'Beregner rute...';
   const coordinates = [
-    [startLng, startLat],
+    [routeStart.lng, routeStart.lat],
     ...stops.map(s => [s.lng, s.lat]),
-    [startLng, startLat]
+    [routeStart.lng, routeStart.lat]
   ];
 
   try {
@@ -1309,9 +1315,12 @@ function wpExportToMaps() {
   if (!currentRouteData || !currentRouteData.customers.length) return;
 
   const stops = currentRouteData.customers;
-  const startLat = appConfig.routeStartLat || 69.06888;
-  const startLng = appConfig.routeStartLng || 17.65274;
-  const startCoord = `${startLat},${startLng}`;
+  const routeStart = getRouteStartLocation();
+  if (!routeStart) {
+    showToast('Sett firmaadresse i admin for å eksportere rute', 'warning');
+    return;
+  }
+  const startCoord = `${routeStart.lat},${routeStart.lng}`;
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
   if (isIOS) {
