@@ -19,7 +19,7 @@ export default async function DashboardLayout({
   const { user, organization } = await requireAuth();
 
   return (
-    <div className="min-h-screen bg-dark-950">
+    <div className="min-h-screen">
       <a href="#main-content" className="skip-to-content">
         Hopp til hovedinnhold
       </a>
