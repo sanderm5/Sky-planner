@@ -56,7 +56,7 @@
       position: absolute;
       inset: 0;
       left: 480px; /* After login form */
-      background: linear-gradient(to right, rgba(15, 15, 15, 0.95) 0%, rgba(15, 15, 15, 0.6) 30%, rgba(15, 15, 15, 0.3) 100%);
+      background: linear-gradient(to right, rgba(15, 15, 15, 0.95) 0%, rgba(15, 15, 15, 0.75) 30%, rgba(15, 15, 15, 0.5) 100%);
       transition: opacity 0.8s cubic-bezier(0.22, 1, 0.36, 1);
       pointer-events: none;
     }
@@ -206,12 +206,14 @@
       font-weight: 600;
       margin-bottom: 2px;
       color: white;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
     }
 
     .login-feature-text p {
       font-size: 12px;
-      color: #666;
+      color: rgba(255, 255, 255, 0.7);
       margin: 0;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
     }
 
     .login-contact {
@@ -223,7 +225,7 @@
 
     .login-contact-address {
       font-size: 13px;
-      color: rgba(255, 255, 255, 0.6);
+      color: rgba(255, 255, 255, 0.7);
       margin-bottom: 8px;
     }
 
@@ -246,17 +248,17 @@
     }
 
     .login-contact-divider {
-      color: rgba(255, 255, 255, 0.3);
+      color: rgba(255, 255, 255, 0.5);
     }
 
     .login-developer {
       margin-top: 24px;
       font-size: 12px;
-      color: rgba(255, 255, 255, 0.4);
+      color: rgba(255, 255, 255, 0.6);
     }
 
     .login-developer a {
-      color: rgba(255, 255, 255, 0.6);
+      color: rgba(255, 255, 255, 0.75);
       text-decoration: none;
       transition: color 0.2s;
     }
@@ -606,7 +608,7 @@
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" />
   <link rel="stylesheet" href="polarnatt.css" />
-  <link rel="stylesheet" href="style.css?v=20260216-splitview4" />
+  <link rel="stylesheet" href="style.css?v=20260226-ui-cleanup" />
 </head>
 <body>
   <a href="#contentPanel" class="skip-to-content">Hopp til hovedinnhold</a>
@@ -638,7 +640,7 @@
           <p>Logg inn for å fortsette til kontrollpanelet</p>
         </div>
 
-        <div class="login-error-message" id="loginErrorMessage">
+        <div class="login-error-message" id="loginErrorMessage" role="alert" aria-live="assertive">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
@@ -732,15 +734,21 @@
 
       <!-- User info / Logout -->
       <div class="user-bar" id="userBar" style="display: none;">
-        <span id="ws-connection-indicator" class="ws-indicator ws-disconnected" title="Kobler til..."></span>
-        <span class="user-name" id="userNameDisplay"></span>
-        <div class="user-bar-actions">
+        <div class="user-bar-top">
+          <span class="user-name" id="userNameDisplay"></span>
           <button class="theme-toggle-btn" id="themeToggleBtn" aria-label="Bytt tema" title="Bytt tema">
             <i class="fas fa-sun theme-icon-light" aria-hidden="true"></i>
             <i class="fas fa-moon theme-icon-dark" aria-hidden="true"></i>
           </button>
+        </div>
+        <div class="user-bar-actions">
+          <a class="dashboard-link-btn" id="dashboardLinkBtn" href="/dashboard" title="Tilbake til dashboard">
+            <i class="fas fa-arrow-left" aria-hidden="true"></i>
+            <span>Dashboard</span>
+          </a>
           <button class="logout-btn" id="logoutBtnMain" aria-label="Logg ut" title="Logg ut">
             <i class="fas fa-sign-out-alt" aria-hidden="true"></i>
+            <span>Logg ut</span>
           </button>
         </div>
       </div>
@@ -1866,8 +1874,28 @@
             <input type="text" id="org_nummer" maxlength="9" pattern="\d{9}" placeholder="9 siffer" inputmode="numeric">
           </div>
           <div class="form-group">
-            <label for="estimert_tid">Estimert tid (min)</label>
-            <input type="number" id="estimert_tid" min="0" max="480" step="15" placeholder="60" inputmode="numeric">
+            <label>Estimert tid</label>
+            <input type="hidden" id="estimert_tid">
+            <div class="estimert-tid-wrapper">
+              <div class="estimert-tid-presets">
+                <button type="button" class="tid-preset" data-tid="15">15m</button>
+                <button type="button" class="tid-preset" data-tid="30">30m</button>
+                <button type="button" class="tid-preset" data-tid="45">45m</button>
+                <button type="button" class="tid-preset" data-tid="60">1t</button>
+                <button type="button" class="tid-preset" data-tid="90">1t 30m</button>
+                <button type="button" class="tid-preset" data-tid="120">2t</button>
+              </div>
+              <div class="estimert-tid-inputs">
+                <div class="tid-input-group">
+                  <input type="number" id="estimert_tid_timer" min="0" max="8" step="1" placeholder="0" inputmode="numeric">
+                  <span class="tid-unit">t</span>
+                </div>
+                <div class="tid-input-group">
+                  <input type="number" id="estimert_tid_min" min="0" max="55" step="5" placeholder="0" inputmode="numeric">
+                  <span class="tid-unit">min</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1999,10 +2027,13 @@
 
         <!-- Email Settings -->
         <div class="form-group email-settings">
-          <label for="emailAktiv">E-postvarsling</label>
-          <div class="email-toggle">
-            <input type="checkbox" id="emailAktiv" checked>
-            <label for="emailAktiv">Aktiver e-postvarsler for denne kunden</label>
+          <label>E-postvarsling</label>
+          <div class="email-toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="emailAktiv" checked>
+              <span class="toggle-slider"></span>
+            </label>
+            <label for="emailAktiv" class="toggle-label">Aktiver e-postvarsler</label>
           </div>
           <div class="email-options" id="emailOptions">
             <div class="form-row">
@@ -2051,7 +2082,7 @@
             <i class="fas fa-phone"></i> Kontaktlogg
           </div>
           <div class="kontaktlogg-add">
-            <select id="kontaktType">
+            <select id="kontaktType" aria-label="Kontakttype">
               <option value="Telefonsamtale">Telefonsamtale</option>
               <option value="SMS">SMS</option>
               <option value="E-post">E-post</option>
@@ -2078,7 +2109,7 @@
           </div>
           <div class="kontaktpersoner-add">
             <input type="text" id="kontaktpersonNavn" placeholder="Navn *" aria-label="Kontaktperson navn">
-            <select id="kontaktpersonRolle">
+            <select id="kontaktpersonRolle" aria-label="Rolle">
               <option value="">Rolle...</option>
               <option value="teknisk">Teknisk</option>
               <option value="faktura">Faktura</option>
@@ -2204,6 +2235,7 @@
         <div class="form-actions">
           <button type="button" id="deleteAvtaleBtn" class="btn btn-danger" style="display: none;">Slett</button>
           <button type="button" id="deleteAvtaleSeriesBtn" class="btn btn-danger" style="display: none;">Slett serie</button>
+          <button type="button" id="showAvtaleOnMapBtn" class="btn btn-secondary" style="display: none;"><i class="fas fa-map-marker-alt"></i> Vis på kart</button>
           <button type="button" id="cancelAvtale" class="btn btn-secondary">Avbryt</button>
           <button type="submit" class="btn btn-primary">Lagre avtale</button>
         </div>
@@ -2447,7 +2479,7 @@
   <script src="https://unpkg.com/supercluster@8.0.1/dist/supercluster.min.js"></script>
   <script src="offline-storage.js?v=1"></script>
   <script src="sync-manager.js?v=1"></script>
-  <script src="app.js?v=20260222-autocomplete-v2"></script>
+  <script src="app.js?v=20260226-ui-cleanup"></script>
   <script>
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {

@@ -11,7 +11,7 @@ async function quickMarkVisited(customerId) {
     <label style="display:flex;align-items:center;gap:8px;padding:8px 0;font-size:15px;color:var(--color-text-primary,#fff);cursor:pointer;">
       <input type="checkbox" class="qmv-kontroll-cb" data-slug="${escapeHtml(st.slug)}" checked
         style="width:20px;height:20px;accent-color:${escapeHtml(st.color || '#5E81AC')};">
-      <i class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
+      <i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
       ${escapeHtml(st.name)}
     </label>
   `).join('');
@@ -99,7 +99,7 @@ async function bulkMarkVisited(customerIds) {
     <label style="display:flex;align-items:center;gap:8px;padding:8px 0;font-size:15px;color:var(--color-text-primary,#fff);cursor:pointer;">
       <input type="checkbox" class="bmv-kontroll-cb" data-slug="${escapeHtml(st.slug)}" checked
         style="width:20px;height:20px;accent-color:${escapeHtml(st.color || '#5E81AC')};">
-      <i class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
+      <i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
       ${escapeHtml(st.name)}
     </label>
   `).join('');

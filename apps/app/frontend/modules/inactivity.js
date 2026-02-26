@@ -38,7 +38,7 @@ function showInactivityWarning() {
   modal.innerHTML = `
     <div style="background:var(--card-bg, #1a1a2e);border-radius:12px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;">
-        <i class="fas fa-clock" style="font-size:28px;color:white;"></i>
+        <i aria-hidden="true" class="fas fa-clock" style="font-size:28px;color:white;"></i>
       </div>
       <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:20px;">Inaktivitet oppdaget</h2>
       <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 8px;font-size:15px;">Du logges ut om <strong id="inactivityCountdown">${secondsLeft}</strong> sekunder på grunn av inaktivitet.</p>

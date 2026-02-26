@@ -30,7 +30,7 @@ let _pendingStyleReload = false;
 // 3D terrain state
 let terrainEnabled = false;
 const TERRAIN_EXAGGERATION = 1.5;
-const TERRAIN_PITCH = 60;
+const TERRAIN_PITCH = 72;
 const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
 
 // Toggle between satellite and dark map style
@@ -388,7 +388,7 @@ function initMap() {
       btn.title = 'Min posisjon';
       btn.setAttribute('aria-label', 'Min posisjon');
       btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:16px;cursor:pointer;';
-      btn.innerHTML = '<i class="fas fa-location-crosshairs"></i>';
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-location-crosshairs"></i>';
 
       let locationMarker = null;
       btn.addEventListener('click', (e) => {
@@ -468,7 +468,7 @@ function initMap() {
     terrainBtn.id = 'terrainToggle';
     terrainBtn.className = 'terrain-toggle-btn';
     terrainBtn.title = 'Slå på 3D-terreng';
-    terrainBtn.innerHTML = '<i class="fas fa-mountain"></i>';
+    terrainBtn.innerHTML = '<i aria-hidden="true" class="fas fa-mountain"></i>';
     terrainBtn.addEventListener('click', () => toggleTerrain());
     toolbar.appendChild(terrainBtn);
   }
@@ -624,7 +624,12 @@ function generatePopupContent(customer) {
   if (orgNr) extraFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
   if (customer.kundenummer) extraFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
   if (customer.prosjektnummer) extraFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
-  if (customer.estimert_tid) extraFieldsHtml += `<p><strong>Est. tid:</strong> ${customer.estimert_tid} min</p>`;
+  if (customer.estimert_tid) {
+    const _h = Math.floor(customer.estimert_tid / 60);
+    const _m = customer.estimert_tid % 60;
+    const tidStr = _h > 0 ? (_m > 0 ? `${_h}t ${_m}m` : `${_h}t`) : `${_m}m`;
+    extraFieldsHtml += `<p><strong>Est. tid:</strong> ${tidStr}</p>`;
+  }
 
   // Show notater if present (strip internal tags for cleaner display)
   let notatHtml = '';
@@ -665,26 +670,26 @@ function generatePopupContent(customer) {
     ${notatHtml}
     <div class="popup-actions">
       <button class="btn btn-small btn-navigate" data-action="navigateToCustomer" data-lat="${customer.lat}" data-lng="${customer.lng}" data-name="${escapeHtml(customer.navn)}">
-        <i class="fas fa-directions"></i> Naviger
+        <i aria-hidden="true" class="fas fa-directions"></i> Naviger
       </button>
       <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
         ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
       </button>
       <div class="popup-btn-group">
         <button class="btn btn-small btn-calendar" data-action="quickAddToday" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i class="fas fa-calendar-plus"></i> I dag
+          <i aria-hidden="true" class="fas fa-calendar-plus"></i> I dag
         </button>
         <button class="btn btn-small btn-calendar" data-action="showCalendarQuickMenu" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i class="fas fa-chevron-down" style="font-size:9px"></i>
+          <i aria-hidden="true" class="fas fa-chevron-down" style="font-size:9px"></i>
         </button>
       </div>
       ${splitViewOpen && splitViewState.activeDay ? `
       <button class="btn btn-small btn-calendar" data-action="quickAddToSplitDay" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}" style="background:var(--color-primary);color:#fff;width:100%;">
-        <i class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
+        <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
       </button>
       ` : ''}
       <button class="btn btn-small btn-success" data-action="quickMarkVisited" data-customer-id="${customer.id}">
-        <i class="fas fa-check"></i> Marker besøkt
+        <i aria-hidden="true" class="fas fa-check"></i> Marker besøkt
       </button>
       <button class="btn btn-small btn-secondary" data-action="editCustomer" data-customer-id="${customer.id}">
         Rediger
@@ -693,7 +698,7 @@ function generatePopupContent(customer) {
               data-action="sendEmail"
               data-customer-id="${customer.id}"
               ${hasEmail ? '' : 'disabled'}>
-        <i class="fas fa-envelope"></i> E-post
+        <i aria-hidden="true" class="fas fa-envelope"></i> E-post
       </button>
     </div>
   `;

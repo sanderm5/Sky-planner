@@ -66,7 +66,7 @@ function renderOverdue() {
   if (overdueCustomers.length === 0) {
     html = `
       <div class="overdue-empty">
-        <i class="fas fa-check-circle"></i>
+        <i aria-hidden="true" class="fas fa-check-circle"></i>
         <p>Ingen forfalte kontroller</p>
         <span>Bra jobba!</span>
       </div>
@@ -93,13 +93,13 @@ function renderOverdue() {
                   <span class="overdue-category">${escapeHtml(c.kategori || 'Ukjent')}</span>
                 </div>
                 <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
               </div>
               <div class="overdue-status">
                 <span class="overdue-days">${c.daysOverdue} dager</span>
                 <span class="overdue-date">${formatDate(c._controlDate)}</span>
                 <button class="btn-remind" data-action="sendReminder" data-customer-id="${c.id}" title="Send påminnelse">
-                  <i class="fas fa-envelope"></i>
+                  <i aria-hidden="true" class="fas fa-envelope"></i>
                 </button>
               </div>
             </div>
@@ -121,15 +121,15 @@ function renderOverdue() {
               <span class="overdue-days-inline ${c.daysOverdue > 60 ? 'critical' : c.daysOverdue > 30 ? 'warning' : 'mild'}">${c.daysOverdue}d forfalt</span>
             </div>
             <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
           </div>
           <div class="overdue-status">
             <span class="overdue-date">${formatDate(c._controlDate)}</span>
             <button class="btn-remind" data-action="sendReminder" data-customer-id="${c.id}" title="Send påminnelse">
-              <i class="fas fa-envelope"></i>
+              <i aria-hidden="true" class="fas fa-envelope"></i>
             </button>
             <button class="btn-wp-single" data-action="addGroupToWeekPlan" data-customer-ids="${c.id}" title="Legg til i ukeplan">
-              <i class="fas fa-calendar-plus"></i>
+              <i aria-hidden="true" class="fas fa-calendar-plus"></i>
             </button>
           </div>
         </div>
@@ -163,13 +163,13 @@ function renderOverdue() {
         html += `
           <div class="overdue-section">
             <div class="overdue-section-header">
-              <i class="fas fa-folder"></i>
+              <i aria-hidden="true" class="fas fa-folder"></i>
               ${escapeHtml(cat)} (${byCategory[cat].length})
               <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for denne gruppen">
-                <i class="fas fa-route"></i>
+                <i aria-hidden="true" class="fas fa-route"></i>
               </button>
               <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-                <i class="fas fa-calendar-plus"></i>
+                <i aria-hidden="true" class="fas fa-calendar-plus"></i>
               </button>
             </div>
             ${renderGroupedItems(byCategory[cat])}
@@ -190,16 +190,16 @@ function renderOverdue() {
         html += `
           <div class="overdue-section overdue-area-section">
             <div class="overdue-section-header">
-              <i class="fas fa-map-marker-alt"></i>
+              <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
               ${escapeHtml(area)} (${byArea[area].length})
               <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for ${escapeHtml(area)}">
-                <i class="fas fa-route"></i>
+                <i aria-hidden="true" class="fas fa-route"></i>
               </button>
               <button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${customerIds}" title="Vis på kart">
-                <i class="fas fa-map"></i>
+                <i aria-hidden="true" class="fas fa-map"></i>
               </button>
               <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-                <i class="fas fa-calendar-plus"></i>
+                <i aria-hidden="true" class="fas fa-calendar-plus"></i>
               </button>
             </div>
             <div class="overdue-type-summary">${renderTypeBadges(byArea[area])}</div>
@@ -218,7 +218,7 @@ function renderOverdue() {
       if (summary.noiseCount > 0) summaryParts.push(`${summary.noiseCount} ${summary.noiseCount === 1 ? 'spredt' : 'spredte'}`);
       html += `
         <div class="proximity-summary">
-          <i class="fas fa-layer-group"></i>
+          <i aria-hidden="true" class="fas fa-layer-group"></i>
           <span>${overdueCustomers.length} ${overdueCustWord} fordelt på ${summaryParts.join(' + ')}</span>
         </div>
       `;
@@ -248,18 +248,18 @@ function renderOverdue() {
           <div class="overdue-section overdue-proximity-section ${severityClass}">
             <div class="overdue-section-header">
               <span class="proximity-number">${idx + 1}</span>
-              <i class="fas fa-map-pin"></i>
+              <i aria-hidden="true" class="fas fa-map-pin"></i>
               ${escapeHtml(cluster.areaName)}
               <span class="proximity-meta">${cluster.customers.length} ${custWord}, ${radiusText}</span>
               ${severityBadges}
               <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for denne klyngen">
-                <i class="fas fa-route"></i>
+                <i aria-hidden="true" class="fas fa-route"></i>
               </button>
               <button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${customerIds}" title="Vis på kart">
-                <i class="fas fa-map"></i>
+                <i aria-hidden="true" class="fas fa-map"></i>
               </button>
               <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-                <i class="fas fa-calendar-plus"></i>
+                <i aria-hidden="true" class="fas fa-calendar-plus"></i>
               </button>
             </div>
             <div class="overdue-type-summary">${renderTypeBadges(cluster.customers)}</div>
@@ -276,10 +276,10 @@ function renderOverdue() {
         html += `
           <div class="overdue-section overdue-noise-section">
             <div class="overdue-section-header">
-              <i class="fas fa-map-marker-alt"></i>
+              <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
               Spredte ${noiseWord} (${noise.length})
-              ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i class="fas fa-map"></i></button>` : ''}
-              ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i class="fas fa-calendar-plus"></i></button>` : ''}
+              ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i aria-hidden="true" class="fas fa-map"></i></button>` : ''}
+              ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i aria-hidden="true" class="fas fa-calendar-plus"></i></button>` : ''}
             </div>
             ${renderGroupedItems(noise)}
           </div>
@@ -387,7 +387,7 @@ function renderWarnings() {
           <span class="control-status ${controlStatus.class}">${daysUntil < 0 ? Math.abs(daysUntil) + ' dager over' : daysUntil + ' dager'}</span>
           <p style="font-size: 10px; color: #666; margin: 2px 0 0 0;">${escapeHtml(dateStr)}</p>
           <button class="btn-wp-single" data-action="addGroupToWeekPlan" data-customer-ids="${c.id}" title="Legg til i ukeplan">
-            <i class="fas fa-calendar-plus"></i>
+            <i aria-hidden="true" class="fas fa-calendar-plus"></i>
           </button>
         </div>
       </div>
@@ -422,7 +422,7 @@ function renderWarnings() {
     if (summary.noiseCount > 0) summaryParts.push(`${summary.noiseCount} ${summary.noiseCount === 1 ? 'spredt' : 'spredte'}`);
     html += `
       <div class="proximity-summary">
-        <i class="fas fa-layer-group"></i>
+        <i aria-hidden="true" class="fas fa-layer-group"></i>
         <span>${warningCustomers.length} ${warnCustWord} fordelt på ${summaryParts.join(' + ')}</span>
       </div>
     `;
@@ -438,17 +438,17 @@ function renderWarnings() {
       html += `<div class="warning-section overdue-proximity-section">
         <div class="warning-header proximity-header">
           <span class="proximity-number">${idx + 1}</span>
-          <i class="fas fa-map-pin"></i>
+          <i aria-hidden="true" class="fas fa-map-pin"></i>
           ${escapeHtml(cluster.areaName)}
           <span class="proximity-meta">${cluster.customers.length} ${custWord}, ${radiusText}</span>
           <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for denne klyngen">
-            <i class="fas fa-route"></i>
+            <i aria-hidden="true" class="fas fa-route"></i>
           </button>
           <button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${customerIds}" title="Vis på kart">
-            <i class="fas fa-map"></i>
+            <i aria-hidden="true" class="fas fa-map"></i>
           </button>
           <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-            <i class="fas fa-calendar-plus"></i>
+            <i aria-hidden="true" class="fas fa-calendar-plus"></i>
           </button>
         </div>
         <div class="overdue-type-summary">${renderWarningTypeBadges(cluster.customers)}</div>
@@ -463,10 +463,10 @@ function renderWarnings() {
       const noiseWord = noise.length === 1 ? 'kunde' : 'kunder';
       html += `<div class="warning-section overdue-noise-section">
         <div class="warning-header proximity-header">
-          <i class="fas fa-map-marker-alt"></i>
+          <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
           Spredte ${noiseWord} (${noise.length})
-          ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i class="fas fa-map"></i></button>` : ''}
-          ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i class="fas fa-calendar-plus"></i></button>` : ''}
+          ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i aria-hidden="true" class="fas fa-map"></i></button>` : ''}
+          ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i aria-hidden="true" class="fas fa-calendar-plus"></i></button>` : ''}
         </div>
         ${noise.map(renderWarningItem).join('')}
       </div>`;

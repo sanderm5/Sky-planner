@@ -1,7 +1,7 @@
 # Sky Planner Web (Marketing-nettside + Dashboard)
 
 > Offentlig markedsføringsside og bruker-dashboard for Sky Planner.
-> **Kjører på:** Astro 5 + Tailwind CSS
+> **Kjører på:** Next.js 15 (App Router) + React 19 + Tailwind CSS
 
 ---
 
@@ -9,9 +9,9 @@
 
 | Hva | Hvor |
 |-----|------|
-| Framework | Astro 5 (SSR) |
+| Framework | Next.js 15 (App Router, React 19) |
 | Styling | Tailwind CSS |
-| Betalinger | Stripe |
+| Betalinger | Stripe (midlertidig deaktivert, Fiken-fakturering) |
 | Port | 3001 (dev) |
 
 ---
@@ -21,75 +21,126 @@
 ```
 apps/web/
 ├── src/
-│   ├── pages/               # Astro-sider (routing)
-│   │   ├── index.astro      # Forsiden (landing page)
-│   │   ├── priser.astro     # Prisside
-│   │   ├── faq.astro        # FAQ-side
-│   │   ├── kontakt.astro    # Kontaktside
-│   │   ├── funksjoner.astro # Features-side
-│   │   ├── demo.astro       # Demo-side
-│   │   ├── personvern.astro # Personvernerklæring
-│   │   ├── vilkar.astro     # Vilkår og betingelser
+│   ├── app/                          # Next.js App Router
+│   │   ├── layout.tsx                # Root layout (<html>, fonts, globals.css)
+│   │   ├── globals.css               # Global CSS (aurora, starfield, mountain-animasjoner)
+│   │   ├── not-found.tsx             # 404-side
+│   │   ├── error.tsx                 # Feilside
+│   │   ├── (marketing)/              # Route group — marketing-sider
+│   │   │   ├── layout.tsx            # Header + Footer + ScrollAnimationObserver
+│   │   │   ├── page.tsx              # Forsiden
+│   │   │   ├── priser/page.tsx
+│   │   │   ├── faq/page.tsx
+│   │   │   ├── kontakt/page.tsx
+│   │   │   ├── funksjoner/page.tsx
+│   │   │   ├── demo/page.tsx
+│   │   │   ├── personvern/page.tsx
+│   │   │   └── vilkar/page.tsx
 │   │   ├── auth/
-│   │   │   ├── login.astro
-│   │   │   ├── registrer.astro
-│   │   │   ├── glemt-passord.astro
-│   │   │   ├── tilbakestill-passord.astro
-│   │   │   ├── verify-email.astro   # E-postverifisering
-│   │   │   └── success.astro
-│   │   ├── dashboard/       # Bruker-dashboard
-│   │   │   ├── index.astro
-│   │   │   ├── brukere/
-│   │   │   ├── abonnement/
-│   │   │   ├── fakturaer/
+│   │   │   ├── layout.tsx            # AuthLayout (fjellbakgrunn)
+│   │   │   ├── login/page.tsx
+│   │   │   ├── registrer/page.tsx
+│   │   │   ├── glemt-passord/page.tsx
+│   │   │   ├── tilbakestill-passord/page.tsx
+│   │   │   ├── verify-email/page.tsx
+│   │   │   ├── verify-2fa/page.tsx
+│   │   │   └── success/page.tsx
+│   │   ├── dashboard/
+│   │   │   ├── layout.tsx            # Auth-sjekk + Sidebar + Header
+│   │   │   ├── page.tsx              # Oversikt
+│   │   │   ├── brukere/page.tsx
+│   │   │   ├── abonnement/page.tsx
+│   │   │   ├── fakturaer/page.tsx
 │   │   │   └── innstillinger/
-│   │   │       ├── index.astro
-│   │   │       ├── api-nokler.astro
-│   │   │       ├── integrasjoner.astro
-│   │   │       ├── webhooks.astro
-│   │   │       └── oauth-callback.astro
-│   │   └── api/             # API-routes
-│   │       ├── auth/
-│   │       │   ├── login.ts
-│   │       │   ├── register.ts
-│   │       │   ├── logout.ts
-│   │       │   ├── glemt-passord.ts
-│   │       │   ├── tilbakestill-passord.ts
-│   │       │   └── verify-email.ts  # E-postverifisering
-│   │       ├── app/
-│   │       │   └── [...path].ts  # Proxy til app API
-│   │       ├── industries/
-│   │       │   └── index.ts
-│   │       ├── contact.ts
-│   │       ├── dashboard/
-│   │       │   ├── invoices/
-│   │       │   ├── organization/
-│   │       │   ├── subscription/
-│   │       │   ├── users/
-│   │       │   ├── 2fa/             # 2FA-oppsett og administrasjon
-│   │       │   │   ├── setup.ts
-│   │       │   │   ├── verify.ts
-│   │       │   │   ├── disable.ts
-│   │       │   │   └── status.ts
-│   │       │   └── delete-account.ts # GDPR-kontosletting
-│   │       └── webhooks/
-│   │           └── stripe.ts
+│   │   │       ├── page.tsx          # Organisasjonsinnstillinger
+│   │   │       ├── tjenester/page.tsx
+│   │   │       ├── kategorier/page.tsx
+│   │   │       ├── integrasjoner/page.tsx
+│   │   │       ├── api-nokler/page.tsx
+│   │   │       ├── webhooks/page.tsx
+│   │   │       ├── sikkerhet/page.tsx
+│   │   │       ├── personvern/page.tsx
+│   │   │       └── oauth-callback/page.tsx
+│   │   └── api/                      # Route Handlers
+│   │       ├── auth/{login,register,logout,...}/route.ts
+│   │       ├── dashboard/{organization,users,...}/route.ts
+│   │       ├── dashboard/2fa/{setup,verify,disable,status}/route.ts
+│   │       ├── webhooks/stripe/route.ts
+│   │       ├── app/[...path]/route.ts   # Proxy til app API
+│   │       ├── contact/route.ts
+│   │       ├── industries/route.ts
+│   │       └── cron/backup/route.ts
 │   ├── components/
-│   │   ├── layout/          # Header, Footer
-│   │   ├── sections/        # Hero, Features, etc.
-│   │   ├── dashboard/       # Dashboard-komponenter
-│   │   ├── ui/              # Gjenbrukbare UI-komponenter
-│   │   └── PasswordStrengthIndicator.astro  # Passordstyrke-indikator
-│   ├── layouts/
-│   │   ├── BaseLayout.astro
-│   │   ├── AuthLayout.astro
-│   │   └── DashboardLayout.astro
-│   ├── middleware.ts        # Auth middleware
-│   └── styles/
-│       └── global.css
-├── astro.config.mjs         # Astro konfigurasjon
-└── tailwind.config.mjs      # Tailwind konfigurasjon
+│   │   ├── layout/                   # Header.tsx, Footer.tsx
+│   │   ├── sections/                 # Hero, Features, HowItWorks, etc.
+│   │   ├── dashboard/                # Sidebar, DashboardHeader, StatCard, SettingsNav
+│   │   ├── dashboard-pages/          # Client Components for interaktive dashboard-sider
+│   │   │   ├── IntegrasjonsManager.tsx
+│   │   │   ├── SikkerhetManager.tsx
+│   │   │   ├── WebhooksManager.tsx
+│   │   │   ├── ApiNoklerManager.tsx
+│   │   │   ├── KategorierManager.tsx
+│   │   │   ├── TjenesterManager.tsx
+│   │   │   ├── BrukereManager.tsx
+│   │   │   ├── OrgSettingsForm.tsx
+│   │   │   ├── PersonvernSettings.tsx
+│   │   │   └── FakturaerManager.tsx
+│   │   ├── ui/                       # GlassCard, Badge, FeatureIcon, PasswordStrengthIndicator
+│   │   └── auth/                     # LoginForm, RegisterForm, etc.
+│   ├── lib/
+│   │   ├── auth.ts                   # requireAuth(), requireApiAuth(), requireAdminApiAuth()
+│   │   ├── csrf.ts                   # getCsrfToken() client utility
+│   │   └── db.ts                     # Database init helper (singleton)
+│   └── hooks/
+│       └── (reserved for future hooks)
+├── middleware.ts                      # CSRF + sikkerhetsheadere (root-nivå)
+├── next.config.ts                     # Next.js-konfigurasjon
+├── tailwind.config.js                 # Tailwind-konfigurasjon
+└── postcss.config.cjs                 # PostCSS (CommonJS pga "type": "module")
 ```
+
+---
+
+## Arkitektur
+
+### Server vs Client Components
+
+- **Server Components** (standard): Marketing-sider, dashboard page.tsx-filer, StatCard
+- **Client Components** (`'use client'`): Header (usePathname), Sidebar, DashboardHeader, alle auth-skjemaer, alle dashboard-managers (interaktive sider)
+
+### Mønster for dashboard-sider
+
+```tsx
+// page.tsx (Server Component) — gjør auth, sender data til client
+import { requireAuth } from '@/lib/auth';
+import SomeManager from '@/components/dashboard-pages/SomeManager';
+
+export default async function SomePage() {
+  const auth = await requireAuth();
+  return <SomeManager organizationId={auth.organizationId} />;
+}
+```
+
+```tsx
+// SomeManager.tsx (Client Component) — all interaktivitet
+'use client';
+export default function SomeManager({ organizationId }: Props) {
+  // useState, useEffect, fetch-kall, modaler, etc.
+}
+```
+
+### CSRF-beskyttelse
+
+- Middleware setter `__csrf`-cookie på GET-forespørsler
+- Client components leser token via `getCsrfToken()` fra `@/lib/csrf`
+- API-ruter validerer `X-CSRF-Token`-header mot cookie (double-submit)
+
+### Auth-flyt
+
+- `requireAuth()` — for sider (Server Components), redirecter til login ved feil
+- `requireApiAuth(request)` — for API-ruter, returnerer Response ved feil
+- `requireAdminApiAuth(request)` — som over, men krever admin-rolle
+- `isAuthError(result)` — type guard for å sjekke om result er en feil-Response
 
 ---
 
@@ -99,7 +150,8 @@ apps/web/
 cd apps/web
 pnpm dev          # http://localhost:3001
 pnpm build        # Produksjonsbygg
-pnpm preview      # Forhåndsvis produksjonsbygg
+pnpm start        # Kjør produksjonsbygg
+pnpm typecheck    # Type-sjekk
 ```
 
 ---
@@ -126,6 +178,7 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 | `/auth/glemt-passord` | Be om passordtilbakestilling |
 | `/auth/tilbakestill-passord` | Sett nytt passord (med token) |
 | `/auth/verify-email` | E-postverifisering (med token) |
+| `/auth/verify-2fa` | 2FA-verifisering |
 | `/auth/success` | Bekreftelse etter registrering |
 
 ### Dashboard
@@ -136,9 +189,13 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 | `/dashboard/abonnement` | Abonnement-oversikt |
 | `/dashboard/fakturaer` | Faktura-historikk |
 | `/dashboard/innstillinger` | Organisasjonsinnstillinger |
+| `/dashboard/innstillinger/tjenester` | Tjenester (fargevelger, ikoner) |
+| `/dashboard/innstillinger/kategorier` | Grupper og tags |
 | `/dashboard/innstillinger/api-nokler` | API-nøkler |
 | `/dashboard/innstillinger/integrasjoner` | Regnskapssystem-integrasjoner |
 | `/dashboard/innstillinger/webhooks` | Webhooks |
+| `/dashboard/innstillinger/sikkerhet` | 2FA og sesjoner |
+| `/dashboard/innstillinger/personvern` | GDPR-innstillinger |
 | `/dashboard/innstillinger/oauth-callback` | OAuth callback-handler |
 
 ---
@@ -154,40 +211,37 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 | `POST /api/auth/glemt-passord` | Be om passordtilbakestilling |
 | `POST /api/auth/tilbakestill-passord` | Sett nytt passord |
 | `GET /api/auth/verify-email` | Verifiser e-postadresse (med token) |
+| `POST /api/auth/verify-2fa` | Verifiser 2FA-kode |
 
 ### Dashboard
 | Endpoint | Beskrivelse |
 |----------|-------------|
 | `GET /api/dashboard/invoices` | Hent fakturaer |
-| `GET /api/dashboard/organization` | Hent organisasjon |
-| `PUT /api/dashboard/organization` | Oppdater organisasjon |
+| `GET/PUT /api/dashboard/organization` | Hent/oppdater organisasjon |
 | `POST /api/dashboard/organization/upload-logo` | Last opp logo |
-| `POST /api/dashboard/subscription/portal` | Stripe kundeportal |
-| `GET /api/dashboard/users` | Hent brukere |
-| `POST /api/dashboard/users` | Inviter bruker |
+| `POST /api/dashboard/subscription/portal` | Stripe kundeportal (deaktivert) |
+| `GET/POST /api/dashboard/users` | Hent/inviter brukere |
+| `PUT/DELETE /api/dashboard/users/[id]` | Oppdater/slett bruker |
+| `GET /api/dashboard/sessions/list` | Hent aktive sesjoner |
+| `POST /api/dashboard/sessions/terminate` | Avslutt sesjon |
+| `GET/POST/DELETE /api/dashboard/delete-account` | GDPR-kontosletting |
 
 ### Tofaktorautentisering (2FA)
 | Endpoint | Beskrivelse |
 |----------|-------------|
-| `POST /api/dashboard/2fa/setup` | Initialiser 2FA (returnerer hemmelighet, URI, backup-koder) |
-| `POST /api/dashboard/2fa/verify` | Verifiser kode for å aktivere 2FA |
-| `POST /api/dashboard/2fa/disable` | Deaktiver 2FA (krever passord) |
+| `POST /api/dashboard/2fa/setup` | Initialiser 2FA |
+| `POST /api/dashboard/2fa/verify` | Verifiser og aktiver 2FA |
+| `POST /api/dashboard/2fa/disable` | Deaktiver 2FA |
 | `GET /api/dashboard/2fa/status` | Hent 2FA-status |
-
-### GDPR-kontosletting
-| Endpoint | Beskrivelse |
-|----------|-------------|
-| `POST /api/dashboard/delete-account` | Be om kontosletting (30 dagers utsettelse) |
-| `DELETE /api/dashboard/delete-account` | Avbryt ventende sletting |
-| `GET /api/dashboard/delete-account` | Hent slettestatus |
 
 ### Andre
 | Endpoint | Beskrivelse |
 |----------|-------------|
-| `POST /api/contact` | Lagre kontaktskjema |
-| `POST /api/webhooks/stripe` | Stripe webhook handler |
+| `POST /api/contact` | Kontaktskjema |
+| `POST /api/webhooks/stripe` | Stripe webhook (deaktivert) |
 | `GET /api/industries` | Hent bransjeliste |
-| `ALL /api/app/*` | Proxy til app API |
+| `ALL /api/app/*` | Proxy til app API (Railway backend) |
+| `POST /api/cron/backup` | Database-backup cron |
 
 ---
 
@@ -198,6 +252,7 @@ pnpm preview      # Forhåndsvis produksjonsbygg
 - `@skyplanner/email` - E-postmaler og sending (Resend API)
 - `stripe` - Betalingshåndtering
 - `bcryptjs` - Passord-hashing
+- `clsx` - Conditional CSS-klasser
 
 ---
 
@@ -212,27 +267,30 @@ Bruker Tailwind CSS med custom konfigurasjon:
 
 ## Komponenter
 
-| Komponent | Beskrivelse |
-|-----------|-------------|
-| `GlassCard` | Glass-effekt kort |
-| `Badge` | Merkelapp-komponent |
-| `Header` | Navigasjonsheader |
-| `Footer` | Sidefooter |
-| `Hero` | Hero-seksjon for landing |
-| `Features` | Features-grid |
-| `Testimonials` | Kundehistorier |
-| `DashboardHeader` | Dashboard-header med brukerinfo |
-| `Sidebar` | Dashboard-navigasjon |
-| `StatCard` | Statistikk-kort |
-| `PasswordStrengthIndicator` | Sanntids passordstyrke-feedback (svak/ok/god/sterk) |
+| Komponent | Type | Beskrivelse |
+|-----------|------|-------------|
+| `Header` | Client | Navigasjonsheader med mobilmeny (usePathname) |
+| `Footer` | Server | Sidefooter |
+| `GlassCard` | Server | Glass-effekt kort |
+| `Badge` | Server | Merkelapp-komponent |
+| `Sidebar` | Client | Dashboard-navigasjon |
+| `DashboardHeader` | Client | Dashboard-header med brukerinfo |
+| `StatCard` | Server | Statistikk-kort |
+| `SettingsNav` | Client | Innstillinger-navigasjon (8 tabs) |
+| `PasswordStrengthIndicator` | Client | Sanntids passordstyrke-feedback |
+| `ScrollAnimationObserver` | Client | IntersectionObserver for scroll-animasjoner |
+| `ContactForm` | Client | Kontaktskjema med validering |
 
 ---
 
 ## Stripe-integrasjon
 
-Webhooks mottas på `/api/webhooks/stripe` for:
-- `checkout.session.completed` - Ny abonnement
-- `customer.subscription.updated` - Abonnement endret
+**Midlertidig deaktivert** — fakturering skjer manuelt via Fiken.
+
+Webhooks konfigurert for:
+- `customer.subscription.created/updated` - Abonnement opprettet/endret
 - `customer.subscription.deleted` - Abonnement kansellert
 - `invoice.payment_succeeded` - Betaling vellykket
 - `invoice.payment_failed` - Betaling feilet
+
+For å re-aktivere: Gjenopprett webhook-handler fra git-historikk og fjern early return.

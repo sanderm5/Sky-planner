@@ -93,14 +93,14 @@ function showPatchNotesEmptyState() {
   modal.className = 'patch-notes-overlay';
   modal.innerHTML = `<div class="patch-notes-modal">
     <div class="patch-notes-modal-header">
-      <h2><i class="fas fa-bullhorn"></i> Nyheter</h2>
+      <h2><i aria-hidden="true" class="fas fa-bullhorn"></i> Nyheter</h2>
       <button class="patch-notes-close" id="closePatchNotesBtn" aria-label="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="patch-notes-modal-body" style="display:flex;align-items:center;justify-content:center;text-align:center;min-height:200px;">
       <div>
-        <i class="fas fa-newspaper" style="font-size:48px;color:var(--color-text-muted, #999);margin-bottom:16px;display:block;"></i>
+        <i aria-hidden="true" class="fas fa-newspaper" style="font-size:48px;color:var(--color-text-muted, #999);margin-bottom:16px;display:block;"></i>
         <p style="font-size:16px;color:var(--color-text-secondary, #666);margin:0 0 8px;">Ingen nyheter enn\u00e5</p>
         <p style="font-size:13px;color:var(--color-text-muted, #999);margin:0;">Nye funksjoner og oppdateringer vil vises her.</p>
       </div>
@@ -140,7 +140,7 @@ function showPatchNotesModal(notes) {
         ? '<span class="patch-note-pro-badge">Pro</span>'
         : '';
       const tabLink = item.tab
-        ? `<button class="patch-note-tab-link" data-patch-tab="${escapeHtml(item.tab)}">Vis <i class="fas fa-arrow-right"></i></button>`
+        ? `<button class="patch-note-tab-link" data-patch-tab="${escapeHtml(item.tab)}">Vis <i aria-hidden="true" class="fas fa-arrow-right"></i></button>`
         : '';
       const descHtml = item.description
         ? `<span class="patch-note-description">${escapeHtml(item.description)}</span>`
@@ -170,9 +170,9 @@ function showPatchNotesModal(notes) {
   modal.className = 'patch-notes-overlay';
   modal.innerHTML = `<div class="patch-notes-modal">
     <div class="patch-notes-modal-header">
-      <h2><i class="fas fa-bullhorn"></i> Nyheter</h2>
+      <h2><i aria-hidden="true" class="fas fa-bullhorn"></i> Nyheter</h2>
       <button class="patch-notes-close" id="closePatchNotesBtn" aria-label="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="patch-notes-modal-body">${contentHtml}</div>
@@ -241,7 +241,7 @@ function initBottomTabBar() {
     btn.dataset.action = tab.action;
     btn.setAttribute('role', 'tab');
     btn.setAttribute('aria-label', tab.label);
-    btn.innerHTML = `<i class="fas ${tab.icon}"></i><span>${tab.label}</span>`;
+    btn.innerHTML = `<i aria-hidden="true" class="fas ${tab.icon}"></i><span>${tab.label}</span>`;
 
     btn.addEventListener('click', () => handleBottomTabClick(tab));
     bar.appendChild(btn);
@@ -379,19 +379,19 @@ function createMoreMenuOverlay() {
     <div class="more-menu-header">
       <h3>Alle funksjoner</h3>
       <button class="more-menu-close" id="moreMenuCloseBtn" aria-label="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="more-menu-grid">
       ${items.map(item => `
         <button class="more-menu-item" data-more-tab="${escapeHtml(item.tab)}">
-          <i class="fas ${escapeHtml(item.icon)}"></i>
+          <i aria-hidden="true" class="fas ${escapeHtml(item.icon)}"></i>
           <span>${escapeHtml(item.label)}</span>
           ${item.badgeId ? `<span class="more-menu-badge" data-mirror-badge="${escapeHtml(item.badgeId)}" style="display:none;"></span>` : ''}
         </button>
       `).join('')}
       <button class="more-menu-item" id="moreMenuPatchNotes">
-        <i class="fas fa-bullhorn"></i>
+        <i aria-hidden="true" class="fas fa-bullhorn"></i>
         <span>Nyheter</span>
       </button>
     </div>
@@ -459,11 +459,11 @@ function createMobileFilterSheet() {
   sheet.innerHTML = `
     <div class="filter-sheet-handle" id="filterSheetHandle">
       <div class="filter-sheet-search-peek">
-        <i class="fas fa-search"></i>
+        <i aria-hidden="true" class="fas fa-search"></i>
         <span>Søk og filtrer kunder</span>
         <span class="filter-sheet-count" id="filterSheetCount">0</span>
         <button class="filter-sheet-close" id="filterSheetClose" aria-label="Lukk">
-          <i class="fas fa-times"></i>
+          <i aria-hidden="true" class="fas fa-times"></i>
         </button>
       </div>
     </div>
@@ -575,7 +575,7 @@ function createMobileSearchFab() {
   fab.id = 'mobileSearchFab';
   fab.className = 'mobile-search-fab';
   fab.setAttribute('aria-label', 'Søk og filtrer kunder');
-  fab.innerHTML = '<i class="fas fa-search"></i>';
+  fab.innerHTML = '<i aria-hidden="true" class="fas fa-search"></i>';
   fab.addEventListener('click', () => {
     showMobileFilterSheet();
   });
@@ -588,7 +588,7 @@ function createMobileSelectionFab() {
   const fab = document.createElement('button');
   fab.id = 'mobileSelectionFab';
   fab.className = 'mobile-selection-fab';
-  fab.innerHTML = '<i class="fas fa-check-circle"></i> <span id="mobileSelectionCount">0</span> valgt';
+  fab.innerHTML = '<i aria-hidden="true" class="fas fa-check-circle"></i> <span id="mobileSelectionCount">0</span> valgt';
   fab.addEventListener('click', () => {
     // Open planner tab to show selected customers
     switchToTab('planner');
@@ -756,13 +756,13 @@ function addMobileMenuButton() {
 
   const btn = document.createElement('button');
   btn.className = 'mobile-menu-toggle';
-  btn.innerHTML = '<i class="fas fa-bars"></i>';
+  btn.innerHTML = '<i aria-hidden="true" class="fas fa-bars"></i>';
   btn.setAttribute('aria-label', 'Åpne meny');
 
   btn.addEventListener('click', () => {
     toggleMobileSidebar();
     btn.classList.toggle('active', sidebarOpen);
-    btn.innerHTML = sidebarOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+    btn.innerHTML = sidebarOpen ? '<i aria-hidden="true" class="fas fa-times"></i>' : '<i aria-hidden="true" class="fas fa-bars"></i>';
   });
 
   document.body.appendChild(btn);
@@ -779,7 +779,7 @@ function toggleMobileSidebar() {
   const btn = document.querySelector('.mobile-menu-toggle');
   if (btn) {
     btn.classList.toggle('active', sidebarOpen);
-    btn.innerHTML = sidebarOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+    btn.innerHTML = sidebarOpen ? '<i aria-hidden="true" class="fas fa-times"></i>' : '<i aria-hidden="true" class="fas fa-bars"></i>';
   }
 }
 
@@ -793,7 +793,7 @@ function closeMobileSidebar() {
   const btn = document.querySelector('.mobile-menu-toggle');
   if (btn) {
     btn.classList.remove('active');
-    btn.innerHTML = '<i class="fas fa-bars"></i>';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-bars"></i>';
   }
 }
 
@@ -807,7 +807,7 @@ function openMobileSidebar() {
   const btn = document.querySelector('.mobile-menu-toggle');
   if (btn) {
     btn.classList.add('active');
-    btn.innerHTML = '<i class="fas fa-times"></i>';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-times"></i>';
   }
 }
 

@@ -819,7 +819,7 @@ function showToast(message, type = 'info', duration = 3000) {
   toast.setAttribute('role', 'status');
   toast.setAttribute('aria-live', 'polite');
   toast.innerHTML = `
-    <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}" aria-hidden="true"></i>
+    <i aria-hidden="true" class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i>
     <span>${escapeHtml(message)}</span>
   `;
 
@@ -1118,8 +1118,8 @@ function applyMvpModeUI() {
   const filterHeader = document.querySelector('.filter-panel-header h3');
   if (filterHeader) {
     filterHeader.innerHTML = isMvp
-      ? '<i class="fas fa-users"></i> Kunder'
-      : '<i class="fas fa-filter"></i> Kunder';
+      ? '<i aria-hidden="true" class="fas fa-users"></i> Kunder'
+      : '<i aria-hidden="true" class="fas fa-filter"></i> Kunder';
   }
 
   Logger.log(`Feature mode UI applied: ${isMvp ? 'MVP (simplified)' : 'Full (features enabled)'}`);
@@ -1504,6 +1504,24 @@ async function apiFetch(url, options = {}) {
     }
   }
 
+  // Handle 503 maintenance mode (full block)
+  if (response.status === 503) {
+    const data = await response.clone().json().catch(() => ({}));
+    if (data.error && data.error.code === 'MAINTENANCE') {
+      showMaintenanceOverlay(data.error.message);
+      throw new Error(data.error.message || 'Vedlikehold pågår');
+    }
+  }
+
+  // Check for maintenance banner header (banner mode — app still works)
+  const maintenanceHeader = response.headers.get('X-Maintenance');
+  if (maintenanceHeader === 'banner') {
+    const msg = response.headers.get('X-Maintenance-Message');
+    showMaintenanceBanner(msg ? decodeURIComponent(msg) : 'Vedlikehold pågår');
+  } else {
+    hideMaintenanceBanner();
+  }
+
   // Check for subscription warning header (grace period / trial ending soon)
   const subscriptionWarning = response.headers.get('X-Subscription-Warning');
   if (subscriptionWarning) {
@@ -1511,6 +1529,68 @@ async function apiFetch(url, options = {}) {
   }
 
   return response;
+}
+
+// Maintenance banner (yellow bar at top — app still usable)
+let maintenanceBannerEl = null;
+
+function showMaintenanceBanner(message) {
+  if (maintenanceBannerEl) {
+    maintenanceBannerEl.querySelector('.maintenance-banner-text').textContent = message;
+    return;
+  }
+
+  maintenanceBannerEl = document.createElement('div');
+  maintenanceBannerEl.id = 'maintenance-banner';
+  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:#1a1a1a;text-align:center;padding:8px 16px;font-size:14px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+  maintenanceBannerEl.innerHTML = '<span class="maintenance-banner-text">' + escapeHtml(message) + '</span>';
+  document.body.appendChild(maintenanceBannerEl);
+}
+
+function hideMaintenanceBanner() {
+  if (maintenanceBannerEl) {
+    maintenanceBannerEl.remove();
+    maintenanceBannerEl = null;
+  }
+}
+
+// Maintenance overlay (full screen block — app unusable)
+let maintenanceOverlayEl = null;
+let maintenancePollInterval = null;
+
+function showMaintenanceOverlay(message) {
+  if (maintenanceOverlayEl) return; // Already showing
+
+  maintenanceOverlayEl = document.createElement('div');
+  maintenanceOverlayEl.id = 'maintenance-overlay';
+  maintenanceOverlayEl.style.cssText = 'position:fixed;inset:0;z-index:100000;background:#0A0E16;display:flex;align-items:center;justify-content:center;';
+  maintenanceOverlayEl.innerHTML = '<div style="text-align:center;padding:2rem;max-width:480px;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">'
+    + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" style="margin:0 auto 1.5rem;display:block;"><defs><linearGradient id="mg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#6366f1"/><stop offset="100%" style="stop-color:#a855f7"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#mg)"/><rect x="5" y="18" width="5" height="10" rx="1" fill="white" opacity="0.5"/><rect x="13" y="12" width="5" height="16" rx="1" fill="white" opacity="0.75"/><rect x="21" y="6" width="5" height="22" rx="1" fill="white"/><path d="M6 16L15 9L24 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 3"/></svg>'
+    + '<h1 style="font-size:1.5rem;font-weight:600;margin-bottom:0.75rem;color:#fff;">Vedlikehold pågår</h1>'
+    + '<p style="color:#94a3b8;font-size:1rem;line-height:1.6;margin-bottom:2rem;">' + escapeHtml(message) + '</p>'
+    + '<div style="width:32px;height:32px;border:3px solid rgba(99,102,241,0.2);border-top-color:#6366f1;border-radius:50%;animation:mtspin 1s linear infinite;margin:0 auto 1rem;"></div>'
+    + '<p style="color:#64748b;font-size:0.8rem;">Siden sjekker automatisk om vi er tilbake...</p>'
+    + '</div>'
+    + '<style>@keyframes mtspin{to{transform:rotate(360deg)}}</style>';
+  document.body.appendChild(maintenanceOverlayEl);
+
+  // Poll for maintenance end
+  maintenancePollInterval = setInterval(function() {
+    fetch('/api/maintenance/status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.maintenance || data.mode !== 'full') {
+          clearInterval(maintenancePollInterval);
+          maintenancePollInterval = null;
+          if (maintenanceOverlayEl) {
+            maintenanceOverlayEl.remove();
+            maintenanceOverlayEl = null;
+          }
+          window.location.reload();
+        }
+      })
+      .catch(function() {});
+  }, 30000);
 }
 
 
@@ -1537,7 +1617,7 @@ function showSubscriptionWarningBanner(message) {
 
   banner.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;">
-      <i class="fas fa-exclamation-circle"></i>
+      <i aria-hidden="true" class="fas fa-exclamation-circle"></i>
       <span>${escapeHtml(message)}</span>
     </div>
     <button onclick="this.parentElement.remove()" style="background:none;border:none;color:white;cursor:pointer;font-size:18px;padding:0 5px;">&times;</button>
@@ -1698,7 +1778,7 @@ function showSubscriptionError(errorData) {
   modal.innerHTML = `
     <div style="background:var(--card-bg, #1a1a2e);border-radius:12px;padding:32px;max-width:450px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;">
-        <i class="fas fa-exclamation-triangle" style="font-size:28px;color:white;"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle" style="font-size:28px;color:white;"></i>
       </div>
       <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:24px;">${escapeHtml(statusTitle)}</h2>
       <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 24px;font-size:15px;line-height:1.6;">${escapeHtml(message)}</p>
@@ -2193,8 +2273,8 @@ class ServiceTypeRegistry {
     const st = typeof slugOrServiceType === 'string'
       ? this.getBySlug(slugOrServiceType)
       : slugOrServiceType;
-    if (!st) return '<i class="fas fa-wrench"></i>';
-    return `<i class="fas ${st.icon}" style="color: ${st.color}"></i>`;
+    if (!st) return '<i aria-hidden="true" class="fas fa-wrench"></i>';
+    return `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`;
   }
 
   /**
@@ -2289,7 +2369,7 @@ class ServiceTypeRegistry {
       html += `
         <label class="kategori-checkbox-label">
           <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
-          <i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
+          <i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
           ${escapeHtml(st.name)}
         </label>`;
     });
@@ -2490,7 +2570,7 @@ class ServiceTypeRegistry {
 
     // Helper to get icon HTML - white FontAwesome icon on colored marker background
     const getIconHtml = (st) => {
-      return `<i class="fas ${st.icon}"></i>`;
+      return `<i aria-hidden="true" class="fas ${st.icon}"></i>`;
     };
 
     // Helper to find matching service type using normalized comparison
@@ -2603,7 +2683,7 @@ class ServiceTypeRegistry {
       html += `
         <div class="control-section service-section" data-service-slug="${st.slug}" data-service-id="${st.id}">
           <div class="control-section-header">
-            <i class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
+            <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
           </div>
 
           ${hasSubtypes ? `
@@ -2673,6 +2753,20 @@ class ServiceTypeRegistry {
       const intervall = intervallSelect?.value ? parseInt(intervallSelect.value, 10) : st.defaultInterval;
       const subtype = subtypeSelect?.value || null;
       const equipment = equipmentSelect?.value || null;
+
+      // Fallback service type (id=0) has no real DB row — writing to
+      // customer_services would violate the foreign key constraint.
+      // Instead, copy dates to the legacy form fields so they get saved
+      // on the main customer record.
+      if (!st.id || st.id === 0) {
+        const legacySiste = document.getElementById('siste_kontroll');
+        const legacyNeste = document.getElementById('neste_kontroll');
+        const legacyIntervall = document.getElementById('kontroll_intervall');
+        if (legacySiste) legacySiste.value = siste || '';
+        if (legacyNeste) legacyNeste.value = neste || '';
+        if (legacyIntervall && intervall) legacyIntervall.value = intervall;
+        return;
+      }
 
       // Always include rendered service sections (even without dates)
       // Null dates = "service type selected but no dates set yet"
@@ -2766,7 +2860,7 @@ class ServiceTypeRegistry {
           return `
             <div class="popup-control-info">
               <p class="popup-status ${controlStatus.class}">
-                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
                 <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
               </p>
               ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -2807,7 +2901,7 @@ class ServiceTypeRegistry {
           html += `
             <div style="margin-bottom:8px;">
               <p style="margin:0;">
-                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
+                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
               </p>
               <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</p>
               ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -2842,7 +2936,7 @@ class ServiceTypeRegistry {
       return `
         <div class="popup-control-info">
           <p class="popup-status ${controlStatus.class}">
-            <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+            <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
             <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
           </p>
           ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -2874,7 +2968,7 @@ class ServiceTypeRegistry {
         }
 
         html += `
-          <p><strong><i class="fas ${st.icon}" style="color: ${st.color};"></i> ${st.name}:</strong></p>
+          <p><strong><i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color};"></i> ${st.name}:</strong></p>
           <p style="margin-left: 20px;">Neste: ${nesteKontroll ? escapeHtml(nesteKontroll) : 'Ikke satt'}</p>
           ${sisteKontroll ? `<p style="margin-left: 20px; font-size: 11px; color: var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
         `;
@@ -2915,7 +3009,7 @@ class ServiceTypeRegistry {
     return `
       <div class="popup-control-info">
         <p class="popup-status ${controlStatus.class}">
-          <strong><i class="fas ${matchedSt.icon}" style="color: ${matchedSt.color};"></i> Neste kontroll:</strong>
+          <strong><i aria-hidden="true" class="fas ${matchedSt.icon}" style="color: ${matchedSt.color};"></i> Neste kontroll:</strong>
           <span class="control-days">${escapeHtml(controlStatus.label)}</span>
         </p>
         ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -2997,12 +3091,12 @@ function updateControlSectionHeaders() {
 
   const elHeader = document.querySelector('#elKontrollSection .control-section-header');
   if (elHeader && elService) {
-    elHeader.innerHTML = `<i class="fas ${escapeHtml(elService.icon)}" style="color: ${escapeHtml(elService.color)}"></i> ${escapeHtml(elService.name)}`;
+    elHeader.innerHTML = `<i aria-hidden="true" class="fas ${escapeHtml(elService.icon)}" style="color: ${escapeHtml(elService.color)}"></i> ${escapeHtml(elService.name)}`;
   }
 
   const brannHeader = document.querySelector('#brannvarslingSection .control-section-header');
   if (brannHeader && brannService) {
-    brannHeader.innerHTML = `<i class="fas ${escapeHtml(brannService.icon)}" style="color: ${escapeHtml(brannService.color)}"></i> ${escapeHtml(brannService.name)}`;
+    brannHeader.innerHTML = `<i aria-hidden="true" class="fas ${escapeHtml(brannService.icon)}" style="color: ${escapeHtml(brannService.color)}"></i> ${escapeHtml(brannService.name)}`;
   }
 }
 
@@ -3501,7 +3595,7 @@ const SmartRouteEngine = {
 
     // Marker sentroiden
     const centroidEl = createMarkerElement('cluster-centroid-marker',
-      '<div class="centroid-icon"><i class="fas fa-crosshairs"></i></div>', [30, 30]);
+      '<div class="centroid-icon"><i aria-hidden="true" class="fas fa-crosshairs"></i></div>', [30, 30]);
     const centroidMarker = new mapboxgl.Marker({ element: centroidEl })
       .setLngLat([cluster.centroid.lng, cluster.centroid.lat])
       .addTo(map);
@@ -3542,10 +3636,10 @@ const SmartRouteEngine = {
       const btn = card.querySelector('.rec-actions .btn-secondary');
       if (btn) {
         if (clusterId === this.selectedClusterId) {
-          btn.innerHTML = '<i class="fas fa-eye-slash"></i> Skjul';
+          btn.innerHTML = '<i aria-hidden="true" class="fas fa-eye-slash"></i> Skjul';
           card.classList.add('selected');
         } else {
-          btn.innerHTML = '<i class="fas fa-map"></i> Vis detaljer';
+          btn.innerHTML = '<i aria-hidden="true" class="fas fa-map"></i> Vis detaljer';
           card.classList.remove('selected');
         }
       }
@@ -3744,7 +3838,7 @@ function renderSmartRecommendations() {
 
     html += `
       <div class="rec-empty">
-        <i class="fas fa-info-circle"></i>
+        <i aria-hidden="true" class="fas fa-info-circle"></i>
         <p>${emptyMessage}</p>
         ${emptyHint ? `<p class="rec-empty-hint">${emptyHint}</p>` : ''}
         <p class="rec-empty-stats">
@@ -3772,7 +3866,7 @@ function renderSmartRecommendations() {
         <div class="rec-header">
           <div class="rec-title">
             <span class="rec-cluster-id">#${rec.id + 1}</span>
-            <h4><i class="fas fa-map-pin"></i> ${escapeHtml(rec.primaryArea)}</h4>
+            <h4><i aria-hidden="true" class="fas fa-map-pin"></i> ${escapeHtml(rec.primaryArea)}</h4>
           </div>
           <div class="rec-efficiency ${efficiencyClass}">
             <span class="efficiency-score">${rec.efficiencyScore}%</span>
@@ -3782,20 +3876,20 @@ function renderSmartRecommendations() {
 
         <div class="rec-metrics">
           <div class="metric">
-            <i class="fas fa-users"></i>
+            <i aria-hidden="true" class="fas fa-users"></i>
             <span>${rec.customerCount} kunder</span>
           </div>
           <div class="metric">
-            <i class="fas fa-road"></i>
+            <i aria-hidden="true" class="fas fa-road"></i>
             <span>~${rec.estimatedKm} km</span>
           </div>
           <div class="metric">
-            <i class="fas fa-clock"></i>
+            <i aria-hidden="true" class="fas fa-clock"></i>
             <span>~${timeStr}</span>
           </div>
           ${rec.overdueCount > 0 ? `
           <div class="metric urgency">
-            <i class="fas fa-exclamation-triangle"></i>
+            <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
             <span>${rec.overdueCount} forfalte</span>
           </div>
           ` : ''}
@@ -3808,11 +3902,11 @@ function renderSmartRecommendations() {
         <div class="rec-actions">
           <button class="btn btn-secondary btn-small" data-action="showClusterOnMap" data-cluster-id="${rec.id}">
             ${SmartRouteEngine.selectedClusterId === rec.id
-              ? '<i class="fas fa-eye-slash"></i> Skjul'
-              : '<i class="fas fa-map"></i> Vis detaljer'}
+              ? '<i aria-hidden="true" class="fas fa-eye-slash"></i> Skjul'
+              : '<i aria-hidden="true" class="fas fa-map"></i> Vis detaljer'}
           </button>
           <button class="btn btn-primary btn-small" data-action="createRouteFromCluster" data-cluster-id="${rec.id}">
-            <i class="fas fa-route"></i> Opprett rute
+            <i aria-hidden="true" class="fas fa-route"></i> Opprett rute
           </button>
         </div>
       </div>
@@ -3822,11 +3916,11 @@ function renderSmartRecommendations() {
   if (recommendations.length > 6) {
     if (SmartRouteEngine.showAllRecommendations) {
       html += `<button class="btn btn-link rec-toggle-all" data-action="toggleShowAllRecommendations">
-        <i class="fas fa-chevron-up"></i> Vis færre
+        <i aria-hidden="true" class="fas fa-chevron-up"></i> Vis færre
       </button>`;
     } else {
       html += `<button class="btn btn-link rec-toggle-all" data-action="toggleShowAllRecommendations">
-        <i class="fas fa-chevron-down"></i> Vis alle ${recommendations.length} anbefalinger
+        <i aria-hidden="true" class="fas fa-chevron-down"></i> Vis alle ${recommendations.length} anbefalinger
       </button>`;
     }
   }
@@ -4516,7 +4610,7 @@ function renderChatConversations() {
   if (chatState.conversations.length === 0) {
     container.innerHTML = `
       <div class="chat-empty-state">
-        <i class="fas fa-comments"></i>
+        <i aria-hidden="true" class="fas fa-comments"></i>
         <p>Ingen samtaler enn\u00e5</p>
         <p>Start en ny samtale med en kollega</p>
       </div>`;
@@ -4535,7 +4629,7 @@ function renderChatConversations() {
 
     return `
       <div class="chat-conv-item ${unread > 0 ? 'unread' : ''}" data-conv-id="${conv.id}" data-conv-type="${conv.type}">
-        <div class="chat-conv-icon"><i class="fas ${icon}"></i></div>
+        <div class="chat-conv-icon"><i aria-hidden="true" class="fas ${icon}"></i></div>
         <div class="chat-conv-info">
           <div class="chat-conv-name">${name}</div>
           <div class="chat-conv-preview">${preview}</div>
@@ -4594,7 +4688,7 @@ function renderChatMessages(conversationId) {
   if (messages.length === 0) {
     container.innerHTML = `
       <div class="chat-empty-state">
-        <i class="fas fa-comment-dots"></i>
+        <i aria-hidden="true" class="fas fa-comment-dots"></i>
         <p>Ingen meldinger enn\u00e5. Si hei!</p>
       </div>`;
     return;
@@ -4682,7 +4776,7 @@ async function showNewDmView() {
   const container = document.getElementById('chatTeamList');
   container.innerHTML = `
     <div class="chat-empty-state">
-      <i class="fas fa-spinner fa-spin"></i>
+      <i aria-hidden="true" class="fas fa-spinner fa-spin"></i>
       <p>Laster teammedlemmer...</p>
     </div>`;
 
@@ -4694,7 +4788,7 @@ async function showNewDmView() {
       try { console.error('Team members body:', await response.text()); } catch {}
       container.innerHTML = `
         <div class="chat-empty-state">
-          <i class="fas fa-exclamation-triangle"></i>
+          <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
           <p>Kunne ikke laste teammedlemmer</p>
           <p style="font-size:12px;opacity:0.7">Bruk Teamchat for \u00e5 sende melding til alle</p>
         </div>`;
@@ -4705,7 +4799,7 @@ async function showNewDmView() {
       if (result.data.length === 0) {
         container.innerHTML = `
           <div class="chat-empty-state">
-            <i class="fas fa-user-slash"></i>
+            <i aria-hidden="true" class="fas fa-user-slash"></i>
             <p>Ingen andre teammedlemmer funnet</p>
             <p style="font-size:12px;opacity:0.7">G\u00e5 tilbake og bruk Teamchat for \u00e5 sende melding til alle</p>
           </div>`;
@@ -4734,7 +4828,7 @@ async function showNewDmView() {
     console.error('Failed to load team members:', e);
     container.innerHTML = `
       <div class="chat-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
         <p>Feil ved lasting av teammedlemmer</p>
         <p style="font-size:12px;opacity:0.7">G\u00e5 tilbake og bruk Teamchat for \u00e5 sende melding til alle</p>
       </div>`;
@@ -4980,18 +5074,18 @@ function renderTodaysWork() {
     html += `
       <div class="tw-next-stop-card">
         <div class="tw-next-stop-label">
-          <i class="fas fa-arrow-right"></i> Neste stopp (${nextStopIndex + 1}/${kunder.length})
+          <i aria-hidden="true" class="fas fa-arrow-right"></i> Neste stopp (${nextStopIndex + 1}/${kunder.length})
         </div>
         <h3 class="tw-next-stop-name">${escapeHtml(nextKunde.navn)}</h3>
         <p class="tw-next-stop-address">${escapeHtml(address)}</p>
-        ${nextKunde.telefon ? `<p class="tw-next-stop-phone"><i class="fas fa-phone"></i> ${escapeHtml(nextKunde.telefon)}</p>` : ''}
+        ${nextKunde.telefon ? `<p class="tw-next-stop-phone"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(nextKunde.telefon)}</p>` : ''}
         <div class="tw-next-stop-actions">
           <button class="btn btn-primary tw-next-nav-btn" onclick="twNavigateToCustomer(${nextKunde.id})">
-            <i class="fas fa-directions"></i> Naviger hit
+            <i aria-hidden="true" class="fas fa-directions"></i> Naviger hit
           </button>
-          ${nextKunde.telefon ? `<a href="tel:${escapeHtml(nextKunde.telefon)}" class="btn btn-secondary tw-next-call-btn"><i class="fas fa-phone"></i> Ring</a>` : ''}
+          ${nextKunde.telefon ? `<a href="tel:${escapeHtml(nextKunde.telefon)}" class="btn btn-secondary tw-next-call-btn"><i aria-hidden="true" class="fas fa-phone"></i> Ring</a>` : ''}
           <button class="btn btn-success tw-next-done-btn" onclick="twMarkVisited(${nextKunde.id})">
-            <i class="fas fa-check"></i> Fullført
+            <i aria-hidden="true" class="fas fa-check"></i> Fullført
           </button>
         </div>
       </div>
@@ -5016,11 +5110,11 @@ function renderTodaysWork() {
           ${!isVisited && kunde.telefon ? `<p class="tw-stop-phone">${escapeHtml(kunde.telefon)}</p>` : ''}
         </div>
         <div class="tw-stop-actions">
-          ${!isVisited && kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="btn btn-icon btn-small tw-action-call" title="Ring"><i class="fas fa-phone"></i></a>` : ''}
-          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" onclick="twNavigateToCustomer(${kunde.id})" title="Naviger"><i class="fas fa-directions"></i></button>` : ''}
+          ${!isVisited && kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="btn btn-icon btn-small tw-action-call" title="Ring"><i aria-hidden="true" class="fas fa-phone"></i></a>` : ''}
+          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" onclick="twNavigateToCustomer(${kunde.id})" title="Naviger"><i aria-hidden="true" class="fas fa-directions"></i></button>` : ''}
           ${isVisited
-            ? '<span class="tw-visited-check"><i class="fas fa-check-circle"></i></span>'
-            : `<button class="btn btn-icon btn-small tw-action-visit" onclick="twMarkVisited(${kunde.id})" title="Marker besøkt"><i class="fas fa-check"></i></button>`
+            ? '<span class="tw-visited-check"><i aria-hidden="true" class="fas fa-check-circle"></i></span>'
+            : `<button class="btn btn-icon btn-small tw-action-visit" onclick="twMarkVisited(${kunde.id})" title="Marker besøkt"><i aria-hidden="true" class="fas fa-check"></i></button>`
           }
         </div>
       </div>
@@ -5040,9 +5134,9 @@ function renderTodaysWork() {
     html += `
       <div class="tw-visited-section">
         <button class="tw-visited-toggle" onclick="this.parentElement.classList.toggle('expanded')">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Besøkt (${visitedStops.length})</span>
-          <i class="fas fa-chevron-down tw-visited-chevron"></i>
+          <i aria-hidden="true" class="fas fa-chevron-down tw-visited-chevron"></i>
         </button>
         <div class="tw-visited-list">
           ${visitedStops.join('')}
@@ -5325,7 +5419,7 @@ function renderWizardProgress() {
         ${steps.map((step, index) => `
           <div class="wizard-step ${index < current ? 'completed' : ''} ${index === current ? 'active' : ''} ${index > current ? 'upcoming' : ''}">
             <div class="wizard-step-icon">
-              ${index < current ? '<i class="fas fa-check"></i>' : `<span>${index + 1}</span>`}
+              ${index < current ? '<i aria-hidden="true" class="fas fa-check"></i>' : `<span>${index + 1}</span>`}
             </div>
             <div class="wizard-step-label">${step.title}</div>
           </div>
@@ -5341,13 +5435,13 @@ function renderCompanyStep() {
 
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-building"></i> Firmainformasjon</h1>
+      <h1><i aria-hidden="true" class="fas fa-building"></i> Firmainformasjon</h1>
       <p>Oppgi firmaets adresse. Dette brukes som utgangspunkt for ruteplanlegging.</p>
     </div>
 
     <div class="wizard-form">
       <div class="wizard-form-group">
-        <label for="companyAddress"><i class="fas fa-map-marker-alt"></i> Firmaadresse</label>
+        <label for="companyAddress"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Firmaadresse</label>
         <div class="wizard-address-wrapper">
           <input type="text" id="companyAddress" placeholder="Begynn å skrive adresse..." value="${escapeHtml(data.address || '')}" autocomplete="off">
           <div class="wizard-address-suggestions" id="wizardAddressSuggestions"></div>
@@ -5356,37 +5450,37 @@ function renderCompanyStep() {
 
       <div class="wizard-form-row">
         <div class="wizard-form-group">
-          <label for="companyPostnummer"><i class="fas fa-hashtag"></i> Postnummer</label>
+          <label for="companyPostnummer"><i aria-hidden="true" class="fas fa-hashtag"></i> Postnummer</label>
           <div class="wizard-postnummer-wrapper">
             <input type="text" id="companyPostnummer" placeholder="0000" maxlength="4" value="${escapeHtml(data.postnummer || '')}" autocomplete="off">
             <span class="wizard-postnummer-status" id="wizardPostnummerStatus"></span>
           </div>
         </div>
         <div class="wizard-form-group">
-          <label for="companyPoststed"><i class="fas fa-city"></i> Poststed</label>
+          <label for="companyPoststed"><i aria-hidden="true" class="fas fa-city"></i> Poststed</label>
           <input type="text" id="companyPoststed" placeholder="Fylles automatisk" value="${escapeHtml(data.poststed || '')}">
         </div>
       </div>
 
       <div class="wizard-form-group">
-        <label><i class="fas fa-route"></i> Rute-startpunkt</label>
+        <label><i aria-hidden="true" class="fas fa-route"></i> Rute-startpunkt</label>
         <p class="wizard-form-hint">Klikk på kartet for å velge startpunkt for ruter, eller bruk firmaadresse.</p>
         <div id="wizardRouteMap" class="wizard-mini-map"></div>
         <div class="wizard-coordinates" id="routeCoordinates">
           ${data.route_start_lat ? `<span>Valgt: ${data.route_start_lat.toFixed(5)}, ${data.route_start_lng.toFixed(5)}</span>` : '<span class="not-set">Ikke valgt - klikk på kartet</span>'}
         </div>
         <button class="wizard-btn wizard-btn-secondary" onclick="useAddressAsRouteStart()">
-          <i class="fas fa-home"></i> Bruk firmaadresse
+          <i aria-hidden="true" class="fas fa-home"></i> Bruk firmaadresse
         </button>
       </div>
     </div>
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
-        <i class="fas fa-forward"></i> Hopp over oppsett
+        <i aria-hidden="true" class="fas fa-forward"></i> Hopp over oppsett
       </button>
       <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Neste <i class="fas fa-arrow-right"></i>
+        Neste <i aria-hidden="true" class="fas fa-arrow-right"></i>
       </button>
     </div>
   `;
@@ -5398,19 +5492,19 @@ function renderMapStep() {
 
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-map-marker-alt"></i> Kartinnstillinger</h1>
+      <h1><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Kartinnstillinger</h1>
       <p>Velg standard kartvisning. Dra og zoom kartet til ønsket område.</p>
     </div>
 
     <div class="wizard-form">
       <div class="wizard-form-group">
-        <label><i class="fas fa-map"></i> Standard kartsentrum</label>
+        <label><i aria-hidden="true" class="fas fa-map"></i> Standard kartsentrum</label>
         <p class="wizard-form-hint">Panorer og zoom kartet til det området du vanligvis jobber i.</p>
         <div id="wizardMainMap" class="wizard-map"></div>
       </div>
 
       <div class="wizard-form-group">
-        <label for="defaultZoom"><i class="fas fa-search-plus"></i> Standard zoom-nivå</label>
+        <label for="defaultZoom"><i aria-hidden="true" class="fas fa-search-plus"></i> Standard zoom-nivå</label>
         <div class="wizard-slider-container">
           <input type="range" id="defaultZoom" min="5" max="18" value="${data.zoom || 10}">
           <span class="wizard-slider-value" id="zoomValue">${data.zoom || 10}</span>
@@ -5420,10 +5514,10 @@ function renderMapStep() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Fullfør oppsett <i class="fas fa-check"></i>
+        Fullfør oppsett <i aria-hidden="true" class="fas fa-check"></i>
       </button>
     </div>
   `;
@@ -5437,7 +5531,7 @@ function renderCompleteStep() {
   return `
     <div class="wizard-step-header wizard-complete">
       <div class="wizard-complete-icon">
-        <i class="fas fa-check-circle"></i>
+        <i aria-hidden="true" class="fas fa-check-circle"></i>
       </div>
       <h1>Oppsettet er fullført!</h1>
       <p>Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
@@ -5446,16 +5540,16 @@ function renderCompleteStep() {
     <div class="wizard-complete-summary">
       <h3>Hva skjer nå?</h3>
       <ul class="wizard-tips-list">
-        <li><i class="fas fa-users"></i> Legg til dine første kunder</li>
-        <li><i class="fas fa-route"></i> Planlegg effektive ruter</li>
-        <li><i class="fas fa-calendar-alt"></i> Bruk kalenderen for å holde oversikt</li>
-        <li><i class="fas fa-cog"></i> Tilpass ytterligere i innstillinger</li>
+        <li><i aria-hidden="true" class="fas fa-users"></i> Legg til dine første kunder</li>
+        <li><i aria-hidden="true" class="fas fa-route"></i> Planlegg effektive ruter</li>
+        <li><i aria-hidden="true" class="fas fa-calendar-alt"></i> Bruk kalenderen for å holde oversikt</li>
+        <li><i aria-hidden="true" class="fas fa-cog"></i> Tilpass ytterligere i innstillinger</li>
       </ul>
     </div>
 
     <div class="wizard-footer wizard-footer-center">
       <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="completeOnboardingWizard()">
-        <i class="fas fa-rocket"></i> Start å bruke Sky Planner
+        <i aria-hidden="true" class="fas fa-rocket"></i> Start å bruke Sky Planner
       </button>
     </div>
   `;
@@ -5693,36 +5787,36 @@ function getSampleValueForColumn(sampleData, columnIndex, headers) {
 function renderWizardImportMethodChoice() {
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-download"></i> Importer kunder</h1>
+      <h1><i aria-hidden="true" class="fas fa-download"></i> Importer kunder</h1>
       <p>Velg hvordan du vil hente inn dine eksisterende kunder.</p>
     </div>
 
     <div class="wizard-import-method-choice">
       <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodIntegration()">
         <div class="wizard-method-icon">
-          <i class="fas fa-plug" aria-hidden="true"></i>
+          <i aria-hidden="true" class="fas fa-plug"></i>
         </div>
         <h3>Regnskapssystem</h3>
         <p>Koble til Tripletex, Fiken eller PowerOffice og synkroniser kunder automatisk.</p>
-        <span class="wizard-method-action">Koble til <i class="fas fa-external-link-alt" aria-hidden="true"></i></span>
+        <span class="wizard-method-action">Koble til <i aria-hidden="true" class="fas fa-external-link-alt"></i></span>
       </div>
 
       <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodFile()">
         <div class="wizard-method-icon">
-          <i class="fas fa-file-excel" aria-hidden="true"></i>
+          <i aria-hidden="true" class="fas fa-file-excel"></i>
         </div>
         <h3>Excel / CSV</h3>
         <p>Last opp en fil med kundedata. AI-assistert mapping hjelper deg med kolonnene.</p>
-        <span class="wizard-method-action">Last opp fil <i class="fas fa-arrow-right" aria-hidden="true"></i></span>
+        <span class="wizard-method-action">Last opp fil <i aria-hidden="true" class="fas fa-arrow-right"></i></span>
       </div>
     </div>
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
-        Hopp over <i class="fas fa-forward"></i>
+        Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
   `;
@@ -5757,7 +5851,7 @@ function renderWizardImportStep() {
 
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-file-excel"></i> Importer kunder</h1>
+      <h1><i aria-hidden="true" class="fas fa-file-excel"></i> Importer kunder</h1>
       <p>Last opp en Excel- eller CSV-fil med dine eksisterende kunder.</p>
     </div>
 
@@ -5816,7 +5910,7 @@ function renderWizardLoadingState() {
   return `
     <div class="wizard-import-loading ${current.isAI ? 'ai-active' : ''}">
       <div class="wizard-loading-icon ${current.isAI ? 'ai-pulse' : 'spinning'}">
-        <i class="fas ${current.icon}"></i>
+        <i aria-hidden="true" class="fas ${current.icon}"></i>
       </div>
       <p class="wizard-loading-message">${current.message}</p>
       ${current.isAI ? `
@@ -5848,10 +5942,10 @@ function renderWizardImportSubStep(step) {
   if (wizardImportState.error) {
     return `
       <div class="wizard-import-error">
-        <i class="fas fa-exclamation-triangle"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
         <p>${escapeHtml(wizardImportState.error)}</p>
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportRetry()">
-          <i class="fas fa-redo"></i> Prøv igjen
+          <i aria-hidden="true" class="fas fa-redo"></i> Prøv igjen
         </button>
       </div>
     `;
@@ -5885,7 +5979,7 @@ function renderWizardImportCleaning() {
     return `
       <div class="wizard-cleaning-container">
         <div class="wizard-cleaning-summary wizard-cleaning-clean">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <div>
             <strong>Ingen problemer funnet</strong>
             <p>Filen ser bra ut! ${totalRows} rader klare for import.</p>
@@ -5893,10 +5987,10 @@ function renderWizardImportCleaning() {
         </div>
         <div class="wizard-import-actions">
           <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
-            <i class="fas fa-arrow-left"></i> Tilbake
+            <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
           </button>
           <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
-            Gå videre <i class="fas fa-arrow-right"></i>
+            Gå videre <i aria-hidden="true" class="fas fa-arrow-right"></i>
           </button>
         </div>
       </div>
@@ -5918,7 +6012,7 @@ function renderWizardImportCleaning() {
     <div class="wizard-cleaning-container">
       <!-- Summary banner -->
       <div class="wizard-cleaning-summary">
-        <i class="fas fa-broom"></i>
+        <i aria-hidden="true" class="fas fa-broom"></i>
         <div>
           <strong>${activeTotal} ${activeTotal === 1 ? 'endring' : 'endringer'} funnet i ${totalRows} rader</strong>
           <p>${activeCellChanges.length} ${activeCellChanges.length === 1 ? 'celle' : 'celler'} renset, ${activeRowRemovals.length} ${activeRowRemovals.length === 1 ? 'rad' : 'rader'} foreslått fjernet.</p>
@@ -5997,13 +6091,13 @@ function renderWizardImportCleaning() {
       <!-- Actions -->
       <div class="wizard-import-actions">
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
-          <i class="fas fa-arrow-left"></i> Tilbake
+          <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
         </button>
         <button class="wizard-btn wizard-btn-ghost" onclick="wizardCleaningSkip()">
           Hopp over rensing
         </button>
         <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
-          <i class="fas fa-check"></i> Godkjenn rensing <i class="fas fa-arrow-right"></i>
+          <i aria-hidden="true" class="fas fa-check"></i> Godkjenn rensing <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       </div>
     </div>
@@ -6076,7 +6170,7 @@ function renderCleaningFullTable() {
 
   return `
     <div class="wizard-cleaning-fulltable-section">
-      <h3><i class="fas fa-table"></i> Fullstendig dataoversikt</h3>
+      <h3><i aria-hidden="true" class="fas fa-table"></i> Fullstendig dataoversikt</h3>
       <p class="wizard-section-desc">${originalRows.length} rader totalt. Endrede celler er markert. Fjernede rader er gjennomstreket.</p>
       <div class="wizard-cleaning-fulltable-wrapper">
         <table class="wizard-cleaning-fulltable">
@@ -6116,12 +6210,12 @@ function renderCleaningFullTable() {
         <div class="wizard-cleaning-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardCleaningTablePage(${validPage - 1})" ${validPage === 0 ? 'disabled' : ''}>
-            <i class="fas fa-chevron-left"></i> Forrige
+            <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPage + 1} av ${totalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardCleaningTablePage(${validPage + 1})" ${validPage >= totalPages - 1 ? 'disabled' : ''}>
-            Neste <i class="fas fa-chevron-right"></i>
+            Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
       ` : ''}
@@ -6215,16 +6309,16 @@ function renderWizardImportUpload() {
       <!-- AI Feature Banner -->
       <div class="wizard-ai-feature-banner">
         <div class="ai-feature-icon">
-          <i class="fas fa-robot"></i>
+          <i aria-hidden="true" class="fas fa-robot"></i>
         </div>
         <div class="ai-feature-content">
-          <h4><i class="fas fa-magic"></i> AI-assistert import</h4>
+          <h4><i aria-hidden="true" class="fas fa-magic"></i> AI-assistert import</h4>
           <p>Vår AI forstår <strong>${escapeHtml(industryName)}</strong> og mapper automatisk kolonner til riktige felt - selv med kreative kolonnenavn!</p>
         </div>
       </div>
 
       <div class="wizard-import-dropzone" id="wizardImportDropzone" role="button" tabindex="0" aria-label="Last opp fil. Dra og slipp, eller trykk for å velge fil.">
-        <i class="fas fa-cloud-upload-alt" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-cloud-upload-alt"></i>
         <p><strong>Dra og slipp fil her</strong></p>
         <p>eller klikk for å velge</p>
         <span class="import-formats">Støttede formater: .xlsx, .xls, .csv (maks 10MB)</span>
@@ -6232,7 +6326,7 @@ function renderWizardImportUpload() {
       </div>
 
       <div class="wizard-import-tips">
-        <h4><i class="fas fa-lightbulb"></i> Tips for import</h4>
+        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Tips for import</h4>
         <ul>
           <li>Filen bør ha én rad per kunde</li>
           <li>Første rad bør inneholde kolonneoverskrifter</li>
@@ -6244,10 +6338,10 @@ function renderWizardImportUpload() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
-        Hopp over <i class="fas fa-forward"></i>
+        Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
   `;
@@ -6264,7 +6358,7 @@ function renderAIQuestions() {
   return `
     <div class="wizard-ai-questions">
       <div class="wizard-ai-questions-header">
-        <i class="fas fa-question-circle"></i>
+        <i aria-hidden="true" class="fas fa-question-circle"></i>
         <span>AI trenger din hjelp med ${questions.length} ${questions.length === 1 ? 'kolonne' : 'kolonner'}</span>
         <button class="wizard-btn-link" onclick="skipAIQuestions()">Bruk AI-anbefalinger</button>
       </div>
@@ -6354,13 +6448,13 @@ function renderRequiredFieldSelectors(data) {
     <div class="wizard-required-fields ${bothMapped ? 'wizard-fields-ok' : ''}">
       ${bothMapped ? `
         <div class="wizard-required-header wizard-header-success">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Kolonner gjenkjent automatisk</span>
         </div>
         <p class="wizard-required-desc">Endre hvis noe er feil.</p>
       ` : `
         <div class="wizard-required-header">
-          <i class="fas fa-columns"></i>
+          <i aria-hidden="true" class="fas fa-columns"></i>
           <span>Velg kolonner</span>
         </div>
         <p class="wizard-required-desc">Velg hvilken kolonne som er kundenavn og adresse.</p>
@@ -6369,7 +6463,7 @@ function renderRequiredFieldSelectors(data) {
       <div class="wizard-required-grid">
         <div class="wizard-required-row">
           <label>
-            <i class="fas fa-user"></i>
+            <i aria-hidden="true" class="fas fa-user"></i>
             Kundenavn
           </label>
           <select id="navnColumnSelect" onchange="updateRequiredMapping('navn', this.value)" class="wizard-required-select">
@@ -6384,7 +6478,7 @@ function renderRequiredFieldSelectors(data) {
 
         <div class="wizard-required-row">
           <label>
-            <i class="fas fa-map-marker-alt"></i>
+            <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
             Adresse
           </label>
           <select id="adresseColumnSelect" onchange="updateRequiredMapping('adresse', this.value)" class="wizard-required-select">
@@ -6400,7 +6494,7 @@ function renderRequiredFieldSelectors(data) {
 
       ${isSameColumnSelected() ? `
         <div class="wizard-required-warning wizard-required-error">
-          <i class="fas fa-times-circle"></i>
+          <i aria-hidden="true" class="fas fa-times-circle"></i>
           <span>Kundenavn og adresse kan ikke bruke samme kolonne.</span>
         </div>
       ` : ''}
@@ -6429,22 +6523,22 @@ function renderWizardImportMapping() {
       <!-- Summary header -->
       <div class="wizard-auto-summary">
         <div class="wizard-auto-success">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Fant <strong>${data.totalRows || 0}</strong> kunder i filen</span>
         </div>
 
         <div class="wizard-auto-stats">
           <div class="wizard-auto-stat">
-            <i class="fas fa-columns"></i>
+            <i aria-hidden="true" class="fas fa-columns"></i>
             <span>${data.totalColumns || 0} kolonner totalt</span>
           </div>
           <div class="wizard-auto-stat wizard-auto-stat-success">
-            <i class="fas fa-check"></i>
+            <i aria-hidden="true" class="fas fa-check"></i>
             <span>${recognizedColumns.length} gjenkjent</span>
           </div>
           ${newFields.length > 0 ? `
             <div class="wizard-auto-stat wizard-auto-stat-new">
-              <i class="fas fa-plus"></i>
+              <i aria-hidden="true" class="fas fa-plus"></i>
               <span>${newFields.length} nye felt</span>
             </div>
           ` : ''}
@@ -6453,7 +6547,7 @@ function renderWizardImportMapping() {
 
       <!-- Mapping Status indicator -->
       <div class="wizard-ai-status wizard-ai-enabled">
-        <i class="fas fa-magic"></i>
+        <i aria-hidden="true" class="fas fa-magic"></i>
         <span>
           <strong>Automatisk kolonnemap</strong>
           ${aiMappedCount > 0 ? `- ${aiMappedCount} kolonner gjenkjent` : '- Velg kolonner manuelt nedenfor'}
@@ -6469,16 +6563,16 @@ function renderWizardImportMapping() {
       <!-- Recognized columns -->
       ${recognizedColumns.length > 0 ? `
         <div class="wizard-auto-section">
-          <h4><i class="fas fa-check-circle"></i> Gjenkjente kolonner</h4>
+          <h4><i aria-hidden="true" class="fas fa-check-circle"></i> Gjenkjente kolonner</h4>
           <div class="wizard-auto-columns">
             ${recognizedColumns.map(col => `
               <div class="wizard-auto-column recognized ${col.source === 'ai' ? 'ai-mapped' : ''}">
                 <span class="column-from">${escapeHtml(col.header)}</span>
-                <i class="fas fa-arrow-right"></i>
+                <i aria-hidden="true" class="fas fa-arrow-right"></i>
                 <span class="column-to">${escapeHtml(col.mappedTo)}</span>
                 ${col.source === 'ai' ? `
                   <span class="mapping-source ai" title="Mappet av AI med ${Math.round((col.confidence || 0) * 100)}% sikkerhet">
-                    <i class="fas fa-robot"></i>
+                    <i aria-hidden="true" class="fas fa-robot"></i>
                   </span>
                 ` : ''}
               </div>
@@ -6490,12 +6584,12 @@ function renderWizardImportMapping() {
       <!-- New fields that will be created -->
       ${newFields.length > 0 ? `
         <div class="wizard-auto-section">
-          <h4><i class="fas fa-plus-circle"></i> Nye felt som opprettes automatisk</h4>
+          <h4><i aria-hidden="true" class="fas fa-plus-circle"></i> Nye felt som opprettes automatisk</h4>
           <div class="wizard-auto-columns">
             ${newFields.map(f => `
               <div class="wizard-auto-column new-field">
                 <span class="column-from">"${escapeHtml(f.header)}"</span>
-                <i class="fas fa-arrow-right"></i>
+                <i aria-hidden="true" class="fas fa-arrow-right"></i>
                 <span class="column-to">
                   ${escapeHtml(f.displayName)}
                   <span class="field-type">(${escapeHtml(f.typeDisplay)}${f.optionsCount > 0 ? `, ${f.optionsCount} valg` : ''})</span>
@@ -6509,7 +6603,7 @@ function renderWizardImportMapping() {
       <!-- Preview table -->
       ${preview.length > 0 ? `
         <div class="wizard-auto-section">
-          <h4><i class="fas fa-table"></i> Forhåndsvisning</h4>
+          <h4><i aria-hidden="true" class="fas fa-table"></i> Forhåndsvisning</h4>
           <div class="wizard-auto-table-wrapper">
             <table class="wizard-auto-table">
               <thead>
@@ -6538,7 +6632,7 @@ function renderWizardImportMapping() {
       <!-- Validation info -->
       ${stats.invalid > 0 ? `
         <div class="wizard-auto-warning">
-          <i class="fas fa-exclamation-triangle"></i>
+          <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
           <span>${stats.invalid} rader mangler påkrevd data og vil bli hoppet over</span>
         </div>
       ` : ''}
@@ -6546,12 +6640,12 @@ function renderWizardImportMapping() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-primary"
         onclick="wizardImportNext()"
         ${!areRequiredFieldsMapped() ? 'disabled title="Velg kolonner for kundenavn og adresse først"' : ''}>
-        Forhåndsvis <i class="fas fa-arrow-right"></i>
+        Forhåndsvis <i aria-hidden="true" class="fas fa-arrow-right"></i>
       </button>
     </div>
   `;
@@ -6589,7 +6683,7 @@ function renderUnmappedColumnsSection(data, headers, mapping, targetFields) {
   return `
     <div class="wizard-unmapped-section">
       <h4 class="wizard-section-title">
-        <i class="fas fa-plus-circle"></i>
+        <i aria-hidden="true" class="fas fa-plus-circle"></i>
         Ekstra kolonner i filen (${visibleUnmapped.length})
       </h4>
       <p class="wizard-section-desc">
@@ -6676,7 +6770,7 @@ function renderWizardImportPreview() {
   if (categoryMatches.length > 0) {
     categoryMappingHtml = `
       <div class="wizard-category-mapping">
-        <h4><i class="fas fa-tags"></i> Kategori-mapping</h4>
+        <h4><i aria-hidden="true" class="fas fa-tags"></i> Kategori-mapping</h4>
         <p>Følgende kategorier ble funnet i filen. Koble dem til eksisterende kategorier eller opprett nye.</p>
         <div class="wizard-category-list">
           ${categoryMatches.map(match => `
@@ -6686,7 +6780,7 @@ function renderWizardImportPreview() {
                 <span class="category-value">${escapeHtml(match.original)}</span>
                 <span class="category-count">(${match.count} kunder)</span>
               </div>
-              <div class="wizard-category-arrow"><i class="fas fa-arrow-right"></i></div>
+              <div class="wizard-category-arrow"><i aria-hidden="true" class="fas fa-arrow-right"></i></div>
               <div class="wizard-category-select">
                 <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeJsString(match.original)}', this.value)">
                   ${match.suggested ? `
@@ -6736,27 +6830,27 @@ function renderWizardImportPreview() {
       <!-- Stats summary -->
       <div class="wizard-preview-stats">
         <div class="stat-item">
-          <i class="fas fa-file-alt"></i>
+          <i aria-hidden="true" class="fas fa-file-alt"></i>
           <span class="stat-value">${stats.totalRows || 0}</span>
           <span class="stat-label">Totalt rader</span>
         </div>
         <div class="stat-item ${stats.validRows > 0 ? 'success' : ''}">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span class="stat-value">${stats.validRows || 0}</span>
           <span class="stat-label">Gyldige</span>
         </div>
         <div class="stat-item ${stats.warnings > 0 ? 'warning' : ''}">
-          <i class="fas fa-exclamation-triangle"></i>
+          <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
           <span class="stat-value">${stats.warnings || 0}</span>
           <span class="stat-label">Advarsler</span>
         </div>
         <div class="stat-item ${stats.errors > 0 ? 'error' : ''}">
-          <i class="fas fa-times-circle"></i>
+          <i aria-hidden="true" class="fas fa-times-circle"></i>
           <span class="stat-value">${stats.errors || 0}</span>
           <span class="stat-label">Feil</span>
         </div>
         <div class="stat-item ${stats.duplicates > 0 ? 'warning' : ''}">
-          <i class="fas fa-copy"></i>
+          <i aria-hidden="true" class="fas fa-copy"></i>
           <span class="stat-value">${stats.duplicates || 0}</span>
           <span class="stat-label">Duplikater</span>
         </div>
@@ -6765,21 +6859,21 @@ function renderWizardImportPreview() {
       ${features.updateEnabled || features.deletionDetectionEnabled ? `
         <!-- Re-import Preview Summary -->
         <div class="wizard-reimport-summary">
-          <h4><i class="fas fa-sync-alt"></i> Oppsummering av import</h4>
+          <h4><i aria-hidden="true" class="fas fa-sync-alt"></i> Oppsummering av import</h4>
           <div class="wizard-reimport-stats">
             <div class="reimport-stat-item new">
-              <i class="fas fa-plus-circle"></i>
+              <i aria-hidden="true" class="fas fa-plus-circle"></i>
               <span class="stat-value">${reimportPreview.toCreate || 0}</span>
               <span class="stat-label">Nye kunder</span>
             </div>
             ${features.updateEnabled ? `
               <div class="reimport-stat-item update">
-                <i class="fas fa-edit"></i>
+                <i aria-hidden="true" class="fas fa-edit"></i>
                 <span class="stat-value">${reimportPreview.toUpdate || 0}</span>
                 <span class="stat-label">Oppdateres</span>
               </div>
               <div class="reimport-stat-item unchanged">
-                <i class="fas fa-equals"></i>
+                <i aria-hidden="true" class="fas fa-equals"></i>
                 <span class="stat-value">${reimportPreview.unchanged || 0}</span>
                 <span class="stat-label">Uendret</span>
               </div>
@@ -6787,7 +6881,7 @@ function renderWizardImportPreview() {
           </div>
           ${features.deletionDetectionEnabled && reimportPreview.notInImport && reimportPreview.notInImport.length > 0 ? `
             <div class="wizard-not-in-import-info">
-              <i class="fas fa-info-circle"></i>
+              <i aria-hidden="true" class="fas fa-info-circle"></i>
               <div>
                 <strong>${reimportPreview.notInImport.length} eksisterende kunder finnes ikke i importfilen</strong>
                 <p>Disse kundene vil <strong>IKKE</strong> bli slettet. De vises kun for informasjon.</p>
@@ -6811,7 +6905,7 @@ function renderWizardImportPreview() {
       <!-- Preview table with selection -->
       <div class="wizard-preview-table-wrapper">
         <div class="wizard-preview-header">
-          <h4><i class="fas fa-table"></i> Forhåndsvisning (${preview.length} rader)</h4>
+          <h4><i aria-hidden="true" class="fas fa-table"></i> Forhåndsvisning (${preview.length} rader)</h4>
           <div class="wizard-preview-controls">
             <label class="wizard-toggle-label">
               <input type="checkbox" ${showBeforeAfter ? 'checked' : ''}
@@ -6820,10 +6914,10 @@ function renderWizardImportPreview() {
             </label>
             <div class="wizard-selection-actions">
               <button class="wizard-btn wizard-btn-small" onclick="wizardSelectAllRows()">
-                <i class="fas fa-check-square"></i> Velg alle
+                <i aria-hidden="true" class="fas fa-check-square"></i> Velg alle
               </button>
               <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectAllRows()">
-                <i class="fas fa-square"></i> Velg ingen
+                <i aria-hidden="true" class="fas fa-square"></i> Velg ingen
               </button>
               <span class="wizard-selection-count" id="wizardSelectionCount">
                 ${getSelectedRowCount()} av ${stats.validRows || 0} valgt
@@ -6831,7 +6925,7 @@ function renderWizardImportPreview() {
             </div>
           </div>
         </div>
-        <p class="wizard-edit-hint"><i class="fas fa-info-circle"></i> Dobbeltklikk på en celle for å redigere</p>
+        <p class="wizard-edit-hint"><i aria-hidden="true" class="fas fa-info-circle"></i> Dobbeltklikk på en celle for å redigere</p>
         <table class="wizard-preview-table wizard-preview-table-editable">
           <thead>
             <tr>
@@ -6880,14 +6974,14 @@ function renderWizardImportPreview() {
                       data-original="${escapeHtml(originalValue)}"
                       ondblclick="wizardStartCellEdit(${globalIdx}, '${col}')"
                       title="${escapeHtml(cellTitle)}">
-                    ${wasTransformed ? `<span class="cell-before">${escapeHtml(rawVal)}</span> <i class="fas fa-arrow-right cell-arrow"></i> <span class="cell-after">${escapeHtml(mappedVal)}</span>` : escapeHtml(displayValue || '-')}
+                    ${wasTransformed ? `<span class="cell-before">${escapeHtml(rawVal)}</span> <i aria-hidden="true" class="fas fa-arrow-right cell-arrow"></i> <span class="cell-after">${escapeHtml(mappedVal)}</span>` : escapeHtml(displayValue || '-')}
                   </td>
                 `;}).join('')}
                 <td class="col-status">
-                  ${!isSelected ? '<span class="status-excluded" title="Ikke valgt for import"><i class="fas fa-minus-circle"></i></span>' :
-                    row.hasError ? `<span class="status-error" title="${escapeHtml(row.errorMessage || 'Feil')}"><i class="fas fa-times-circle"></i></span>` :
-                    row.hasWarning ? `<span class="status-warning" title="${escapeHtml(row.warningMessage || 'Advarsel')}"><i class="fas fa-exclamation-triangle"></i></span>` :
-                    '<span class="status-ok"><i class="fas fa-check-circle"></i></span>'}
+                  ${!isSelected ? '<span class="status-excluded" title="Ikke valgt for import"><i aria-hidden="true" class="fas fa-minus-circle"></i></span>' :
+                    row.hasError ? `<span class="status-error" title="${escapeHtml(row.errorMessage || 'Feil')}"><i aria-hidden="true" class="fas fa-times-circle"></i></span>` :
+                    row.hasWarning ? `<span class="status-warning" title="${escapeHtml(row.warningMessage || 'Advarsel')}"><i aria-hidden="true" class="fas fa-exclamation-triangle"></i></span>` :
+                    '<span class="status-ok"><i aria-hidden="true" class="fas fa-check-circle"></i></span>'}
                 </td>
               </tr>
             `;}).join('')}
@@ -6899,19 +6993,19 @@ function renderWizardImportPreview() {
         <div class="wizard-preview-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardPreviewTablePage(${validPreviewPage - 1})" ${validPreviewPage === 0 ? 'disabled' : ''}>
-            <i class="fas fa-chevron-left"></i> Forrige
+            <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPreviewPage + 1} av ${previewTotalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardPreviewTablePage(${validPreviewPage + 1})" ${validPreviewPage >= previewTotalPages - 1 ? 'disabled' : ''}>
-            Neste <i class="fas fa-chevron-right"></i>
+            Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
       ` : ''}
 
       ${stats.errors > 0 ? `
         <div class="wizard-preview-warning">
-          <i class="fas fa-info-circle"></i>
+          <i aria-hidden="true" class="fas fa-info-circle"></i>
           <p>${stats.errors} rad(er) har feil og vil ikke bli importert. Du kan redigere eller fjerne dem fra utvalget.</p>
         </div>
       ` : ''}
@@ -6923,16 +7017,16 @@ function renderWizardImportPreview() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <div class="wizard-footer-right">
         ${wizardImportState.batchId ? `
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport som CSV">
-            <i class="fas fa-download"></i> Feilrapport
+            <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
           </button>
         ` : ''}
         <button class="wizard-btn wizard-btn-primary" onclick="wizardStartImport()" ${getSelectedValidRowCount() === 0 ? 'disabled' : ''}>
-          <i class="fas fa-file-import"></i> Importer ${getSelectedValidRowCount()} kunder
+          <i aria-hidden="true" class="fas fa-file-import"></i> Importer ${getSelectedValidRowCount()} kunder
         </button>
       </div>
     </div>
@@ -6951,7 +7045,7 @@ function renderWizardImportResults() {
   return `
     <div class="wizard-import-results">
       <div class="wizard-results-icon ${isSuccess ? 'success' : 'partial'}">
-        <i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+        <i aria-hidden="true" class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
       </div>
 
       <h2>${isSuccess ? 'Import fullført!' : 'Import delvis fullført'}</h2>
@@ -6959,35 +7053,35 @@ function renderWizardImportResults() {
       <div class="wizard-results-stats">
         ${results.createdCount > 0 ? `
           <div class="result-stat success">
-            <i class="fas fa-plus"></i>
+            <i aria-hidden="true" class="fas fa-plus"></i>
             <span class="stat-value">${results.createdCount}</span>
             <span class="stat-label">Nye kunder opprettet</span>
           </div>
         ` : ''}
         ${results.updatedCount > 0 ? `
           <div class="result-stat info">
-            <i class="fas fa-sync-alt"></i>
+            <i aria-hidden="true" class="fas fa-sync-alt"></i>
             <span class="stat-value">${results.updatedCount}</span>
             <span class="stat-label">Eksisterende oppdatert</span>
           </div>
         ` : ''}
         ${!results.createdCount && !results.updatedCount ? `
           <div class="result-stat success">
-            <i class="fas fa-check"></i>
+            <i aria-hidden="true" class="fas fa-check"></i>
             <span class="stat-value">${results.importedCount || 0}</span>
             <span class="stat-label">Kunder importert</span>
           </div>
         ` : ''}
         ${results.skippedCount > 0 ? `
           <div class="result-stat warning">
-            <i class="fas fa-forward"></i>
+            <i aria-hidden="true" class="fas fa-forward"></i>
             <span class="stat-value">${results.skippedCount}</span>
             <span class="stat-label">Hoppet over</span>
           </div>
         ` : ''}
         ${results.errorCount > 0 ? `
           <div class="result-stat error">
-            <i class="fas fa-times"></i>
+            <i aria-hidden="true" class="fas fa-times"></i>
             <span class="stat-value">${results.errorCount}</span>
             <span class="stat-label">Feilet</span>
           </div>
@@ -7003,7 +7097,7 @@ function renderWizardImportResults() {
 
       ${results.errors && results.errors.length > 0 ? `
         <div class="wizard-results-errors">
-          <h4><i class="fas fa-exclamation-triangle"></i> Feil under import</h4>
+          <h4><i aria-hidden="true" class="fas fa-exclamation-triangle"></i> Feil under import</h4>
           <ul>
             ${results.errors.slice(0, 5).map(err => `
               <li>${escapeHtml((err.rowNumber || err.row) ? `Rad ${err.rowNumber || err.row}: ` : '')}${escapeHtml(err.error || err.message || 'Ukjent feil')}</li>
@@ -7017,26 +7111,26 @@ function renderWizardImportResults() {
     <div class="wizard-footer wizard-footer-center">
       ${results.batchId ? `
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardRollbackImport()" title="Angre hele importen">
-          <i class="fas fa-undo"></i> Angre import
+          <i aria-hidden="true" class="fas fa-undo"></i> Angre import
         </button>
       ` : ''}
       ${results.errorCount > 0 ? `
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardReimportFailed()" title="Prøv å importere feilede rader på nytt">
-          <i class="fas fa-redo"></i> Reimporter feilede (${results.errorCount})
+          <i aria-hidden="true" class="fas fa-redo"></i> Reimporter feilede (${results.errorCount})
         </button>
       ` : ''}
       ${results.batchId ? `
         <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport">
-          <i class="fas fa-download"></i> Feilrapport
+          <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
         </button>
       ` : ''}
       ${standaloneImportMode ? `
         <button class="wizard-btn wizard-btn-primary" onclick="closeImportModal()">
-          <i class="fas fa-check"></i> Ferdig
+          <i aria-hidden="true" class="fas fa-check"></i> Ferdig
         </button>
       ` : `
         <button class="wizard-btn wizard-btn-primary" onclick="wizardImportComplete()">
-          Fortsett til neste steg <i class="fas fa-arrow-right"></i>
+          Fortsett til neste steg <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       `}
     </div>
@@ -7149,7 +7243,7 @@ function updateSelectionDisplay() {
   if (importBtn) {
     const count = getSelectedValidRowCount();
     importBtn.disabled = count === 0;
-    importBtn.innerHTML = `<i class="fas fa-file-import"></i> Importer ${count} kunder`;
+    importBtn.innerHTML = `<i aria-hidden="true" class="fas fa-file-import"></i> Importer ${count} kunder`;
   }
 
   // Update row styling
@@ -8144,7 +8238,7 @@ function renderErrorGrouping(preview) {
 
   return `
     <div class="wizard-error-groups">
-      <h4><i class="fas fa-layer-group"></i> Feilsammendrag</h4>
+      <h4><i aria-hidden="true" class="fas fa-layer-group"></i> Feilsammendrag</h4>
       <div class="error-group-list">
         ${groups.slice(0, 8).map(group => `
           <div class="error-group-item">
@@ -8155,11 +8249,11 @@ function renderErrorGrouping(preview) {
             </div>
             ${group.field === 'epost' && group.message.includes('skrivefeil') ? `
               <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
-                <i class="fas fa-magic"></i> Fiks alle
+                <i aria-hidden="true" class="fas fa-magic"></i> Fiks alle
               </button>
             ` : `
               <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
-                <i class="fas fa-minus-circle"></i> Fjern fra import
+                <i aria-hidden="true" class="fas fa-minus-circle"></i> Fjern fra import
               </button>
             `}
           </div>
@@ -8176,14 +8270,14 @@ function renderQualityReport(report) {
 
   return `
     <div class="wizard-quality-report">
-      <h4><i class="fas fa-chart-bar"></i> Kvalitetsrapport</h4>
+      <h4><i aria-hidden="true" class="fas fa-chart-bar"></i> Kvalitetsrapport</h4>
       <div class="quality-score-bar">
         <div class="quality-score-fill ${scoreColor}" style="width: ${report.overallScore}%"></div>
         <span class="quality-score-label">${report.overallScore}%</span>
       </div>
       ${report.suggestions && report.suggestions.length > 0 ? `
         <ul class="quality-suggestions">
-          ${report.suggestions.map(s => `<li><i class="fas fa-lightbulb"></i> ${escapeHtml(s)}</li>`).join('')}
+          ${report.suggestions.map(s => `<li><i aria-hidden="true" class="fas fa-lightbulb"></i> ${escapeHtml(s)}</li>`).join('')}
         </ul>
       ` : ''}
     </div>
@@ -8409,7 +8503,7 @@ function renderWizardAddressSuggestions(results) {
 
   container.innerHTML = results.map((addr, index) => `
     <div class="wizard-address-suggestion" data-index="${index}">
-      <i class="fas fa-map-marker-alt"></i>
+      <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
       <div class="wizard-address-text">
         <div class="wizard-address-main">${escapeHtml(addr.adresse)}</div>
         <div class="wizard-address-detail">${escapeHtml(addr.postnummer)} ${escapeHtml(addr.poststed)}${addr.kommune ? `, ${escapeHtml(addr.kommune)}` : ''}</div>
@@ -8523,15 +8617,15 @@ function updateWizardPostnummerStatus(status) {
 
   switch (status) {
     case 'valid':
-      statusEl.innerHTML = '<i class="fas fa-check"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-check"></i>';
       statusEl.classList.add('valid');
       break;
     case 'invalid':
-      statusEl.innerHTML = '<i class="fas fa-times"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-times"></i>';
       statusEl.classList.add('invalid');
       break;
     case 'loading':
-      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i>';
       statusEl.classList.add('loading');
       break;
     default:
@@ -8802,7 +8896,7 @@ function renderAdminFields() {
   listContainer.innerHTML = organizationFields.map((field, index) => `
     <div class="sortable-item" data-id="${field.id}" data-index="${index}" draggable="true">
       <div class="drag-handle">
-        <i class="fas fa-grip-vertical"></i>
+        <i aria-hidden="true" class="fas fa-grip-vertical"></i>
       </div>
       <div class="item-info">
         <span class="item-name">${escapeHtml(field.display_name)}</span>
@@ -8815,10 +8909,10 @@ function renderAdminFields() {
       </div>
       <div class="item-actions">
         <button class="btn-icon" onclick="openFieldModal(${field.id})" title="Rediger">
-          <i class="fas fa-edit"></i>
+          <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
         <button class="btn-icon danger" onclick="confirmDeleteField(${field.id})" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
@@ -8882,7 +8976,7 @@ function renderFieldOptions(options) {
       <input type="text" class="option-value" value="${escapeHtml(opt.value || '')}" placeholder="Verdi">
       <input type="text" class="option-display" value="${escapeHtml(opt.display_name || '')}" placeholder="Visningsnavn">
       <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
   `).join('');
@@ -8899,7 +8993,7 @@ function addFieldOption() {
       <input type="text" class="option-value" placeholder="Verdi">
       <input type="text" class="option-display" placeholder="Visningsnavn">
       <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
   `;
@@ -9065,16 +9159,16 @@ function renderCategoryListItems() {
   container.innerHTML = organizationCategories.map(cat => `
     <div class="category-list-item">
       <div class="category-list-info">
-        <i class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
+        <i aria-hidden="true" class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
         <span>${escapeHtml(cat.name)}</span>
         <span class="category-list-meta">${cat.default_interval_months || 12} mnd</span>
       </div>
       <div class="category-list-actions">
         <button class="btn-icon" onclick="document.getElementById('categoryListModal').classList.add('hidden'); openCategoryModal(${cat.id});" title="Rediger">
-          <i class="fas fa-edit"></i>
+          <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
         <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
@@ -9099,11 +9193,11 @@ function renderAdminCategories() {
   listContainer.innerHTML = organizationCategories.map((cat, index) => `
     <div class="sortable-item" data-id="${cat.id}" data-index="${index}" draggable="true">
       <div class="drag-handle">
-        <i class="fas fa-grip-vertical"></i>
+        <i aria-hidden="true" class="fas fa-grip-vertical"></i>
       </div>
       <div class="item-info">
         <span class="item-name">
-          <i class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
+          <i aria-hidden="true" class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
           ${escapeHtml(cat.name)}
         </span>
         <span class="item-meta">
@@ -9112,10 +9206,10 @@ function renderAdminCategories() {
       </div>
       <div class="item-actions">
         <button class="btn-icon" onclick="openCategoryModal(${cat.id})" title="Rediger">
-          <i class="fas fa-edit"></i>
+          <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
         <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
@@ -9142,7 +9236,7 @@ function renderCategoryIconPicker(selectedIcon) {
     <button type="button" class="icon-btn ${icon === selectedIcon ? 'selected' : ''}"
             data-icon="${escapeHtml(icon)}" title="${escapeHtml(icon.replace('fa-', ''))}"
             onclick="selectCategoryIcon(this, '${escapeJsString(icon)}')">
-      <i class="fas ${escapeHtml(icon)}"></i>
+      <i aria-hidden="true" class="fas ${escapeHtml(icon)}"></i>
     </button>
   `).join('');
 }
@@ -9335,14 +9429,14 @@ async function renderAdminSubcategories() {
   content.innerHTML = groups.map(group => `
     <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border, #444); padding-left: 10px;">
       <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-        <i class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
+        <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
         <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
         <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
         <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Gi nytt navn">
-          <i class="fas fa-pen" style="font-size: 10px;"></i>
+          <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
         </button>
         <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Slett gruppe">
-          <i class="fas fa-trash" style="font-size: 10px;"></i>
+          <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
         </button>
       </div>
 
@@ -9351,10 +9445,10 @@ async function renderAdminSubcategories() {
           <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
           <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
           <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Gi nytt navn">
-            <i class="fas fa-pen" style="font-size: 10px;"></i>
+            <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
           </button>
           <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Slett">
-            <i class="fas fa-trash" style="font-size: 10px;"></i>
+            <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
           </button>
         </div>
       `).join('')}
@@ -9365,7 +9459,7 @@ async function renderAdminSubcategories() {
           data-add-subcat-for-group="${group.id}"
           onkeydown="if(event.key==='Enter'){addSubcatItem(${group.id}, this); event.preventDefault();}">
         <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatItem(${group.id}, this.previousElementSibling)">
-          <i class="fas fa-plus"></i>
+          <i aria-hidden="true" class="fas fa-plus"></i>
         </button>
       </div>
     </div>
@@ -9376,7 +9470,7 @@ async function renderAdminSubcategories() {
         id="adminAddGroupInput"
         onkeydown="if(event.key==='Enter'){addSubcatGroup(this); event.preventDefault();}">
       <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatGroup(document.getElementById('adminAddGroupInput'))">
-        <i class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
+        <i aria-hidden="true" class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
       </button>
     </div>
   `;
@@ -9696,8 +9790,8 @@ async function loadTeamMembers() {
               </div>
             </div>
             <div class="team-member-actions">
-              <button class="btn-icon" data-action="editTeamMember" data-member-id="${member.id}" title="Rediger"><i class="fas fa-pen"></i></button>
-              <button class="btn-icon delete" data-action="deleteTeamMember" data-member-id="${member.id}" title="Slett"><i class="fas fa-trash"></i></button>
+              <button class="btn-icon" data-action="editTeamMember" data-member-id="${member.id}" title="Rediger"><i aria-hidden="true" class="fas fa-pen"></i></button>
+              <button class="btn-icon delete" data-action="deleteTeamMember" data-member-id="${member.id}" title="Slett"><i aria-hidden="true" class="fas fa-trash"></i></button>
             </div>
           </div>
         `;
@@ -10070,7 +10164,7 @@ async function loadLoginLog(append = false) {
           <td>${tid}</td>
           <td>${escapeHtml(entry.bruker_navn || '-')}</td>
           <td>${escapeHtml(entry.epost)}</td>
-          <td><span class="status-badge ${statusClass}"><i class="fas ${statusIcon}"></i> ${statusText}</span></td>
+          <td><span class="status-badge ${statusClass}"><i aria-hidden="true" class="fas ${statusIcon}"></i> ${statusText}</span></td>
           <td class="ip-address">${escapeHtml(entry.ip_adresse || '-')}</td>
           <td class="user-agent" title="${escapeHtml(ua)}">${device}</td>
         `;
@@ -10342,7 +10436,7 @@ function renderOrganizationList(filter = '') {
         <td>${opprettet}</td>
         <td>
           <button class="btn btn-small btn-secondary" data-action="selectOrganization" data-org-id="${org.id}">
-            <i class="fas fa-eye"></i>
+            <i aria-hidden="true" class="fas fa-eye"></i>
           </button>
         </td>
       </tr>
@@ -10462,10 +10556,10 @@ function renderOrgCustomers(customers) {
       <td>${escapeHtml(kunde.epost || '-')}</td>
       <td>
         <button class="btn-icon" data-action="editOrgCustomer" data-kunde-id="${kunde.id}" title="Rediger">
-          <i class="fas fa-pen"></i>
+          <i aria-hidden="true" class="fas fa-pen"></i>
         </button>
         <button class="btn-icon delete" data-action="deleteOrgCustomer" data-kunde-id="${kunde.id}" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </td>
     </tr>
@@ -10897,14 +10991,14 @@ function showPatchNotesEmptyState() {
   modal.className = 'patch-notes-overlay';
   modal.innerHTML = `<div class="patch-notes-modal">
     <div class="patch-notes-modal-header">
-      <h2><i class="fas fa-bullhorn"></i> Nyheter</h2>
+      <h2><i aria-hidden="true" class="fas fa-bullhorn"></i> Nyheter</h2>
       <button class="patch-notes-close" id="closePatchNotesBtn" aria-label="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="patch-notes-modal-body" style="display:flex;align-items:center;justify-content:center;text-align:center;min-height:200px;">
       <div>
-        <i class="fas fa-newspaper" style="font-size:48px;color:var(--color-text-muted, #999);margin-bottom:16px;display:block;"></i>
+        <i aria-hidden="true" class="fas fa-newspaper" style="font-size:48px;color:var(--color-text-muted, #999);margin-bottom:16px;display:block;"></i>
         <p style="font-size:16px;color:var(--color-text-secondary, #666);margin:0 0 8px;">Ingen nyheter enn\u00e5</p>
         <p style="font-size:13px;color:var(--color-text-muted, #999);margin:0;">Nye funksjoner og oppdateringer vil vises her.</p>
       </div>
@@ -10944,7 +11038,7 @@ function showPatchNotesModal(notes) {
         ? '<span class="patch-note-pro-badge">Pro</span>'
         : '';
       const tabLink = item.tab
-        ? `<button class="patch-note-tab-link" data-patch-tab="${escapeHtml(item.tab)}">Vis <i class="fas fa-arrow-right"></i></button>`
+        ? `<button class="patch-note-tab-link" data-patch-tab="${escapeHtml(item.tab)}">Vis <i aria-hidden="true" class="fas fa-arrow-right"></i></button>`
         : '';
       const descHtml = item.description
         ? `<span class="patch-note-description">${escapeHtml(item.description)}</span>`
@@ -10974,9 +11068,9 @@ function showPatchNotesModal(notes) {
   modal.className = 'patch-notes-overlay';
   modal.innerHTML = `<div class="patch-notes-modal">
     <div class="patch-notes-modal-header">
-      <h2><i class="fas fa-bullhorn"></i> Nyheter</h2>
+      <h2><i aria-hidden="true" class="fas fa-bullhorn"></i> Nyheter</h2>
       <button class="patch-notes-close" id="closePatchNotesBtn" aria-label="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="patch-notes-modal-body">${contentHtml}</div>
@@ -11045,7 +11139,7 @@ function initBottomTabBar() {
     btn.dataset.action = tab.action;
     btn.setAttribute('role', 'tab');
     btn.setAttribute('aria-label', tab.label);
-    btn.innerHTML = `<i class="fas ${tab.icon}"></i><span>${tab.label}</span>`;
+    btn.innerHTML = `<i aria-hidden="true" class="fas ${tab.icon}"></i><span>${tab.label}</span>`;
 
     btn.addEventListener('click', () => handleBottomTabClick(tab));
     bar.appendChild(btn);
@@ -11183,19 +11277,19 @@ function createMoreMenuOverlay() {
     <div class="more-menu-header">
       <h3>Alle funksjoner</h3>
       <button class="more-menu-close" id="moreMenuCloseBtn" aria-label="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="more-menu-grid">
       ${items.map(item => `
         <button class="more-menu-item" data-more-tab="${escapeHtml(item.tab)}">
-          <i class="fas ${escapeHtml(item.icon)}"></i>
+          <i aria-hidden="true" class="fas ${escapeHtml(item.icon)}"></i>
           <span>${escapeHtml(item.label)}</span>
           ${item.badgeId ? `<span class="more-menu-badge" data-mirror-badge="${escapeHtml(item.badgeId)}" style="display:none;"></span>` : ''}
         </button>
       `).join('')}
       <button class="more-menu-item" id="moreMenuPatchNotes">
-        <i class="fas fa-bullhorn"></i>
+        <i aria-hidden="true" class="fas fa-bullhorn"></i>
         <span>Nyheter</span>
       </button>
     </div>
@@ -11263,11 +11357,11 @@ function createMobileFilterSheet() {
   sheet.innerHTML = `
     <div class="filter-sheet-handle" id="filterSheetHandle">
       <div class="filter-sheet-search-peek">
-        <i class="fas fa-search"></i>
+        <i aria-hidden="true" class="fas fa-search"></i>
         <span>Søk og filtrer kunder</span>
         <span class="filter-sheet-count" id="filterSheetCount">0</span>
         <button class="filter-sheet-close" id="filterSheetClose" aria-label="Lukk">
-          <i class="fas fa-times"></i>
+          <i aria-hidden="true" class="fas fa-times"></i>
         </button>
       </div>
     </div>
@@ -11379,7 +11473,7 @@ function createMobileSearchFab() {
   fab.id = 'mobileSearchFab';
   fab.className = 'mobile-search-fab';
   fab.setAttribute('aria-label', 'Søk og filtrer kunder');
-  fab.innerHTML = '<i class="fas fa-search"></i>';
+  fab.innerHTML = '<i aria-hidden="true" class="fas fa-search"></i>';
   fab.addEventListener('click', () => {
     showMobileFilterSheet();
   });
@@ -11392,7 +11486,7 @@ function createMobileSelectionFab() {
   const fab = document.createElement('button');
   fab.id = 'mobileSelectionFab';
   fab.className = 'mobile-selection-fab';
-  fab.innerHTML = '<i class="fas fa-check-circle"></i> <span id="mobileSelectionCount">0</span> valgt';
+  fab.innerHTML = '<i aria-hidden="true" class="fas fa-check-circle"></i> <span id="mobileSelectionCount">0</span> valgt';
   fab.addEventListener('click', () => {
     // Open planner tab to show selected customers
     switchToTab('planner');
@@ -11560,13 +11654,13 @@ function addMobileMenuButton() {
 
   const btn = document.createElement('button');
   btn.className = 'mobile-menu-toggle';
-  btn.innerHTML = '<i class="fas fa-bars"></i>';
+  btn.innerHTML = '<i aria-hidden="true" class="fas fa-bars"></i>';
   btn.setAttribute('aria-label', 'Åpne meny');
 
   btn.addEventListener('click', () => {
     toggleMobileSidebar();
     btn.classList.toggle('active', sidebarOpen);
-    btn.innerHTML = sidebarOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+    btn.innerHTML = sidebarOpen ? '<i aria-hidden="true" class="fas fa-times"></i>' : '<i aria-hidden="true" class="fas fa-bars"></i>';
   });
 
   document.body.appendChild(btn);
@@ -11583,7 +11677,7 @@ function toggleMobileSidebar() {
   const btn = document.querySelector('.mobile-menu-toggle');
   if (btn) {
     btn.classList.toggle('active', sidebarOpen);
-    btn.innerHTML = sidebarOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+    btn.innerHTML = sidebarOpen ? '<i aria-hidden="true" class="fas fa-times"></i>' : '<i aria-hidden="true" class="fas fa-bars"></i>';
   }
 }
 
@@ -11597,7 +11691,7 @@ function closeMobileSidebar() {
   const btn = document.querySelector('.mobile-menu-toggle');
   if (btn) {
     btn.classList.remove('active');
-    btn.innerHTML = '<i class="fas fa-bars"></i>';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-bars"></i>';
   }
 }
 
@@ -11611,7 +11705,7 @@ function openMobileSidebar() {
   const btn = document.querySelector('.mobile-menu-toggle');
   if (btn) {
     btn.classList.add('active');
-    btn.innerHTML = '<i class="fas fa-times"></i>';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-times"></i>';
   }
 }
 
@@ -11756,7 +11850,7 @@ function showTip(tip) {
     <div class="context-tip" id="contextTip-${tip.id}">
       <div class="context-tip-arrow"></div>
       <div class="context-tip-icon">
-        <i class="fas ${tip.icon}"></i>
+        <i aria-hidden="true" class="fas ${tip.icon}"></i>
       </div>
       <div class="context-tip-content">
         <h4>${escapeHtml(tip.title)}</h4>
@@ -11767,7 +11861,7 @@ function showTip(tip) {
           Hopp over alle
         </button>
         <button class="context-tip-btn context-tip-btn-next" onclick="dismissCurrentTip()">
-          Forstått <i class="fas fa-check"></i>
+          Forstått <i aria-hidden="true" class="fas fa-check"></i>
         </button>
       </div>
       <div class="context-tip-progress">
@@ -12229,7 +12323,7 @@ async function quickMarkVisited(customerId) {
     <label style="display:flex;align-items:center;gap:8px;padding:8px 0;font-size:15px;color:var(--color-text-primary,#fff);cursor:pointer;">
       <input type="checkbox" class="qmv-kontroll-cb" data-slug="${escapeHtml(st.slug)}" checked
         style="width:20px;height:20px;accent-color:${escapeHtml(st.color || '#5E81AC')};">
-      <i class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
+      <i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
       ${escapeHtml(st.name)}
     </label>
   `).join('');
@@ -12317,7 +12411,7 @@ async function bulkMarkVisited(customerIds) {
     <label style="display:flex;align-items:center;gap:8px;padding:8px 0;font-size:15px;color:var(--color-text-primary,#fff);cursor:pointer;">
       <input type="checkbox" class="bmv-kontroll-cb" data-slug="${escapeHtml(st.slug)}" checked
         style="width:20px;height:20px;accent-color:${escapeHtml(st.color || '#5E81AC')};">
-      <i class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
+      <i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#5E81AC')};"></i>
       ${escapeHtml(st.name)}
     </label>
   `).join('');
@@ -12612,7 +12706,7 @@ function renderAddressSuggestions(results) {
 
   container.innerHTML = results.map((addr, index) => `
     <div class="address-suggestion-item" role="option" data-index="${index}">
-      <i class="fas fa-map-marker-alt"></i>
+      <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
       <div class="address-suggestion-text">
         <div class="address-suggestion-main">${escapeHtml(addr.adresse)}</div>
         <div class="address-suggestion-detail">${escapeHtml(addr.postnummer)} ${escapeHtml(addr.poststed)}${addr.kommune ? `, ${escapeHtml(addr.kommune)}` : ''}</div>
@@ -12669,15 +12763,15 @@ function updatePostnummerStatus(status) {
 
   switch (status) {
     case 'valid':
-      statusEl.innerHTML = '<i class="fas fa-check"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-check"></i>';
       statusEl.classList.add('valid');
       break;
     case 'invalid':
-      statusEl.innerHTML = '<i class="fas fa-times"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-times"></i>';
       statusEl.classList.add('invalid');
       break;
     case 'loading':
-      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i>';
       statusEl.classList.add('loading');
       break;
     default:
@@ -12725,7 +12819,7 @@ function setupAddressAutocomplete() {
   function showSearchLoading() {
     suggestionsContainer.innerHTML = `
       <div class="address-suggestion-item" style="justify-content:center;opacity:0.6;pointer-events:none;">
-        <i class="fas fa-spinner fa-spin"></i>
+        <i aria-hidden="true" class="fas fa-spinner fa-spin"></i>
         <span>Søker...</span>
       </div>`;
     positionAddressSuggestions();
@@ -12988,7 +13082,7 @@ async function planSimpleRoute(customerData) {
       drawRouteFromGeoJSON(feature);
 
       // Add start marker (company location)
-      const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+      const startEl = createMarkerElement('route-marker route-start', '<i aria-hidden="true" class="fas fa-home"></i>', [30, 30]);
       const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
         .setLngLat(startLngLat)
         .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
@@ -13070,7 +13164,7 @@ async function drawRoute(orderedCustomers) {
   }
 
   // Add start marker
-  const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+  const startEl = createMarkerElement('route-marker route-start', '<i aria-hidden="true" class="fas fa-home"></i>', [30, 30]);
   const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
     .setLngLat(startLngLat)
     .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
@@ -13191,8 +13285,8 @@ function renderEmailDialog(customer) {
   overlay.innerHTML = `
     <div class="email-dialog">
       <div class="email-dialog-header">
-        <h3><i class="fas fa-envelope"></i> Send e-post</h3>
-        <button class="email-dialog-close" onclick="closeEmailDialog()"><i class="fas fa-times"></i></button>
+        <h3><i aria-hidden="true" class="fas fa-envelope"></i> Send e-post</h3>
+        <button class="email-dialog-close" onclick="closeEmailDialog()"><i aria-hidden="true" class="fas fa-times"></i></button>
       </div>
       <div class="email-dialog-body">
         <div class="email-dialog-recipient">
@@ -13220,7 +13314,7 @@ function renderEmailDialog(customer) {
 
         <div class="email-dialog-preview-section">
           <button class="email-dialog-preview-btn" onclick="previewEmail()">
-            <i class="fas fa-eye"></i> Forhåndsvis
+            <i aria-hidden="true" class="fas fa-eye"></i> Forhåndsvis
           </button>
           <div id="emailPreviewContainer" class="email-preview-container" style="display:none">
             <div class="email-preview-subject" id="emailPreviewSubject"></div>
@@ -13231,7 +13325,7 @@ function renderEmailDialog(customer) {
       <div class="email-dialog-footer">
         <button class="btn btn-secondary" onclick="closeEmailDialog()">Avbryt</button>
         <button class="btn btn-primary email-send-btn" onclick="sendEmailFromDialog()">
-          <i class="fas fa-paper-plane"></i> Send e-post
+          <i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post
         </button>
       </div>
     </div>
@@ -13311,7 +13405,7 @@ async function sendEmailFromDialog() {
   const sendBtn = document.querySelector('.email-send-btn');
   if (sendBtn) {
     sendBtn.disabled = true;
-    sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+    sendBtn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Sender...';
   }
 
   const customVariables = {};
@@ -13326,7 +13420,7 @@ async function sendEmailFromDialog() {
       showNotification('Fyll inn emne og melding', 'error');
       if (sendBtn) {
         sendBtn.disabled = false;
-        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Send e-post';
+        sendBtn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post';
       }
       return;
     }
@@ -13352,7 +13446,7 @@ async function sendEmailFromDialog() {
     showNotification(err.message || 'Kunne ikke sende e-post', 'error');
     if (sendBtn) {
       sendBtn.disabled = false;
-      sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Send e-post';
+      sendBtn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post';
     }
   }
 }
@@ -13432,7 +13526,7 @@ function renderOverdue() {
   if (overdueCustomers.length === 0) {
     html = `
       <div class="overdue-empty">
-        <i class="fas fa-check-circle"></i>
+        <i aria-hidden="true" class="fas fa-check-circle"></i>
         <p>Ingen forfalte kontroller</p>
         <span>Bra jobba!</span>
       </div>
@@ -13459,13 +13553,13 @@ function renderOverdue() {
                   <span class="overdue-category">${escapeHtml(c.kategori || 'Ukjent')}</span>
                 </div>
                 <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
               </div>
               <div class="overdue-status">
                 <span class="overdue-days">${c.daysOverdue} dager</span>
                 <span class="overdue-date">${formatDate(c._controlDate)}</span>
                 <button class="btn-remind" data-action="sendReminder" data-customer-id="${c.id}" title="Send påminnelse">
-                  <i class="fas fa-envelope"></i>
+                  <i aria-hidden="true" class="fas fa-envelope"></i>
                 </button>
               </div>
             </div>
@@ -13487,15 +13581,15 @@ function renderOverdue() {
               <span class="overdue-days-inline ${c.daysOverdue > 60 ? 'critical' : c.daysOverdue > 30 ? 'warning' : 'mild'}">${c.daysOverdue}d forfalt</span>
             </div>
             <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
           </div>
           <div class="overdue-status">
             <span class="overdue-date">${formatDate(c._controlDate)}</span>
             <button class="btn-remind" data-action="sendReminder" data-customer-id="${c.id}" title="Send påminnelse">
-              <i class="fas fa-envelope"></i>
+              <i aria-hidden="true" class="fas fa-envelope"></i>
             </button>
             <button class="btn-wp-single" data-action="addGroupToWeekPlan" data-customer-ids="${c.id}" title="Legg til i ukeplan">
-              <i class="fas fa-calendar-plus"></i>
+              <i aria-hidden="true" class="fas fa-calendar-plus"></i>
             </button>
           </div>
         </div>
@@ -13529,13 +13623,13 @@ function renderOverdue() {
         html += `
           <div class="overdue-section">
             <div class="overdue-section-header">
-              <i class="fas fa-folder"></i>
+              <i aria-hidden="true" class="fas fa-folder"></i>
               ${escapeHtml(cat)} (${byCategory[cat].length})
               <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for denne gruppen">
-                <i class="fas fa-route"></i>
+                <i aria-hidden="true" class="fas fa-route"></i>
               </button>
               <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-                <i class="fas fa-calendar-plus"></i>
+                <i aria-hidden="true" class="fas fa-calendar-plus"></i>
               </button>
             </div>
             ${renderGroupedItems(byCategory[cat])}
@@ -13556,16 +13650,16 @@ function renderOverdue() {
         html += `
           <div class="overdue-section overdue-area-section">
             <div class="overdue-section-header">
-              <i class="fas fa-map-marker-alt"></i>
+              <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
               ${escapeHtml(area)} (${byArea[area].length})
               <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for ${escapeHtml(area)}">
-                <i class="fas fa-route"></i>
+                <i aria-hidden="true" class="fas fa-route"></i>
               </button>
               <button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${customerIds}" title="Vis på kart">
-                <i class="fas fa-map"></i>
+                <i aria-hidden="true" class="fas fa-map"></i>
               </button>
               <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-                <i class="fas fa-calendar-plus"></i>
+                <i aria-hidden="true" class="fas fa-calendar-plus"></i>
               </button>
             </div>
             <div class="overdue-type-summary">${renderTypeBadges(byArea[area])}</div>
@@ -13584,7 +13678,7 @@ function renderOverdue() {
       if (summary.noiseCount > 0) summaryParts.push(`${summary.noiseCount} ${summary.noiseCount === 1 ? 'spredt' : 'spredte'}`);
       html += `
         <div class="proximity-summary">
-          <i class="fas fa-layer-group"></i>
+          <i aria-hidden="true" class="fas fa-layer-group"></i>
           <span>${overdueCustomers.length} ${overdueCustWord} fordelt på ${summaryParts.join(' + ')}</span>
         </div>
       `;
@@ -13614,18 +13708,18 @@ function renderOverdue() {
           <div class="overdue-section overdue-proximity-section ${severityClass}">
             <div class="overdue-section-header">
               <span class="proximity-number">${idx + 1}</span>
-              <i class="fas fa-map-pin"></i>
+              <i aria-hidden="true" class="fas fa-map-pin"></i>
               ${escapeHtml(cluster.areaName)}
               <span class="proximity-meta">${cluster.customers.length} ${custWord}, ${radiusText}</span>
               ${severityBadges}
               <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for denne klyngen">
-                <i class="fas fa-route"></i>
+                <i aria-hidden="true" class="fas fa-route"></i>
               </button>
               <button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${customerIds}" title="Vis på kart">
-                <i class="fas fa-map"></i>
+                <i aria-hidden="true" class="fas fa-map"></i>
               </button>
               <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-                <i class="fas fa-calendar-plus"></i>
+                <i aria-hidden="true" class="fas fa-calendar-plus"></i>
               </button>
             </div>
             <div class="overdue-type-summary">${renderTypeBadges(cluster.customers)}</div>
@@ -13642,10 +13736,10 @@ function renderOverdue() {
         html += `
           <div class="overdue-section overdue-noise-section">
             <div class="overdue-section-header">
-              <i class="fas fa-map-marker-alt"></i>
+              <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
               Spredte ${noiseWord} (${noise.length})
-              ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i class="fas fa-map"></i></button>` : ''}
-              ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i class="fas fa-calendar-plus"></i></button>` : ''}
+              ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i aria-hidden="true" class="fas fa-map"></i></button>` : ''}
+              ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i aria-hidden="true" class="fas fa-calendar-plus"></i></button>` : ''}
             </div>
             ${renderGroupedItems(noise)}
           </div>
@@ -13753,7 +13847,7 @@ function renderWarnings() {
           <span class="control-status ${controlStatus.class}">${daysUntil < 0 ? Math.abs(daysUntil) + ' dager over' : daysUntil + ' dager'}</span>
           <p style="font-size: 10px; color: #666; margin: 2px 0 0 0;">${escapeHtml(dateStr)}</p>
           <button class="btn-wp-single" data-action="addGroupToWeekPlan" data-customer-ids="${c.id}" title="Legg til i ukeplan">
-            <i class="fas fa-calendar-plus"></i>
+            <i aria-hidden="true" class="fas fa-calendar-plus"></i>
           </button>
         </div>
       </div>
@@ -13788,7 +13882,7 @@ function renderWarnings() {
     if (summary.noiseCount > 0) summaryParts.push(`${summary.noiseCount} ${summary.noiseCount === 1 ? 'spredt' : 'spredte'}`);
     html += `
       <div class="proximity-summary">
-        <i class="fas fa-layer-group"></i>
+        <i aria-hidden="true" class="fas fa-layer-group"></i>
         <span>${warningCustomers.length} ${warnCustWord} fordelt på ${summaryParts.join(' + ')}</span>
       </div>
     `;
@@ -13804,17 +13898,17 @@ function renderWarnings() {
       html += `<div class="warning-section overdue-proximity-section">
         <div class="warning-header proximity-header">
           <span class="proximity-number">${idx + 1}</span>
-          <i class="fas fa-map-pin"></i>
+          <i aria-hidden="true" class="fas fa-map-pin"></i>
           ${escapeHtml(cluster.areaName)}
           <span class="proximity-meta">${cluster.customers.length} ${custWord}, ${radiusText}</span>
           <button class="btn-group-route" data-action="createRouteFromGroup" data-customer-ids="${customerIds}" title="Lag rute for denne klyngen">
-            <i class="fas fa-route"></i>
+            <i aria-hidden="true" class="fas fa-route"></i>
           </button>
           <button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${customerIds}" title="Vis på kart">
-            <i class="fas fa-map"></i>
+            <i aria-hidden="true" class="fas fa-map"></i>
           </button>
           <button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${customerIds}" title="Legg til i ukeplan">
-            <i class="fas fa-calendar-plus"></i>
+            <i aria-hidden="true" class="fas fa-calendar-plus"></i>
           </button>
         </div>
         <div class="overdue-type-summary">${renderWarningTypeBadges(cluster.customers)}</div>
@@ -13829,10 +13923,10 @@ function renderWarnings() {
       const noiseWord = noise.length === 1 ? 'kunde' : 'kunder';
       html += `<div class="warning-section overdue-noise-section">
         <div class="warning-header proximity-header">
-          <i class="fas fa-map-marker-alt"></i>
+          <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
           Spredte ${noiseWord} (${noise.length})
-          ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i class="fas fa-map"></i></button>` : ''}
-          ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i class="fas fa-calendar-plus"></i></button>` : ''}
+          ${noiseIds ? `<button class="btn-group-map" data-action="showGroupOnMap" data-customer-ids="${noiseIds}" title="Vis på kart"><i aria-hidden="true" class="fas fa-map"></i></button>` : ''}
+          ${noiseIds ? `<button class="btn-group-weekplan" data-action="addGroupToWeekPlan" data-customer-ids="${noiseIds}" title="Legg til i ukeplan"><i aria-hidden="true" class="fas fa-calendar-plus"></i></button>` : ''}
         </div>
         ${noise.map(renderWarningItem).join('')}
       </div>`;
@@ -13941,7 +14035,7 @@ function renderAreaBadges(dayAvtaler) {
     <div class="week-day-areas">
       ${sorted.map(([area, data]) => `
         <span class="area-badge" title="${escapeHtml(data.customers.join(', '))}">
-          <i class="fas fa-map-marker-alt"></i> ${escapeHtml(area)} (${data.count})
+          <i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(area)} (${data.count})
         </span>
       `).join('')}
     </div>
@@ -13958,8 +14052,8 @@ function formatMinutes(totalMin) {
   if (!totalMin || totalMin <= 0) return '';
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
-  if (h === 0) return `${m} min`;
-  return m > 0 ? `${h}t ${m}min` : `${h}t`;
+  if (h === 0) return `${m}m`;
+  return m > 0 ? `${h}t ${m}m` : `${h}t`;
 }
 
 function formatTimeOfDay(minutesOffset, startHour = 8, startMinute = 0) {
@@ -14207,9 +14301,9 @@ async function renderWeeklyPlan() {
   // Header: week nav
   html += `
     <div class="wp-header">
-      <button class="btn btn-small btn-secondary" data-action="weekPlanPrev" aria-label="Forrige uke"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+      <button class="btn btn-small btn-secondary" data-action="weekPlanPrev" aria-label="Forrige uke"><i aria-hidden="true" class="fas fa-chevron-left"></i></button>
       <span class="wp-week-title">Uke ${weekNum}</span>
-      <button class="btn btn-small btn-secondary" data-action="weekPlanNext" aria-label="Neste uke"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+      <button class="btn btn-small btn-secondary" data-action="weekPlanNext" aria-label="Neste uke"><i aria-hidden="true" class="fas fa-chevron-right"></i></button>
     </div>
   `;
 
@@ -14221,7 +14315,7 @@ async function renderWeeklyPlan() {
       `<option value="${escapeHtml(m.navn)}" ${globalAssigned === m.navn ? 'selected' : ''}>${escapeHtml(m.navn)}</option>`
     ).join('');
     html += `<div class="wp-dispatch-bar">
-      <i class="fas fa-user-hard-hat"></i>
+      <i aria-hidden="true" class="fas fa-user-hard-hat"></i>
       <span>Planlegg for:</span>
       <select class="wp-dispatch-select" id="wpDispatchSelect">
         <option value="">Meg selv</option>
@@ -14233,7 +14327,7 @@ async function renderWeeklyPlan() {
   // Customer search bar (always visible)
   html += `<div class="wp-search-container">
     <div class="wp-search-wrapper">
-      <i class="fas fa-search wp-search-icon"></i>
+      <i aria-hidden="true" class="fas fa-search wp-search-icon"></i>
       <input type="text" class="wp-search-input" id="wpCustomerSearch"
         placeholder="S\u00f8k kunde (navn, adresse, sted)..." autocomplete="off">
     </div>
@@ -14244,22 +14338,22 @@ async function renderWeeklyPlan() {
   if (weekPlanState.activeDay) {
     const dispatchName = weekPlanState.globalAssignedTo || '';
     const forWho = dispatchName ? ` for ${dispatchName}` : '';
-    html += `<div class="wp-status"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet for <strong>${weekDayLabels[weekDayKeys.indexOf(weekPlanState.activeDay)]}</strong>${forWho}</div>`;
+    html += `<div class="wp-status"><i aria-hidden="true" class="fas fa-crosshairs"></i> Dra over kunder på kartet for <strong>${weekDayLabels[weekDayKeys.indexOf(weekPlanState.activeDay)]}</strong>${forWho}</div>`;
   } else if (totalPlanned === 0) {
-    html += `<div class="wp-status muted"><i class="fas fa-hand-pointer"></i> Velg en dag for å starte</div>`;
+    html += `<div class="wp-status muted"><i aria-hidden="true" class="fas fa-hand-pointer"></i> Velg en dag for å starte</div>`;
   }
 
   // Team bar - show all employees with planned work this week
   const teamMembers = getWeekTeamMembers();
   if (teamMembers.length > 0) {
     html += `<div class="wp-team-bar">`;
-    html += `<span class="wp-team-label"><i class="fas fa-users"></i></span>`;
+    html += `<span class="wp-team-label"><i aria-hidden="true" class="fas fa-users"></i></span>`;
     for (const member of teamMembers) {
       const isActive = wpFocusedTeamMember === member.name;
       html += `<span class="wp-team-chip ${isActive ? 'active' : ''}" style="background:${member.color}" data-action="focusTeamMember" data-member-name="${escapeHtml(member.name)}" title="Vis ${escapeHtml(member.name)} på kartet" role="button" tabindex="0">${escapeHtml(member.initials)} <span class="chip-count">${member.count}</span></span>`;
     }
     if (wpFocusedTeamMember) {
-      html += `<span class="wp-team-chip" style="background:var(--bg-tertiary, #666);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i class="fas fa-times" aria-hidden="true"></i></span>`;
+      html += `<span class="wp-team-chip" style="background:var(--bg-tertiary, #666);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-times"></i></span>`;
     }
     html += `</div>`;
   }
@@ -14302,7 +14396,7 @@ async function renderWeeklyPlan() {
       html += `<span class="wp-time-badge">~${formatMinutes(estTotalBar)}</span>`;
     }
     if (isActive) {
-      html += `<i class="fas fa-crosshairs wp-active-icon"></i>`;
+      html += `<i aria-hidden="true" class="fas fa-crosshairs wp-active-icon"></i>`;
     }
     html += `</div>`;
 
@@ -14342,8 +14436,8 @@ async function renderWeeklyPlan() {
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(c.navn)}</span>
               ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
-              ${c.telefon ? `<span class="wp-item-phone"><i class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
-              <span class="wp-item-timerange"><i class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
+              ${c.telefon ? `<span class="wp-item-phone"><i aria-hidden="true" class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
+              <span class="wp-item-timerange"><i aria-hidden="true" class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
             </div>
             <div class="wp-item-meta">
               <input type="number" class="wp-time-input" value="${c.estimertTid || 30}" min="5" step="5"
@@ -14371,8 +14465,8 @@ async function renderWeeklyPlan() {
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(name)}</span>
               ${addr ? `<span class="wp-item-addr">${escapeHtml(addr)}</span>` : ''}
-              ${phone ? `<span class="wp-item-phone"><i class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(phone)}</span>` : ''}
-              <span class="wp-item-timerange"><i class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${exStartTime} - ${exEndTime}</span>
+              ${phone ? `<span class="wp-item-phone"><i aria-hidden="true" class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(phone)}</span>` : ''}
+              <span class="wp-item-timerange"><i aria-hidden="true" class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${exStartTime} - ${exEndTime}</span>
             </div>
             <button class="wp-remove" data-action="deleteAvtale" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" title="Slett avtale" aria-label="Fjern">&times;</button>
           </div>`;
@@ -14381,7 +14475,7 @@ async function renderWeeklyPlan() {
 
       // Empty active day hint
       if (!hasContent && isActive) {
-        html += `<div class="wp-empty-hint"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet eller søk etter kunde</div>`;
+        html += `<div class="wp-empty-hint"><i aria-hidden="true" class="fas fa-crosshairs"></i> Dra over kunder på kartet eller søk etter kunde</div>`;
       }
 
       html += `</div>`;
@@ -14398,10 +14492,10 @@ async function renderWeeklyPlan() {
         html += `</div>`;
         html += `<div class="wp-day-actions">`;
         if (hasCoords && totalCount >= 3) {
-          html += `<button class="btn btn-small btn-secondary wp-opt-btn" data-action="wpOptimizeOrder" data-day="${dayKey}" title="Optimaliser rekkefølge" aria-label="Optimaliser rekkefølge"><i class="fas fa-sort-amount-down" aria-hidden="true"></i></button>`;
+          html += `<button class="btn btn-small btn-secondary wp-opt-btn" data-action="wpOptimizeOrder" data-day="${dayKey}" title="Optimaliser rekkefølge" aria-label="Optimaliser rekkefølge"><i aria-hidden="true" class="fas fa-sort-amount-down"></i></button>`;
         }
         if (hasCoords) {
-          html += `<button class="btn btn-small btn-secondary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i class="fas fa-directions" aria-hidden="true"></i> Naviger</button>`;
+          html += `<button class="btn btn-small btn-secondary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i aria-hidden="true" class="fas fa-directions"></i> Naviger</button>`;
         }
         html += `</div>`;
         html += `</div>`;
@@ -14417,8 +14511,8 @@ async function renderWeeklyPlan() {
   if (totalPlanned > 0) {
     html += `
       <div class="wp-actions">
-        <button class="btn btn-primary wp-save-btn" data-action="saveWeeklyPlan"><i class="fas fa-check" aria-hidden="true"></i> Opprett ${totalPlanned} avtale${totalPlanned > 1 ? 'r' : ''}</button>
-        <button class="btn btn-secondary wp-clear-btn" data-action="clearWeekPlan" aria-label="Tøm plan"><i class="fas fa-trash" aria-hidden="true"></i></button>
+        <button class="btn btn-primary wp-save-btn" data-action="saveWeeklyPlan"><i aria-hidden="true" class="fas fa-check"></i> Opprett ${totalPlanned} avtale${totalPlanned > 1 ? 'r' : ''}</button>
+        <button class="btn btn-secondary wp-clear-btn" data-action="clearWeekPlan" aria-label="Tøm plan"><i aria-hidden="true" class="fas fa-trash"></i></button>
       </div>`;
   }
 
@@ -14471,7 +14565,7 @@ async function renderWeeklyPlan() {
           ${alreadyAdded ? 'title="Allerede lagt til"' : ''} role="button" tabindex="0">
           <span class="wp-search-name">${escapeHtml(c.navn)}</span>
           <span class="wp-search-addr">${escapeHtml(addrText)}</span>
-          ${alreadyAdded ? '<i class="fas fa-check" style="color:var(--color-success, #10b981);"></i>' : '<i class="fas fa-plus"></i>'}
+          ${alreadyAdded ? '<i aria-hidden="true" class="fas fa-check" style="color:var(--color-success, #10b981);"></i>' : '<i aria-hidden="true" class="fas fa-plus"></i>'}
         </div>`;
       }).join('');
       resultsDiv.style.display = 'block';
@@ -14570,7 +14664,7 @@ async function wpLoadTravelTimes(dayKey) {
     const driveMin = Math.round(time.durationSec / 60);
     const sep = document.createElement('div');
     sep.className = 'wp-drive-separator';
-    sep.innerHTML = `<i class="fas fa-car" style="font-size:9px"></i> ${driveMin} min kjøretid`;
+    sep.innerHTML = `<i aria-hidden="true" class="fas fa-car" style="font-size:9px"></i> ${formatMinutes(driveMin) || '0m'} kjøretid`;
     item.parentNode.insertBefore(sep, item);
   });
 
@@ -14702,7 +14796,7 @@ function addCustomersToWeekPlan(customersList) {
       kategori: customer.kategori || null,
       lat: customer.lat || null,
       lng: customer.lng || null,
-      estimertTid: 30,
+      estimertTid: customer.estimert_tid || 30,
       addedBy: weekPlanState.globalAssignedTo || localStorage.getItem('userName') || 'admin'
     });
     added++;
@@ -14765,7 +14859,8 @@ async function saveWeeklyPlan() {
           kunde_id: customer.id,
           dato: date,
           beskrivelse: customer.kategori || 'Planlagt oppdrag',
-          opprettet_av: opprettetAv
+          opprettet_av: opprettetAv,
+          varighet: customer.estimertTid || 30
         };
         const response = await apiFetch('/api/avtaler', {
           method: 'POST',
@@ -15139,28 +15234,28 @@ function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
     </div>
     <div class="wp-route-stats">
       <div class="wp-route-stat">
-        <i class="fas fa-car" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-car"></i>
         <span>Kjøretid: ~${formatMinutes(drivingMin)}</span>
       </div>
       <div class="wp-route-stat">
-        <i class="fas fa-user-clock" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-user-clock"></i>
         <span>Hos kunder: ~${formatMinutes(customerMin)}</span>
       </div>
       <div class="wp-route-stat total">
-        <i class="fas fa-clock" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-clock"></i>
         <span>Totalt: ~${formatMinutes(totalMin)}</span>
       </div>
       <div class="wp-route-stat">
-        <i class="fas fa-road" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-road"></i>
         <span>${km} km</span>
       </div>
     </div>
     <div class="wp-route-actions">
       <button class="btn btn-small btn-primary" data-action="wpExportMaps" data-day="${dayKey}">
-        <i class="fas fa-external-link-alt" aria-hidden="true"></i> Åpne i Maps
+        <i aria-hidden="true" class="fas fa-external-link-alt"></i> Åpne i Maps
       </button>
       <button class="btn btn-small btn-secondary" data-action="closeWpRoute">
-        <i class="fas fa-times" aria-hidden="true"></i> Lukk rute
+        <i aria-hidden="true" class="fas fa-times"></i> Lukk rute
       </button>
     </div>
   `;
@@ -15227,16 +15322,16 @@ function showCalendarQuickMenu(customerId, customerName, anchorEl) {
   menu.innerHTML = `
     <div class="quick-menu-header">${escapeHtml(customerName)}</div>
     <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(today)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-day" aria-hidden="true"></i> I dag (${today.getDate()}.${today.getMonth() + 1})
+      <i aria-hidden="true" class="fas fa-calendar-day"></i> I dag (${today.getDate()}.${today.getMonth() + 1})
     </div>
     <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(tomorrow)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-day" aria-hidden="true"></i> I morgen (${tomorrow.getDate()}.${tomorrow.getMonth() + 1})
+      <i aria-hidden="true" class="fas fa-calendar-day"></i> I morgen (${tomorrow.getDate()}.${tomorrow.getMonth() + 1})
     </div>
     <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(nextMonday)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-week" aria-hidden="true"></i> Neste mandag (${nextMonday.getDate()}.${nextMonday.getMonth() + 1})
+      <i aria-hidden="true" class="fas fa-calendar-week"></i> Neste mandag (${nextMonday.getDate()}.${nextMonday.getMonth() + 1})
     </div>
     <div class="quick-menu-item" data-action="addCustomerToCalendar" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-alt" aria-hidden="true"></i> Velg dato...
+      <i aria-hidden="true" class="fas fa-calendar-alt"></i> Velg dato...
     </div>
   `;
 
@@ -15302,6 +15397,15 @@ async function quickAddAvtaleForDate(customerId, customerName, date) {
   }
 }
 
+
+// Format minutes as "Xt Ym" for calendar display
+function formatEstTid(min) {
+  if (!min || min <= 0) return '';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  return m > 0 ? `${h}t ${m}m` : `${h}t`;
+}
 
 // Build Google Maps directions URL for a list of avtaler on a given date
 // Route: Kontor → kunde1 → kunde2 → ... → Kontor
@@ -15400,18 +15504,18 @@ async function renderCalendar() {
 
   let html = `
     <div class="calendar-header">
-      <button class="calendar-nav" id="prevMonth" aria-label="Forrige måned"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+      <button class="calendar-nav" id="prevMonth" aria-label="Forrige måned"><i aria-hidden="true" class="fas fa-chevron-left"></i></button>
       <h3>${monthNames[currentCalendarMonth]} ${currentCalendarYear}</h3>
-      <button class="calendar-nav" id="nextMonth" aria-label="Neste måned"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+      <button class="calendar-nav" id="nextMonth" aria-label="Neste måned"><i aria-hidden="true" class="fas fa-chevron-right"></i></button>
       <div style="margin-left:auto;display:flex;gap:4px;">
         <button class="btn btn-small ${calendarViewMode === 'week' ? 'btn-primary' : 'btn-secondary'}" id="toggleWeekView">
-          <i class="fas fa-calendar-week" aria-hidden="true"></i> Uke
+          <i aria-hidden="true" class="fas fa-calendar-week"></i> Uke
         </button>
         <button class="btn btn-small btn-primary" id="openCalendarSplit" title="Åpne fullskjerm kalender" aria-label="Åpne fullskjerm kalender">
-          <i class="fas fa-expand" aria-hidden="true"></i>
+          <i aria-hidden="true" class="fas fa-expand"></i>
         </button>
         <button class="btn btn-primary calendar-add-btn" id="addAvtaleBtn">
-          <i class="fas fa-plus" aria-hidden="true"></i> Ny avtale
+          <i aria-hidden="true" class="fas fa-plus"></i> Ny avtale
         </button>
       </div>
     </div>
@@ -15451,7 +15555,7 @@ async function renderCalendar() {
         <div class="day-top-row">
           <span class="day-number">${day}</span>
           ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} omr.</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         <div class="calendar-events">
           ${dayAvtaler.map(a => {
@@ -15462,13 +15566,13 @@ async function renderCalendar() {
             <div class="calendar-avtale ${a.status === 'fullført' ? 'completed' : ''}"
                  data-avtale-id="${a.id}"${serviceColor ? ` style="border-left-color:${serviceColor}"` : ''}>
               <div class="avtale-content" data-avtale-id="${a.id}" data-action="editAvtale" role="button" tabindex="0">
-                ${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}${a.rute_id ? '<i class="fas fa-route" style="font-size:0.6em;margin-right:2px;color:var(--primary)" title="Fra rute"></i>' : ''}${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.6em;margin-right:2px" title="Gjentakende"></i>' : ''}
+                ${a.status === 'fullført' ? '<i aria-hidden="true" class="fas fa-check" style="font-size:0.6em;margin-right:2px;color:var(--color-good)" title="Fullført"></i><span class="sr-only">Fullført:</span>' : ''}${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}${a.rute_id ? '<i aria-hidden="true" class="fas fa-route" style="font-size:0.6em;margin-right:2px;color:var(--primary)" title="Fra rute"></i>' : ''}${a.er_gjentakelse || a.original_avtale_id ? '<i aria-hidden="true" class="fas fa-sync-alt" style="font-size:0.6em;margin-right:2px" title="Gjentakende"></i>' : ''}
                 ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
                 <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</span>
                 ${poststed ? `<span class="avtale-poststed">${escapeHtml(poststed)}</span>` : ''}
                 ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="avtale-creator" title="Opprettet av ${escapeHtml(a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.opprettet_av, true))}</span>` : ''}
               </div>
-              <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i class="fas fa-times" aria-hidden="true"></i></button>
+              <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
             </div>
           `; }).join('')}
         </div>
@@ -15486,18 +15590,18 @@ async function renderCalendar() {
 
     html = `
       <div class="calendar-header">
-        <button class="calendar-nav" id="prevWeek" aria-label="Forrige uke"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+        <button class="calendar-nav" id="prevWeek" aria-label="Forrige uke"><i aria-hidden="true" class="fas fa-chevron-left"></i></button>
         <h3>Uke ${weekNum} - ${currentWeekStart.getFullYear()}</h3>
-        <button class="calendar-nav" id="nextWeek" aria-label="Neste uke"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+        <button class="calendar-nav" id="nextWeek" aria-label="Neste uke"><i aria-hidden="true" class="fas fa-chevron-right"></i></button>
         <div style="margin-left:auto;display:flex;gap:4px;">
           <button class="btn btn-small btn-primary" id="openCalendarSplit" title="Åpne fullskjerm kalender" aria-label="Åpne fullskjerm kalender">
-            <i class="fas fa-expand" aria-hidden="true"></i>
+            <i aria-hidden="true" class="fas fa-expand"></i>
           </button>
           <button class="btn btn-small btn-secondary" id="toggleWeekView">
-            <i class="fas fa-calendar-alt" aria-hidden="true"></i> Måned
+            <i aria-hidden="true" class="fas fa-calendar-alt"></i> Måned
           </button>
           <button class="btn btn-primary calendar-add-btn" id="addAvtaleBtn">
-            <i class="fas fa-plus" aria-hidden="true"></i> Ny avtale
+            <i aria-hidden="true" class="fas fa-plus"></i> Ny avtale
           </button>
         </div>
       </div>
@@ -15528,8 +15632,8 @@ async function renderCalendar() {
           <div class="week-day-header">
             <span class="week-day-name">${weekDayNames[i].substring(0, 3)}</span>
             <span class="week-day-date">${dayDate.getDate()}</span>
-            ${dayMinutes > 0 ? `<span class="week-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
-            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+            ${dayMinutes > 0 ? `<span class="week-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
+            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
           </div>
           ${renderAreaBadges(dayAvtaler)}
           <div class="week-day-content">
@@ -15546,29 +15650,29 @@ async function renderCalendar() {
               return `
                 <div class="week-avtale-card ${a.status === 'fullført' ? 'completed' : ''}" data-avtale-id="${a.id}" data-action="editAvtale" role="button" tabindex="0"${serviceColor ? ` style="border-left-color:${serviceColor}"` : ''}>
                   <div class="week-card-header">
-                    ${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}
+                    ${a.status === 'fullført' ? '<i aria-hidden="true" class="fas fa-check" style="font-size:0.6em;margin-right:2px;color:var(--color-good)" title="Fullført"></i><span class="sr-only">Fullført:</span>' : ''}${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}
                     ${initials ? `<span class="week-card-initials" title="${escapeHtml(creator)}">${escapeHtml(initials)}</span>` : ''}
                     <span class="week-card-name">${escapeHtml(navn)}</span>
-                    ${estTid ? `<span class="avtale-duration">${estTid}m</span>` : ''}
-                    <button class="week-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i class="fas fa-times" aria-hidden="true"></i></button>
+                    ${estTid ? `<span class="avtale-duration">${formatEstTid(estTid)}</span>` : ''}
+                    <button class="week-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
                   </div>
                   ${addr ? `<div class="week-card-addr">${escapeHtml(addr)}</div>` : ''}
-                  ${phone ? `<div class="week-card-phone"><i class="fas fa-phone" aria-hidden="true"></i>${escapeHtml(phone)}</div>` : ''}
-                  ${a.klokkeslett ? `<div class="week-card-time"><i class="fas fa-clock" aria-hidden="true"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${a.varighet}m)` : ''}</div>` : ''}
+                  ${phone ? `<div class="week-card-phone"><i aria-hidden="true" class="fas fa-phone"></i>${escapeHtml(phone)}</div>` : ''}
+                  ${a.klokkeslett ? `<div class="week-card-time"><i aria-hidden="true" class="fas fa-clock"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${formatEstTid(a.varighet)})` : ''}</div>` : ''}
                 </div>
               `;
             }).join('')}
             ${dayAvtaler.length === 0 ? '<div class="week-empty">Ingen avtaler</div>' : ''}
           </div>
           <div class="week-day-add" data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
-            <i class="fas fa-plus" aria-hidden="true"></i> Legg til
+            <i aria-hidden="true" class="fas fa-plus"></i> Legg til
           </div>
         </div>
       `;
     }
 
     html += `</div>`;
-    html += `<div class="week-summary"><strong>Total estimert tid denne uken:</strong> ${Math.floor(totalWeekMinutes / 60)}t ${totalWeekMinutes % 60}m</div>`;
+    html += `<div class="week-summary"><strong>Total estimert tid denne uken:</strong> ${formatEstTid(totalWeekMinutes)}</div>`;
 
     container.innerHTML = html;
     runTabCleanup('calendar');
@@ -15589,7 +15693,7 @@ async function renderCalendar() {
   if (upcomingAvtaler.length > 0) {
     html += `
       <div class="upcoming-section">
-        <h4><i class="fas fa-calendar-check"></i> Kommende avtaler</h4>
+        <h4><i aria-hidden="true" class="fas fa-calendar-check"></i> Kommende avtaler</h4>
         <div class="upcoming-list">
           ${upcomingAvtaler.map(a => `
             <div class="upcoming-item" data-avtale-id="${a.id}" data-action="editAvtale" role="button" tabindex="0">
@@ -15598,7 +15702,7 @@ async function renderCalendar() {
                 <span class="upcoming-month">${monthNames[new Date(a.dato).getMonth()].substring(0, 3)}</span>
               </div>
               <div class="upcoming-info">
-                <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
+                <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i aria-hidden="true" class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
                 <span>${a.klokkeslett ? a.klokkeslett.substring(0, 5) : ''} ${a.type || ''}</span>
                 ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="upcoming-creator">Av: ${escapeHtml(getCreatorDisplay(a.opprettet_av))}</span>` : ''}
               </div>
@@ -15886,10 +15990,10 @@ function renderSplitWeekContent() {
         <div class="split-week-day-header" data-action="setSplitActiveDay" data-date="${dateStr}" title="${isActive ? 'Klikk for å deaktivere dag' : 'Klikk for å velge dag — dra over kartet for å legge til kunder'}" role="button" tabindex="0">
           <span class="split-day-name">${weekDayNames[i].substring(0, 3)}</span>
           <span class="split-day-date">${dayDate.getDate()}</span>
-          ${isActive ? '<i class="fas fa-crosshairs split-active-icon" aria-hidden="true"></i>' : ''}
-          ${dayMinutes > 0 ? `<span class="split-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
+          ${isActive ? '<i aria-hidden="true" class="fas fa-crosshairs split-active-icon"></i>' : ''}
+          ${dayMinutes > 0 ? `<span class="split-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
           ${dayAvtaler.length > 0 ? `<span class="split-day-count">${dayAvtaler.length} avtale${dayAvtaler.length !== 1 ? 'r' : ''}</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         ${dayAvtaler.length > 0 ? renderAreaBadges(dayAvtaler) : ''}
         <div class="split-day-content">
@@ -15916,12 +16020,12 @@ function renderSplitWeekContent() {
             ${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}
             ${initials ? `<span class="split-card-initials" title="${escapeHtml(creator)}">${escapeHtml(initials)}</span>` : ''}
             <span class="split-card-name">${escapeHtml(navn)}</span>
-            ${estTid ? `<span class="avtale-duration">${estTid}m</span>` : ''}
-            <button class="split-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i class="fas fa-times" aria-hidden="true"></i></button>
+            ${estTid ? `<span class="avtale-duration">${formatEstTid(estTid)}</span>` : ''}
+            <button class="split-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
           </div>
-          ${addr ? `<div class="split-card-addr"><i class="fas fa-map-marker-alt" style="font-size:8px;margin-right:3px;" aria-hidden="true"></i>${escapeHtml(addr)}</div>` : ''}
-          ${phone ? `<div class="split-card-phone"><i class="fas fa-phone" aria-hidden="true"></i>${escapeHtml(phone)}</div>` : ''}
-          ${a.klokkeslett ? `<div class="split-card-time"><i class="fas fa-clock" aria-hidden="true"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${a.varighet}m)` : ''}</div>` : ''}
+          ${addr ? `<div class="split-card-addr"><i aria-hidden="true" class="fas fa-map-marker-alt" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(addr)}</div>` : ''}
+          ${phone ? `<div class="split-card-phone"><i aria-hidden="true" class="fas fa-phone"></i>${escapeHtml(phone)}</div>` : ''}
+          ${a.klokkeslett ? `<div class="split-card-time"><i aria-hidden="true" class="fas fa-clock"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${formatEstTid(a.varighet)})` : ''}</div>` : ''}
         </div>
       `;
     });
@@ -15931,11 +16035,11 @@ function renderSplitWeekContent() {
         </div>
         <div class="split-day-footer">
           <div class="split-day-add" data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
-            <i class="fas fa-plus" aria-hidden="true"></i> Legg til
+            <i aria-hidden="true" class="fas fa-plus"></i> Legg til
           </div>
           ${pendingAvtaler.length > 0 ? `
           <div class="split-day-confirm" data-date="${dateStr}" data-action="confirmDay" role="button" tabindex="0">
-            <i class="fas fa-check-double" aria-hidden="true"></i> Bekreft dag
+            <i aria-hidden="true" class="fas fa-check-double"></i> Bekreft dag
           </div>
           ` : ''}
         </div>
@@ -15983,9 +16087,9 @@ function renderUpcomingAreas(fromDate) {
   return `
     <div class="split-upcoming-areas">
       <div class="split-upcoming-header" data-action="toggleUpcomingAreas" role="button" tabindex="0">
-        <i class="fas fa-map-marked-alt" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-map-marked-alt"></i>
         <span>Kommende områder (${sorted.length})</span>
-        <i class="fas fa-chevron-down split-upcoming-chevron" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-chevron-down split-upcoming-chevron"></i>
       </div>
       <div class="split-upcoming-body" id="splitUpcomingBody">
         ${sorted.slice(0, 10).map(([area, data]) => {
@@ -15995,7 +16099,7 @@ function renderUpcomingAreas(fromDate) {
           return `
           <div class="split-upcoming-item" title="${escapeHtml(data.customers.join(', '))}">
             <div class="split-upcoming-item-top">
-              <span class="split-upcoming-area"><i class="fas fa-map-marker-alt" aria-hidden="true"></i> ${escapeHtml(area)}</span>
+              <span class="split-upcoming-area"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(area)}</span>
               <span class="split-upcoming-count">${data.count} avtale${data.count !== 1 ? 'r' : ''}</span>
               <span class="split-upcoming-days">${data.dates.size} dag${data.dates.size !== 1 ? 'er' : ''}</span>
             </div>
@@ -16061,7 +16165,7 @@ function showConfirmDayPanel(dateStr) {
     <div class="confirm-day-actions">
       <button class="btn btn-small btn-secondary" id="confirmDayCancel" style="flex:1;">Avbryt</button>
       <button class="btn btn-small btn-success" id="confirmDaySubmit" style="flex:2;">
-        <i class="fas fa-check-double" aria-hidden="true"></i> Bekreft ${dayAvtaler.length} kunder
+        <i aria-hidden="true" class="fas fa-check-double"></i> Bekreft ${dayAvtaler.length} kunder
       </button>
     </div>
   `;
@@ -16074,7 +16178,7 @@ function showConfirmDayPanel(dateStr) {
   document.getElementById('confirmDaySubmit').addEventListener('click', async () => {
     const submitBtn = document.getElementById('confirmDaySubmit');
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Bekrefter...';
+    submitBtn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Bekrefter...';
 
     const fallbackInterval = Number.parseInt(document.getElementById('confirmDayIntervalSelect').value) || 12;
 
@@ -16223,6 +16327,7 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
   const gjentakelseSelect = document.getElementById('avtaleGjentakelse');
   const gjentakelseSluttGroup = document.getElementById('avtaleGjentakelseSluttGroup');
   const gjentakelseGroup = document.getElementById('avtaleGjentakelseGroup');
+  const showOnMapBtn = document.getElementById('showAvtaleOnMapBtn');
 
   // Populate type dropdown dynamically from ServiceTypeRegistry
   if (avtaleTypeSelect) {
@@ -16266,6 +16371,15 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     // Show "delete series" button if this is part of a recurring series
     const isPartOfSeries = avtale.er_gjentakelse || avtale.original_avtale_id;
     deleteSeriesBtn.style.display = isPartOfSeries ? 'inline-block' : 'none';
+
+    // Show "Vis på kart" button with click handler
+    if (showOnMapBtn) {
+      showOnMapBtn.style.display = 'inline-block';
+      showOnMapBtn.onclick = () => {
+        modal.classList.add('hidden');
+        focusOnCustomer(avtale.kunde_id);
+      };
+    }
   } else {
     // New avtale
     title.textContent = 'Ny avtale';
@@ -16282,6 +16396,7 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     }
     deleteBtn.style.display = 'none';
     deleteSeriesBtn.style.display = 'none';
+    if (showOnMapBtn) showOnMapBtn.style.display = 'none';
   }
 
   modal.classList.remove('hidden');
@@ -16713,7 +16828,7 @@ function showInactivityWarning() {
   modal.innerHTML = `
     <div style="background:var(--card-bg, #1a1a2e);border-radius:12px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;">
-        <i class="fas fa-clock" style="font-size:28px;color:white;"></i>
+        <i aria-hidden="true" class="fas fa-clock" style="font-size:28px;color:white;"></i>
       </div>
       <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:20px;">Inaktivitet oppdaget</h2>
       <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 8px;font-size:15px;">Du logges ut om <strong id="inactivityCountdown">${secondsLeft}</strong> sekunder på grunn av inaktivitet.</p>
@@ -16842,7 +16957,7 @@ function showOverdueOnMap() {
   // Show notification
   const notification = document.createElement('div');
   notification.className = 'map-notification';
-  notification.innerHTML = `<i class="fas fa-map-marker-alt"></i> Viser ${overdueCustomers.length} forfalte kunder på kartet`;
+  notification.innerHTML = `<i aria-hidden="true" class="fas fa-map-marker-alt"></i> Viser ${overdueCustomers.length} forfalte kunder på kartet`;
   document.querySelector('.map-container')?.appendChild(notification);
   setTimeout(() => notification.remove(), 3000);
 }
@@ -16988,7 +17103,7 @@ async function loadEmailUpcoming() {
                     data-action="sendEmail"
                     data-customer-id="${item.id}"
                     title="${hasEmail ? 'Send e-post' : 'Ingen e-post registrert'}">
-              <i class="fas fa-envelope"></i>
+              <i aria-hidden="true" class="fas fa-envelope"></i>
             </button>
             <span class="upcoming-days ${daysClass}">${daysText}</span>
           </div>
@@ -17094,7 +17209,7 @@ async function sendTestEmail() {
   const btn = document.getElementById('sendTestEmailBtn');
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Sender...';
   }
 
   try {
@@ -17118,7 +17233,7 @@ async function sendTestEmail() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-paper-plane"></i> Send Test';
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i> Send Test';
     }
   }
 }
@@ -17128,7 +17243,7 @@ async function triggerEmailCheck() {
   const btn = document.getElementById('triggerEmailCheckBtn');
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Sender...';
   }
 
   try {
@@ -17144,7 +17259,7 @@ async function triggerEmailCheck() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-paper-plane"></i><span>Send varsler nå</span>';
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i><span>Send varsler nå</span>';
     }
   }
 }
@@ -17153,16 +17268,18 @@ async function triggerEmailCheck() {
 async function loadCustomerEmailSettings(kundeId) {
   try {
     const response = await apiFetch(`/api/email/innstillinger/${kundeId}`);
-    const settings = await response.json();
+    if (!response.ok) return;
+    const result = await response.json();
+    const settings = result.data || result;
 
     const emailAktiv = document.getElementById('emailAktiv');
     const forsteVarsel = document.getElementById('forsteVarsel');
     const paaminnelseEtter = document.getElementById('paaminnelseEtter');
     const emailOptions = document.getElementById('emailOptions');
 
-    if (emailAktiv) emailAktiv.checked = settings.email_aktiv === 1;
-    if (forsteVarsel) forsteVarsel.value = settings.forste_varsel_dager;
-    if (paaminnelseEtter) paaminnelseEtter.value = settings.paaminnelse_etter_dager;
+    if (emailAktiv) emailAktiv.checked = settings.email_aktiv === 1 || settings.email_aktiv === true;
+    if (forsteVarsel) forsteVarsel.value = settings.forste_varsel_dager || 30;
+    if (paaminnelseEtter) paaminnelseEtter.value = settings.paaminnelse_etter_dager || 7;
 
     // Toggle options visibility
     if (emailOptions) {
@@ -17281,11 +17398,11 @@ async function renderSubcatManagerBody() {
     html += `
       <div class="subcat-group-item" data-group-id="${group.id}" style="margin-bottom:12px;border:1px solid var(--color-border);border-radius:6px;padding:10px;">
         <div style="display:flex;align-items:center;gap:6px;padding:4px 0;">
-          <i class="fas fa-folder" style="color:var(--color-text-muted);font-size:12px;"></i>
+          <i aria-hidden="true" class="fas fa-folder" style="color:var(--color-text-muted);font-size:12px;"></i>
           <strong style="font-size:13px;">${escapeHtml(group.navn)}</strong>
           <span style="font-size:11px;color:var(--color-text-muted)">(${subs.length})</span>
           <button class="btn-icon-tiny btn-icon-danger" data-action="deleteGroup" data-group-id="${group.id}" title="Slett gruppe">
-            <i class="fas fa-trash"></i>
+            <i aria-hidden="true" class="fas fa-trash"></i>
           </button>
         </div>
         <div style="margin-left:12px;">
@@ -17293,14 +17410,14 @@ async function renderSubcatManagerBody() {
             <div style="display:flex;align-items:center;gap:4px;padding:2px 0;font-size:13px;">
               <span>${escapeHtml(sub.navn)}</span>
               <button class="btn-icon-tiny btn-icon-danger" data-action="deleteSubcat" data-subcat-id="${sub.id}" title="Slett">
-                <i class="fas fa-trash"></i>
+                <i aria-hidden="true" class="fas fa-trash"></i>
               </button>
             </div>
           `).join('')}
           <div style="display:flex;gap:4px;margin-top:4px;">
             <input type="text" class="subcat-inline-input" placeholder="Ny underkategori..." maxlength="100" data-group-id="${group.id}" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
             <button class="btn btn-small btn-primary subcat-inline-add" data-group-id="${group.id}" style="padding:4px 8px;">
-              <i class="fas fa-plus"></i>
+              <i aria-hidden="true" class="fas fa-plus"></i>
             </button>
           </div>
         </div>
@@ -17314,7 +17431,7 @@ async function renderSubcatManagerBody() {
       <div style="display:flex;gap:4px;">
         <input type="text" class="new-group-input" placeholder="Ny gruppe..." maxlength="100" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
         <button class="btn btn-small btn-secondary new-group-add" style="padding:4px 8px;">
-          <i class="fas fa-plus"></i> Gruppe
+          <i aria-hidden="true" class="fas fa-plus"></i> Gruppe
         </button>
       </div>
     </div>
@@ -17449,7 +17566,8 @@ async function loadKontaktlogg(kundeId) {
   try {
     const response = await apiFetch(`/api/kunder/${kundeId}/kontaktlogg`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const logg = await response.json();
+    const result = await response.json();
+    const logg = result.data || result;
 
     if (logg.length === 0) {
       listEl.innerHTML = '<div class="kontaktlogg-empty">Ingen registrerte kontakter</div>';
@@ -17476,7 +17594,7 @@ async function loadKontaktlogg(kundeId) {
             ${k.notat ? `<div class="kontaktlogg-notat">${escapeHtml(k.notat)}</div>` : ''}
           </div>
           <button type="button" class="kontaktlogg-delete" data-action="deleteKontakt" data-id="${k.id}" title="Slett">
-            <i class="fas fa-trash"></i>
+            <i aria-hidden="true" class="fas fa-trash"></i>
           </button>
         </div>
       `;
@@ -17560,7 +17678,7 @@ async function loadKontaktpersoner(kundeId) {
         ? `<span class="kontaktperson-rolle">${escapeHtml(rolleLabels[p.rolle] || p.rolle)}</span>`
         : '';
       const primaerBadge = p.er_primaer
-        ? '<span class="kontaktperson-primaer-badge"><i class="fas fa-star"></i> Primær</span>'
+        ? '<span class="kontaktperson-primaer-badge"><i aria-hidden="true" class="fas fa-star"></i> Primær</span>'
         : '';
 
       return `
@@ -17572,12 +17690,12 @@ async function loadKontaktpersoner(kundeId) {
               ${primaerBadge}
             </div>
             <div class="kontaktperson-details">
-              ${p.telefon ? `<span class="kontaktperson-detail"><i class="fas fa-phone"></i> ${escapeHtml(p.telefon)}</span>` : ''}
-              ${p.epost ? `<span class="kontaktperson-detail"><i class="fas fa-envelope"></i> ${escapeHtml(p.epost)}</span>` : ''}
+              ${p.telefon ? `<span class="kontaktperson-detail"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(p.telefon)}</span>` : ''}
+              ${p.epost ? `<span class="kontaktperson-detail"><i aria-hidden="true" class="fas fa-envelope"></i> ${escapeHtml(p.epost)}</span>` : ''}
             </div>
           </div>
           <button type="button" class="kontaktperson-delete" data-action="deleteKontaktperson" data-id="${p.id}" title="Slett">
-            <i class="fas fa-trash"></i>
+            <i aria-hidden="true" class="fas fa-trash"></i>
           </button>
         </div>
       `;
@@ -17772,7 +17890,7 @@ function showNotification(message, type = 'success') {
 
   const toast = document.createElement('div');
   toast.className = `notification-toast notification-${type}`;
-  toast.innerHTML = `<i class="fas ${icons[type] || icons.success}"></i> ${escapeHtml(message)}`;
+  toast.innerHTML = `<i aria-hidden="true" class="fas ${icons[type] || icons.success}"></i> ${escapeHtml(message)}`;
   document.body.appendChild(toast);
 
   setTimeout(() => {
@@ -17968,7 +18086,7 @@ function renderFilterPanelCategories() {
   // Start with "Alle" button
   let html = `
     <button class="category-btn ${selectedCategory === 'all' ? 'active' : ''}" data-category="all">
-      <i class="fas fa-list"></i> Alle
+      <i aria-hidden="true" class="fas fa-list"></i> Alle
     </button>
   `;
 
@@ -17977,7 +18095,7 @@ function renderFilterPanelCategories() {
     const isActive = selectedCategory === st.name || selectedCategory === st.slug;
     html += `
       <button class="category-btn ${isActive ? 'active' : ''}" data-category="${st.name}">
-        <i class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
+        <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
       </button>
     `;
   });
@@ -17985,7 +18103,7 @@ function renderFilterPanelCategories() {
   // Add combined option if 2+ service types
   if (serviceTypes.length >= 2) {
     const combinedName = serviceTypes.map(st => st.name).join(' + ');
-    const icons = serviceTypes.map(st => `<i class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
+    const icons = serviceTypes.map(st => `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
     const isActive = selectedCategory === combinedName;
     html += `
       <button class="category-btn ${isActive ? 'active' : ''}" data-category="${combinedName}">
@@ -18021,7 +18139,7 @@ function startMarkerDrag(customerId, x, y) {
   // Create floating ghost element
   dragGhost = document.createElement('div');
   dragGhost.className = 'drag-ghost';
-  dragGhost.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.navn)}`;
+  dragGhost.innerHTML = `<i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.navn)}`;
   dragGhost.style.left = x + 'px';
   dragGhost.style.top = y + 'px';
   document.body.appendChild(dragGhost);
@@ -18176,7 +18294,7 @@ function renderSubcategoryFilter() {
     filterContainer.style.display = 'block';
     contentEl.innerHTML = `<div class="subcat-add-row subcat-add-group-row">
       <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
-      <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+      <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i aria-hidden="true" class="fas fa-plus"></i> Gruppe</button>
     </div>`;
     attachSubcategoryHandlers();
     return;
@@ -18217,13 +18335,13 @@ function renderSubcategoryFilter() {
     html += `<div class="subcat-group ${isCollapsed ? 'subcat-group-collapsed' : ''}">
       <div class="subcat-group-header">
         <span class="subcat-group-name" data-toggle-group="${group.id}">
-          <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'} subcat-chevron"></i>
+          <i aria-hidden="true" class="fas fa-chevron-${isCollapsed ? 'right' : 'down'} subcat-chevron"></i>
           ${escapeHtml(group.navn)}
           ${isCollapsed && activeSub ? `<span class="subcat-active-indicator">${escapeHtml(activeSub.navn)}</span>` : ''}
         </span>
         <span class="subcat-admin-only">
-          <button class="category-manage-btn" data-action="editGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
-          <button class="category-manage-btn subcat-delete-btn" data-action="deleteGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+          <button class="category-manage-btn" data-action="editGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Rediger"><i aria-hidden="true" class="fas fa-pen"></i></button>
+          <button class="category-manage-btn subcat-delete-btn" data-action="deleteGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Slett"><i aria-hidden="true" class="fas fa-trash"></i></button>
         </span>
       </div>`;
 
@@ -18240,8 +18358,8 @@ function renderSubcategoryFilter() {
             ${escapeHtml(sub.navn)} <span class="subcat-count">${count}</span>
           </button>
           <span class="subcat-admin-only subcat-item-actions">
-            <button class="category-manage-btn" data-action="editSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
-            <button class="category-manage-btn subcat-delete-btn" data-action="deleteSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+            <button class="category-manage-btn" data-action="editSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Rediger"><i aria-hidden="true" class="fas fa-pen"></i></button>
+            <button class="category-manage-btn subcat-delete-btn" data-action="deleteSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Slett"><i aria-hidden="true" class="fas fa-trash"></i></button>
           </span>
         </span>`;
       });
@@ -18251,7 +18369,7 @@ function renderSubcategoryFilter() {
     // Add subcategory input (admin only)
     html += `<div class="subcat-add-row subcat-admin-only">
       <input type="text" class="subcat-add-input" placeholder="Ny underkategori..." maxlength="100" data-add-subcat-input data-group-id="${group.id}">
-      <button class="subcat-add-btn" data-action="addSubcat" data-group-id="${group.id}" title="Legg til"><i class="fas fa-plus"></i></button>
+      <button class="subcat-add-btn" data-action="addSubcat" data-group-id="${group.id}" title="Legg til"><i aria-hidden="true" class="fas fa-plus"></i></button>
     </div>`;
 
     html += `</div>`; // close subcat-group-body
@@ -18261,7 +18379,7 @@ function renderSubcategoryFilter() {
   // Add group input (admin only)
   html += `<div class="subcat-add-row subcat-add-group-row subcat-admin-only">
     <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
-    <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+    <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i aria-hidden="true" class="fas fa-plus"></i> Gruppe</button>
   </div>`;
 
   contentEl.innerHTML = html;
@@ -18514,7 +18632,7 @@ function renderDynamicFieldFilters() {
       <div class="category-filter dynamic-field-filter" data-field="${escapeHtml(field.field_name)}">
         <div class="category-filter-title clickable-header" data-toggle="field-${escapeHtml(field.field_name)}">
           <span>${escapeHtml(field.display_name)}</span>
-          <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'} toggle-icon"></i>
+          <i aria-hidden="true" class="fas fa-chevron-${isExpanded ? 'down' : 'right'} toggle-icon"></i>
         </div>
         <div class="dynamic-filter-content" id="fieldFilter-${escapeHtml(field.field_name)}" style="display: ${isExpanded ? 'block' : 'none'};">
           ${renderFieldFilterInput(field)}
@@ -18555,7 +18673,7 @@ function renderSelectFilterButtons(field, currentValue) {
   let html = `<div class="category-filter-buttons">
     <button class="category-btn dynamic-field-btn ${!currentValue || currentValue === 'all' ? 'active' : ''}"
             data-field="${escapeHtml(field.field_name)}" data-value="all">
-      <i class="fas fa-list"></i> Alle
+      <i aria-hidden="true" class="fas fa-list"></i> Alle
     </button>`;
 
   options.forEach(opt => {
@@ -18791,7 +18909,7 @@ function renderDashboardCategories(categoryStats) {
     const count = categoryStats[st.name] || 0;
     html += `
       <div class="category-stat">
-        <i class="fas ${st.icon}" style="color: ${st.color}"></i>
+        <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>
         <span class="cat-name">${st.name}</span>
         <span class="cat-count">${count}</span>
       </div>
@@ -18802,7 +18920,7 @@ function renderDashboardCategories(categoryStats) {
   const combinedName = serviceTypes.map(st => st.name).join(' + ');
   const combinedCount = categoryStats[combinedName] || 0;
   if (combinedCount > 0) {
-    const icons = serviceTypes.map(st => `<i class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
+    const icons = serviceTypes.map(st => `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
     html += `
       <div class="category-stat">
         ${icons}
@@ -18895,7 +19013,7 @@ let _pendingStyleReload = false;
 // 3D terrain state
 let terrainEnabled = false;
 const TERRAIN_EXAGGERATION = 1.5;
-const TERRAIN_PITCH = 60;
+const TERRAIN_PITCH = 72;
 const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
 
 // Toggle between satellite and dark map style
@@ -19253,7 +19371,7 @@ function initMap() {
       btn.title = 'Min posisjon';
       btn.setAttribute('aria-label', 'Min posisjon');
       btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:16px;cursor:pointer;';
-      btn.innerHTML = '<i class="fas fa-location-crosshairs"></i>';
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-location-crosshairs"></i>';
 
       let locationMarker = null;
       btn.addEventListener('click', (e) => {
@@ -19333,7 +19451,7 @@ function initMap() {
     terrainBtn.id = 'terrainToggle';
     terrainBtn.className = 'terrain-toggle-btn';
     terrainBtn.title = 'Slå på 3D-terreng';
-    terrainBtn.innerHTML = '<i class="fas fa-mountain"></i>';
+    terrainBtn.innerHTML = '<i aria-hidden="true" class="fas fa-mountain"></i>';
     terrainBtn.addEventListener('click', () => toggleTerrain());
     toolbar.appendChild(terrainBtn);
   }
@@ -19489,7 +19607,12 @@ function generatePopupContent(customer) {
   if (orgNr) extraFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
   if (customer.kundenummer) extraFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
   if (customer.prosjektnummer) extraFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
-  if (customer.estimert_tid) extraFieldsHtml += `<p><strong>Est. tid:</strong> ${customer.estimert_tid} min</p>`;
+  if (customer.estimert_tid) {
+    const _h = Math.floor(customer.estimert_tid / 60);
+    const _m = customer.estimert_tid % 60;
+    const tidStr = _h > 0 ? (_m > 0 ? `${_h}t ${_m}m` : `${_h}t`) : `${_m}m`;
+    extraFieldsHtml += `<p><strong>Est. tid:</strong> ${tidStr}</p>`;
+  }
 
   // Show notater if present (strip internal tags for cleaner display)
   let notatHtml = '';
@@ -19530,26 +19653,26 @@ function generatePopupContent(customer) {
     ${notatHtml}
     <div class="popup-actions">
       <button class="btn btn-small btn-navigate" data-action="navigateToCustomer" data-lat="${customer.lat}" data-lng="${customer.lng}" data-name="${escapeHtml(customer.navn)}">
-        <i class="fas fa-directions"></i> Naviger
+        <i aria-hidden="true" class="fas fa-directions"></i> Naviger
       </button>
       <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
         ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
       </button>
       <div class="popup-btn-group">
         <button class="btn btn-small btn-calendar" data-action="quickAddToday" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i class="fas fa-calendar-plus"></i> I dag
+          <i aria-hidden="true" class="fas fa-calendar-plus"></i> I dag
         </button>
         <button class="btn btn-small btn-calendar" data-action="showCalendarQuickMenu" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i class="fas fa-chevron-down" style="font-size:9px"></i>
+          <i aria-hidden="true" class="fas fa-chevron-down" style="font-size:9px"></i>
         </button>
       </div>
       ${splitViewOpen && splitViewState.activeDay ? `
       <button class="btn btn-small btn-calendar" data-action="quickAddToSplitDay" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}" style="background:var(--color-primary);color:#fff;width:100%;">
-        <i class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
+        <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
       </button>
       ` : ''}
       <button class="btn btn-small btn-success" data-action="quickMarkVisited" data-customer-id="${customer.id}">
-        <i class="fas fa-check"></i> Marker besøkt
+        <i aria-hidden="true" class="fas fa-check"></i> Marker besøkt
       </button>
       <button class="btn btn-small btn-secondary" data-action="editCustomer" data-customer-id="${customer.id}">
         Rediger
@@ -19558,7 +19681,7 @@ function generatePopupContent(customer) {
               data-action="sendEmail"
               data-customer-id="${customer.id}"
               ${hasEmail ? '' : 'disabled'}>
-        <i class="fas fa-envelope"></i> E-post
+        <i aria-hidden="true" class="fas fa-envelope"></i> E-post
       </button>
     </div>
   `;
@@ -19736,6 +19859,11 @@ function showUserBar() {
   if (userBar) {
     userBar.style.display = 'flex';
     if (userNameDisplay) userNameDisplay.textContent = userName;
+    // Set dashboard link to web app URL
+    const dashLink = document.getElementById('dashboardLinkBtn');
+    if (dashLink && appConfig.webUrl) {
+      dashLink.href = appConfig.webUrl + '/dashboard';
+    }
   }
 
   // Show admin tab and manage button if user is admin/bruker
@@ -20252,10 +20380,10 @@ function showUnknownCategoryNotification(count) {
   notification.className = 'unknown-category-notification';
   notification.innerHTML = `
     <div class="notification-content">
-      <i class="fas fa-exclamation-triangle"></i>
+      <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
       <span><strong>${count}</strong> kunde${count > 1 ? 'r' : ''} har kategorier fra tidligere bransje og m&aring; oppdateres.</span>
       <button class="btn-close-notification" onclick="this.parentElement.parentElement.remove()">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
   `;
@@ -20830,7 +20958,7 @@ function initExcelImport() {
 
     // Show loading state
     dropzone.innerHTML = `
-      <i class="fas fa-spinner fa-spin"></i>
+      <i aria-hidden="true" class="fas fa-spinner fa-spin"></i>
       <p>Analyserer fil...</p>
       <span class="import-formats">${file.name}</span>
     `;
@@ -20872,7 +21000,7 @@ function initExcelImport() {
 
   function resetDropzone() {
     dropzone.innerHTML = `
-      <i class="fas fa-cloud-upload-alt"></i>
+      <i aria-hidden="true" class="fas fa-cloud-upload-alt"></i>
       <p>Dra og slipp fil her, eller klikk for å velge</p>
       <span class="import-formats">Støttede formater: .xlsx, .xls, .csv (maks 10MB)</span>
     `;
@@ -20917,7 +21045,7 @@ function initExcelImport() {
           <strong>${escapeHtml(col.excelHeader)}</strong>
           <span class="sample-values">${col.sampleValues.map(v => escapeHtml(v)).join(', ') || 'Ingen verdier'}</span>
         </div>
-        <i class="fas fa-arrow-right mapping-arrow"></i>
+        <i aria-hidden="true" class="fas fa-arrow-right mapping-arrow"></i>
         <div class="mapping-db">
           <select class="column-select" data-excel="${escapeHtml(col.excelHeader)}">
             ${dbFields.map(f => `
@@ -21037,7 +21165,7 @@ function initExcelImport() {
           <input type="checkbox" class="schema-item-checkbox" id="newCat_${idx}" data-category="${escapeHtml(cat.name)}" checked>
           <div class="schema-item-color" style="background-color: ${cat.color}"></div>
           <div class="schema-item-icon">
-            <i class="fas ${cat.icon}"></i>
+            <i aria-hidden="true" class="fas ${cat.icon}"></i>
           </div>
           <div class="schema-item-info">
             <label for="newCat_${idx}" class="schema-item-name">${escapeHtml(cat.name)}</label>
@@ -21163,10 +21291,10 @@ function initExcelImport() {
       }[row.status] || '';
 
       const statusIcon = {
-        'valid': '<i class="fas fa-plus-circle"></i>',
-        'warning': '<i class="fas fa-exclamation-triangle"></i>',
-        'error': '<i class="fas fa-times-circle"></i>',
-        'duplicate': '<i class="fas fa-sync-alt"></i>'
+        'valid': '<i aria-hidden="true" class="fas fa-plus-circle"></i>',
+        'warning': '<i aria-hidden="true" class="fas fa-exclamation-triangle"></i>',
+        'error': '<i aria-hidden="true" class="fas fa-times-circle"></i>',
+        'duplicate': '<i aria-hidden="true" class="fas fa-sync-alt"></i>'
       }[row.status] || '';
 
       const statusText = {
@@ -21185,7 +21313,7 @@ function initExcelImport() {
           <td class="info-cell">
             ${row.issues.length > 0 ?
               `<span class="issues-tooltip" title="${row.issues.map(i => escapeHtml(i)).join('\n')}">
-                <i class="fas fa-info-circle"></i> ${row.issues.length} melding${row.issues.length > 1 ? 'er' : ''}
+                <i aria-hidden="true" class="fas fa-info-circle"></i> ${row.issues.length} melding${row.issues.length > 1 ? 'er' : ''}
               </span>` : '-'}
           </td>
         </tr>
@@ -21357,7 +21485,7 @@ function initExcelImport() {
     const title = document.getElementById('importResultTitle');
 
     if (success) {
-      icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+      icon.innerHTML = '<i aria-hidden="true" class="fas fa-check-circle"></i>';
       icon.className = 'result-icon success';
       title.textContent = 'Import fullført!';
 
@@ -21389,7 +21517,7 @@ function initExcelImport() {
         noteEl.classList.add('hidden');
       }
     } else {
-      icon.innerHTML = '<i class="fas fa-times-circle"></i>';
+      icon.innerHTML = '<i aria-hidden="true" class="fas fa-times-circle"></i>';
       icon.className = 'result-icon error';
       title.textContent = 'Import feilet';
 
@@ -21768,27 +21896,27 @@ function renderGettingStartedBanner() {
         <p>Legg til dine kunder for å komme i gang.</p>
       </div>
       <button class="getting-started-close" data-action="dismiss-getting-started" title="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="getting-started-cards">
       <div class="getting-started-card" data-action="open-integrations" data-url="${escapeHtml(webUrl)}/dashboard/innstillinger/integrasjoner">
         <div class="getting-started-card-icon">
-          <i class="fas fa-plug"></i>
+          <i aria-hidden="true" class="fas fa-plug"></i>
         </div>
         <h3>Koble til regnskapssystem</h3>
         <p>Synkroniser kunder fra Tripletex, Fiken eller PowerOffice.</p>
       </div>
       <div class="getting-started-card" data-action="contact-import" data-url="mailto:support@skyplanner.no?subject=Hjelp med dataimport">
         <div class="getting-started-card-icon">
-          <i class="fas fa-file-import"></i>
+          <i aria-hidden="true" class="fas fa-file-import"></i>
         </div>
         <h3>Importer eksisterende data</h3>
         <p>Har du data i Excel eller annet format? Kontakt oss, s&aring; hjelper vi deg.</p>
       </div>
       <div class="getting-started-card" data-action="add-customer-manual">
         <div class="getting-started-card-icon">
-          <i class="fas fa-plus-circle"></i>
+          <i aria-hidden="true" class="fas fa-plus-circle"></i>
         </div>
         <h3>Legg til manuelt</h3>
         <p>Opprett kunder en og en direkte i systemet.</p>
@@ -21834,7 +21962,7 @@ function renderOmradeFilter() {
         ${omrader.map(o => `<option value="${escapeHtml(o.poststed)}">${escapeHtml(o.poststed)} (${o.antall})</option>`).join('')}
       </select>
       <button id="showOverdueInAreaBtn" class="btn btn-small btn-warning" style="display:none;white-space:nowrap;" title="Vis forfalte i området på kartet">
-        <i class="fas fa-exclamation-triangle"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
       </button>
     </div>
   `;
@@ -22019,7 +22147,7 @@ function updateCategoryFilterCounts() {
 
   // "Alle" button (left sidebar + right sidebar tab)
   const allBtn = document.querySelector('[data-category="all"]');
-  if (allBtn) allBtn.innerHTML = `<i class="fas fa-list"></i> Alle (${customers.length})`;
+  if (allBtn) allBtn.innerHTML = `<i aria-hidden="true" class="fas fa-list"></i> Alle (${customers.length})`;
   const alleTab = document.querySelector('[data-kategori="alle"]');
   if (alleTab) alleTab.innerHTML = `Alle (${customers.length})`;
 
@@ -22167,7 +22295,7 @@ function renderCustomerList(customerData) {
       const isFiltered = customers.length > 0;
       customerList.innerHTML = `
         <div style="text-align:center;padding:40px 20px;color:var(--color-text-secondary,#a0a0a0);">
-          <i class="fas ${isFiltered ? 'fa-filter' : 'fa-users'}" style="font-size:32px;margin-bottom:12px;display:block;opacity:0.5;"></i>
+          <i aria-hidden="true" class="fas ${isFiltered ? 'fa-filter' : 'fa-users'}" style="font-size:32px;margin-bottom:12px;display:block;opacity:0.5;"></i>
           <p style="font-size:15px;margin:0 0 8px;">${isFiltered ? 'Ingen kunder matcher filteret' : 'Ingen kunder lagt til enn\u00e5'}</p>
           <p style="font-size:13px;margin:0;opacity:0.7;">${isFiltered ? 'Pr\u00f8v \u00e5 endre s\u00f8k eller filter' : 'Klikk + for \u00e5 legge til din f\u00f8rste kunde'}</p>
         </div>
@@ -22197,7 +22325,7 @@ function renderCustomerList(customerData) {
       <div class="customer-section">
         <button class="section-header" data-area="${escapeHtml(area)}" data-action="toggleSection">
           <span class="section-toggle-icon">
-            <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'}"></i>
+            <i aria-hidden="true" class="fas fa-chevron-${isExpanded ? 'down' : 'right'}"></i>
           </span>
           <span class="section-title">
             <span class="section-postnr">${postnummer}</span>
@@ -22243,7 +22371,7 @@ function renderCustomerList(customerData) {
                           data-action="sendEmail"
                           data-customer-id="${customer.id}"
                           title="${hasEmail ? 'Send e-post' : 'Ingen e-post registrert'}">
-                    <i class="fas fa-envelope"></i>
+                    <i aria-hidden="true" class="fas fa-envelope"></i>
                   </button>
                 </div>
                 <div class="customer-control-info">
@@ -22320,7 +22448,7 @@ function showContextMenu({ header, items, x, y, context }) {
       menuHtml += `
       <div class="${cssClass} context-menu-parent" role="menuitem" tabindex="-1">
         <span>${item.icon ? `<i class="${item.icon}"></i> ` : ''}${escapeHtml(item.label)}</span>
-        <i class="fas fa-chevron-right context-menu-arrow"></i>
+        <i aria-hidden="true" class="fas fa-chevron-right context-menu-arrow"></i>
         <div class="context-menu-submenu" role="menu">
           ${item.children.filter(c => !c.hidden).map(child => {
             const childDataAttrs = [`data-action="${escapeHtml(child.action || '')}"`];
@@ -22811,20 +22939,20 @@ function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
   tooltip.innerHTML = `
     <div class="tooltip-header">${escapeHtml(customer.navn)}</div>
     <div class="tooltip-body">
-      <div class="tooltip-row"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.adresse || '')}${customer.postnummer ? `, ${escapeHtml(customer.postnummer)}` : ''} ${escapeHtml(customer.poststed || '')}</div>
-      ${customer.telefon ? `<div class="tooltip-row"><i class="fas fa-phone"></i> ${escapeHtml(customer.telefon)}</div>` : ''}
-      <div class="tooltip-service"><i class="fas fa-tools"></i> ${escapeHtml(serviceInfo)}</div>
+      <div class="tooltip-row"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.adresse || '')}${customer.postnummer ? `, ${escapeHtml(customer.postnummer)}` : ''} ${escapeHtml(customer.poststed || '')}</div>
+      ${customer.telefon ? `<div class="tooltip-row"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(customer.telefon)}</div>` : ''}
+      <div class="tooltip-service"><i aria-hidden="true" class="fas fa-tools"></i> ${escapeHtml(serviceInfo)}</div>
       <div class="tooltip-status ${controlStatus.class}">${escapeHtml(controlStatus.label)}</div>
     </div>
     <div class="tooltip-actions">
       <button class="tooltip-action-btn" data-action="select" title="${isSelected ? 'Fjern fra utvalg' : 'Velg kunde'}">
-        <i class="fas ${isSelected ? 'fa-check-square' : 'fa-square'}"></i>
+        <i aria-hidden="true" class="fas ${isSelected ? 'fa-check-square' : 'fa-square'}"></i>
       </button>
       <button class="tooltip-action-btn" data-action="weekplan" title="Legg til ukeplan">
-        <i class="fas fa-calendar-week"></i>
+        <i aria-hidden="true" class="fas fa-calendar-week"></i>
       </button>
       <button class="tooltip-action-btn" data-action="calendar" title="Ny avtale">
-        <i class="fas fa-calendar-plus"></i>
+        <i aria-hidden="true" class="fas fa-calendar-plus"></i>
       </button>
     </div>
   `;
@@ -22924,7 +23052,7 @@ function initAreaSelect() {
   btn.id = 'areaSelectToggle';
   btn.className = 'area-select-toggle-btn';
   btn.title = 'Velg område';
-  btn.innerHTML = '<i class="fas fa-expand"></i>';
+  btn.innerHTML = '<i aria-hidden="true" class="fas fa-expand"></i>';
   btn.addEventListener('click', () => toggleAreaSelect());
   toolbar.appendChild(btn);
 
@@ -23071,23 +23199,23 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     <div class="area-select-menu-actions">
       ${showWpButton ? `
         <button class="btn btn-small asm-btn asm-btn-weekplan" id="areaAddToWeekPlan">
-          <i class="fas fa-clipboard-list"></i> ${wpDayActive ? `Legg til ${escapeHtml(wpDayLabel)}` : 'Legg til ukeplan'}
+          <i aria-hidden="true" class="fas fa-clipboard-list"></i> ${wpDayActive ? `Legg til ${escapeHtml(wpDayLabel)}` : 'Legg til ukeplan'}
         </button>
         ${wpDayPickerHtml}
       ` : ''}
       ${splitViewOpen && splitViewState.activeDay ? `
         <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToSplitDay" style="background:var(--color-primary);color:#fff;">
-          <i class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
+          <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
         </button>
       ` : ''}
       <button class="btn btn-small asm-btn asm-btn-route" id="areaAddToRoute">
-        <i class="fas fa-route"></i> Legg til rute
+        <i aria-hidden="true" class="fas fa-route"></i> Legg til rute
       </button>
       <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToCalendar">
-        <i class="fas fa-calendar-plus"></i> Legg i kalender
+        <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg i kalender
       </button>
       <button class="btn btn-small asm-btn asm-btn-check" id="areaMarkVisited">
-        <i class="fas fa-check-circle"></i> Marker besøkt
+        <i aria-hidden="true" class="fas fa-check-circle"></i> Marker besøkt
       </button>
     </div>
   `;
@@ -23145,10 +23273,10 @@ function showAreaSelectMenu(selectedCustomersList, center) {
           </div>
           <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="btn btn-small btn-secondary" id="asmDurationBack" style="flex:1;">
-              <i class="fas fa-arrow-left"></i> Tilbake
+              <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
             </button>
             <button class="btn btn-small btn-primary" id="asmDurationConfirm" style="flex:2;">
-              <i class="fas fa-calendar-plus"></i> Opprett ${selectedCustomersList.length} avtaler
+              <i aria-hidden="true" class="fas fa-calendar-plus"></i> Opprett ${selectedCustomersList.length} avtaler
             </button>
           </div>
         </div>
@@ -23218,7 +23346,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
       </div>
       <div style="display:flex;gap:8px;padding-top:4px;">
         <button class="btn btn-small btn-secondary" id="areaCalBack" style="flex:1;">
-          <i class="fas fa-arrow-left"></i> Tilbake
+          <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
         </button>
         <button class="btn btn-small btn-primary" id="areaCalConfirm" style="flex:2;">
           Opprett ${selectedCustomersList.length} avtaler
@@ -23411,7 +23539,12 @@ function editCustomer(id) {
   // Fyll org_nummer fra dedikert felt, eller fallback til [ORGNR:] tag i notater
   const orgNrValue = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]) || '';
   document.getElementById('org_nummer').value = orgNrValue;
-  document.getElementById('estimert_tid').value = customer.estimert_tid || '';
+  // Set estimated time (hours + minutes inputs)
+  if (window.setEstimertTidFromMinutes) {
+    window.setEstimertTidFromMinutes(customer.estimert_tid || 0);
+  } else {
+    document.getElementById('estimert_tid').value = customer.estimert_tid || '';
+  }
   document.getElementById('telefon').value = customer.telefon || '';
   document.getElementById('epost').value = customer.epost || '';
   const trimDate = (v) => appConfig.datoModus === 'month_year' && v && v.length >= 7 ? v.substring(0, 7) : (v || '');
@@ -23419,8 +23552,8 @@ function editCustomer(id) {
   document.getElementById('neste_kontroll').value = trimDate(customer.neste_kontroll);
   document.getElementById('kontroll_intervall').value = customer.kontroll_intervall_mnd || 12;
   document.getElementById('notater').value = (customer.notater || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').replace(/^\s*\|\s*/, '').trim();
-  document.getElementById('lat').value = customer.lat || '';
-  document.getElementById('lng').value = customer.lng || '';
+  document.getElementById('lat').value = customer.lat ? Number(customer.lat).toFixed(6) : '';
+  document.getElementById('lng').value = customer.lng ? Number(customer.lng).toFixed(6) : '';
 
   // Update geocode quality badge
   updateGeocodeQualityBadge(customer.geocode_quality || (customer.lat ? 'exact' : null));
@@ -23746,6 +23879,10 @@ async function addCustomer() {
   customerForm.reset();
   document.getElementById('customerId').value = '';
   document.getElementById('kontroll_intervall').value = 12;
+  // Clear estimated time
+  if (window.setEstimertTidFromMinutes) {
+    window.setEstimertTidFromMinutes(0);
+  }
   document.getElementById('lat').value = '';
   document.getElementById('lng').value = '';
   updateGeocodeQualityBadge(null);
@@ -23925,8 +24062,8 @@ async function saveCustomer(e) {
     if (coords) {
       lat = coords.lat;
       lng = coords.lng;
-      document.getElementById('lat').value = lat;
-      document.getElementById('lng').value = lng;
+      document.getElementById('lat').value = lat.toFixed(6);
+      document.getElementById('lng').value = lng.toFixed(6);
     }
   }
 
@@ -23944,6 +24081,10 @@ async function saveCustomer(e) {
 
   const hasEl = selectedSlugs.includes('el-kontroll');
   const hasBrann = selectedSlugs.includes('brannvarsling');
+
+  // Parse services FØR vi leser legacy-felt, fordi parseServiceFormData()
+  // kopierer datoer til legacy-feltene for default-kategorien (id=0)
+  const parsedServices = serviceTypeRegistry.parseServiceFormData();
 
   const data = {
     navn: document.getElementById('navn').value,
@@ -23971,7 +24112,7 @@ async function saveCustomer(e) {
     neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || (_editingCustomer?.neste_brann_kontroll || null)) : null,
     brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || (_editingCustomer?.brann_kontroll_intervall || 12)) : null,
     // Dynamiske tjeneste-datoer fra dynamiske seksjoner
-    services: serviceTypeRegistry.parseServiceFormData(),
+    services: parsedServices,
     // Custom organization fields
     custom_data: JSON.stringify(collectCustomFieldValues())
   };
@@ -23999,7 +24140,8 @@ async function saveCustomer(e) {
       return;
     }
 
-    const savedCustomerId = customerId || result.id;
+    const kundeData = result.data || result;
+    const savedCustomerId = customerId || kundeData.id;
 
     // Close modal and show notification immediately — don't block on secondary saves
     releaseCustomer(currentClaimedKundeId);
@@ -24095,8 +24237,8 @@ async function handleGeocode() {
   geocodeBtn.disabled = false;
 
   if (result) {
-    document.getElementById('lat').value = result.lat;
-    document.getElementById('lng').value = result.lng;
+    document.getElementById('lat').value = result.lat.toFixed(6);
+    document.getElementById('lng').value = result.lng.toFixed(6);
     updateGeocodeQualityBadge('exact');
     showNotification('Koordinater funnet!', 'success');
   } else {
@@ -24127,7 +24269,7 @@ function enableCoordinatePicking() {
   // Show indicator
   pickingIndicator = document.createElement('div');
   pickingIndicator.className = 'picking-mode-indicator';
-  pickingIndicator.innerHTML = '<i class="fas fa-crosshairs"></i> Klikk på kartet for å velge posisjon';
+  pickingIndicator.innerHTML = '<i aria-hidden="true" class="fas fa-crosshairs"></i> Klikk på kartet for å velge posisjon';
   document.body.appendChild(pickingIndicator);
 
   // Add click handler to map
@@ -24375,7 +24517,7 @@ function renderCustomerAdmin() {
           ${serviceInfo}
           ${nextControlInfo}
         </div>
-        ${hasCoords ? `<button class="btn-map-focus" data-customer-id="${c.id}" title="Vis på kart"><i class="fas fa-map-marker-alt"></i></button>` : ''}
+        ${hasCoords ? `<button class="btn-map-focus" data-customer-id="${c.id}" title="Vis på kart"><i aria-hidden="true" class="fas fa-map-marker-alt"></i></button>` : ''}
       </div>
     `;
   }).join('');
@@ -24693,7 +24835,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentView = 'app';
     appInitialized = true;
 
-    // Enable map interactivity (already at app view position via skipGlobe)
+    // Enable map interactivity and fly to office location
     if (map) {
       setMapInteractive(true);
       if (!map._zoomControl) {
@@ -24701,6 +24843,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         map.addControl(map._zoomControl, 'top-right');
       }
       stopGlobeSpin(); // Safety: ensure globe spin is stopped
+
+      // Fly to office location (needed for SSO login where skipGlobe may be false)
+      const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
+      if (hasOfficeLocation) {
+        map.flyTo({
+          center: [appConfig.routeStartLng, appConfig.routeStartLat],
+          zoom: 6,
+          duration: 1600,
+          essential: true
+        });
+      }
     }
 
     // Initialize DOM and app
@@ -24811,6 +24964,14 @@ async function initializeApp() {
 
 // Setup all event listeners
 function setupEventListeners() {
+  // WCAG 2.1.1: Keyboard support for role="button" elements (Enter/Space activates click)
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"]')) {
+      e.preventDefault();
+      e.target.click();
+    }
+  });
+
   // Patch notes
   checkForNewPatchNotes();
   document.getElementById('patchNotesLink')?.addEventListener('click', () => {
@@ -24874,9 +25035,12 @@ function setupEventListeners() {
   const exportBtn = document.getElementById('exportCustomersBtn');
   const exportDropdown = document.getElementById('exportDropdown');
   if (exportBtn && exportDropdown) {
+    exportBtn.setAttribute('aria-haspopup', 'true');
+    exportBtn.setAttribute('aria-expanded', 'false');
     exportBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       exportDropdown.classList.toggle('hidden');
+      exportBtn.setAttribute('aria-expanded', String(!exportDropdown.classList.contains('hidden')));
     });
     exportDropdown.querySelectorAll('.export-option').forEach(opt => {
       opt.addEventListener('click', async () => {
@@ -24907,7 +25071,10 @@ function setupEventListeners() {
       });
     });
     // Close dropdown when clicking outside
-    document.addEventListener('click', () => exportDropdown.classList.add('hidden'));
+    document.addEventListener('click', () => {
+      exportDropdown.classList.add('hidden');
+      exportBtn.setAttribute('aria-expanded', 'false');
+    });
   }
 
   // Integration buttons in customer modal
@@ -24972,13 +25139,18 @@ function setupEventListeners() {
     toggleListBtn.addEventListener('click', () => {
       customerAdminList.classList.toggle('collapsed');
       toggleListBtn.classList.toggle('collapsed');
-      localStorage.setItem('customerListCollapsed', customerAdminList.classList.contains('collapsed'));
+      const isCollapsed = customerAdminList.classList.contains('collapsed');
+      toggleListBtn.setAttribute('aria-expanded', String(!isCollapsed));
+      localStorage.setItem('customerListCollapsed', isCollapsed);
     });
 
     // Restore state
     if (localStorage.getItem('customerListCollapsed') === 'true') {
       customerAdminList.classList.add('collapsed');
       toggleListBtn.classList.add('collapsed');
+      toggleListBtn.setAttribute('aria-expanded', 'false');
+    } else {
+      toggleListBtn.setAttribute('aria-expanded', 'true');
     }
   }
 
@@ -24995,12 +25167,14 @@ function setupEventListeners() {
       // Save preference to localStorage
       const isCollapsed = sidebar.classList.contains('collapsed');
       localStorage.setItem('sidebarCollapsed', isCollapsed);
+      sidebarToggle.setAttribute('aria-expanded', String(!isCollapsed));
     });
 
     // Restore sidebar state from localStorage (only on desktop)
     const wasCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
     if (wasCollapsed && window.innerWidth > 768) {
       sidebar.classList.add('collapsed');
+      sidebarToggle.setAttribute('aria-expanded', 'false');
     }
   }
 
@@ -25416,8 +25590,8 @@ function setupEventListeners() {
   const savedTab = localStorage.getItem('activeTab');
   const savedPanelState = localStorage.getItem('contentPanelOpen');
 
-  // Always open content panel on desktop by default
-  if (window.innerWidth > 768 && savedPanelState !== 'false') {
+  // Only open content panel on desktop if user had it open before
+  if (window.innerWidth > 768 && savedPanelState === 'true') {
     openContentPanel();
   }
 
@@ -25430,12 +25604,6 @@ function setupEventListeners() {
         setTimeout(() => {
           savedTabBtn.click();
         }, 100);
-      }
-    } else {
-      // Click dashboard tab by default
-      const dashboardTab = document.querySelector('.tab-item[data-tab="dashboard"]');
-      if (dashboardTab) {
-        setTimeout(() => dashboardTab.click(), 100);
       }
     }
   }
@@ -25508,6 +25676,43 @@ function setupEventListeners() {
       emailOptions.classList.toggle('hidden', !e.target.checked);
     }
   });
+
+  // Estimated time: sync hidden field from hours+minutes inputs
+  function syncEstimertTid() {
+    const h = parseInt(document.getElementById('estimert_tid_timer')?.value) || 0;
+    const m = parseInt(document.getElementById('estimert_tid_min')?.value) || 0;
+    const total = h * 60 + m;
+    const hidden = document.getElementById('estimert_tid');
+    if (hidden) hidden.value = total > 0 ? total : '';
+    document.querySelectorAll('.tid-preset').forEach(b => {
+      b.classList.toggle('active', b.dataset.tid === String(total));
+    });
+  }
+  function setEstimertTidFromMinutes(totalMin) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const timerInput = document.getElementById('estimert_tid_timer');
+    const minInput = document.getElementById('estimert_tid_min');
+    const hidden = document.getElementById('estimert_tid');
+    if (timerInput) timerInput.value = h || '';
+    if (minInput) minInput.value = m || '';
+    if (hidden) hidden.value = totalMin > 0 ? totalMin : '';
+    document.querySelectorAll('.tid-preset').forEach(b => {
+      b.classList.toggle('active', b.dataset.tid === String(totalMin));
+    });
+  }
+  // Make available globally for customer-form.js
+  window.setEstimertTidFromMinutes = setEstimertTidFromMinutes;
+
+  // Preset buttons
+  document.querySelectorAll('.tid-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setEstimertTidFromMinutes(parseInt(btn.dataset.tid));
+    });
+  });
+  // Sync when user types in hours/minutes
+  document.getElementById('estimert_tid_timer')?.addEventListener('input', syncEstimertTid);
+  document.getElementById('estimert_tid_min')?.addEventListener('input', syncEstimertTid);
 
   // Filter panel toggle (collapse/expand)
   const filterPanelToggle = document.getElementById('filterPanelToggle');

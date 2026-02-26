@@ -1,0 +1,65 @@
+import GlassCard from '../ui/GlassCard';
+
+const testimonials = [
+  {
+    quote: 'Sky Planner har forenklet arbeidshverdagen vår betydelig. Vi sparer timer hver uke på planlegging og får aldri glemt en kontroll.',
+    author: 'Per Hansen',
+    company: 'Hansen Sky Planner AS',
+    role: 'Daglig leder',
+  },
+  {
+    quote: 'Endelig et system som forstår behovene til bedrifter som jobber med el-kontroll og brannvarsling. Ruteoptimaliseringen alene er verdt prisen.',
+    author: 'Maria Olsen',
+    company: 'Olsen Sikkerhet',
+    role: 'Servicekoordinator',
+  },
+  {
+    quote: 'Vi gikk fra kaos med Excel-ark til full oversikt på dagen. Kundene våre merker også forskjellen med bedre oppfølging.',
+    author: 'Thomas Berg',
+    company: 'Berg Elektro AS',
+    role: 'Eier',
+  },
+];
+
+export default function Testimonials() {
+  return (
+    <section className="section bg-dark-950/30 relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-frost/20 to-transparent" aria-hidden="true"></div>
+      <div className="absolute -top-24 right-1/4 w-[450px] h-[280px] bg-gradient-radial from-accent-frost/[0.04] to-transparent rounded-full filter blur-[80px] pointer-events-none" aria-hidden="true"></div>
+      <div className="container-wide relative">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+            Hva våre kunder sier
+          </h2>
+          <p className="text-lg text-dark-300 max-w-2xl mx-auto">
+            Hundrevis av bedrifter bruker Sky Planner for å effektivisere sin kundehåndtering
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6">
+          {testimonials.map((testimonial) => (
+            <GlassCard key={testimonial.author} className="flex flex-col">
+              <div className="flex-1">
+                <svg className="w-8 h-8 text-primary-500/50 mb-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" />
+                </svg>
+                <p className="text-dark-200 text-lg leading-relaxed mb-6">
+                  {testimonial.quote}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 pt-4 border-t border-dark-700/50">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center text-white font-semibold">
+                  {testimonial.author.charAt(0)}
+                </div>
+                <div>
+                  <div className="font-medium text-white">{testimonial.author}</div>
+                  <div className="text-sm text-dark-400">{testimonial.role}, {testimonial.company}</div>
+                </div>
+              </div>
+            </GlassCard>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}

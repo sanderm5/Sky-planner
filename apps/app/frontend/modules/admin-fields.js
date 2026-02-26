@@ -31,7 +31,7 @@ function renderAdminFields() {
   listContainer.innerHTML = organizationFields.map((field, index) => `
     <div class="sortable-item" data-id="${field.id}" data-index="${index}" draggable="true">
       <div class="drag-handle">
-        <i class="fas fa-grip-vertical"></i>
+        <i aria-hidden="true" class="fas fa-grip-vertical"></i>
       </div>
       <div class="item-info">
         <span class="item-name">${escapeHtml(field.display_name)}</span>
@@ -44,10 +44,10 @@ function renderAdminFields() {
       </div>
       <div class="item-actions">
         <button class="btn-icon" onclick="openFieldModal(${field.id})" title="Rediger">
-          <i class="fas fa-edit"></i>
+          <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
         <button class="btn-icon danger" onclick="confirmDeleteField(${field.id})" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
@@ -111,7 +111,7 @@ function renderFieldOptions(options) {
       <input type="text" class="option-value" value="${escapeHtml(opt.value || '')}" placeholder="Verdi">
       <input type="text" class="option-display" value="${escapeHtml(opt.display_name || '')}" placeholder="Visningsnavn">
       <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
   `).join('');
@@ -128,7 +128,7 @@ function addFieldOption() {
       <input type="text" class="option-value" placeholder="Verdi">
       <input type="text" class="option-display" placeholder="Visningsnavn">
       <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
   `;
@@ -294,16 +294,16 @@ function renderCategoryListItems() {
   container.innerHTML = organizationCategories.map(cat => `
     <div class="category-list-item">
       <div class="category-list-info">
-        <i class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
+        <i aria-hidden="true" class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
         <span>${escapeHtml(cat.name)}</span>
         <span class="category-list-meta">${cat.default_interval_months || 12} mnd</span>
       </div>
       <div class="category-list-actions">
         <button class="btn-icon" onclick="document.getElementById('categoryListModal').classList.add('hidden'); openCategoryModal(${cat.id});" title="Rediger">
-          <i class="fas fa-edit"></i>
+          <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
         <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
@@ -328,11 +328,11 @@ function renderAdminCategories() {
   listContainer.innerHTML = organizationCategories.map((cat, index) => `
     <div class="sortable-item" data-id="${cat.id}" data-index="${index}" draggable="true">
       <div class="drag-handle">
-        <i class="fas fa-grip-vertical"></i>
+        <i aria-hidden="true" class="fas fa-grip-vertical"></i>
       </div>
       <div class="item-info">
         <span class="item-name">
-          <i class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
+          <i aria-hidden="true" class="fas ${escapeHtml(cat.icon || 'fa-tag')}" style="color: ${escapeHtml(cat.color || '#6B7280')}; margin-right: 8px;"></i>
           ${escapeHtml(cat.name)}
         </span>
         <span class="item-meta">
@@ -341,10 +341,10 @@ function renderAdminCategories() {
       </div>
       <div class="item-actions">
         <button class="btn-icon" onclick="openCategoryModal(${cat.id})" title="Rediger">
-          <i class="fas fa-edit"></i>
+          <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
         <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
@@ -371,7 +371,7 @@ function renderCategoryIconPicker(selectedIcon) {
     <button type="button" class="icon-btn ${icon === selectedIcon ? 'selected' : ''}"
             data-icon="${escapeHtml(icon)}" title="${escapeHtml(icon.replace('fa-', ''))}"
             onclick="selectCategoryIcon(this, '${escapeJsString(icon)}')">
-      <i class="fas ${escapeHtml(icon)}"></i>
+      <i aria-hidden="true" class="fas ${escapeHtml(icon)}"></i>
     </button>
   `).join('');
 }
@@ -564,14 +564,14 @@ async function renderAdminSubcategories() {
   content.innerHTML = groups.map(group => `
     <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border, #444); padding-left: 10px;">
       <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-        <i class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
+        <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
         <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
         <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
         <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Gi nytt navn">
-          <i class="fas fa-pen" style="font-size: 10px;"></i>
+          <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
         </button>
         <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Slett gruppe">
-          <i class="fas fa-trash" style="font-size: 10px;"></i>
+          <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
         </button>
       </div>
 
@@ -580,10 +580,10 @@ async function renderAdminSubcategories() {
           <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
           <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
           <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Gi nytt navn">
-            <i class="fas fa-pen" style="font-size: 10px;"></i>
+            <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
           </button>
           <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Slett">
-            <i class="fas fa-trash" style="font-size: 10px;"></i>
+            <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
           </button>
         </div>
       `).join('')}
@@ -594,7 +594,7 @@ async function renderAdminSubcategories() {
           data-add-subcat-for-group="${group.id}"
           onkeydown="if(event.key==='Enter'){addSubcatItem(${group.id}, this); event.preventDefault();}">
         <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatItem(${group.id}, this.previousElementSibling)">
-          <i class="fas fa-plus"></i>
+          <i aria-hidden="true" class="fas fa-plus"></i>
         </button>
       </div>
     </div>
@@ -605,7 +605,7 @@ async function renderAdminSubcategories() {
         id="adminAddGroupInput"
         onkeydown="if(event.key==='Enter'){addSubcatGroup(this); event.preventDefault();}">
       <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatGroup(document.getElementById('adminAddGroupInput'))">
-        <i class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
+        <i aria-hidden="true" class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
       </button>
     </div>
   `;

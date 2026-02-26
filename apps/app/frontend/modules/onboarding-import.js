@@ -162,7 +162,7 @@ function renderWizardProgress() {
         ${steps.map((step, index) => `
           <div class="wizard-step ${index < current ? 'completed' : ''} ${index === current ? 'active' : ''} ${index > current ? 'upcoming' : ''}">
             <div class="wizard-step-icon">
-              ${index < current ? '<i class="fas fa-check"></i>' : `<span>${index + 1}</span>`}
+              ${index < current ? '<i aria-hidden="true" class="fas fa-check"></i>' : `<span>${index + 1}</span>`}
             </div>
             <div class="wizard-step-label">${step.title}</div>
           </div>
@@ -178,13 +178,13 @@ function renderCompanyStep() {
 
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-building"></i> Firmainformasjon</h1>
+      <h1><i aria-hidden="true" class="fas fa-building"></i> Firmainformasjon</h1>
       <p>Oppgi firmaets adresse. Dette brukes som utgangspunkt for ruteplanlegging.</p>
     </div>
 
     <div class="wizard-form">
       <div class="wizard-form-group">
-        <label for="companyAddress"><i class="fas fa-map-marker-alt"></i> Firmaadresse</label>
+        <label for="companyAddress"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Firmaadresse</label>
         <div class="wizard-address-wrapper">
           <input type="text" id="companyAddress" placeholder="Begynn å skrive adresse..." value="${escapeHtml(data.address || '')}" autocomplete="off">
           <div class="wizard-address-suggestions" id="wizardAddressSuggestions"></div>
@@ -193,37 +193,37 @@ function renderCompanyStep() {
 
       <div class="wizard-form-row">
         <div class="wizard-form-group">
-          <label for="companyPostnummer"><i class="fas fa-hashtag"></i> Postnummer</label>
+          <label for="companyPostnummer"><i aria-hidden="true" class="fas fa-hashtag"></i> Postnummer</label>
           <div class="wizard-postnummer-wrapper">
             <input type="text" id="companyPostnummer" placeholder="0000" maxlength="4" value="${escapeHtml(data.postnummer || '')}" autocomplete="off">
             <span class="wizard-postnummer-status" id="wizardPostnummerStatus"></span>
           </div>
         </div>
         <div class="wizard-form-group">
-          <label for="companyPoststed"><i class="fas fa-city"></i> Poststed</label>
+          <label for="companyPoststed"><i aria-hidden="true" class="fas fa-city"></i> Poststed</label>
           <input type="text" id="companyPoststed" placeholder="Fylles automatisk" value="${escapeHtml(data.poststed || '')}">
         </div>
       </div>
 
       <div class="wizard-form-group">
-        <label><i class="fas fa-route"></i> Rute-startpunkt</label>
+        <label><i aria-hidden="true" class="fas fa-route"></i> Rute-startpunkt</label>
         <p class="wizard-form-hint">Klikk på kartet for å velge startpunkt for ruter, eller bruk firmaadresse.</p>
         <div id="wizardRouteMap" class="wizard-mini-map"></div>
         <div class="wizard-coordinates" id="routeCoordinates">
           ${data.route_start_lat ? `<span>Valgt: ${data.route_start_lat.toFixed(5)}, ${data.route_start_lng.toFixed(5)}</span>` : '<span class="not-set">Ikke valgt - klikk på kartet</span>'}
         </div>
         <button class="wizard-btn wizard-btn-secondary" onclick="useAddressAsRouteStart()">
-          <i class="fas fa-home"></i> Bruk firmaadresse
+          <i aria-hidden="true" class="fas fa-home"></i> Bruk firmaadresse
         </button>
       </div>
     </div>
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
-        <i class="fas fa-forward"></i> Hopp over oppsett
+        <i aria-hidden="true" class="fas fa-forward"></i> Hopp over oppsett
       </button>
       <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Neste <i class="fas fa-arrow-right"></i>
+        Neste <i aria-hidden="true" class="fas fa-arrow-right"></i>
       </button>
     </div>
   `;
@@ -235,19 +235,19 @@ function renderMapStep() {
 
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-map-marker-alt"></i> Kartinnstillinger</h1>
+      <h1><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Kartinnstillinger</h1>
       <p>Velg standard kartvisning. Dra og zoom kartet til ønsket område.</p>
     </div>
 
     <div class="wizard-form">
       <div class="wizard-form-group">
-        <label><i class="fas fa-map"></i> Standard kartsentrum</label>
+        <label><i aria-hidden="true" class="fas fa-map"></i> Standard kartsentrum</label>
         <p class="wizard-form-hint">Panorer og zoom kartet til det området du vanligvis jobber i.</p>
         <div id="wizardMainMap" class="wizard-map"></div>
       </div>
 
       <div class="wizard-form-group">
-        <label for="defaultZoom"><i class="fas fa-search-plus"></i> Standard zoom-nivå</label>
+        <label for="defaultZoom"><i aria-hidden="true" class="fas fa-search-plus"></i> Standard zoom-nivå</label>
         <div class="wizard-slider-container">
           <input type="range" id="defaultZoom" min="5" max="18" value="${data.zoom || 10}">
           <span class="wizard-slider-value" id="zoomValue">${data.zoom || 10}</span>
@@ -257,10 +257,10 @@ function renderMapStep() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Fullfør oppsett <i class="fas fa-check"></i>
+        Fullfør oppsett <i aria-hidden="true" class="fas fa-check"></i>
       </button>
     </div>
   `;
@@ -274,7 +274,7 @@ function renderCompleteStep() {
   return `
     <div class="wizard-step-header wizard-complete">
       <div class="wizard-complete-icon">
-        <i class="fas fa-check-circle"></i>
+        <i aria-hidden="true" class="fas fa-check-circle"></i>
       </div>
       <h1>Oppsettet er fullført!</h1>
       <p>Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
@@ -283,16 +283,16 @@ function renderCompleteStep() {
     <div class="wizard-complete-summary">
       <h3>Hva skjer nå?</h3>
       <ul class="wizard-tips-list">
-        <li><i class="fas fa-users"></i> Legg til dine første kunder</li>
-        <li><i class="fas fa-route"></i> Planlegg effektive ruter</li>
-        <li><i class="fas fa-calendar-alt"></i> Bruk kalenderen for å holde oversikt</li>
-        <li><i class="fas fa-cog"></i> Tilpass ytterligere i innstillinger</li>
+        <li><i aria-hidden="true" class="fas fa-users"></i> Legg til dine første kunder</li>
+        <li><i aria-hidden="true" class="fas fa-route"></i> Planlegg effektive ruter</li>
+        <li><i aria-hidden="true" class="fas fa-calendar-alt"></i> Bruk kalenderen for å holde oversikt</li>
+        <li><i aria-hidden="true" class="fas fa-cog"></i> Tilpass ytterligere i innstillinger</li>
       </ul>
     </div>
 
     <div class="wizard-footer wizard-footer-center">
       <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="completeOnboardingWizard()">
-        <i class="fas fa-rocket"></i> Start å bruke Sky Planner
+        <i aria-hidden="true" class="fas fa-rocket"></i> Start å bruke Sky Planner
       </button>
     </div>
   `;
@@ -530,36 +530,36 @@ function getSampleValueForColumn(sampleData, columnIndex, headers) {
 function renderWizardImportMethodChoice() {
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-download"></i> Importer kunder</h1>
+      <h1><i aria-hidden="true" class="fas fa-download"></i> Importer kunder</h1>
       <p>Velg hvordan du vil hente inn dine eksisterende kunder.</p>
     </div>
 
     <div class="wizard-import-method-choice">
       <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodIntegration()">
         <div class="wizard-method-icon">
-          <i class="fas fa-plug" aria-hidden="true"></i>
+          <i aria-hidden="true" class="fas fa-plug"></i>
         </div>
         <h3>Regnskapssystem</h3>
         <p>Koble til Tripletex, Fiken eller PowerOffice og synkroniser kunder automatisk.</p>
-        <span class="wizard-method-action">Koble til <i class="fas fa-external-link-alt" aria-hidden="true"></i></span>
+        <span class="wizard-method-action">Koble til <i aria-hidden="true" class="fas fa-external-link-alt"></i></span>
       </div>
 
       <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodFile()">
         <div class="wizard-method-icon">
-          <i class="fas fa-file-excel" aria-hidden="true"></i>
+          <i aria-hidden="true" class="fas fa-file-excel"></i>
         </div>
         <h3>Excel / CSV</h3>
         <p>Last opp en fil med kundedata. AI-assistert mapping hjelper deg med kolonnene.</p>
-        <span class="wizard-method-action">Last opp fil <i class="fas fa-arrow-right" aria-hidden="true"></i></span>
+        <span class="wizard-method-action">Last opp fil <i aria-hidden="true" class="fas fa-arrow-right"></i></span>
       </div>
     </div>
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
-        Hopp over <i class="fas fa-forward"></i>
+        Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
   `;
@@ -594,7 +594,7 @@ function renderWizardImportStep() {
 
   return `
     <div class="wizard-step-header">
-      <h1><i class="fas fa-file-excel"></i> Importer kunder</h1>
+      <h1><i aria-hidden="true" class="fas fa-file-excel"></i> Importer kunder</h1>
       <p>Last opp en Excel- eller CSV-fil med dine eksisterende kunder.</p>
     </div>
 
@@ -653,7 +653,7 @@ function renderWizardLoadingState() {
   return `
     <div class="wizard-import-loading ${current.isAI ? 'ai-active' : ''}">
       <div class="wizard-loading-icon ${current.isAI ? 'ai-pulse' : 'spinning'}">
-        <i class="fas ${current.icon}"></i>
+        <i aria-hidden="true" class="fas ${current.icon}"></i>
       </div>
       <p class="wizard-loading-message">${current.message}</p>
       ${current.isAI ? `
@@ -685,10 +685,10 @@ function renderWizardImportSubStep(step) {
   if (wizardImportState.error) {
     return `
       <div class="wizard-import-error">
-        <i class="fas fa-exclamation-triangle"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
         <p>${escapeHtml(wizardImportState.error)}</p>
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportRetry()">
-          <i class="fas fa-redo"></i> Prøv igjen
+          <i aria-hidden="true" class="fas fa-redo"></i> Prøv igjen
         </button>
       </div>
     `;
@@ -722,7 +722,7 @@ function renderWizardImportCleaning() {
     return `
       <div class="wizard-cleaning-container">
         <div class="wizard-cleaning-summary wizard-cleaning-clean">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <div>
             <strong>Ingen problemer funnet</strong>
             <p>Filen ser bra ut! ${totalRows} rader klare for import.</p>
@@ -730,10 +730,10 @@ function renderWizardImportCleaning() {
         </div>
         <div class="wizard-import-actions">
           <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
-            <i class="fas fa-arrow-left"></i> Tilbake
+            <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
           </button>
           <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
-            Gå videre <i class="fas fa-arrow-right"></i>
+            Gå videre <i aria-hidden="true" class="fas fa-arrow-right"></i>
           </button>
         </div>
       </div>
@@ -755,7 +755,7 @@ function renderWizardImportCleaning() {
     <div class="wizard-cleaning-container">
       <!-- Summary banner -->
       <div class="wizard-cleaning-summary">
-        <i class="fas fa-broom"></i>
+        <i aria-hidden="true" class="fas fa-broom"></i>
         <div>
           <strong>${activeTotal} ${activeTotal === 1 ? 'endring' : 'endringer'} funnet i ${totalRows} rader</strong>
           <p>${activeCellChanges.length} ${activeCellChanges.length === 1 ? 'celle' : 'celler'} renset, ${activeRowRemovals.length} ${activeRowRemovals.length === 1 ? 'rad' : 'rader'} foreslått fjernet.</p>
@@ -834,13 +834,13 @@ function renderWizardImportCleaning() {
       <!-- Actions -->
       <div class="wizard-import-actions">
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
-          <i class="fas fa-arrow-left"></i> Tilbake
+          <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
         </button>
         <button class="wizard-btn wizard-btn-ghost" onclick="wizardCleaningSkip()">
           Hopp over rensing
         </button>
         <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
-          <i class="fas fa-check"></i> Godkjenn rensing <i class="fas fa-arrow-right"></i>
+          <i aria-hidden="true" class="fas fa-check"></i> Godkjenn rensing <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       </div>
     </div>
@@ -913,7 +913,7 @@ function renderCleaningFullTable() {
 
   return `
     <div class="wizard-cleaning-fulltable-section">
-      <h3><i class="fas fa-table"></i> Fullstendig dataoversikt</h3>
+      <h3><i aria-hidden="true" class="fas fa-table"></i> Fullstendig dataoversikt</h3>
       <p class="wizard-section-desc">${originalRows.length} rader totalt. Endrede celler er markert. Fjernede rader er gjennomstreket.</p>
       <div class="wizard-cleaning-fulltable-wrapper">
         <table class="wizard-cleaning-fulltable">
@@ -953,12 +953,12 @@ function renderCleaningFullTable() {
         <div class="wizard-cleaning-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardCleaningTablePage(${validPage - 1})" ${validPage === 0 ? 'disabled' : ''}>
-            <i class="fas fa-chevron-left"></i> Forrige
+            <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPage + 1} av ${totalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardCleaningTablePage(${validPage + 1})" ${validPage >= totalPages - 1 ? 'disabled' : ''}>
-            Neste <i class="fas fa-chevron-right"></i>
+            Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
       ` : ''}
@@ -1052,16 +1052,16 @@ function renderWizardImportUpload() {
       <!-- AI Feature Banner -->
       <div class="wizard-ai-feature-banner">
         <div class="ai-feature-icon">
-          <i class="fas fa-robot"></i>
+          <i aria-hidden="true" class="fas fa-robot"></i>
         </div>
         <div class="ai-feature-content">
-          <h4><i class="fas fa-magic"></i> AI-assistert import</h4>
+          <h4><i aria-hidden="true" class="fas fa-magic"></i> AI-assistert import</h4>
           <p>Vår AI forstår <strong>${escapeHtml(industryName)}</strong> og mapper automatisk kolonner til riktige felt - selv med kreative kolonnenavn!</p>
         </div>
       </div>
 
       <div class="wizard-import-dropzone" id="wizardImportDropzone" role="button" tabindex="0" aria-label="Last opp fil. Dra og slipp, eller trykk for å velge fil.">
-        <i class="fas fa-cloud-upload-alt" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-cloud-upload-alt"></i>
         <p><strong>Dra og slipp fil her</strong></p>
         <p>eller klikk for å velge</p>
         <span class="import-formats">Støttede formater: .xlsx, .xls, .csv (maks 10MB)</span>
@@ -1069,7 +1069,7 @@ function renderWizardImportUpload() {
       </div>
 
       <div class="wizard-import-tips">
-        <h4><i class="fas fa-lightbulb"></i> Tips for import</h4>
+        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Tips for import</h4>
         <ul>
           <li>Filen bør ha én rad per kunde</li>
           <li>Første rad bør inneholde kolonneoverskrifter</li>
@@ -1081,10 +1081,10 @@ function renderWizardImportUpload() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
-        Hopp over <i class="fas fa-forward"></i>
+        Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
   `;
@@ -1101,7 +1101,7 @@ function renderAIQuestions() {
   return `
     <div class="wizard-ai-questions">
       <div class="wizard-ai-questions-header">
-        <i class="fas fa-question-circle"></i>
+        <i aria-hidden="true" class="fas fa-question-circle"></i>
         <span>AI trenger din hjelp med ${questions.length} ${questions.length === 1 ? 'kolonne' : 'kolonner'}</span>
         <button class="wizard-btn-link" onclick="skipAIQuestions()">Bruk AI-anbefalinger</button>
       </div>
@@ -1191,13 +1191,13 @@ function renderRequiredFieldSelectors(data) {
     <div class="wizard-required-fields ${bothMapped ? 'wizard-fields-ok' : ''}">
       ${bothMapped ? `
         <div class="wizard-required-header wizard-header-success">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Kolonner gjenkjent automatisk</span>
         </div>
         <p class="wizard-required-desc">Endre hvis noe er feil.</p>
       ` : `
         <div class="wizard-required-header">
-          <i class="fas fa-columns"></i>
+          <i aria-hidden="true" class="fas fa-columns"></i>
           <span>Velg kolonner</span>
         </div>
         <p class="wizard-required-desc">Velg hvilken kolonne som er kundenavn og adresse.</p>
@@ -1206,7 +1206,7 @@ function renderRequiredFieldSelectors(data) {
       <div class="wizard-required-grid">
         <div class="wizard-required-row">
           <label>
-            <i class="fas fa-user"></i>
+            <i aria-hidden="true" class="fas fa-user"></i>
             Kundenavn
           </label>
           <select id="navnColumnSelect" onchange="updateRequiredMapping('navn', this.value)" class="wizard-required-select">
@@ -1221,7 +1221,7 @@ function renderRequiredFieldSelectors(data) {
 
         <div class="wizard-required-row">
           <label>
-            <i class="fas fa-map-marker-alt"></i>
+            <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
             Adresse
           </label>
           <select id="adresseColumnSelect" onchange="updateRequiredMapping('adresse', this.value)" class="wizard-required-select">
@@ -1237,7 +1237,7 @@ function renderRequiredFieldSelectors(data) {
 
       ${isSameColumnSelected() ? `
         <div class="wizard-required-warning wizard-required-error">
-          <i class="fas fa-times-circle"></i>
+          <i aria-hidden="true" class="fas fa-times-circle"></i>
           <span>Kundenavn og adresse kan ikke bruke samme kolonne.</span>
         </div>
       ` : ''}
@@ -1266,22 +1266,22 @@ function renderWizardImportMapping() {
       <!-- Summary header -->
       <div class="wizard-auto-summary">
         <div class="wizard-auto-success">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Fant <strong>${data.totalRows || 0}</strong> kunder i filen</span>
         </div>
 
         <div class="wizard-auto-stats">
           <div class="wizard-auto-stat">
-            <i class="fas fa-columns"></i>
+            <i aria-hidden="true" class="fas fa-columns"></i>
             <span>${data.totalColumns || 0} kolonner totalt</span>
           </div>
           <div class="wizard-auto-stat wizard-auto-stat-success">
-            <i class="fas fa-check"></i>
+            <i aria-hidden="true" class="fas fa-check"></i>
             <span>${recognizedColumns.length} gjenkjent</span>
           </div>
           ${newFields.length > 0 ? `
             <div class="wizard-auto-stat wizard-auto-stat-new">
-              <i class="fas fa-plus"></i>
+              <i aria-hidden="true" class="fas fa-plus"></i>
               <span>${newFields.length} nye felt</span>
             </div>
           ` : ''}
@@ -1290,7 +1290,7 @@ function renderWizardImportMapping() {
 
       <!-- Mapping Status indicator -->
       <div class="wizard-ai-status wizard-ai-enabled">
-        <i class="fas fa-magic"></i>
+        <i aria-hidden="true" class="fas fa-magic"></i>
         <span>
           <strong>Automatisk kolonnemap</strong>
           ${aiMappedCount > 0 ? `- ${aiMappedCount} kolonner gjenkjent` : '- Velg kolonner manuelt nedenfor'}
@@ -1306,16 +1306,16 @@ function renderWizardImportMapping() {
       <!-- Recognized columns -->
       ${recognizedColumns.length > 0 ? `
         <div class="wizard-auto-section">
-          <h4><i class="fas fa-check-circle"></i> Gjenkjente kolonner</h4>
+          <h4><i aria-hidden="true" class="fas fa-check-circle"></i> Gjenkjente kolonner</h4>
           <div class="wizard-auto-columns">
             ${recognizedColumns.map(col => `
               <div class="wizard-auto-column recognized ${col.source === 'ai' ? 'ai-mapped' : ''}">
                 <span class="column-from">${escapeHtml(col.header)}</span>
-                <i class="fas fa-arrow-right"></i>
+                <i aria-hidden="true" class="fas fa-arrow-right"></i>
                 <span class="column-to">${escapeHtml(col.mappedTo)}</span>
                 ${col.source === 'ai' ? `
                   <span class="mapping-source ai" title="Mappet av AI med ${Math.round((col.confidence || 0) * 100)}% sikkerhet">
-                    <i class="fas fa-robot"></i>
+                    <i aria-hidden="true" class="fas fa-robot"></i>
                   </span>
                 ` : ''}
               </div>
@@ -1327,12 +1327,12 @@ function renderWizardImportMapping() {
       <!-- New fields that will be created -->
       ${newFields.length > 0 ? `
         <div class="wizard-auto-section">
-          <h4><i class="fas fa-plus-circle"></i> Nye felt som opprettes automatisk</h4>
+          <h4><i aria-hidden="true" class="fas fa-plus-circle"></i> Nye felt som opprettes automatisk</h4>
           <div class="wizard-auto-columns">
             ${newFields.map(f => `
               <div class="wizard-auto-column new-field">
                 <span class="column-from">"${escapeHtml(f.header)}"</span>
-                <i class="fas fa-arrow-right"></i>
+                <i aria-hidden="true" class="fas fa-arrow-right"></i>
                 <span class="column-to">
                   ${escapeHtml(f.displayName)}
                   <span class="field-type">(${escapeHtml(f.typeDisplay)}${f.optionsCount > 0 ? `, ${f.optionsCount} valg` : ''})</span>
@@ -1346,7 +1346,7 @@ function renderWizardImportMapping() {
       <!-- Preview table -->
       ${preview.length > 0 ? `
         <div class="wizard-auto-section">
-          <h4><i class="fas fa-table"></i> Forhåndsvisning</h4>
+          <h4><i aria-hidden="true" class="fas fa-table"></i> Forhåndsvisning</h4>
           <div class="wizard-auto-table-wrapper">
             <table class="wizard-auto-table">
               <thead>
@@ -1375,7 +1375,7 @@ function renderWizardImportMapping() {
       <!-- Validation info -->
       ${stats.invalid > 0 ? `
         <div class="wizard-auto-warning">
-          <i class="fas fa-exclamation-triangle"></i>
+          <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
           <span>${stats.invalid} rader mangler påkrevd data og vil bli hoppet over</span>
         </div>
       ` : ''}
@@ -1383,12 +1383,12 @@ function renderWizardImportMapping() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-primary"
         onclick="wizardImportNext()"
         ${!areRequiredFieldsMapped() ? 'disabled title="Velg kolonner for kundenavn og adresse først"' : ''}>
-        Forhåndsvis <i class="fas fa-arrow-right"></i>
+        Forhåndsvis <i aria-hidden="true" class="fas fa-arrow-right"></i>
       </button>
     </div>
   `;
@@ -1426,7 +1426,7 @@ function renderUnmappedColumnsSection(data, headers, mapping, targetFields) {
   return `
     <div class="wizard-unmapped-section">
       <h4 class="wizard-section-title">
-        <i class="fas fa-plus-circle"></i>
+        <i aria-hidden="true" class="fas fa-plus-circle"></i>
         Ekstra kolonner i filen (${visibleUnmapped.length})
       </h4>
       <p class="wizard-section-desc">
@@ -1513,7 +1513,7 @@ function renderWizardImportPreview() {
   if (categoryMatches.length > 0) {
     categoryMappingHtml = `
       <div class="wizard-category-mapping">
-        <h4><i class="fas fa-tags"></i> Kategori-mapping</h4>
+        <h4><i aria-hidden="true" class="fas fa-tags"></i> Kategori-mapping</h4>
         <p>Følgende kategorier ble funnet i filen. Koble dem til eksisterende kategorier eller opprett nye.</p>
         <div class="wizard-category-list">
           ${categoryMatches.map(match => `
@@ -1523,7 +1523,7 @@ function renderWizardImportPreview() {
                 <span class="category-value">${escapeHtml(match.original)}</span>
                 <span class="category-count">(${match.count} kunder)</span>
               </div>
-              <div class="wizard-category-arrow"><i class="fas fa-arrow-right"></i></div>
+              <div class="wizard-category-arrow"><i aria-hidden="true" class="fas fa-arrow-right"></i></div>
               <div class="wizard-category-select">
                 <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeJsString(match.original)}', this.value)">
                   ${match.suggested ? `
@@ -1573,27 +1573,27 @@ function renderWizardImportPreview() {
       <!-- Stats summary -->
       <div class="wizard-preview-stats">
         <div class="stat-item">
-          <i class="fas fa-file-alt"></i>
+          <i aria-hidden="true" class="fas fa-file-alt"></i>
           <span class="stat-value">${stats.totalRows || 0}</span>
           <span class="stat-label">Totalt rader</span>
         </div>
         <div class="stat-item ${stats.validRows > 0 ? 'success' : ''}">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span class="stat-value">${stats.validRows || 0}</span>
           <span class="stat-label">Gyldige</span>
         </div>
         <div class="stat-item ${stats.warnings > 0 ? 'warning' : ''}">
-          <i class="fas fa-exclamation-triangle"></i>
+          <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
           <span class="stat-value">${stats.warnings || 0}</span>
           <span class="stat-label">Advarsler</span>
         </div>
         <div class="stat-item ${stats.errors > 0 ? 'error' : ''}">
-          <i class="fas fa-times-circle"></i>
+          <i aria-hidden="true" class="fas fa-times-circle"></i>
           <span class="stat-value">${stats.errors || 0}</span>
           <span class="stat-label">Feil</span>
         </div>
         <div class="stat-item ${stats.duplicates > 0 ? 'warning' : ''}">
-          <i class="fas fa-copy"></i>
+          <i aria-hidden="true" class="fas fa-copy"></i>
           <span class="stat-value">${stats.duplicates || 0}</span>
           <span class="stat-label">Duplikater</span>
         </div>
@@ -1602,21 +1602,21 @@ function renderWizardImportPreview() {
       ${features.updateEnabled || features.deletionDetectionEnabled ? `
         <!-- Re-import Preview Summary -->
         <div class="wizard-reimport-summary">
-          <h4><i class="fas fa-sync-alt"></i> Oppsummering av import</h4>
+          <h4><i aria-hidden="true" class="fas fa-sync-alt"></i> Oppsummering av import</h4>
           <div class="wizard-reimport-stats">
             <div class="reimport-stat-item new">
-              <i class="fas fa-plus-circle"></i>
+              <i aria-hidden="true" class="fas fa-plus-circle"></i>
               <span class="stat-value">${reimportPreview.toCreate || 0}</span>
               <span class="stat-label">Nye kunder</span>
             </div>
             ${features.updateEnabled ? `
               <div class="reimport-stat-item update">
-                <i class="fas fa-edit"></i>
+                <i aria-hidden="true" class="fas fa-edit"></i>
                 <span class="stat-value">${reimportPreview.toUpdate || 0}</span>
                 <span class="stat-label">Oppdateres</span>
               </div>
               <div class="reimport-stat-item unchanged">
-                <i class="fas fa-equals"></i>
+                <i aria-hidden="true" class="fas fa-equals"></i>
                 <span class="stat-value">${reimportPreview.unchanged || 0}</span>
                 <span class="stat-label">Uendret</span>
               </div>
@@ -1624,7 +1624,7 @@ function renderWizardImportPreview() {
           </div>
           ${features.deletionDetectionEnabled && reimportPreview.notInImport && reimportPreview.notInImport.length > 0 ? `
             <div class="wizard-not-in-import-info">
-              <i class="fas fa-info-circle"></i>
+              <i aria-hidden="true" class="fas fa-info-circle"></i>
               <div>
                 <strong>${reimportPreview.notInImport.length} eksisterende kunder finnes ikke i importfilen</strong>
                 <p>Disse kundene vil <strong>IKKE</strong> bli slettet. De vises kun for informasjon.</p>
@@ -1648,7 +1648,7 @@ function renderWizardImportPreview() {
       <!-- Preview table with selection -->
       <div class="wizard-preview-table-wrapper">
         <div class="wizard-preview-header">
-          <h4><i class="fas fa-table"></i> Forhåndsvisning (${preview.length} rader)</h4>
+          <h4><i aria-hidden="true" class="fas fa-table"></i> Forhåndsvisning (${preview.length} rader)</h4>
           <div class="wizard-preview-controls">
             <label class="wizard-toggle-label">
               <input type="checkbox" ${showBeforeAfter ? 'checked' : ''}
@@ -1657,10 +1657,10 @@ function renderWizardImportPreview() {
             </label>
             <div class="wizard-selection-actions">
               <button class="wizard-btn wizard-btn-small" onclick="wizardSelectAllRows()">
-                <i class="fas fa-check-square"></i> Velg alle
+                <i aria-hidden="true" class="fas fa-check-square"></i> Velg alle
               </button>
               <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectAllRows()">
-                <i class="fas fa-square"></i> Velg ingen
+                <i aria-hidden="true" class="fas fa-square"></i> Velg ingen
               </button>
               <span class="wizard-selection-count" id="wizardSelectionCount">
                 ${getSelectedRowCount()} av ${stats.validRows || 0} valgt
@@ -1668,7 +1668,7 @@ function renderWizardImportPreview() {
             </div>
           </div>
         </div>
-        <p class="wizard-edit-hint"><i class="fas fa-info-circle"></i> Dobbeltklikk på en celle for å redigere</p>
+        <p class="wizard-edit-hint"><i aria-hidden="true" class="fas fa-info-circle"></i> Dobbeltklikk på en celle for å redigere</p>
         <table class="wizard-preview-table wizard-preview-table-editable">
           <thead>
             <tr>
@@ -1717,14 +1717,14 @@ function renderWizardImportPreview() {
                       data-original="${escapeHtml(originalValue)}"
                       ondblclick="wizardStartCellEdit(${globalIdx}, '${col}')"
                       title="${escapeHtml(cellTitle)}">
-                    ${wasTransformed ? `<span class="cell-before">${escapeHtml(rawVal)}</span> <i class="fas fa-arrow-right cell-arrow"></i> <span class="cell-after">${escapeHtml(mappedVal)}</span>` : escapeHtml(displayValue || '-')}
+                    ${wasTransformed ? `<span class="cell-before">${escapeHtml(rawVal)}</span> <i aria-hidden="true" class="fas fa-arrow-right cell-arrow"></i> <span class="cell-after">${escapeHtml(mappedVal)}</span>` : escapeHtml(displayValue || '-')}
                   </td>
                 `;}).join('')}
                 <td class="col-status">
-                  ${!isSelected ? '<span class="status-excluded" title="Ikke valgt for import"><i class="fas fa-minus-circle"></i></span>' :
-                    row.hasError ? `<span class="status-error" title="${escapeHtml(row.errorMessage || 'Feil')}"><i class="fas fa-times-circle"></i></span>` :
-                    row.hasWarning ? `<span class="status-warning" title="${escapeHtml(row.warningMessage || 'Advarsel')}"><i class="fas fa-exclamation-triangle"></i></span>` :
-                    '<span class="status-ok"><i class="fas fa-check-circle"></i></span>'}
+                  ${!isSelected ? '<span class="status-excluded" title="Ikke valgt for import"><i aria-hidden="true" class="fas fa-minus-circle"></i></span>' :
+                    row.hasError ? `<span class="status-error" title="${escapeHtml(row.errorMessage || 'Feil')}"><i aria-hidden="true" class="fas fa-times-circle"></i></span>` :
+                    row.hasWarning ? `<span class="status-warning" title="${escapeHtml(row.warningMessage || 'Advarsel')}"><i aria-hidden="true" class="fas fa-exclamation-triangle"></i></span>` :
+                    '<span class="status-ok"><i aria-hidden="true" class="fas fa-check-circle"></i></span>'}
                 </td>
               </tr>
             `;}).join('')}
@@ -1736,19 +1736,19 @@ function renderWizardImportPreview() {
         <div class="wizard-preview-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardPreviewTablePage(${validPreviewPage - 1})" ${validPreviewPage === 0 ? 'disabled' : ''}>
-            <i class="fas fa-chevron-left"></i> Forrige
+            <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPreviewPage + 1} av ${previewTotalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
             onclick="wizardPreviewTablePage(${validPreviewPage + 1})" ${validPreviewPage >= previewTotalPages - 1 ? 'disabled' : ''}>
-            Neste <i class="fas fa-chevron-right"></i>
+            Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
       ` : ''}
 
       ${stats.errors > 0 ? `
         <div class="wizard-preview-warning">
-          <i class="fas fa-info-circle"></i>
+          <i aria-hidden="true" class="fas fa-info-circle"></i>
           <p>${stats.errors} rad(er) har feil og vil ikke bli importert. Du kan redigere eller fjerne dem fra utvalget.</p>
         </div>
       ` : ''}
@@ -1760,16 +1760,16 @@ function renderWizardImportPreview() {
 
     <div class="wizard-footer">
       <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
-        <i class="fas fa-arrow-left"></i> Tilbake
+        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <div class="wizard-footer-right">
         ${wizardImportState.batchId ? `
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport som CSV">
-            <i class="fas fa-download"></i> Feilrapport
+            <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
           </button>
         ` : ''}
         <button class="wizard-btn wizard-btn-primary" onclick="wizardStartImport()" ${getSelectedValidRowCount() === 0 ? 'disabled' : ''}>
-          <i class="fas fa-file-import"></i> Importer ${getSelectedValidRowCount()} kunder
+          <i aria-hidden="true" class="fas fa-file-import"></i> Importer ${getSelectedValidRowCount()} kunder
         </button>
       </div>
     </div>
@@ -1788,7 +1788,7 @@ function renderWizardImportResults() {
   return `
     <div class="wizard-import-results">
       <div class="wizard-results-icon ${isSuccess ? 'success' : 'partial'}">
-        <i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+        <i aria-hidden="true" class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
       </div>
 
       <h2>${isSuccess ? 'Import fullført!' : 'Import delvis fullført'}</h2>
@@ -1796,35 +1796,35 @@ function renderWizardImportResults() {
       <div class="wizard-results-stats">
         ${results.createdCount > 0 ? `
           <div class="result-stat success">
-            <i class="fas fa-plus"></i>
+            <i aria-hidden="true" class="fas fa-plus"></i>
             <span class="stat-value">${results.createdCount}</span>
             <span class="stat-label">Nye kunder opprettet</span>
           </div>
         ` : ''}
         ${results.updatedCount > 0 ? `
           <div class="result-stat info">
-            <i class="fas fa-sync-alt"></i>
+            <i aria-hidden="true" class="fas fa-sync-alt"></i>
             <span class="stat-value">${results.updatedCount}</span>
             <span class="stat-label">Eksisterende oppdatert</span>
           </div>
         ` : ''}
         ${!results.createdCount && !results.updatedCount ? `
           <div class="result-stat success">
-            <i class="fas fa-check"></i>
+            <i aria-hidden="true" class="fas fa-check"></i>
             <span class="stat-value">${results.importedCount || 0}</span>
             <span class="stat-label">Kunder importert</span>
           </div>
         ` : ''}
         ${results.skippedCount > 0 ? `
           <div class="result-stat warning">
-            <i class="fas fa-forward"></i>
+            <i aria-hidden="true" class="fas fa-forward"></i>
             <span class="stat-value">${results.skippedCount}</span>
             <span class="stat-label">Hoppet over</span>
           </div>
         ` : ''}
         ${results.errorCount > 0 ? `
           <div class="result-stat error">
-            <i class="fas fa-times"></i>
+            <i aria-hidden="true" class="fas fa-times"></i>
             <span class="stat-value">${results.errorCount}</span>
             <span class="stat-label">Feilet</span>
           </div>
@@ -1840,7 +1840,7 @@ function renderWizardImportResults() {
 
       ${results.errors && results.errors.length > 0 ? `
         <div class="wizard-results-errors">
-          <h4><i class="fas fa-exclamation-triangle"></i> Feil under import</h4>
+          <h4><i aria-hidden="true" class="fas fa-exclamation-triangle"></i> Feil under import</h4>
           <ul>
             ${results.errors.slice(0, 5).map(err => `
               <li>${escapeHtml((err.rowNumber || err.row) ? `Rad ${err.rowNumber || err.row}: ` : '')}${escapeHtml(err.error || err.message || 'Ukjent feil')}</li>
@@ -1854,26 +1854,26 @@ function renderWizardImportResults() {
     <div class="wizard-footer wizard-footer-center">
       ${results.batchId ? `
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardRollbackImport()" title="Angre hele importen">
-          <i class="fas fa-undo"></i> Angre import
+          <i aria-hidden="true" class="fas fa-undo"></i> Angre import
         </button>
       ` : ''}
       ${results.errorCount > 0 ? `
         <button class="wizard-btn wizard-btn-secondary" onclick="wizardReimportFailed()" title="Prøv å importere feilede rader på nytt">
-          <i class="fas fa-redo"></i> Reimporter feilede (${results.errorCount})
+          <i aria-hidden="true" class="fas fa-redo"></i> Reimporter feilede (${results.errorCount})
         </button>
       ` : ''}
       ${results.batchId ? `
         <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport">
-          <i class="fas fa-download"></i> Feilrapport
+          <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
         </button>
       ` : ''}
       ${standaloneImportMode ? `
         <button class="wizard-btn wizard-btn-primary" onclick="closeImportModal()">
-          <i class="fas fa-check"></i> Ferdig
+          <i aria-hidden="true" class="fas fa-check"></i> Ferdig
         </button>
       ` : `
         <button class="wizard-btn wizard-btn-primary" onclick="wizardImportComplete()">
-          Fortsett til neste steg <i class="fas fa-arrow-right"></i>
+          Fortsett til neste steg <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       `}
     </div>
@@ -1986,7 +1986,7 @@ function updateSelectionDisplay() {
   if (importBtn) {
     const count = getSelectedValidRowCount();
     importBtn.disabled = count === 0;
-    importBtn.innerHTML = `<i class="fas fa-file-import"></i> Importer ${count} kunder`;
+    importBtn.innerHTML = `<i aria-hidden="true" class="fas fa-file-import"></i> Importer ${count} kunder`;
   }
 
   // Update row styling
@@ -2981,7 +2981,7 @@ function renderErrorGrouping(preview) {
 
   return `
     <div class="wizard-error-groups">
-      <h4><i class="fas fa-layer-group"></i> Feilsammendrag</h4>
+      <h4><i aria-hidden="true" class="fas fa-layer-group"></i> Feilsammendrag</h4>
       <div class="error-group-list">
         ${groups.slice(0, 8).map(group => `
           <div class="error-group-item">
@@ -2992,11 +2992,11 @@ function renderErrorGrouping(preview) {
             </div>
             ${group.field === 'epost' && group.message.includes('skrivefeil') ? `
               <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
-                <i class="fas fa-magic"></i> Fiks alle
+                <i aria-hidden="true" class="fas fa-magic"></i> Fiks alle
               </button>
             ` : `
               <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
-                <i class="fas fa-minus-circle"></i> Fjern fra import
+                <i aria-hidden="true" class="fas fa-minus-circle"></i> Fjern fra import
               </button>
             `}
           </div>
@@ -3013,14 +3013,14 @@ function renderQualityReport(report) {
 
   return `
     <div class="wizard-quality-report">
-      <h4><i class="fas fa-chart-bar"></i> Kvalitetsrapport</h4>
+      <h4><i aria-hidden="true" class="fas fa-chart-bar"></i> Kvalitetsrapport</h4>
       <div class="quality-score-bar">
         <div class="quality-score-fill ${scoreColor}" style="width: ${report.overallScore}%"></div>
         <span class="quality-score-label">${report.overallScore}%</span>
       </div>
       ${report.suggestions && report.suggestions.length > 0 ? `
         <ul class="quality-suggestions">
-          ${report.suggestions.map(s => `<li><i class="fas fa-lightbulb"></i> ${escapeHtml(s)}</li>`).join('')}
+          ${report.suggestions.map(s => `<li><i aria-hidden="true" class="fas fa-lightbulb"></i> ${escapeHtml(s)}</li>`).join('')}
         </ul>
       ` : ''}
     </div>
@@ -3246,7 +3246,7 @@ function renderWizardAddressSuggestions(results) {
 
   container.innerHTML = results.map((addr, index) => `
     <div class="wizard-address-suggestion" data-index="${index}">
-      <i class="fas fa-map-marker-alt"></i>
+      <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
       <div class="wizard-address-text">
         <div class="wizard-address-main">${escapeHtml(addr.adresse)}</div>
         <div class="wizard-address-detail">${escapeHtml(addr.postnummer)} ${escapeHtml(addr.poststed)}${addr.kommune ? `, ${escapeHtml(addr.kommune)}` : ''}</div>
@@ -3360,15 +3360,15 @@ function updateWizardPostnummerStatus(status) {
 
   switch (status) {
     case 'valid':
-      statusEl.innerHTML = '<i class="fas fa-check"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-check"></i>';
       statusEl.classList.add('valid');
       break;
     case 'invalid':
-      statusEl.innerHTML = '<i class="fas fa-times"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-times"></i>';
       statusEl.classList.add('invalid');
       break;
     case 'loading':
-      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i>';
       statusEl.classList.add('loading');
       break;
     default:

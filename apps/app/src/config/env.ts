@@ -131,9 +131,18 @@ export function validateEnvironment(): EnvConfig {
     errors.push('JWT_SECRET må være minst 64 tegn i produksjon (HMAC-SHA256)');
   }
 
-  // Check encryption salt in production
-  if (isProduction && !process.env.ENCRYPTION_SALT) {
+  // Check encryption salt strength in production
+  const encryptionSalt = process.env.ENCRYPTION_SALT;
+  if (isProduction && !encryptionSalt) {
     errors.push('ENCRYPTION_SALT er påkrevd i produksjon');
+  } else if (isProduction && encryptionSalt && encryptionSalt.length < 32) {
+    errors.push('ENCRYPTION_SALT må være minst 32 tegn i produksjon');
+  }
+
+  // Check integration encryption key strength in production
+  const integrationKey = process.env.INTEGRATION_ENCRYPTION_KEY;
+  if (isProduction && integrationKey && integrationKey.length < 48) {
+    errors.push('INTEGRATION_ENCRYPTION_KEY må være minst 48 tegn i produksjon');
   }
 
   // Log warnings

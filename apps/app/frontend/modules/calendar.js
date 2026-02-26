@@ -1,3 +1,12 @@
+// Format minutes as "Xt Ym" for calendar display
+function formatEstTid(min) {
+  if (!min || min <= 0) return '';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  return m > 0 ? `${h}t ${m}m` : `${h}t`;
+}
+
 // Build Google Maps directions URL for a list of avtaler on a given date
 // Route: Kontor → kunde1 → kunde2 → ... → Kontor
 function buildGoogleMapsUrl(dayAvtaler) {
@@ -95,18 +104,18 @@ async function renderCalendar() {
 
   let html = `
     <div class="calendar-header">
-      <button class="calendar-nav" id="prevMonth" aria-label="Forrige måned"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+      <button class="calendar-nav" id="prevMonth" aria-label="Forrige måned"><i aria-hidden="true" class="fas fa-chevron-left"></i></button>
       <h3>${monthNames[currentCalendarMonth]} ${currentCalendarYear}</h3>
-      <button class="calendar-nav" id="nextMonth" aria-label="Neste måned"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+      <button class="calendar-nav" id="nextMonth" aria-label="Neste måned"><i aria-hidden="true" class="fas fa-chevron-right"></i></button>
       <div style="margin-left:auto;display:flex;gap:4px;">
         <button class="btn btn-small ${calendarViewMode === 'week' ? 'btn-primary' : 'btn-secondary'}" id="toggleWeekView">
-          <i class="fas fa-calendar-week" aria-hidden="true"></i> Uke
+          <i aria-hidden="true" class="fas fa-calendar-week"></i> Uke
         </button>
         <button class="btn btn-small btn-primary" id="openCalendarSplit" title="Åpne fullskjerm kalender" aria-label="Åpne fullskjerm kalender">
-          <i class="fas fa-expand" aria-hidden="true"></i>
+          <i aria-hidden="true" class="fas fa-expand"></i>
         </button>
         <button class="btn btn-primary calendar-add-btn" id="addAvtaleBtn">
-          <i class="fas fa-plus" aria-hidden="true"></i> Ny avtale
+          <i aria-hidden="true" class="fas fa-plus"></i> Ny avtale
         </button>
       </div>
     </div>
@@ -146,7 +155,7 @@ async function renderCalendar() {
         <div class="day-top-row">
           <span class="day-number">${day}</span>
           ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} omr.</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         <div class="calendar-events">
           ${dayAvtaler.map(a => {
@@ -157,13 +166,13 @@ async function renderCalendar() {
             <div class="calendar-avtale ${a.status === 'fullført' ? 'completed' : ''}"
                  data-avtale-id="${a.id}"${serviceColor ? ` style="border-left-color:${serviceColor}"` : ''}>
               <div class="avtale-content" data-avtale-id="${a.id}" data-action="editAvtale" role="button" tabindex="0">
-                ${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}${a.rute_id ? '<i class="fas fa-route" style="font-size:0.6em;margin-right:2px;color:var(--primary)" title="Fra rute"></i>' : ''}${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.6em;margin-right:2px" title="Gjentakende"></i>' : ''}
+                ${a.status === 'fullført' ? '<i aria-hidden="true" class="fas fa-check" style="font-size:0.6em;margin-right:2px;color:var(--color-good)" title="Fullført"></i><span class="sr-only">Fullført:</span>' : ''}${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}${a.rute_id ? '<i aria-hidden="true" class="fas fa-route" style="font-size:0.6em;margin-right:2px;color:var(--primary)" title="Fra rute"></i>' : ''}${a.er_gjentakelse || a.original_avtale_id ? '<i aria-hidden="true" class="fas fa-sync-alt" style="font-size:0.6em;margin-right:2px" title="Gjentakende"></i>' : ''}
                 ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
                 <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</span>
                 ${poststed ? `<span class="avtale-poststed">${escapeHtml(poststed)}</span>` : ''}
                 ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="avtale-creator" title="Opprettet av ${escapeHtml(a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.opprettet_av, true))}</span>` : ''}
               </div>
-              <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i class="fas fa-times" aria-hidden="true"></i></button>
+              <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
             </div>
           `; }).join('')}
         </div>
@@ -181,18 +190,18 @@ async function renderCalendar() {
 
     html = `
       <div class="calendar-header">
-        <button class="calendar-nav" id="prevWeek" aria-label="Forrige uke"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+        <button class="calendar-nav" id="prevWeek" aria-label="Forrige uke"><i aria-hidden="true" class="fas fa-chevron-left"></i></button>
         <h3>Uke ${weekNum} - ${currentWeekStart.getFullYear()}</h3>
-        <button class="calendar-nav" id="nextWeek" aria-label="Neste uke"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+        <button class="calendar-nav" id="nextWeek" aria-label="Neste uke"><i aria-hidden="true" class="fas fa-chevron-right"></i></button>
         <div style="margin-left:auto;display:flex;gap:4px;">
           <button class="btn btn-small btn-primary" id="openCalendarSplit" title="Åpne fullskjerm kalender" aria-label="Åpne fullskjerm kalender">
-            <i class="fas fa-expand" aria-hidden="true"></i>
+            <i aria-hidden="true" class="fas fa-expand"></i>
           </button>
           <button class="btn btn-small btn-secondary" id="toggleWeekView">
-            <i class="fas fa-calendar-alt" aria-hidden="true"></i> Måned
+            <i aria-hidden="true" class="fas fa-calendar-alt"></i> Måned
           </button>
           <button class="btn btn-primary calendar-add-btn" id="addAvtaleBtn">
-            <i class="fas fa-plus" aria-hidden="true"></i> Ny avtale
+            <i aria-hidden="true" class="fas fa-plus"></i> Ny avtale
           </button>
         </div>
       </div>
@@ -223,8 +232,8 @@ async function renderCalendar() {
           <div class="week-day-header">
             <span class="week-day-name">${weekDayNames[i].substring(0, 3)}</span>
             <span class="week-day-date">${dayDate.getDate()}</span>
-            ${dayMinutes > 0 ? `<span class="week-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
-            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+            ${dayMinutes > 0 ? `<span class="week-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
+            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
           </div>
           ${renderAreaBadges(dayAvtaler)}
           <div class="week-day-content">
@@ -241,29 +250,29 @@ async function renderCalendar() {
               return `
                 <div class="week-avtale-card ${a.status === 'fullført' ? 'completed' : ''}" data-avtale-id="${a.id}" data-action="editAvtale" role="button" tabindex="0"${serviceColor ? ` style="border-left-color:${serviceColor}"` : ''}>
                   <div class="week-card-header">
-                    ${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}
+                    ${a.status === 'fullført' ? '<i aria-hidden="true" class="fas fa-check" style="font-size:0.6em;margin-right:2px;color:var(--color-good)" title="Fullført"></i><span class="sr-only">Fullført:</span>' : ''}${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}
                     ${initials ? `<span class="week-card-initials" title="${escapeHtml(creator)}">${escapeHtml(initials)}</span>` : ''}
                     <span class="week-card-name">${escapeHtml(navn)}</span>
-                    ${estTid ? `<span class="avtale-duration">${estTid}m</span>` : ''}
-                    <button class="week-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i class="fas fa-times" aria-hidden="true"></i></button>
+                    ${estTid ? `<span class="avtale-duration">${formatEstTid(estTid)}</span>` : ''}
+                    <button class="week-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
                   </div>
                   ${addr ? `<div class="week-card-addr">${escapeHtml(addr)}</div>` : ''}
-                  ${phone ? `<div class="week-card-phone"><i class="fas fa-phone" aria-hidden="true"></i>${escapeHtml(phone)}</div>` : ''}
-                  ${a.klokkeslett ? `<div class="week-card-time"><i class="fas fa-clock" aria-hidden="true"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${a.varighet}m)` : ''}</div>` : ''}
+                  ${phone ? `<div class="week-card-phone"><i aria-hidden="true" class="fas fa-phone"></i>${escapeHtml(phone)}</div>` : ''}
+                  ${a.klokkeslett ? `<div class="week-card-time"><i aria-hidden="true" class="fas fa-clock"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${formatEstTid(a.varighet)})` : ''}</div>` : ''}
                 </div>
               `;
             }).join('')}
             ${dayAvtaler.length === 0 ? '<div class="week-empty">Ingen avtaler</div>' : ''}
           </div>
           <div class="week-day-add" data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
-            <i class="fas fa-plus" aria-hidden="true"></i> Legg til
+            <i aria-hidden="true" class="fas fa-plus"></i> Legg til
           </div>
         </div>
       `;
     }
 
     html += `</div>`;
-    html += `<div class="week-summary"><strong>Total estimert tid denne uken:</strong> ${Math.floor(totalWeekMinutes / 60)}t ${totalWeekMinutes % 60}m</div>`;
+    html += `<div class="week-summary"><strong>Total estimert tid denne uken:</strong> ${formatEstTid(totalWeekMinutes)}</div>`;
 
     container.innerHTML = html;
     runTabCleanup('calendar');
@@ -284,7 +293,7 @@ async function renderCalendar() {
   if (upcomingAvtaler.length > 0) {
     html += `
       <div class="upcoming-section">
-        <h4><i class="fas fa-calendar-check"></i> Kommende avtaler</h4>
+        <h4><i aria-hidden="true" class="fas fa-calendar-check"></i> Kommende avtaler</h4>
         <div class="upcoming-list">
           ${upcomingAvtaler.map(a => `
             <div class="upcoming-item" data-avtale-id="${a.id}" data-action="editAvtale" role="button" tabindex="0">
@@ -293,7 +302,7 @@ async function renderCalendar() {
                 <span class="upcoming-month">${monthNames[new Date(a.dato).getMonth()].substring(0, 3)}</span>
               </div>
               <div class="upcoming-info">
-                <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
+                <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i aria-hidden="true" class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
                 <span>${a.klokkeslett ? a.klokkeslett.substring(0, 5) : ''} ${a.type || ''}</span>
                 ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="upcoming-creator">Av: ${escapeHtml(getCreatorDisplay(a.opprettet_av))}</span>` : ''}
               </div>
@@ -581,10 +590,10 @@ function renderSplitWeekContent() {
         <div class="split-week-day-header" data-action="setSplitActiveDay" data-date="${dateStr}" title="${isActive ? 'Klikk for å deaktivere dag' : 'Klikk for å velge dag — dra over kartet for å legge til kunder'}" role="button" tabindex="0">
           <span class="split-day-name">${weekDayNames[i].substring(0, 3)}</span>
           <span class="split-day-date">${dayDate.getDate()}</span>
-          ${isActive ? '<i class="fas fa-crosshairs split-active-icon" aria-hidden="true"></i>' : ''}
-          ${dayMinutes > 0 ? `<span class="split-day-time">${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m</span>` : ''}
+          ${isActive ? '<i aria-hidden="true" class="fas fa-crosshairs split-active-icon"></i>' : ''}
+          ${dayMinutes > 0 ? `<span class="split-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
           ${dayAvtaler.length > 0 ? `<span class="split-day-count">${dayAvtaler.length} avtale${dayAvtaler.length !== 1 ? 'r' : ''}</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i class="fas fa-directions" aria-hidden="true"></i></a>` : ''}
+          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         ${dayAvtaler.length > 0 ? renderAreaBadges(dayAvtaler) : ''}
         <div class="split-day-content">
@@ -611,12 +620,12 @@ function renderSplitWeekContent() {
             ${serviceIcon ? `<span class="avtale-service-icon">${serviceIcon}</span>` : ''}
             ${initials ? `<span class="split-card-initials" title="${escapeHtml(creator)}">${escapeHtml(initials)}</span>` : ''}
             <span class="split-card-name">${escapeHtml(navn)}</span>
-            ${estTid ? `<span class="avtale-duration">${estTid}m</span>` : ''}
-            <button class="split-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i class="fas fa-times" aria-hidden="true"></i></button>
+            ${estTid ? `<span class="avtale-duration">${formatEstTid(estTid)}</span>` : ''}
+            <button class="split-card-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
           </div>
-          ${addr ? `<div class="split-card-addr"><i class="fas fa-map-marker-alt" style="font-size:8px;margin-right:3px;" aria-hidden="true"></i>${escapeHtml(addr)}</div>` : ''}
-          ${phone ? `<div class="split-card-phone"><i class="fas fa-phone" aria-hidden="true"></i>${escapeHtml(phone)}</div>` : ''}
-          ${a.klokkeslett ? `<div class="split-card-time"><i class="fas fa-clock" aria-hidden="true"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${a.varighet}m)` : ''}</div>` : ''}
+          ${addr ? `<div class="split-card-addr"><i aria-hidden="true" class="fas fa-map-marker-alt" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(addr)}</div>` : ''}
+          ${phone ? `<div class="split-card-phone"><i aria-hidden="true" class="fas fa-phone"></i>${escapeHtml(phone)}</div>` : ''}
+          ${a.klokkeslett ? `<div class="split-card-time"><i aria-hidden="true" class="fas fa-clock"></i>${a.klokkeslett.substring(0, 5)}${a.varighet ? ` (${formatEstTid(a.varighet)})` : ''}</div>` : ''}
         </div>
       `;
     });
@@ -626,11 +635,11 @@ function renderSplitWeekContent() {
         </div>
         <div class="split-day-footer">
           <div class="split-day-add" data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
-            <i class="fas fa-plus" aria-hidden="true"></i> Legg til
+            <i aria-hidden="true" class="fas fa-plus"></i> Legg til
           </div>
           ${pendingAvtaler.length > 0 ? `
           <div class="split-day-confirm" data-date="${dateStr}" data-action="confirmDay" role="button" tabindex="0">
-            <i class="fas fa-check-double" aria-hidden="true"></i> Bekreft dag
+            <i aria-hidden="true" class="fas fa-check-double"></i> Bekreft dag
           </div>
           ` : ''}
         </div>
@@ -678,9 +687,9 @@ function renderUpcomingAreas(fromDate) {
   return `
     <div class="split-upcoming-areas">
       <div class="split-upcoming-header" data-action="toggleUpcomingAreas" role="button" tabindex="0">
-        <i class="fas fa-map-marked-alt" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-map-marked-alt"></i>
         <span>Kommende områder (${sorted.length})</span>
-        <i class="fas fa-chevron-down split-upcoming-chevron" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-chevron-down split-upcoming-chevron"></i>
       </div>
       <div class="split-upcoming-body" id="splitUpcomingBody">
         ${sorted.slice(0, 10).map(([area, data]) => {
@@ -690,7 +699,7 @@ function renderUpcomingAreas(fromDate) {
           return `
           <div class="split-upcoming-item" title="${escapeHtml(data.customers.join(', '))}">
             <div class="split-upcoming-item-top">
-              <span class="split-upcoming-area"><i class="fas fa-map-marker-alt" aria-hidden="true"></i> ${escapeHtml(area)}</span>
+              <span class="split-upcoming-area"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(area)}</span>
               <span class="split-upcoming-count">${data.count} avtale${data.count !== 1 ? 'r' : ''}</span>
               <span class="split-upcoming-days">${data.dates.size} dag${data.dates.size !== 1 ? 'er' : ''}</span>
             </div>
@@ -756,7 +765,7 @@ function showConfirmDayPanel(dateStr) {
     <div class="confirm-day-actions">
       <button class="btn btn-small btn-secondary" id="confirmDayCancel" style="flex:1;">Avbryt</button>
       <button class="btn btn-small btn-success" id="confirmDaySubmit" style="flex:2;">
-        <i class="fas fa-check-double" aria-hidden="true"></i> Bekreft ${dayAvtaler.length} kunder
+        <i aria-hidden="true" class="fas fa-check-double"></i> Bekreft ${dayAvtaler.length} kunder
       </button>
     </div>
   `;
@@ -769,7 +778,7 @@ function showConfirmDayPanel(dateStr) {
   document.getElementById('confirmDaySubmit').addEventListener('click', async () => {
     const submitBtn = document.getElementById('confirmDaySubmit');
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Bekrefter...';
+    submitBtn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Bekrefter...';
 
     const fallbackInterval = Number.parseInt(document.getElementById('confirmDayIntervalSelect').value) || 12;
 
@@ -918,6 +927,7 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
   const gjentakelseSelect = document.getElementById('avtaleGjentakelse');
   const gjentakelseSluttGroup = document.getElementById('avtaleGjentakelseSluttGroup');
   const gjentakelseGroup = document.getElementById('avtaleGjentakelseGroup');
+  const showOnMapBtn = document.getElementById('showAvtaleOnMapBtn');
 
   // Populate type dropdown dynamically from ServiceTypeRegistry
   if (avtaleTypeSelect) {
@@ -961,6 +971,15 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     // Show "delete series" button if this is part of a recurring series
     const isPartOfSeries = avtale.er_gjentakelse || avtale.original_avtale_id;
     deleteSeriesBtn.style.display = isPartOfSeries ? 'inline-block' : 'none';
+
+    // Show "Vis på kart" button with click handler
+    if (showOnMapBtn) {
+      showOnMapBtn.style.display = 'inline-block';
+      showOnMapBtn.onclick = () => {
+        modal.classList.add('hidden');
+        focusOnCustomer(avtale.kunde_id);
+      };
+    }
   } else {
     // New avtale
     title.textContent = 'Ny avtale';
@@ -977,6 +996,7 @@ function openAvtaleModal(avtale = null, preselectedDate = null) {
     }
     deleteBtn.style.display = 'none';
     deleteSeriesBtn.style.display = 'none';
+    if (showOnMapBtn) showOnMapBtn.style.display = 'none';
   }
 
   modal.classList.remove('hidden');

@@ -21,7 +21,7 @@ function showSubscriptionWarningBanner(message) {
 
   banner.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;">
-      <i class="fas fa-exclamation-circle"></i>
+      <i aria-hidden="true" class="fas fa-exclamation-circle"></i>
       <span>${escapeHtml(message)}</span>
     </div>
     <button onclick="this.parentElement.remove()" style="background:none;border:none;color:white;cursor:pointer;font-size:18px;padding:0 5px;">&times;</button>
@@ -182,7 +182,7 @@ function showSubscriptionError(errorData) {
   modal.innerHTML = `
     <div style="background:var(--card-bg, #1a1a2e);border-radius:12px;padding:32px;max-width:450px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;">
-        <i class="fas fa-exclamation-triangle" style="font-size:28px;color:white;"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle" style="font-size:28px;color:white;"></i>
       </div>
       <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:24px;">${escapeHtml(statusTitle)}</h2>
       <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 24px;font-size:15px;line-height:1.6;">${escapeHtml(message)}</p>

@@ -135,7 +135,7 @@ function updateCategoryFilterCounts() {
 
   // "Alle" button (left sidebar + right sidebar tab)
   const allBtn = document.querySelector('[data-category="all"]');
-  if (allBtn) allBtn.innerHTML = `<i class="fas fa-list"></i> Alle (${customers.length})`;
+  if (allBtn) allBtn.innerHTML = `<i aria-hidden="true" class="fas fa-list"></i> Alle (${customers.length})`;
   const alleTab = document.querySelector('[data-kategori="alle"]');
   if (alleTab) alleTab.innerHTML = `Alle (${customers.length})`;
 
@@ -283,7 +283,7 @@ function renderCustomerList(customerData) {
       const isFiltered = customers.length > 0;
       customerList.innerHTML = `
         <div style="text-align:center;padding:40px 20px;color:var(--color-text-secondary,#a0a0a0);">
-          <i class="fas ${isFiltered ? 'fa-filter' : 'fa-users'}" style="font-size:32px;margin-bottom:12px;display:block;opacity:0.5;"></i>
+          <i aria-hidden="true" class="fas ${isFiltered ? 'fa-filter' : 'fa-users'}" style="font-size:32px;margin-bottom:12px;display:block;opacity:0.5;"></i>
           <p style="font-size:15px;margin:0 0 8px;">${isFiltered ? 'Ingen kunder matcher filteret' : 'Ingen kunder lagt til enn\u00e5'}</p>
           <p style="font-size:13px;margin:0;opacity:0.7;">${isFiltered ? 'Pr\u00f8v \u00e5 endre s\u00f8k eller filter' : 'Klikk + for \u00e5 legge til din f\u00f8rste kunde'}</p>
         </div>
@@ -313,7 +313,7 @@ function renderCustomerList(customerData) {
       <div class="customer-section">
         <button class="section-header" data-area="${escapeHtml(area)}" data-action="toggleSection">
           <span class="section-toggle-icon">
-            <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'}"></i>
+            <i aria-hidden="true" class="fas fa-chevron-${isExpanded ? 'down' : 'right'}"></i>
           </span>
           <span class="section-title">
             <span class="section-postnr">${postnummer}</span>
@@ -359,7 +359,7 @@ function renderCustomerList(customerData) {
                           data-action="sendEmail"
                           data-customer-id="${customer.id}"
                           title="${hasEmail ? 'Send e-post' : 'Ingen e-post registrert'}">
-                    <i class="fas fa-envelope"></i>
+                    <i aria-hidden="true" class="fas fa-envelope"></i>
                   </button>
                 </div>
                 <div class="customer-control-info">

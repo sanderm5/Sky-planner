@@ -126,7 +126,7 @@ function renderOrganizationList(filter = '') {
         <td>${opprettet}</td>
         <td>
           <button class="btn btn-small btn-secondary" data-action="selectOrganization" data-org-id="${org.id}">
-            <i class="fas fa-eye"></i>
+            <i aria-hidden="true" class="fas fa-eye"></i>
           </button>
         </td>
       </tr>
@@ -246,10 +246,10 @@ function renderOrgCustomers(customers) {
       <td>${escapeHtml(kunde.epost || '-')}</td>
       <td>
         <button class="btn-icon" data-action="editOrgCustomer" data-kunde-id="${kunde.id}" title="Rediger">
-          <i class="fas fa-pen"></i>
+          <i aria-hidden="true" class="fas fa-pen"></i>
         </button>
         <button class="btn-icon delete" data-action="deleteOrgCustomer" data-kunde-id="${kunde.id}" title="Slett">
-          <i class="fas fa-trash"></i>
+          <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </td>
     </tr>

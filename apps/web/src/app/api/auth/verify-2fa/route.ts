@@ -1,0 +1,269 @@
+import { NextRequest } from 'next/server';
+import crypto from 'crypto';
+import * as db from '@skyplanner/database';
+import * as auth from '@skyplanner/auth';
+import type { JWTPayload } from '@skyplanner/auth';
+import { initDb } from '@/lib/db';
+
+/**
+ * POST /api/auth/verify-2fa
+ * Verify TOTP code during login flow
+ */
+function parseDeviceInfo(ua: string): string {
+  if (!ua) return 'Ukjent enhet';
+  let browser = 'Ukjent nettleser';
+  if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
+
+  let os = 'Ukjent OS';
+  if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Mac OS X') || ua.includes('Macintosh')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+  return `${browser} på ${os}`;
+}
+
+export async function POST(request: NextRequest) {
+  const JWT_SECRET = process.env.JWT_SECRET;
+  const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+  const ENCRYPTION_SALT = process.env.ENCRYPTION_SALT;
+
+  if (!JWT_SECRET || !ENCRYPTION_KEY || !ENCRYPTION_SALT) {
+    return new Response(
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Server-konfigurasjonsfeil' } }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  initDb();
+
+  try {
+    const body = await request.json();
+    const { code } = body;
+
+    // Read session token from HttpOnly cookie (set by login endpoint)
+    const cookieHeader = request.headers.get('cookie') || '';
+    const sessionCookie = cookieHeader
+      .split(';')
+      .map((c) => c.trim())
+      .find((c) => c.startsWith('__2fa_session='));
+    const sessionToken = sessionCookie?.split('=')[1] || body.sessionToken; // Fallback for backwards compat
+
+    if (!sessionToken || !code) {
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Session-token og kode er påkrevd' } }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Hash the session token to look up in DB
+    const sessionTokenHash = crypto.createHash('sha256').update(sessionToken).digest('hex');
+
+    const supabase = db.getSupabaseClient();
+
+    // Find pending session
+    const { data: session, error: sessionError } = await supabase
+      .from('totp_pending_sessions')
+      .select('*')
+      .eq('session_token_hash', sessionTokenHash)
+      .single();
+
+    if (sessionError || !session) {
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Ugyldig eller utløpt sesjon. Logg inn på nytt.' } }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Check expiration
+    if (new Date(session.expires_at) < new Date()) {
+      await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Sesjonen har utløpt. Logg inn på nytt.' } }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Rate limiting: max 5 attempts per session
+    const MAX_ATTEMPTS = 5;
+    const currentAttempts = session.attempts ?? 0;
+    if (currentAttempts >= MAX_ATTEMPTS) {
+      await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'For mange forsøk. Logg inn på nytt.' } }),
+        { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '300' } }
+      );
+    }
+
+    // Increment attempt counter
+    await supabase
+      .from('totp_pending_sessions')
+      .update({ attempts: currentAttempts + 1 })
+      .eq('id', session.id);
+
+    // Get user with TOTP data
+    const tableName = session.user_type === 'klient' ? 'klient' : 'brukere';
+    const { data: user, error: userError } = await supabase
+      .from(tableName)
+      .select('id, navn, epost, organization_id, totp_secret_encrypted, backup_codes_hash, totp_recovery_codes_used, totp_last_used_step')
+      .eq('id', session.user_id)
+      .single();
+
+    if (userError || !user || !user.totp_secret_encrypted) {
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const codeStr = String(code).trim();
+    let verified = false;
+    let usedBackupCode = false;
+
+    // Try TOTP code first (6 digits) with atomic replay prevention
+    if (/^\d{6}$/.test(codeStr)) {
+      const secret = auth.decryptTOTPSecret(user.totp_secret_encrypted, ENCRYPTION_KEY, ENCRYPTION_SALT);
+      const matchedStep = auth.verifyTOTPWithCounter(secret, codeStr);
+      if (matchedStep !== null) {
+        // Atomic update: only succeeds if no concurrent request used this step.
+        // The WHERE clause acts as both check and guard against race conditions.
+        const { data: updateResult } = await supabase
+          .from(tableName)
+          .update({ totp_last_used_step: matchedStep })
+          .eq('id', user.id)
+          .or(`totp_last_used_step.is.null,totp_last_used_step.lt.${matchedStep}`)
+          .select('id');
+
+        verified = !!(updateResult && updateResult.length > 0);
+      }
+    }
+
+    // Try backup code if TOTP failed (format: XXXX-XXXX or 8 chars)
+    if (!verified && user.backup_codes_hash) {
+      const backupIndex = auth.verifyBackupCode(codeStr, user.backup_codes_hash, ENCRYPTION_SALT);
+      if (backupIndex >= 0) {
+        verified = true;
+        usedBackupCode = true;
+
+        // Remove used backup code
+        const updatedCodes = [...user.backup_codes_hash];
+        updatedCodes.splice(backupIndex, 1);
+        await supabase
+          .from(tableName)
+          .update({
+            backup_codes_hash: updatedCodes,
+            totp_recovery_codes_used: (user.totp_recovery_codes_used || 0) + 1,
+          })
+          .eq('id', user.id);
+      }
+    }
+
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
+
+    if (!verified) {
+      // Log failed attempt
+      await supabase.from('totp_audit_log').insert({
+        user_id: session.user_id,
+        user_type: session.user_type,
+        action: 'verification_failed',
+        ip_address: clientIp || null,
+        metadata: { context: 'login' },
+      });
+
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Feil kode. Prøv igjen.' } }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 2FA verified — delete pending session
+    await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
+
+    // Log successful verification
+    await supabase.from('totp_audit_log').insert({
+      user_id: session.user_id,
+      user_type: session.user_type,
+      action: usedBackupCode ? 'backup_code_used' : 'verification_success',
+      ip_address: clientIp || null,
+      metadata: { context: 'login' },
+    });
+
+    // Get organization for JWT payload
+    let organization = null;
+    if (user.organization_id) {
+      organization = await db.getOrganizationById(user.organization_id);
+    }
+
+    // Create full JWT token
+    const tokenPayload: Omit<JWTPayload, 'iat' | 'exp'> = {
+      userId: user.id,
+      epost: user.epost,
+      type: session.user_type as 'klient' | 'bruker',
+      organizationId: organization?.id,
+      organizationSlug: organization?.slug,
+      subscriptionStatus: organization?.subscription_status,
+      subscriptionPlan: organization?.plan_type,
+      trialEndsAt: organization?.trial_ends_at,
+      currentPeriodEnd: organization?.current_period_end,
+    };
+
+    const token = auth.signToken(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
+    const cookieConfig = auth.getCookieConfig(isProduction);
+    const authCookieHeader = auth.buildSetCookieHeader(token, cookieConfig.options);
+
+    // Track active session
+    const decoded = auth.decodeToken(token);
+    if (decoded?.jti) {
+      const ip = clientIp;
+      const userAgent = request.headers.get('user-agent') || '';
+      supabase.from('active_sessions').insert({
+        user_id: user.id,
+        user_type: session.user_type,
+        jti: decoded.jti,
+        ip_address: ip,
+        user_agent: userAgent,
+        device_info: parseDeviceInfo(userAgent),
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+    }
+
+    // Clear the 2FA session cookie and set the auth cookie
+    const clear2faCookie = '__2fa_session=; Path=/auth/verify-2fa; HttpOnly; SameSite=Strict; Max-Age=0';
+
+    const responseHeaders = new Headers();
+    responseHeaders.set('Content-Type', 'application/json');
+    responseHeaders.append('Set-Cookie', authCookieHeader);
+    responseHeaders.append('Set-Cookie', clear2faCookie);
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        user: { id: user.id, navn: user.navn, epost: user.epost },
+        organization: organization ? {
+          id: organization.id,
+          navn: organization.navn,
+          slug: organization.slug,
+        } : null,
+        redirectUrl: '/dashboard',
+        appUrl: process.env.NEXT_PUBLIC_APP_URL || 'https://app.skyplanner.no',
+        usedBackupCode,
+      }),
+      {
+        status: 200,
+        headers: responseHeaders,
+      }
+    );
+  } catch (error) {
+    console.error('2FA verify error:', error instanceof Error ? error.message : 'Unknown');
+    return new Response(
+      JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Verifisering feilet' } }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}

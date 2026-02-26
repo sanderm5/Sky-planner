@@ -169,6 +169,11 @@ function showUserBar() {
   if (userBar) {
     userBar.style.display = 'flex';
     if (userNameDisplay) userNameDisplay.textContent = userName;
+    // Set dashboard link to web app URL
+    const dashLink = document.getElementById('dashboardLinkBtn');
+    if (dashLink && appConfig.webUrl) {
+      dashLink.href = appConfig.webUrl + '/dashboard';
+    }
   }
 
   // Show admin tab and manage button if user is admin/bruker

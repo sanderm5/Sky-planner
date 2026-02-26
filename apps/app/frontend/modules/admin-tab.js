@@ -89,8 +89,8 @@ async function loadTeamMembers() {
               </div>
             </div>
             <div class="team-member-actions">
-              <button class="btn-icon" data-action="editTeamMember" data-member-id="${member.id}" title="Rediger"><i class="fas fa-pen"></i></button>
-              <button class="btn-icon delete" data-action="deleteTeamMember" data-member-id="${member.id}" title="Slett"><i class="fas fa-trash"></i></button>
+              <button class="btn-icon" data-action="editTeamMember" data-member-id="${member.id}" title="Rediger"><i aria-hidden="true" class="fas fa-pen"></i></button>
+              <button class="btn-icon delete" data-action="deleteTeamMember" data-member-id="${member.id}" title="Slett"><i aria-hidden="true" class="fas fa-trash"></i></button>
             </div>
           </div>
         `;
@@ -463,7 +463,7 @@ async function loadLoginLog(append = false) {
           <td>${tid}</td>
           <td>${escapeHtml(entry.bruker_navn || '-')}</td>
           <td>${escapeHtml(entry.epost)}</td>
-          <td><span class="status-badge ${statusClass}"><i class="fas ${statusIcon}"></i> ${statusText}</span></td>
+          <td><span class="status-badge ${statusClass}"><i aria-hidden="true" class="fas ${statusIcon}"></i> ${statusText}</span></td>
           <td class="ip-address">${escapeHtml(entry.ip_adresse || '-')}</td>
           <td class="user-agent" title="${escapeHtml(ua)}">${device}</td>
         `;

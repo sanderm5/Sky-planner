@@ -61,10 +61,10 @@ function showUnknownCategoryNotification(count) {
   notification.className = 'unknown-category-notification';
   notification.innerHTML = `
     <div class="notification-content">
-      <i class="fas fa-exclamation-triangle"></i>
+      <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
       <span><strong>${count}</strong> kunde${count > 1 ? 'r' : ''} har kategorier fra tidligere bransje og m&aring; oppdateres.</span>
       <button class="btn-close-notification" onclick="this.parentElement.parentElement.remove()">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
   `;

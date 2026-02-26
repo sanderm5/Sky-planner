@@ -48,8 +48,8 @@ function renderEmailDialog(customer) {
   overlay.innerHTML = `
     <div class="email-dialog">
       <div class="email-dialog-header">
-        <h3><i class="fas fa-envelope"></i> Send e-post</h3>
-        <button class="email-dialog-close" onclick="closeEmailDialog()"><i class="fas fa-times"></i></button>
+        <h3><i aria-hidden="true" class="fas fa-envelope"></i> Send e-post</h3>
+        <button class="email-dialog-close" onclick="closeEmailDialog()"><i aria-hidden="true" class="fas fa-times"></i></button>
       </div>
       <div class="email-dialog-body">
         <div class="email-dialog-recipient">
@@ -77,7 +77,7 @@ function renderEmailDialog(customer) {
 
         <div class="email-dialog-preview-section">
           <button class="email-dialog-preview-btn" onclick="previewEmail()">
-            <i class="fas fa-eye"></i> Forhåndsvis
+            <i aria-hidden="true" class="fas fa-eye"></i> Forhåndsvis
           </button>
           <div id="emailPreviewContainer" class="email-preview-container" style="display:none">
             <div class="email-preview-subject" id="emailPreviewSubject"></div>
@@ -88,7 +88,7 @@ function renderEmailDialog(customer) {
       <div class="email-dialog-footer">
         <button class="btn btn-secondary" onclick="closeEmailDialog()">Avbryt</button>
         <button class="btn btn-primary email-send-btn" onclick="sendEmailFromDialog()">
-          <i class="fas fa-paper-plane"></i> Send e-post
+          <i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post
         </button>
       </div>
     </div>
@@ -168,7 +168,7 @@ async function sendEmailFromDialog() {
   const sendBtn = document.querySelector('.email-send-btn');
   if (sendBtn) {
     sendBtn.disabled = true;
-    sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+    sendBtn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Sender...';
   }
 
   const customVariables = {};
@@ -183,7 +183,7 @@ async function sendEmailFromDialog() {
       showNotification('Fyll inn emne og melding', 'error');
       if (sendBtn) {
         sendBtn.disabled = false;
-        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Send e-post';
+        sendBtn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post';
       }
       return;
     }
@@ -209,7 +209,7 @@ async function sendEmailFromDialog() {
     showNotification(err.message || 'Kunne ikke sende e-post', 'error');
     if (sendBtn) {
       sendBtn.disabled = false;
-      sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Send e-post';
+      sendBtn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post';
     }
   }
 }

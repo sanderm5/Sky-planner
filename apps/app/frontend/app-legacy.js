@@ -167,7 +167,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentView = 'app';
     appInitialized = true;
 
-    // Enable map interactivity (already at app view position via skipGlobe)
+    // Enable map interactivity and fly to office location
     if (map) {
       setMapInteractive(true);
       if (!map._zoomControl) {
@@ -175,6 +175,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         map.addControl(map._zoomControl, 'top-right');
       }
       stopGlobeSpin(); // Safety: ensure globe spin is stopped
+
+      // Fly to office location (needed for SSO login where skipGlobe may be false)
+      const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
+      if (hasOfficeLocation) {
+        map.flyTo({
+          center: [appConfig.routeStartLng, appConfig.routeStartLat],
+          zoom: 6,
+          duration: 1600,
+          essential: true
+        });
+      }
     }
 
     // Initialize DOM and app
@@ -285,6 +296,14 @@ async function initializeApp() {
 
 // Setup all event listeners
 function setupEventListeners() {
+  // WCAG 2.1.1: Keyboard support for role="button" elements (Enter/Space activates click)
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"]')) {
+      e.preventDefault();
+      e.target.click();
+    }
+  });
+
   // Patch notes
   checkForNewPatchNotes();
   document.getElementById('patchNotesLink')?.addEventListener('click', () => {
@@ -348,9 +367,12 @@ function setupEventListeners() {
   const exportBtn = document.getElementById('exportCustomersBtn');
   const exportDropdown = document.getElementById('exportDropdown');
   if (exportBtn && exportDropdown) {
+    exportBtn.setAttribute('aria-haspopup', 'true');
+    exportBtn.setAttribute('aria-expanded', 'false');
     exportBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       exportDropdown.classList.toggle('hidden');
+      exportBtn.setAttribute('aria-expanded', String(!exportDropdown.classList.contains('hidden')));
     });
     exportDropdown.querySelectorAll('.export-option').forEach(opt => {
       opt.addEventListener('click', async () => {
@@ -381,7 +403,10 @@ function setupEventListeners() {
       });
     });
     // Close dropdown when clicking outside
-    document.addEventListener('click', () => exportDropdown.classList.add('hidden'));
+    document.addEventListener('click', () => {
+      exportDropdown.classList.add('hidden');
+      exportBtn.setAttribute('aria-expanded', 'false');
+    });
   }
 
   // Integration buttons in customer modal
@@ -446,13 +471,18 @@ function setupEventListeners() {
     toggleListBtn.addEventListener('click', () => {
       customerAdminList.classList.toggle('collapsed');
       toggleListBtn.classList.toggle('collapsed');
-      localStorage.setItem('customerListCollapsed', customerAdminList.classList.contains('collapsed'));
+      const isCollapsed = customerAdminList.classList.contains('collapsed');
+      toggleListBtn.setAttribute('aria-expanded', String(!isCollapsed));
+      localStorage.setItem('customerListCollapsed', isCollapsed);
     });
 
     // Restore state
     if (localStorage.getItem('customerListCollapsed') === 'true') {
       customerAdminList.classList.add('collapsed');
       toggleListBtn.classList.add('collapsed');
+      toggleListBtn.setAttribute('aria-expanded', 'false');
+    } else {
+      toggleListBtn.setAttribute('aria-expanded', 'true');
     }
   }
 
@@ -469,12 +499,14 @@ function setupEventListeners() {
       // Save preference to localStorage
       const isCollapsed = sidebar.classList.contains('collapsed');
       localStorage.setItem('sidebarCollapsed', isCollapsed);
+      sidebarToggle.setAttribute('aria-expanded', String(!isCollapsed));
     });
 
     // Restore sidebar state from localStorage (only on desktop)
     const wasCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
     if (wasCollapsed && window.innerWidth > 768) {
       sidebar.classList.add('collapsed');
+      sidebarToggle.setAttribute('aria-expanded', 'false');
     }
   }
 
@@ -890,8 +922,8 @@ function setupEventListeners() {
   const savedTab = localStorage.getItem('activeTab');
   const savedPanelState = localStorage.getItem('contentPanelOpen');
 
-  // Always open content panel on desktop by default
-  if (window.innerWidth > 768 && savedPanelState !== 'false') {
+  // Only open content panel on desktop if user had it open before
+  if (window.innerWidth > 768 && savedPanelState === 'true') {
     openContentPanel();
   }
 
@@ -904,12 +936,6 @@ function setupEventListeners() {
         setTimeout(() => {
           savedTabBtn.click();
         }, 100);
-      }
-    } else {
-      // Click dashboard tab by default
-      const dashboardTab = document.querySelector('.tab-item[data-tab="dashboard"]');
-      if (dashboardTab) {
-        setTimeout(() => dashboardTab.click(), 100);
       }
     }
   }
@@ -982,6 +1008,43 @@ function setupEventListeners() {
       emailOptions.classList.toggle('hidden', !e.target.checked);
     }
   });
+
+  // Estimated time: sync hidden field from hours+minutes inputs
+  function syncEstimertTid() {
+    const h = parseInt(document.getElementById('estimert_tid_timer')?.value) || 0;
+    const m = parseInt(document.getElementById('estimert_tid_min')?.value) || 0;
+    const total = h * 60 + m;
+    const hidden = document.getElementById('estimert_tid');
+    if (hidden) hidden.value = total > 0 ? total : '';
+    document.querySelectorAll('.tid-preset').forEach(b => {
+      b.classList.toggle('active', b.dataset.tid === String(total));
+    });
+  }
+  function setEstimertTidFromMinutes(totalMin) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const timerInput = document.getElementById('estimert_tid_timer');
+    const minInput = document.getElementById('estimert_tid_min');
+    const hidden = document.getElementById('estimert_tid');
+    if (timerInput) timerInput.value = h || '';
+    if (minInput) minInput.value = m || '';
+    if (hidden) hidden.value = totalMin > 0 ? totalMin : '';
+    document.querySelectorAll('.tid-preset').forEach(b => {
+      b.classList.toggle('active', b.dataset.tid === String(totalMin));
+    });
+  }
+  // Make available globally for customer-form.js
+  window.setEstimertTidFromMinutes = setEstimertTidFromMinutes;
+
+  // Preset buttons
+  document.querySelectorAll('.tid-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setEstimertTidFromMinutes(parseInt(btn.dataset.tid));
+    });
+  });
+  // Sync when user types in hours/minutes
+  document.getElementById('estimert_tid_timer')?.addEventListener('input', syncEstimertTid);
+  document.getElementById('estimert_tid_min')?.addEventListener('input', syncEstimertTid);
 
   // Filter panel toggle (collapse/expand)
   const filterPanelToggle = document.getElementById('filterPanelToggle');

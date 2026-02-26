@@ -311,7 +311,7 @@ function renderChatConversations() {
   if (chatState.conversations.length === 0) {
     container.innerHTML = `
       <div class="chat-empty-state">
-        <i class="fas fa-comments"></i>
+        <i aria-hidden="true" class="fas fa-comments"></i>
         <p>Ingen samtaler enn\u00e5</p>
         <p>Start en ny samtale med en kollega</p>
       </div>`;
@@ -330,7 +330,7 @@ function renderChatConversations() {
 
     return `
       <div class="chat-conv-item ${unread > 0 ? 'unread' : ''}" data-conv-id="${conv.id}" data-conv-type="${conv.type}">
-        <div class="chat-conv-icon"><i class="fas ${icon}"></i></div>
+        <div class="chat-conv-icon"><i aria-hidden="true" class="fas ${icon}"></i></div>
         <div class="chat-conv-info">
           <div class="chat-conv-name">${name}</div>
           <div class="chat-conv-preview">${preview}</div>
@@ -389,7 +389,7 @@ function renderChatMessages(conversationId) {
   if (messages.length === 0) {
     container.innerHTML = `
       <div class="chat-empty-state">
-        <i class="fas fa-comment-dots"></i>
+        <i aria-hidden="true" class="fas fa-comment-dots"></i>
         <p>Ingen meldinger enn\u00e5. Si hei!</p>
       </div>`;
     return;
@@ -477,7 +477,7 @@ async function showNewDmView() {
   const container = document.getElementById('chatTeamList');
   container.innerHTML = `
     <div class="chat-empty-state">
-      <i class="fas fa-spinner fa-spin"></i>
+      <i aria-hidden="true" class="fas fa-spinner fa-spin"></i>
       <p>Laster teammedlemmer...</p>
     </div>`;
 
@@ -489,7 +489,7 @@ async function showNewDmView() {
       try { console.error('Team members body:', await response.text()); } catch {}
       container.innerHTML = `
         <div class="chat-empty-state">
-          <i class="fas fa-exclamation-triangle"></i>
+          <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
           <p>Kunne ikke laste teammedlemmer</p>
           <p style="font-size:12px;opacity:0.7">Bruk Teamchat for \u00e5 sende melding til alle</p>
         </div>`;
@@ -500,7 +500,7 @@ async function showNewDmView() {
       if (result.data.length === 0) {
         container.innerHTML = `
           <div class="chat-empty-state">
-            <i class="fas fa-user-slash"></i>
+            <i aria-hidden="true" class="fas fa-user-slash"></i>
             <p>Ingen andre teammedlemmer funnet</p>
             <p style="font-size:12px;opacity:0.7">G\u00e5 tilbake og bruk Teamchat for \u00e5 sende melding til alle</p>
           </div>`;
@@ -529,7 +529,7 @@ async function showNewDmView() {
     console.error('Failed to load team members:', e);
     container.innerHTML = `
       <div class="chat-empty-state">
-        <i class="fas fa-exclamation-triangle"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
         <p>Feil ved lasting av teammedlemmer</p>
         <p style="font-size:12px;opacity:0.7">G\u00e5 tilbake og bruk Teamchat for \u00e5 sende melding til alle</p>
       </div>`;

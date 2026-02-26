@@ -160,8 +160,8 @@ class ServiceTypeRegistry {
     const st = typeof slugOrServiceType === 'string'
       ? this.getBySlug(slugOrServiceType)
       : slugOrServiceType;
-    if (!st) return '<i class="fas fa-wrench"></i>';
-    return `<i class="fas ${st.icon}" style="color: ${st.color}"></i>`;
+    if (!st) return '<i aria-hidden="true" class="fas fa-wrench"></i>';
+    return `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`;
   }
 
   /**
@@ -256,7 +256,7 @@ class ServiceTypeRegistry {
       html += `
         <label class="kategori-checkbox-label">
           <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
-          <i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
+          <i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
           ${escapeHtml(st.name)}
         </label>`;
     });
@@ -457,7 +457,7 @@ class ServiceTypeRegistry {
 
     // Helper to get icon HTML - white FontAwesome icon on colored marker background
     const getIconHtml = (st) => {
-      return `<i class="fas ${st.icon}"></i>`;
+      return `<i aria-hidden="true" class="fas ${st.icon}"></i>`;
     };
 
     // Helper to find matching service type using normalized comparison
@@ -570,7 +570,7 @@ class ServiceTypeRegistry {
       html += `
         <div class="control-section service-section" data-service-slug="${st.slug}" data-service-id="${st.id}">
           <div class="control-section-header">
-            <i class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
+            <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
           </div>
 
           ${hasSubtypes ? `
@@ -640,6 +640,20 @@ class ServiceTypeRegistry {
       const intervall = intervallSelect?.value ? parseInt(intervallSelect.value, 10) : st.defaultInterval;
       const subtype = subtypeSelect?.value || null;
       const equipment = equipmentSelect?.value || null;
+
+      // Fallback service type (id=0) has no real DB row — writing to
+      // customer_services would violate the foreign key constraint.
+      // Instead, copy dates to the legacy form fields so they get saved
+      // on the main customer record.
+      if (!st.id || st.id === 0) {
+        const legacySiste = document.getElementById('siste_kontroll');
+        const legacyNeste = document.getElementById('neste_kontroll');
+        const legacyIntervall = document.getElementById('kontroll_intervall');
+        if (legacySiste) legacySiste.value = siste || '';
+        if (legacyNeste) legacyNeste.value = neste || '';
+        if (legacyIntervall && intervall) legacyIntervall.value = intervall;
+        return;
+      }
 
       // Always include rendered service sections (even without dates)
       // Null dates = "service type selected but no dates set yet"
@@ -733,7 +747,7 @@ class ServiceTypeRegistry {
           return `
             <div class="popup-control-info">
               <p class="popup-status ${controlStatus.class}">
-                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
                 <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
               </p>
               ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -774,7 +788,7 @@ class ServiceTypeRegistry {
           html += `
             <div style="margin-bottom:8px;">
               <p style="margin:0;">
-                <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
+                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
               </p>
               <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</p>
               ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -809,7 +823,7 @@ class ServiceTypeRegistry {
       return `
         <div class="popup-control-info">
           <p class="popup-status ${controlStatus.class}">
-            <strong><i class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+            <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
             <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
           </p>
           ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -841,7 +855,7 @@ class ServiceTypeRegistry {
         }
 
         html += `
-          <p><strong><i class="fas ${st.icon}" style="color: ${st.color};"></i> ${st.name}:</strong></p>
+          <p><strong><i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color};"></i> ${st.name}:</strong></p>
           <p style="margin-left: 20px;">Neste: ${nesteKontroll ? escapeHtml(nesteKontroll) : 'Ikke satt'}</p>
           ${sisteKontroll ? `<p style="margin-left: 20px; font-size: 11px; color: var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
         `;
@@ -882,7 +896,7 @@ class ServiceTypeRegistry {
     return `
       <div class="popup-control-info">
         <p class="popup-status ${controlStatus.class}">
-          <strong><i class="fas ${matchedSt.icon}" style="color: ${matchedSt.color};"></i> Neste kontroll:</strong>
+          <strong><i aria-hidden="true" class="fas ${matchedSt.icon}" style="color: ${matchedSt.color};"></i> Neste kontroll:</strong>
           <span class="control-days">${escapeHtml(controlStatus.label)}</span>
         </p>
         ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -964,12 +978,12 @@ function updateControlSectionHeaders() {
 
   const elHeader = document.querySelector('#elKontrollSection .control-section-header');
   if (elHeader && elService) {
-    elHeader.innerHTML = `<i class="fas ${escapeHtml(elService.icon)}" style="color: ${escapeHtml(elService.color)}"></i> ${escapeHtml(elService.name)}`;
+    elHeader.innerHTML = `<i aria-hidden="true" class="fas ${escapeHtml(elService.icon)}" style="color: ${escapeHtml(elService.color)}"></i> ${escapeHtml(elService.name)}`;
   }
 
   const brannHeader = document.querySelector('#brannvarslingSection .control-section-header');
   if (brannHeader && brannService) {
-    brannHeader.innerHTML = `<i class="fas ${escapeHtml(brannService.icon)}" style="color: ${escapeHtml(brannService.color)}"></i> ${escapeHtml(brannService.name)}`;
+    brannHeader.innerHTML = `<i aria-hidden="true" class="fas ${escapeHtml(brannService.icon)}" style="color: ${escapeHtml(brannService.color)}"></i> ${escapeHtml(brannService.name)}`;
   }
 }
 

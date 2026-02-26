@@ -156,18 +156,18 @@ function renderTodaysWork() {
     html += `
       <div class="tw-next-stop-card">
         <div class="tw-next-stop-label">
-          <i class="fas fa-arrow-right"></i> Neste stopp (${nextStopIndex + 1}/${kunder.length})
+          <i aria-hidden="true" class="fas fa-arrow-right"></i> Neste stopp (${nextStopIndex + 1}/${kunder.length})
         </div>
         <h3 class="tw-next-stop-name">${escapeHtml(nextKunde.navn)}</h3>
         <p class="tw-next-stop-address">${escapeHtml(address)}</p>
-        ${nextKunde.telefon ? `<p class="tw-next-stop-phone"><i class="fas fa-phone"></i> ${escapeHtml(nextKunde.telefon)}</p>` : ''}
+        ${nextKunde.telefon ? `<p class="tw-next-stop-phone"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(nextKunde.telefon)}</p>` : ''}
         <div class="tw-next-stop-actions">
           <button class="btn btn-primary tw-next-nav-btn" onclick="twNavigateToCustomer(${nextKunde.id})">
-            <i class="fas fa-directions"></i> Naviger hit
+            <i aria-hidden="true" class="fas fa-directions"></i> Naviger hit
           </button>
-          ${nextKunde.telefon ? `<a href="tel:${escapeHtml(nextKunde.telefon)}" class="btn btn-secondary tw-next-call-btn"><i class="fas fa-phone"></i> Ring</a>` : ''}
+          ${nextKunde.telefon ? `<a href="tel:${escapeHtml(nextKunde.telefon)}" class="btn btn-secondary tw-next-call-btn"><i aria-hidden="true" class="fas fa-phone"></i> Ring</a>` : ''}
           <button class="btn btn-success tw-next-done-btn" onclick="twMarkVisited(${nextKunde.id})">
-            <i class="fas fa-check"></i> Fullført
+            <i aria-hidden="true" class="fas fa-check"></i> Fullført
           </button>
         </div>
       </div>
@@ -192,11 +192,11 @@ function renderTodaysWork() {
           ${!isVisited && kunde.telefon ? `<p class="tw-stop-phone">${escapeHtml(kunde.telefon)}</p>` : ''}
         </div>
         <div class="tw-stop-actions">
-          ${!isVisited && kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="btn btn-icon btn-small tw-action-call" title="Ring"><i class="fas fa-phone"></i></a>` : ''}
-          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" onclick="twNavigateToCustomer(${kunde.id})" title="Naviger"><i class="fas fa-directions"></i></button>` : ''}
+          ${!isVisited && kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="btn btn-icon btn-small tw-action-call" title="Ring"><i aria-hidden="true" class="fas fa-phone"></i></a>` : ''}
+          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" onclick="twNavigateToCustomer(${kunde.id})" title="Naviger"><i aria-hidden="true" class="fas fa-directions"></i></button>` : ''}
           ${isVisited
-            ? '<span class="tw-visited-check"><i class="fas fa-check-circle"></i></span>'
-            : `<button class="btn btn-icon btn-small tw-action-visit" onclick="twMarkVisited(${kunde.id})" title="Marker besøkt"><i class="fas fa-check"></i></button>`
+            ? '<span class="tw-visited-check"><i aria-hidden="true" class="fas fa-check-circle"></i></span>'
+            : `<button class="btn btn-icon btn-small tw-action-visit" onclick="twMarkVisited(${kunde.id})" title="Marker besøkt"><i aria-hidden="true" class="fas fa-check"></i></button>`
           }
         </div>
       </div>
@@ -216,9 +216,9 @@ function renderTodaysWork() {
     html += `
       <div class="tw-visited-section">
         <button class="tw-visited-toggle" onclick="this.parentElement.classList.toggle('expanded')">
-          <i class="fas fa-check-circle"></i>
+          <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Besøkt (${visitedStops.length})</span>
-          <i class="fas fa-chevron-down tw-visited-chevron"></i>
+          <i aria-hidden="true" class="fas fa-chevron-down tw-visited-chevron"></i>
         </button>
         <div class="tw-visited-list">
           ${visitedStops.join('')}

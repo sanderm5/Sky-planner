@@ -659,6 +659,164 @@ router.get(
 );
 
 /**
+ * POST /api/klient/sso
+ * Validates a one-time SSO token from the web app and sets an auth cookie.
+ * Uses POST to prevent token from leaking in URL, browser history, and server logs.
+ * This enables cross-domain SSO when web and app are on different domains.
+ */
+
+// Rate limiting for SSO endpoint
+const ssoAttempts = new Map<string, { count: number; firstAttempt: number }>();
+const SSO_RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const SSO_MAX_ATTEMPTS = 10;
+
+function isSsoRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const attempts = ssoAttempts.get(ip);
+
+  if (!attempts || now - attempts.firstAttempt >= SSO_RATE_LIMIT_WINDOW) {
+    ssoAttempts.set(ip, { count: 1, firstAttempt: now });
+    return false;
+  }
+
+  attempts.count++;
+  return attempts.count > SSO_MAX_ATTEMPTS;
+}
+
+router.post(
+  '/sso',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+
+    // Rate limiting
+    if (isSsoRateLimited(ip)) {
+      authLogger.warn({ ip }, 'SSO rate limit exceeded');
+      return res.redirect('/?error=rate_limited');
+    }
+
+    const { token } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      return res.redirect('/?error=missing_sso_token');
+    }
+
+    // Validate token format (64 hex chars)
+    if (!/^[a-f0-9]{64}$/.test(token)) {
+      return res.redirect('/?error=invalid_sso_token');
+    }
+
+    const crypto = await import('crypto');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Look up and validate token from database
+    const { getSupabaseClient } = await import('@skyplanner/database');
+    const supabase = getSupabaseClient();
+
+    const { data: ssoRecord, error: ssoError } = await supabase
+      .from('sso_tokens')
+      .select('*')
+      .eq('token_hash', tokenHash)
+      .single();
+
+    if (ssoError || !ssoRecord) {
+      return res.redirect('/?error=invalid_sso_token');
+    }
+
+    // Check expiration BEFORE deleting (correct order)
+    if (new Date(ssoRecord.expires_at) < new Date()) {
+      // Delete expired token
+      await supabase.from('sso_tokens').delete().eq('id', ssoRecord.id);
+      return res.redirect('/?error=sso_token_expired');
+    }
+
+    // Delete token immediately (one-time use)
+    await supabase.from('sso_tokens').delete().eq('id', ssoRecord.id);
+
+    // Verify IP binding — token must be redeemed from same IP that created it
+    if (ssoRecord.ip_hash) {
+      const currentIpHash = crypto.createHash('sha256').update(ip).digest('hex');
+      if (currentIpHash !== ssoRecord.ip_hash) {
+        authLogger.warn({ ip, userId: ssoRecord.user_id }, 'SSO token IP mismatch');
+        return res.redirect('/?error=invalid_sso_token');
+      }
+    }
+
+    // Fetch user and organization
+    let user: KlientRecord | BrukerRecord | null = null;
+    const userType: 'klient' | 'bruker' = ssoRecord.user_type || 'klient';
+    const tableName = userType === 'klient' ? 'klient' : 'brukere';
+
+    // Get user email by ID, then fetch full user record via dbService
+    const { data: userRecord } = await supabase
+      .from(tableName)
+      .select('epost')
+      .eq('id', ssoRecord.user_id)
+      .single();
+
+    if (userRecord?.epost) {
+      if (userType === 'klient') {
+        user = await dbService.getKlientByEpost(userRecord.epost);
+      } else {
+        user = await dbService.getBrukerByEpost(userRecord.epost);
+      }
+    }
+
+    if (!user || !user.aktiv) {
+      return res.redirect('/?error=account_inactive');
+    }
+
+    let organization: OrganizationRecord | null = null;
+    if (ssoRecord.organization_id) {
+      organization = await dbService.getOrganizationById(ssoRecord.organization_id);
+    }
+
+    // Generate JWT token
+    const tokenPayload: Omit<JWTPayload, 'iat' | 'exp'> = {
+      userId: user.id,
+      epost: user.epost,
+      organizationId: ssoRecord.organization_id,
+      organizationSlug: organization?.slug,
+      type: userType,
+      subscriptionStatus: organization?.subscription_status,
+      subscriptionPlan: organization?.plan_type,
+      trialEndsAt: organization?.trial_ends_at,
+      currentPeriodEnd: organization?.current_period_end,
+    };
+    const jwtToken = generateToken(tokenPayload, '24h');
+
+    // Track active session
+    const userAgent = req.headers['user-agent'] || '';
+    const decoded = jwt.decode(jwtToken) as JWTPayload;
+    if (decoded?.jti) {
+      try {
+        await dbService.createSession({
+          userId: user.id,
+          userType,
+          jti: decoded.jti,
+          ipAddress: ip,
+          userAgent,
+          deviceInfo: parseDeviceInfo(userAgent),
+          expiresAt: new Date(Date.now() + SESSION_DURATION_MS),
+        });
+      } catch (err) {
+        authLogger.error({ err }, 'Failed to create SSO session record');
+      }
+    }
+
+    // Set httpOnly auth cookie
+    const isProduction = getConfig().NODE_ENV === 'production';
+    const cookieConfig = getCookieConfig(isProduction);
+    const cookieHeader = buildSetCookieHeader(jwtToken, cookieConfig.options);
+    res.setHeader('Set-Cookie', cookieHeader);
+
+    authLogger.info({ userId: user.id, userType }, 'SSO login successful');
+
+    // Redirect to app frontend
+    res.redirect('/');
+  })
+);
+
+/**
  * Escape HTML entities for safe embedding in email templates
  */
 function escapeHtmlForEmail(text: string): string {

@@ -94,27 +94,27 @@ function renderGettingStartedBanner() {
         <p>Legg til dine kunder for å komme i gang.</p>
       </div>
       <button class="getting-started-close" data-action="dismiss-getting-started" title="Lukk">
-        <i class="fas fa-times"></i>
+        <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
     <div class="getting-started-cards">
       <div class="getting-started-card" data-action="open-integrations" data-url="${escapeHtml(webUrl)}/dashboard/innstillinger/integrasjoner">
         <div class="getting-started-card-icon">
-          <i class="fas fa-plug"></i>
+          <i aria-hidden="true" class="fas fa-plug"></i>
         </div>
         <h3>Koble til regnskapssystem</h3>
         <p>Synkroniser kunder fra Tripletex, Fiken eller PowerOffice.</p>
       </div>
       <div class="getting-started-card" data-action="contact-import" data-url="mailto:support@skyplanner.no?subject=Hjelp med dataimport">
         <div class="getting-started-card-icon">
-          <i class="fas fa-file-import"></i>
+          <i aria-hidden="true" class="fas fa-file-import"></i>
         </div>
         <h3>Importer eksisterende data</h3>
         <p>Har du data i Excel eller annet format? Kontakt oss, s&aring; hjelper vi deg.</p>
       </div>
       <div class="getting-started-card" data-action="add-customer-manual">
         <div class="getting-started-card-icon">
-          <i class="fas fa-plus-circle"></i>
+          <i aria-hidden="true" class="fas fa-plus-circle"></i>
         </div>
         <h3>Legg til manuelt</h3>
         <p>Opprett kunder en og en direkte i systemet.</p>
@@ -160,7 +160,7 @@ function renderOmradeFilter() {
         ${omrader.map(o => `<option value="${escapeHtml(o.poststed)}">${escapeHtml(o.poststed)} (${o.antall})</option>`).join('')}
       </select>
       <button id="showOverdueInAreaBtn" class="btn btn-small btn-warning" style="display:none;white-space:nowrap;" title="Vis forfalte i området på kartet">
-        <i class="fas fa-exclamation-triangle"></i>
+        <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
       </button>
     </div>
   `;

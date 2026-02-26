@@ -82,7 +82,7 @@ function renderDashboardCategories(categoryStats) {
     const count = categoryStats[st.name] || 0;
     html += `
       <div class="category-stat">
-        <i class="fas ${st.icon}" style="color: ${st.color}"></i>
+        <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>
         <span class="cat-name">${st.name}</span>
         <span class="cat-count">${count}</span>
       </div>
@@ -93,7 +93,7 @@ function renderDashboardCategories(categoryStats) {
   const combinedName = serviceTypes.map(st => st.name).join(' + ');
   const combinedCount = categoryStats[combinedName] || 0;
   if (combinedCount > 0) {
-    const icons = serviceTypes.map(st => `<i class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
+    const icons = serviceTypes.map(st => `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
     html += `
       <div class="category-stat">
         ${icons}

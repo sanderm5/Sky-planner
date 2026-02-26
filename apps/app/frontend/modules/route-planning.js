@@ -121,7 +121,7 @@ async function planSimpleRoute(customerData) {
       drawRouteFromGeoJSON(feature);
 
       // Add start marker (company location)
-      const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+      const startEl = createMarkerElement('route-marker route-start', '<i aria-hidden="true" class="fas fa-home"></i>', [30, 30]);
       const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
         .setLngLat(startLngLat)
         .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
@@ -203,7 +203,7 @@ async function drawRoute(orderedCustomers) {
   }
 
   // Add start marker
-  const startEl = createMarkerElement('route-marker route-start', '<i class="fas fa-home"></i>', [30, 30]);
+  const startEl = createMarkerElement('route-marker route-start', '<i aria-hidden="true" class="fas fa-home"></i>', [30, 30]);
   const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
     .setLngLat(startLngLat)
     .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))

@@ -112,7 +112,7 @@ function initExcelImport() {
 
     // Show loading state
     dropzone.innerHTML = `
-      <i class="fas fa-spinner fa-spin"></i>
+      <i aria-hidden="true" class="fas fa-spinner fa-spin"></i>
       <p>Analyserer fil...</p>
       <span class="import-formats">${file.name}</span>
     `;
@@ -154,7 +154,7 @@ function initExcelImport() {
 
   function resetDropzone() {
     dropzone.innerHTML = `
-      <i class="fas fa-cloud-upload-alt"></i>
+      <i aria-hidden="true" class="fas fa-cloud-upload-alt"></i>
       <p>Dra og slipp fil her, eller klikk for å velge</p>
       <span class="import-formats">Støttede formater: .xlsx, .xls, .csv (maks 10MB)</span>
     `;
@@ -199,7 +199,7 @@ function initExcelImport() {
           <strong>${escapeHtml(col.excelHeader)}</strong>
           <span class="sample-values">${col.sampleValues.map(v => escapeHtml(v)).join(', ') || 'Ingen verdier'}</span>
         </div>
-        <i class="fas fa-arrow-right mapping-arrow"></i>
+        <i aria-hidden="true" class="fas fa-arrow-right mapping-arrow"></i>
         <div class="mapping-db">
           <select class="column-select" data-excel="${escapeHtml(col.excelHeader)}">
             ${dbFields.map(f => `
@@ -319,7 +319,7 @@ function initExcelImport() {
           <input type="checkbox" class="schema-item-checkbox" id="newCat_${idx}" data-category="${escapeHtml(cat.name)}" checked>
           <div class="schema-item-color" style="background-color: ${cat.color}"></div>
           <div class="schema-item-icon">
-            <i class="fas ${cat.icon}"></i>
+            <i aria-hidden="true" class="fas ${cat.icon}"></i>
           </div>
           <div class="schema-item-info">
             <label for="newCat_${idx}" class="schema-item-name">${escapeHtml(cat.name)}</label>
@@ -445,10 +445,10 @@ function initExcelImport() {
       }[row.status] || '';
 
       const statusIcon = {
-        'valid': '<i class="fas fa-plus-circle"></i>',
-        'warning': '<i class="fas fa-exclamation-triangle"></i>',
-        'error': '<i class="fas fa-times-circle"></i>',
-        'duplicate': '<i class="fas fa-sync-alt"></i>'
+        'valid': '<i aria-hidden="true" class="fas fa-plus-circle"></i>',
+        'warning': '<i aria-hidden="true" class="fas fa-exclamation-triangle"></i>',
+        'error': '<i aria-hidden="true" class="fas fa-times-circle"></i>',
+        'duplicate': '<i aria-hidden="true" class="fas fa-sync-alt"></i>'
       }[row.status] || '';
 
       const statusText = {
@@ -467,7 +467,7 @@ function initExcelImport() {
           <td class="info-cell">
             ${row.issues.length > 0 ?
               `<span class="issues-tooltip" title="${row.issues.map(i => escapeHtml(i)).join('\n')}">
-                <i class="fas fa-info-circle"></i> ${row.issues.length} melding${row.issues.length > 1 ? 'er' : ''}
+                <i aria-hidden="true" class="fas fa-info-circle"></i> ${row.issues.length} melding${row.issues.length > 1 ? 'er' : ''}
               </span>` : '-'}
           </td>
         </tr>
@@ -639,7 +639,7 @@ function initExcelImport() {
     const title = document.getElementById('importResultTitle');
 
     if (success) {
-      icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+      icon.innerHTML = '<i aria-hidden="true" class="fas fa-check-circle"></i>';
       icon.className = 'result-icon success';
       title.textContent = 'Import fullført!';
 
@@ -671,7 +671,7 @@ function initExcelImport() {
         noteEl.classList.add('hidden');
       }
     } else {
-      icon.innerHTML = '<i class="fas fa-times-circle"></i>';
+      icon.innerHTML = '<i aria-hidden="true" class="fas fa-times-circle"></i>';
       icon.className = 'result-icon error';
       title.textContent = 'Import feilet';
 

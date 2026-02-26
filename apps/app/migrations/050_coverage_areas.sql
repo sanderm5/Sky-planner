@@ -27,16 +27,16 @@ ALTER TABLE coverage_areas ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "coverage_areas_tenant_select" ON coverage_areas;
 CREATE POLICY "coverage_areas_tenant_select" ON coverage_areas
-  FOR SELECT USING (organization_id = current_setting('app.current_organization_id', true)::int);
+  FOR SELECT USING (organization_id = (select current_setting('app.current_organization_id', true)::int));
 
 DROP POLICY IF EXISTS "coverage_areas_tenant_insert" ON coverage_areas;
 CREATE POLICY "coverage_areas_tenant_insert" ON coverage_areas
-  FOR INSERT WITH CHECK (organization_id = current_setting('app.current_organization_id', true)::int);
+  FOR INSERT WITH CHECK (organization_id = (select current_setting('app.current_organization_id', true)::int));
 
 DROP POLICY IF EXISTS "coverage_areas_tenant_update" ON coverage_areas;
 CREATE POLICY "coverage_areas_tenant_update" ON coverage_areas
-  FOR UPDATE USING (organization_id = current_setting('app.current_organization_id', true)::int);
+  FOR UPDATE USING (organization_id = (select current_setting('app.current_organization_id', true)::int));
 
 DROP POLICY IF EXISTS "coverage_areas_tenant_delete" ON coverage_areas;
 CREATE POLICY "coverage_areas_tenant_delete" ON coverage_areas
-  FOR DELETE USING (organization_id = current_setting('app.current_organization_id', true)::int);
+  FOR DELETE USING (organization_id = (select current_setting('app.current_organization_id', true)::int));

@@ -1,7 +1,7 @@
 // Sky Planner Service Worker
 // Handles caching strategies for offline support
 
-const SHELL_CACHE = 'skyplanner-shell-v3';
+const SHELL_CACHE = 'skyplanner-shell-v5';
 const CDN_CACHE = 'skyplanner-cdn-v1';
 const TILE_CACHE = 'skyplanner-tiles-v1';
 const API_CACHE = 'skyplanner-api-v1';
@@ -12,8 +12,8 @@ const MAX_TILE_CACHE = 2000;
 const SHELL_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260222-autocomplete-v2',
-  '/style.css?v=20260222-autocomplete-v2',
+  '/app.js?v=20260226-ui-cleanup',
+  '/style.css?v=20260226-ui-cleanup',
   '/offline-storage.js?v=1',
   '/sync-manager.js?v=1',
   '/skyplanner-logo.svg',
@@ -110,7 +110,13 @@ self.addEventListener('fetch', (event) => {
   // 5. Navigation requests (HTML): network-first, fall back to cached index
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/index.html'))
+      fetch(request).then(function(response) {
+        // If server returns maintenance page, show it directly (don't fall back to cached app)
+        if (response.status === 503 && response.headers.get('X-Maintenance') === 'true') {
+          return response;
+        }
+        return response;
+      }).catch(() => caches.match('/index.html'))
     );
     return;
   }

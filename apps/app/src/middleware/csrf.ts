@@ -119,6 +119,7 @@ const EXEMPT_PATH_PREFIXES = [
   '/api/integration-webhooks', // External integration webhooks use token verification
   '/api/cron', // Cron jobs use secret verification
   '/api/docs', // API documentation is read-only
+  '/api/klient/sso', // SSO uses one-time token + IP binding for cross-domain auth
 ];
 
 /**

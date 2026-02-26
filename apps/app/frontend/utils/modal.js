@@ -231,7 +231,7 @@ function showToast(message, type = 'info', duration = 3000) {
   toast.setAttribute('role', 'status');
   toast.setAttribute('aria-live', 'polite');
   toast.innerHTML = `
-    <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}" aria-hidden="true"></i>
+    <i aria-hidden="true" class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i>
     <span>${escapeHtml(message)}</span>
   `;
 

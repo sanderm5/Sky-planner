@@ -491,7 +491,7 @@ const SmartRouteEngine = {
 
     // Marker sentroiden
     const centroidEl = createMarkerElement('cluster-centroid-marker',
-      '<div class="centroid-icon"><i class="fas fa-crosshairs"></i></div>', [30, 30]);
+      '<div class="centroid-icon"><i aria-hidden="true" class="fas fa-crosshairs"></i></div>', [30, 30]);
     const centroidMarker = new mapboxgl.Marker({ element: centroidEl })
       .setLngLat([cluster.centroid.lng, cluster.centroid.lat])
       .addTo(map);
@@ -532,10 +532,10 @@ const SmartRouteEngine = {
       const btn = card.querySelector('.rec-actions .btn-secondary');
       if (btn) {
         if (clusterId === this.selectedClusterId) {
-          btn.innerHTML = '<i class="fas fa-eye-slash"></i> Skjul';
+          btn.innerHTML = '<i aria-hidden="true" class="fas fa-eye-slash"></i> Skjul';
           card.classList.add('selected');
         } else {
-          btn.innerHTML = '<i class="fas fa-map"></i> Vis detaljer';
+          btn.innerHTML = '<i aria-hidden="true" class="fas fa-map"></i> Vis detaljer';
           card.classList.remove('selected');
         }
       }
@@ -734,7 +734,7 @@ function renderSmartRecommendations() {
 
     html += `
       <div class="rec-empty">
-        <i class="fas fa-info-circle"></i>
+        <i aria-hidden="true" class="fas fa-info-circle"></i>
         <p>${emptyMessage}</p>
         ${emptyHint ? `<p class="rec-empty-hint">${emptyHint}</p>` : ''}
         <p class="rec-empty-stats">
@@ -762,7 +762,7 @@ function renderSmartRecommendations() {
         <div class="rec-header">
           <div class="rec-title">
             <span class="rec-cluster-id">#${rec.id + 1}</span>
-            <h4><i class="fas fa-map-pin"></i> ${escapeHtml(rec.primaryArea)}</h4>
+            <h4><i aria-hidden="true" class="fas fa-map-pin"></i> ${escapeHtml(rec.primaryArea)}</h4>
           </div>
           <div class="rec-efficiency ${efficiencyClass}">
             <span class="efficiency-score">${rec.efficiencyScore}%</span>
@@ -772,20 +772,20 @@ function renderSmartRecommendations() {
 
         <div class="rec-metrics">
           <div class="metric">
-            <i class="fas fa-users"></i>
+            <i aria-hidden="true" class="fas fa-users"></i>
             <span>${rec.customerCount} kunder</span>
           </div>
           <div class="metric">
-            <i class="fas fa-road"></i>
+            <i aria-hidden="true" class="fas fa-road"></i>
             <span>~${rec.estimatedKm} km</span>
           </div>
           <div class="metric">
-            <i class="fas fa-clock"></i>
+            <i aria-hidden="true" class="fas fa-clock"></i>
             <span>~${timeStr}</span>
           </div>
           ${rec.overdueCount > 0 ? `
           <div class="metric urgency">
-            <i class="fas fa-exclamation-triangle"></i>
+            <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
             <span>${rec.overdueCount} forfalte</span>
           </div>
           ` : ''}
@@ -798,11 +798,11 @@ function renderSmartRecommendations() {
         <div class="rec-actions">
           <button class="btn btn-secondary btn-small" data-action="showClusterOnMap" data-cluster-id="${rec.id}">
             ${SmartRouteEngine.selectedClusterId === rec.id
-              ? '<i class="fas fa-eye-slash"></i> Skjul'
-              : '<i class="fas fa-map"></i> Vis detaljer'}
+              ? '<i aria-hidden="true" class="fas fa-eye-slash"></i> Skjul'
+              : '<i aria-hidden="true" class="fas fa-map"></i> Vis detaljer'}
           </button>
           <button class="btn btn-primary btn-small" data-action="createRouteFromCluster" data-cluster-id="${rec.id}">
-            <i class="fas fa-route"></i> Opprett rute
+            <i aria-hidden="true" class="fas fa-route"></i> Opprett rute
           </button>
         </div>
       </div>
@@ -812,11 +812,11 @@ function renderSmartRecommendations() {
   if (recommendations.length > 6) {
     if (SmartRouteEngine.showAllRecommendations) {
       html += `<button class="btn btn-link rec-toggle-all" data-action="toggleShowAllRecommendations">
-        <i class="fas fa-chevron-up"></i> Vis færre
+        <i aria-hidden="true" class="fas fa-chevron-up"></i> Vis færre
       </button>`;
     } else {
       html += `<button class="btn btn-link rec-toggle-all" data-action="toggleShowAllRecommendations">
-        <i class="fas fa-chevron-down"></i> Vis alle ${recommendations.length} anbefalinger
+        <i aria-hidden="true" class="fas fa-chevron-down"></i> Vis alle ${recommendations.length} anbefalinger
       </button>`;
     }
   }

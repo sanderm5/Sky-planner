@@ -26,7 +26,7 @@ function initAreaSelect() {
   btn.id = 'areaSelectToggle';
   btn.className = 'area-select-toggle-btn';
   btn.title = 'Velg område';
-  btn.innerHTML = '<i class="fas fa-expand"></i>';
+  btn.innerHTML = '<i aria-hidden="true" class="fas fa-expand"></i>';
   btn.addEventListener('click', () => toggleAreaSelect());
   toolbar.appendChild(btn);
 
@@ -173,23 +173,23 @@ function showAreaSelectMenu(selectedCustomersList, center) {
     <div class="area-select-menu-actions">
       ${showWpButton ? `
         <button class="btn btn-small asm-btn asm-btn-weekplan" id="areaAddToWeekPlan">
-          <i class="fas fa-clipboard-list"></i> ${wpDayActive ? `Legg til ${escapeHtml(wpDayLabel)}` : 'Legg til ukeplan'}
+          <i aria-hidden="true" class="fas fa-clipboard-list"></i> ${wpDayActive ? `Legg til ${escapeHtml(wpDayLabel)}` : 'Legg til ukeplan'}
         </button>
         ${wpDayPickerHtml}
       ` : ''}
       ${splitViewOpen && splitViewState.activeDay ? `
         <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToSplitDay" style="background:var(--color-primary);color:#fff;">
-          <i class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
+          <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
         </button>
       ` : ''}
       <button class="btn btn-small asm-btn asm-btn-route" id="areaAddToRoute">
-        <i class="fas fa-route"></i> Legg til rute
+        <i aria-hidden="true" class="fas fa-route"></i> Legg til rute
       </button>
       <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToCalendar">
-        <i class="fas fa-calendar-plus"></i> Legg i kalender
+        <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg i kalender
       </button>
       <button class="btn btn-small asm-btn asm-btn-check" id="areaMarkVisited">
-        <i class="fas fa-check-circle"></i> Marker besøkt
+        <i aria-hidden="true" class="fas fa-check-circle"></i> Marker besøkt
       </button>
     </div>
   `;
@@ -247,10 +247,10 @@ function showAreaSelectMenu(selectedCustomersList, center) {
           </div>
           <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="btn btn-small btn-secondary" id="asmDurationBack" style="flex:1;">
-              <i class="fas fa-arrow-left"></i> Tilbake
+              <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
             </button>
             <button class="btn btn-small btn-primary" id="asmDurationConfirm" style="flex:2;">
-              <i class="fas fa-calendar-plus"></i> Opprett ${selectedCustomersList.length} avtaler
+              <i aria-hidden="true" class="fas fa-calendar-plus"></i> Opprett ${selectedCustomersList.length} avtaler
             </button>
           </div>
         </div>
@@ -320,7 +320,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
       </div>
       <div style="display:flex;gap:8px;padding-top:4px;">
         <button class="btn btn-small btn-secondary" id="areaCalBack" style="flex:1;">
-          <i class="fas fa-arrow-left"></i> Tilbake
+          <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
         </button>
         <button class="btn btn-small btn-primary" id="areaCalConfirm" style="flex:2;">
           Opprett ${selectedCustomersList.length} avtaler

@@ -54,7 +54,7 @@ function showContextMenu({ header, items, x, y, context }) {
       menuHtml += `
       <div class="${cssClass} context-menu-parent" role="menuitem" tabindex="-1">
         <span>${item.icon ? `<i class="${item.icon}"></i> ` : ''}${escapeHtml(item.label)}</span>
-        <i class="fas fa-chevron-right context-menu-arrow"></i>
+        <i aria-hidden="true" class="fas fa-chevron-right context-menu-arrow"></i>
         <div class="context-menu-submenu" role="menu">
           ${item.children.filter(c => !c.hidden).map(child => {
             const childDataAttrs = [`data-action="${escapeHtml(child.action || '')}"`];
@@ -545,20 +545,20 @@ function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
   tooltip.innerHTML = `
     <div class="tooltip-header">${escapeHtml(customer.navn)}</div>
     <div class="tooltip-body">
-      <div class="tooltip-row"><i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.adresse || '')}${customer.postnummer ? `, ${escapeHtml(customer.postnummer)}` : ''} ${escapeHtml(customer.poststed || '')}</div>
-      ${customer.telefon ? `<div class="tooltip-row"><i class="fas fa-phone"></i> ${escapeHtml(customer.telefon)}</div>` : ''}
-      <div class="tooltip-service"><i class="fas fa-tools"></i> ${escapeHtml(serviceInfo)}</div>
+      <div class="tooltip-row"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.adresse || '')}${customer.postnummer ? `, ${escapeHtml(customer.postnummer)}` : ''} ${escapeHtml(customer.poststed || '')}</div>
+      ${customer.telefon ? `<div class="tooltip-row"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(customer.telefon)}</div>` : ''}
+      <div class="tooltip-service"><i aria-hidden="true" class="fas fa-tools"></i> ${escapeHtml(serviceInfo)}</div>
       <div class="tooltip-status ${controlStatus.class}">${escapeHtml(controlStatus.label)}</div>
     </div>
     <div class="tooltip-actions">
       <button class="tooltip-action-btn" data-action="select" title="${isSelected ? 'Fjern fra utvalg' : 'Velg kunde'}">
-        <i class="fas ${isSelected ? 'fa-check-square' : 'fa-square'}"></i>
+        <i aria-hidden="true" class="fas ${isSelected ? 'fa-check-square' : 'fa-square'}"></i>
       </button>
       <button class="tooltip-action-btn" data-action="weekplan" title="Legg til ukeplan">
-        <i class="fas fa-calendar-week"></i>
+        <i aria-hidden="true" class="fas fa-calendar-week"></i>
       </button>
       <button class="tooltip-action-btn" data-action="calendar" title="Ny avtale">
-        <i class="fas fa-calendar-plus"></i>
+        <i aria-hidden="true" class="fas fa-calendar-plus"></i>
       </button>
     </div>
   `;

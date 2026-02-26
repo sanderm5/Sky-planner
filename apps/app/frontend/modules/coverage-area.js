@@ -262,7 +262,7 @@ const CoverageAreaManager = {
     btn.id = 'coverageAreaToggle';
     btn.className = 'coverage-area-toggle-btn active';
     btn.title = 'Vis/skjul dekningsområde';
-    btn.innerHTML = '<i class="fas fa-draw-polygon"></i>';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-draw-polygon"></i>';
     btn.addEventListener('click', () => this.toggleVisibility());
     container.appendChild(btn);
   },
@@ -276,7 +276,7 @@ const CoverageAreaManager = {
     const outsideCount = [...this.customerCoverageCache.values()].filter(v => v.outsideAll).length;
     return `
       <div class="coverage-filter-row">
-        <span class="coverage-filter-label"><i class="fas fa-draw-polygon"></i> Dekning:</span>
+        <span class="coverage-filter-label"><i aria-hidden="true" class="fas fa-draw-polygon"></i> Dekning:</span>
         <button class="coverage-filter-btn ${this.filterMode === 'all' ? 'active' : ''}" data-coverage-filter="all" data-action="coverageFilterAll">Alle</button>
         <button class="coverage-filter-btn ${this.filterMode === 'inside' ? 'active' : ''}" data-coverage-filter="inside" data-action="coverageFilterInside">Innenfor (${insideCount})</button>
         <button class="coverage-filter-btn ${this.filterMode === 'outside' ? 'active' : ''}" data-coverage-filter="outside" data-action="coverageFilterOutside">Utenfor (${outsideCount})</button>

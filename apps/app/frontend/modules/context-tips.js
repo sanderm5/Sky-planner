@@ -86,7 +86,7 @@ function showTip(tip) {
     <div class="context-tip" id="contextTip-${tip.id}">
       <div class="context-tip-arrow"></div>
       <div class="context-tip-icon">
-        <i class="fas ${tip.icon}"></i>
+        <i aria-hidden="true" class="fas ${tip.icon}"></i>
       </div>
       <div class="context-tip-content">
         <h4>${escapeHtml(tip.title)}</h4>
@@ -97,7 +97,7 @@ function showTip(tip) {
           Hopp over alle
         </button>
         <button class="context-tip-btn context-tip-btn-next" onclick="dismissCurrentTip()">
-          Forstått <i class="fas fa-check"></i>
+          Forstått <i aria-hidden="true" class="fas fa-check"></i>
         </button>
       </div>
       <div class="context-tip-progress">

@@ -52,6 +52,7 @@ import publicApiV1Routes, { initPublicCustomersRoutes } from './routes/public-ap
 import webhooksRoutes from './routes/webhooks';
 import docsRoutes from './routes/docs';
 import cronRoutes from './routes/cron';
+import maintenanceRoutes from './routes/maintenance';
 import cron from 'node-cron';
 import { sendAlert, alertRateLimitExceeded } from './services/alerts';
 import integrationWebhooksRoutes from './routes/integration-webhooks';
@@ -65,6 +66,7 @@ import todaysWorkRoutes, { initTodaysWorkRoutes } from './routes/todays-work';
 import patchNotesRoutes, { initPatchNotesRoutes } from './routes/patch-notes';
 import chatRoutes, { initChatRoutes } from './routes/chat';
 import { csrfTokenMiddleware, csrfProtection, getCsrfTokenHandler } from './middleware/csrf';
+import { maintenanceMiddleware } from './middleware/maintenance';
 import { initWebSocketServer, shutdownWebSocket } from './services/websocket';
 import type { AuthenticatedRequest } from './types';
 
@@ -206,11 +208,14 @@ app.use(
 );
 
 // Body parsing
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Cookie parsing (required for CSRF)
 app.use(cookieParser());
+
+// Maintenance routes (before CSRF — uses its own CRON_SECRET auth)
+app.use('/api/maintenance', maintenanceRoutes);
 
 // CSRF token generation (ensures token is always available)
 app.use(csrfTokenMiddleware);
@@ -269,6 +274,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// Maintenance mode middleware (must be before rate limiting and routes)
+app.use(maintenanceMiddleware);
+
 // Rate limiting - skip for localhost in development
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const isLocalhost = (req: express.Request) => {
@@ -321,6 +329,8 @@ app.use('/api/klient/reset-passord', sensitiveActionLimiter);
 app.use('/api/bruker/reset-passord', sensitiveActionLimiter);
 app.use('/api/klient/2fa', sensitiveActionLimiter);
 app.use('/api/bruker/2fa', sensitiveActionLimiter);
+app.use('/api/klient/sso', sensitiveActionLimiter);
+app.use('/api/klient/verify', apiLimiter);
 
 // ===== STATIC FILES =====
 const publicPath = path.join(__dirname, '..', 'public');
@@ -403,6 +413,7 @@ app.use('/api/docs', docsRoutes);
 
 // Cron endpoints (protected by CRON_SECRET)
 app.use('/api/cron', cronRoutes);
+
 
 // Incoming integration webhooks (from Tripletex, etc. - verified by provider, no JWT)
 app.use('/api/integration-webhooks', integrationWebhooksRoutes);

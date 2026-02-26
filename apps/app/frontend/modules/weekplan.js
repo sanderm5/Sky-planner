@@ -65,7 +65,7 @@ function renderAreaBadges(dayAvtaler) {
     <div class="week-day-areas">
       ${sorted.map(([area, data]) => `
         <span class="area-badge" title="${escapeHtml(data.customers.join(', '))}">
-          <i class="fas fa-map-marker-alt"></i> ${escapeHtml(area)} (${data.count})
+          <i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(area)} (${data.count})
         </span>
       `).join('')}
     </div>
@@ -82,8 +82,8 @@ function formatMinutes(totalMin) {
   if (!totalMin || totalMin <= 0) return '';
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
-  if (h === 0) return `${m} min`;
-  return m > 0 ? `${h}t ${m}min` : `${h}t`;
+  if (h === 0) return `${m}m`;
+  return m > 0 ? `${h}t ${m}m` : `${h}t`;
 }
 
 function formatTimeOfDay(minutesOffset, startHour = 8, startMinute = 0) {
@@ -331,9 +331,9 @@ async function renderWeeklyPlan() {
   // Header: week nav
   html += `
     <div class="wp-header">
-      <button class="btn btn-small btn-secondary" data-action="weekPlanPrev" aria-label="Forrige uke"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+      <button class="btn btn-small btn-secondary" data-action="weekPlanPrev" aria-label="Forrige uke"><i aria-hidden="true" class="fas fa-chevron-left"></i></button>
       <span class="wp-week-title">Uke ${weekNum}</span>
-      <button class="btn btn-small btn-secondary" data-action="weekPlanNext" aria-label="Neste uke"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+      <button class="btn btn-small btn-secondary" data-action="weekPlanNext" aria-label="Neste uke"><i aria-hidden="true" class="fas fa-chevron-right"></i></button>
     </div>
   `;
 
@@ -345,7 +345,7 @@ async function renderWeeklyPlan() {
       `<option value="${escapeHtml(m.navn)}" ${globalAssigned === m.navn ? 'selected' : ''}>${escapeHtml(m.navn)}</option>`
     ).join('');
     html += `<div class="wp-dispatch-bar">
-      <i class="fas fa-user-hard-hat"></i>
+      <i aria-hidden="true" class="fas fa-user-hard-hat"></i>
       <span>Planlegg for:</span>
       <select class="wp-dispatch-select" id="wpDispatchSelect">
         <option value="">Meg selv</option>
@@ -357,7 +357,7 @@ async function renderWeeklyPlan() {
   // Customer search bar (always visible)
   html += `<div class="wp-search-container">
     <div class="wp-search-wrapper">
-      <i class="fas fa-search wp-search-icon"></i>
+      <i aria-hidden="true" class="fas fa-search wp-search-icon"></i>
       <input type="text" class="wp-search-input" id="wpCustomerSearch"
         placeholder="S\u00f8k kunde (navn, adresse, sted)..." autocomplete="off">
     </div>
@@ -368,22 +368,22 @@ async function renderWeeklyPlan() {
   if (weekPlanState.activeDay) {
     const dispatchName = weekPlanState.globalAssignedTo || '';
     const forWho = dispatchName ? ` for ${dispatchName}` : '';
-    html += `<div class="wp-status"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet for <strong>${weekDayLabels[weekDayKeys.indexOf(weekPlanState.activeDay)]}</strong>${forWho}</div>`;
+    html += `<div class="wp-status"><i aria-hidden="true" class="fas fa-crosshairs"></i> Dra over kunder på kartet for <strong>${weekDayLabels[weekDayKeys.indexOf(weekPlanState.activeDay)]}</strong>${forWho}</div>`;
   } else if (totalPlanned === 0) {
-    html += `<div class="wp-status muted"><i class="fas fa-hand-pointer"></i> Velg en dag for å starte</div>`;
+    html += `<div class="wp-status muted"><i aria-hidden="true" class="fas fa-hand-pointer"></i> Velg en dag for å starte</div>`;
   }
 
   // Team bar - show all employees with planned work this week
   const teamMembers = getWeekTeamMembers();
   if (teamMembers.length > 0) {
     html += `<div class="wp-team-bar">`;
-    html += `<span class="wp-team-label"><i class="fas fa-users"></i></span>`;
+    html += `<span class="wp-team-label"><i aria-hidden="true" class="fas fa-users"></i></span>`;
     for (const member of teamMembers) {
       const isActive = wpFocusedTeamMember === member.name;
       html += `<span class="wp-team-chip ${isActive ? 'active' : ''}" style="background:${member.color}" data-action="focusTeamMember" data-member-name="${escapeHtml(member.name)}" title="Vis ${escapeHtml(member.name)} på kartet" role="button" tabindex="0">${escapeHtml(member.initials)} <span class="chip-count">${member.count}</span></span>`;
     }
     if (wpFocusedTeamMember) {
-      html += `<span class="wp-team-chip" style="background:var(--bg-tertiary, #666);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i class="fas fa-times" aria-hidden="true"></i></span>`;
+      html += `<span class="wp-team-chip" style="background:var(--bg-tertiary, #666);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-times"></i></span>`;
     }
     html += `</div>`;
   }
@@ -426,7 +426,7 @@ async function renderWeeklyPlan() {
       html += `<span class="wp-time-badge">~${formatMinutes(estTotalBar)}</span>`;
     }
     if (isActive) {
-      html += `<i class="fas fa-crosshairs wp-active-icon"></i>`;
+      html += `<i aria-hidden="true" class="fas fa-crosshairs wp-active-icon"></i>`;
     }
     html += `</div>`;
 
@@ -466,8 +466,8 @@ async function renderWeeklyPlan() {
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(c.navn)}</span>
               ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
-              ${c.telefon ? `<span class="wp-item-phone"><i class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
-              <span class="wp-item-timerange"><i class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
+              ${c.telefon ? `<span class="wp-item-phone"><i aria-hidden="true" class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
+              <span class="wp-item-timerange"><i aria-hidden="true" class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
             </div>
             <div class="wp-item-meta">
               <input type="number" class="wp-time-input" value="${c.estimertTid || 30}" min="5" step="5"
@@ -495,8 +495,8 @@ async function renderWeeklyPlan() {
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(name)}</span>
               ${addr ? `<span class="wp-item-addr">${escapeHtml(addr)}</span>` : ''}
-              ${phone ? `<span class="wp-item-phone"><i class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(phone)}</span>` : ''}
-              <span class="wp-item-timerange"><i class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${exStartTime} - ${exEndTime}</span>
+              ${phone ? `<span class="wp-item-phone"><i aria-hidden="true" class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(phone)}</span>` : ''}
+              <span class="wp-item-timerange"><i aria-hidden="true" class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${exStartTime} - ${exEndTime}</span>
             </div>
             <button class="wp-remove" data-action="deleteAvtale" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" title="Slett avtale" aria-label="Fjern">&times;</button>
           </div>`;
@@ -505,7 +505,7 @@ async function renderWeeklyPlan() {
 
       // Empty active day hint
       if (!hasContent && isActive) {
-        html += `<div class="wp-empty-hint"><i class="fas fa-crosshairs"></i> Dra over kunder på kartet eller søk etter kunde</div>`;
+        html += `<div class="wp-empty-hint"><i aria-hidden="true" class="fas fa-crosshairs"></i> Dra over kunder på kartet eller søk etter kunde</div>`;
       }
 
       html += `</div>`;
@@ -522,10 +522,10 @@ async function renderWeeklyPlan() {
         html += `</div>`;
         html += `<div class="wp-day-actions">`;
         if (hasCoords && totalCount >= 3) {
-          html += `<button class="btn btn-small btn-secondary wp-opt-btn" data-action="wpOptimizeOrder" data-day="${dayKey}" title="Optimaliser rekkefølge" aria-label="Optimaliser rekkefølge"><i class="fas fa-sort-amount-down" aria-hidden="true"></i></button>`;
+          html += `<button class="btn btn-small btn-secondary wp-opt-btn" data-action="wpOptimizeOrder" data-day="${dayKey}" title="Optimaliser rekkefølge" aria-label="Optimaliser rekkefølge"><i aria-hidden="true" class="fas fa-sort-amount-down"></i></button>`;
         }
         if (hasCoords) {
-          html += `<button class="btn btn-small btn-secondary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i class="fas fa-directions" aria-hidden="true"></i> Naviger</button>`;
+          html += `<button class="btn btn-small btn-secondary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i aria-hidden="true" class="fas fa-directions"></i> Naviger</button>`;
         }
         html += `</div>`;
         html += `</div>`;
@@ -541,8 +541,8 @@ async function renderWeeklyPlan() {
   if (totalPlanned > 0) {
     html += `
       <div class="wp-actions">
-        <button class="btn btn-primary wp-save-btn" data-action="saveWeeklyPlan"><i class="fas fa-check" aria-hidden="true"></i> Opprett ${totalPlanned} avtale${totalPlanned > 1 ? 'r' : ''}</button>
-        <button class="btn btn-secondary wp-clear-btn" data-action="clearWeekPlan" aria-label="Tøm plan"><i class="fas fa-trash" aria-hidden="true"></i></button>
+        <button class="btn btn-primary wp-save-btn" data-action="saveWeeklyPlan"><i aria-hidden="true" class="fas fa-check"></i> Opprett ${totalPlanned} avtale${totalPlanned > 1 ? 'r' : ''}</button>
+        <button class="btn btn-secondary wp-clear-btn" data-action="clearWeekPlan" aria-label="Tøm plan"><i aria-hidden="true" class="fas fa-trash"></i></button>
       </div>`;
   }
 
@@ -595,7 +595,7 @@ async function renderWeeklyPlan() {
           ${alreadyAdded ? 'title="Allerede lagt til"' : ''} role="button" tabindex="0">
           <span class="wp-search-name">${escapeHtml(c.navn)}</span>
           <span class="wp-search-addr">${escapeHtml(addrText)}</span>
-          ${alreadyAdded ? '<i class="fas fa-check" style="color:var(--color-success, #10b981);"></i>' : '<i class="fas fa-plus"></i>'}
+          ${alreadyAdded ? '<i aria-hidden="true" class="fas fa-check" style="color:var(--color-success, #10b981);"></i>' : '<i aria-hidden="true" class="fas fa-plus"></i>'}
         </div>`;
       }).join('');
       resultsDiv.style.display = 'block';
@@ -694,7 +694,7 @@ async function wpLoadTravelTimes(dayKey) {
     const driveMin = Math.round(time.durationSec / 60);
     const sep = document.createElement('div');
     sep.className = 'wp-drive-separator';
-    sep.innerHTML = `<i class="fas fa-car" style="font-size:9px"></i> ${driveMin} min kjøretid`;
+    sep.innerHTML = `<i aria-hidden="true" class="fas fa-car" style="font-size:9px"></i> ${formatMinutes(driveMin) || '0m'} kjøretid`;
     item.parentNode.insertBefore(sep, item);
   });
 
@@ -826,7 +826,7 @@ function addCustomersToWeekPlan(customersList) {
       kategori: customer.kategori || null,
       lat: customer.lat || null,
       lng: customer.lng || null,
-      estimertTid: 30,
+      estimertTid: customer.estimert_tid || 30,
       addedBy: weekPlanState.globalAssignedTo || localStorage.getItem('userName') || 'admin'
     });
     added++;
@@ -889,7 +889,8 @@ async function saveWeeklyPlan() {
           kunde_id: customer.id,
           dato: date,
           beskrivelse: customer.kategori || 'Planlagt oppdrag',
-          opprettet_av: opprettetAv
+          opprettet_av: opprettetAv,
+          varighet: customer.estimertTid || 30
         };
         const response = await apiFetch('/api/avtaler', {
           method: 'POST',
@@ -1263,28 +1264,28 @@ function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
     </div>
     <div class="wp-route-stats">
       <div class="wp-route-stat">
-        <i class="fas fa-car" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-car"></i>
         <span>Kjøretid: ~${formatMinutes(drivingMin)}</span>
       </div>
       <div class="wp-route-stat">
-        <i class="fas fa-user-clock" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-user-clock"></i>
         <span>Hos kunder: ~${formatMinutes(customerMin)}</span>
       </div>
       <div class="wp-route-stat total">
-        <i class="fas fa-clock" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-clock"></i>
         <span>Totalt: ~${formatMinutes(totalMin)}</span>
       </div>
       <div class="wp-route-stat">
-        <i class="fas fa-road" aria-hidden="true"></i>
+        <i aria-hidden="true" class="fas fa-road"></i>
         <span>${km} km</span>
       </div>
     </div>
     <div class="wp-route-actions">
       <button class="btn btn-small btn-primary" data-action="wpExportMaps" data-day="${dayKey}">
-        <i class="fas fa-external-link-alt" aria-hidden="true"></i> Åpne i Maps
+        <i aria-hidden="true" class="fas fa-external-link-alt"></i> Åpne i Maps
       </button>
       <button class="btn btn-small btn-secondary" data-action="closeWpRoute">
-        <i class="fas fa-times" aria-hidden="true"></i> Lukk rute
+        <i aria-hidden="true" class="fas fa-times"></i> Lukk rute
       </button>
     </div>
   `;
@@ -1351,16 +1352,16 @@ function showCalendarQuickMenu(customerId, customerName, anchorEl) {
   menu.innerHTML = `
     <div class="quick-menu-header">${escapeHtml(customerName)}</div>
     <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(today)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-day" aria-hidden="true"></i> I dag (${today.getDate()}.${today.getMonth() + 1})
+      <i aria-hidden="true" class="fas fa-calendar-day"></i> I dag (${today.getDate()}.${today.getMonth() + 1})
     </div>
     <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(tomorrow)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-day" aria-hidden="true"></i> I morgen (${tomorrow.getDate()}.${tomorrow.getMonth() + 1})
+      <i aria-hidden="true" class="fas fa-calendar-day"></i> I morgen (${tomorrow.getDate()}.${tomorrow.getMonth() + 1})
     </div>
     <div class="quick-menu-item" data-action="quickAddAvtale" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" data-quick-date="${formatDateISO(nextMonday)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-week" aria-hidden="true"></i> Neste mandag (${nextMonday.getDate()}.${nextMonday.getMonth() + 1})
+      <i aria-hidden="true" class="fas fa-calendar-week"></i> Neste mandag (${nextMonday.getDate()}.${nextMonday.getMonth() + 1})
     </div>
     <div class="quick-menu-item" data-action="addCustomerToCalendar" data-customer-id="${customerId}" data-customer-name="${escapeHtml(customerName)}" role="button" tabindex="0">
-      <i class="fas fa-calendar-alt" aria-hidden="true"></i> Velg dato...
+      <i aria-hidden="true" class="fas fa-calendar-alt"></i> Velg dato...
     </div>
   `;
 

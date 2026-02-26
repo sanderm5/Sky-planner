@@ -122,7 +122,12 @@ function editCustomer(id) {
   // Fyll org_nummer fra dedikert felt, eller fallback til [ORGNR:] tag i notater
   const orgNrValue = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]) || '';
   document.getElementById('org_nummer').value = orgNrValue;
-  document.getElementById('estimert_tid').value = customer.estimert_tid || '';
+  // Set estimated time (hours + minutes inputs)
+  if (window.setEstimertTidFromMinutes) {
+    window.setEstimertTidFromMinutes(customer.estimert_tid || 0);
+  } else {
+    document.getElementById('estimert_tid').value = customer.estimert_tid || '';
+  }
   document.getElementById('telefon').value = customer.telefon || '';
   document.getElementById('epost').value = customer.epost || '';
   const trimDate = (v) => appConfig.datoModus === 'month_year' && v && v.length >= 7 ? v.substring(0, 7) : (v || '');
@@ -130,8 +135,8 @@ function editCustomer(id) {
   document.getElementById('neste_kontroll').value = trimDate(customer.neste_kontroll);
   document.getElementById('kontroll_intervall').value = customer.kontroll_intervall_mnd || 12;
   document.getElementById('notater').value = (customer.notater || '').replace(/\[ORGNR:\d{9}\]\s*/g, '').replace(/^\s*\|\s*/, '').trim();
-  document.getElementById('lat').value = customer.lat || '';
-  document.getElementById('lng').value = customer.lng || '';
+  document.getElementById('lat').value = customer.lat ? Number(customer.lat).toFixed(6) : '';
+  document.getElementById('lng').value = customer.lng ? Number(customer.lng).toFixed(6) : '';
 
   // Update geocode quality badge
   updateGeocodeQualityBadge(customer.geocode_quality || (customer.lat ? 'exact' : null));
@@ -457,6 +462,10 @@ async function addCustomer() {
   customerForm.reset();
   document.getElementById('customerId').value = '';
   document.getElementById('kontroll_intervall').value = 12;
+  // Clear estimated time
+  if (window.setEstimertTidFromMinutes) {
+    window.setEstimertTidFromMinutes(0);
+  }
   document.getElementById('lat').value = '';
   document.getElementById('lng').value = '';
   updateGeocodeQualityBadge(null);
@@ -636,8 +645,8 @@ async function saveCustomer(e) {
     if (coords) {
       lat = coords.lat;
       lng = coords.lng;
-      document.getElementById('lat').value = lat;
-      document.getElementById('lng').value = lng;
+      document.getElementById('lat').value = lat.toFixed(6);
+      document.getElementById('lng').value = lng.toFixed(6);
     }
   }
 
@@ -655,6 +664,10 @@ async function saveCustomer(e) {
 
   const hasEl = selectedSlugs.includes('el-kontroll');
   const hasBrann = selectedSlugs.includes('brannvarsling');
+
+  // Parse services FØR vi leser legacy-felt, fordi parseServiceFormData()
+  // kopierer datoer til legacy-feltene for default-kategorien (id=0)
+  const parsedServices = serviceTypeRegistry.parseServiceFormData();
 
   const data = {
     navn: document.getElementById('navn').value,
@@ -682,7 +695,7 @@ async function saveCustomer(e) {
     neste_brann_kontroll: hasBrann ? (normalizeDateValue(document.getElementById('neste_brann_kontroll').value) || (_editingCustomer?.neste_brann_kontroll || null)) : null,
     brann_kontroll_intervall: hasBrann ? (Number.parseInt(document.getElementById('brann_kontroll_intervall').value) || (_editingCustomer?.brann_kontroll_intervall || 12)) : null,
     // Dynamiske tjeneste-datoer fra dynamiske seksjoner
-    services: serviceTypeRegistry.parseServiceFormData(),
+    services: parsedServices,
     // Custom organization fields
     custom_data: JSON.stringify(collectCustomFieldValues())
   };
@@ -710,7 +723,8 @@ async function saveCustomer(e) {
       return;
     }
 
-    const savedCustomerId = customerId || result.id;
+    const kundeData = result.data || result;
+    const savedCustomerId = customerId || kundeData.id;
 
     // Close modal and show notification immediately — don't block on secondary saves
     releaseCustomer(currentClaimedKundeId);
@@ -806,8 +820,8 @@ async function handleGeocode() {
   geocodeBtn.disabled = false;
 
   if (result) {
-    document.getElementById('lat').value = result.lat;
-    document.getElementById('lng').value = result.lng;
+    document.getElementById('lat').value = result.lat.toFixed(6);
+    document.getElementById('lng').value = result.lng.toFixed(6);
     updateGeocodeQualityBadge('exact');
     showNotification('Koordinater funnet!', 'success');
   } else {
@@ -838,7 +852,7 @@ function enableCoordinatePicking() {
   // Show indicator
   pickingIndicator = document.createElement('div');
   pickingIndicator.className = 'picking-mode-indicator';
-  pickingIndicator.innerHTML = '<i class="fas fa-crosshairs"></i> Klikk på kartet for å velge posisjon';
+  pickingIndicator.innerHTML = '<i aria-hidden="true" class="fas fa-crosshairs"></i> Klikk på kartet for å velge posisjon';
   document.body.appendChild(pickingIndicator);
 
   // Add click handler to map

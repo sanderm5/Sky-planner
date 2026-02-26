@@ -13,7 +13,7 @@ Dette er en **monorepo** med Turborepo og pnpm workspaces.
 /
 ├── apps/
 │   ├── app/     → Backend API + Kart-applikasjon (Express.js + TypeScript)
-│   └── web/     → Marketing-nettside + Dashboard (Astro)
+│   └── web/     → Marketing-nettside + Dashboard (Next.js 15 + React 19)
 ├── packages/
 │   ├── auth/    → Delt autentisering (JWT, cookies, TOTP, passordvalidering)
 │   ├── database/→ Delt database-logikk (Supabase)
@@ -60,7 +60,7 @@ Offentlig nettside og bruker-dashboard med:
 - API-nøkler, integrasjoner og webhooks-administrasjon
 - GDPR-kontoførespørsel om sletting (30 dagers utsettelse)
 
-**Stack:** Astro 5, Tailwind CSS, Stripe
+**Stack:** Next.js 15 (App Router), React 19, Tailwind CSS, Stripe
 
 ---
 
@@ -128,7 +128,7 @@ pnpm typecheck
 
 **Viktig:** `JWT_SECRET` må være identisk på Vercel og Railway for at SSO/proxy skal fungere.
 
-Web-appen proxyer API-kall via `/api/app/...` → Railway backend `/api/...` (se `apps/web/src/pages/api/app/[...path].ts`).
+Web-appen proxyer API-kall via `/api/app/...` → Railway backend `/api/...` (se `apps/web/src/app/api/app/[...path]/route.ts`).
 
 ---
 

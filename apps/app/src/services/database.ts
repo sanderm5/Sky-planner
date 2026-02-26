@@ -98,6 +98,26 @@ interface SupabaseService {
     notater?: string | null;
   }>): Promise<unknown[]>;
   deactivateCustomerServices(kundeId: number, activeServiceTypeIds: number[]): Promise<void>;
+
+  // Ruter (routes)
+  getAllRuter(organizationId: number): Promise<(Rute & { antall_kunder: number })[]>;
+  getRuteById(id: number): Promise<(Rute & { kunder?: (Kunde & { rekkefolge: number })[] }) | null>;
+  createRute(data: Partial<Rute> & { kunde_ids?: number[] }): Promise<Rute>;
+  updateRute(id: number, data: Partial<Rute> & { kunde_ids?: number[] }): Promise<Rute | null>;
+  deleteRute(id: number): Promise<{ success: boolean }>;
+  completeRute(id: number, dato: string): Promise<{ success: boolean; oppdaterte_kunder: number }>;
+
+  // Kontaktlogg
+  getKontaktloggByKunde(kundeId: number, organizationId: number): Promise<Kontaktlogg[]>;
+  createKontaktlogg(data: Partial<Kontaktlogg> & { kunde_id: number; organization_id?: number }): Promise<Kontaktlogg>;
+  deleteKontaktlogg(id: number): Promise<{ success: boolean }>;
+
+  // Email
+  getEmailInnstillinger(kundeId: number): Promise<EmailInnstilling | null>;
+  updateEmailInnstillinger(kundeId: number, data: Partial<EmailInnstilling>): Promise<void>;
+  getEmailHistorikk(organizationId: number, kundeId?: number | null, limit?: number): Promise<EmailVarsel[]>;
+  getEmailStats(organizationId: number): Promise<{ pending: number; sent: number; failed: number }>;
+  getUpcomingEmails(organizationId: number, daysAhead: number): Promise<(Kunde & { dager_til_kontroll: number })[]>;
 }
 
 interface KlientRecord {
@@ -3246,6 +3266,10 @@ class DatabaseService {
   // ============ KONTAKTLOGG METHODS ============
 
   async getKontaktloggByKunde(kundeId: number, organizationId: number): Promise<Kontaktlogg[]> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getKontaktloggByKunde(kundeId, organizationId);
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     // Sikkerhet: Alltid filtrer på organization_id for å forhindre data-lekkasje
@@ -3257,6 +3281,10 @@ class DatabaseService {
   }
 
   async createKontaktlogg(data: Partial<Kontaktlogg> & { kunde_id: number; organization_id: number }): Promise<Kontaktlogg> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.createKontaktlogg(data);
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const stmt = this.sqlite.prepare(`
@@ -3279,6 +3307,11 @@ class DatabaseService {
   async deleteKontaktlogg(id: number, organizationId: number): Promise<boolean> {
     this.validateTenantContext(organizationId, 'deleteKontaktlogg');
 
+    if (this.type === 'supabase' && this.supabase) {
+      await this.supabase.deleteKontaktlogg(id);
+      return true;
+    }
+
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const sql = 'DELETE FROM kontaktlogg WHERE id = ? AND organization_id = ?';
@@ -3290,6 +3323,9 @@ class DatabaseService {
   // ============ EMAIL METHODS ============
 
   async getEmailInnstillinger(kundeId: number): Promise<EmailInnstilling | null> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getEmailInnstillinger(kundeId);
+    }
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const result = this.sqlite.prepare('SELECT * FROM email_innstillinger WHERE kunde_id = ?').get(kundeId);
@@ -3297,6 +3333,9 @@ class DatabaseService {
   }
 
   async updateEmailInnstillinger(kundeId: number, data: Partial<EmailInnstilling>): Promise<void> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.updateEmailInnstillinger(kundeId, data);
+    }
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const existing = this.sqlite.prepare('SELECT id FROM email_innstillinger WHERE kunde_id = ?').get(kundeId);
@@ -3326,6 +3365,9 @@ class DatabaseService {
   }
 
   async getEmailHistorikk(organizationId: number, kundeId?: number | null, limit = 100): Promise<EmailVarsel[]> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getEmailHistorikk(organizationId, kundeId, limit);
+    }
     if (!this.sqlite) throw new Error('Database not initialized');
 
     // Sikkerhet: Alltid filtrer på organization_id for å forhindre data-lekkasje
@@ -3347,6 +3389,9 @@ class DatabaseService {
   }
 
   async getEmailStats(organizationId: number): Promise<{ pending: number; sent: number; failed: number }> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getEmailStats(organizationId);
+    }
     if (!this.sqlite) throw new Error('Database not initialized');
 
     // Sikkerhet: Kun tell e-poster for denne organisasjonen
@@ -3368,6 +3413,9 @@ class DatabaseService {
   }
 
   async getUpcomingEmails(organizationId: number, daysAhead: number): Promise<(Kunde & { dager_til_kontroll: number })[]> {
+    if (this.type === 'supabase' && this.supabase) {
+      return this.supabase.getUpcomingEmails(organizationId, daysAhead);
+    }
     if (!this.sqlite) throw new Error('Database not initialized');
 
     // Sikkerhet: Kun hent kunder for denne organisasjonen
@@ -6260,7 +6308,6 @@ class DatabaseService {
     if (!this.sqlite) throw new Error('Database not initialized');
 
     const now = new Date();
-    const today = now.toISOString().slice(0, 10);
     // Forfalt = kun når kontrollens måned er passert (første dag i inneværende måned)
     const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
     const in30 = new Date();

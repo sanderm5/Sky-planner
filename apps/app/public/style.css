@@ -893,6 +893,20 @@ a:hover {
   color: var(--color-text-primary);
 }
 
+.user-bar .user-bar-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-bar .user-bar-top .user-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .user-bar .user-bar-actions {
   display: flex;
   align-items: center;
@@ -1000,6 +1014,29 @@ a:hover {
   background: #dc2626;
 }
 
+.user-bar .dashboard-link-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: all 0.15s ease;
+  justify-content: center;
+}
+
+.user-bar .dashboard-link-btn:hover {
+  background: var(--color-accent-subtle, rgba(59, 130, 246, 0.1));
+  border-color: var(--color-accent, #3B82F6);
+  color: var(--color-accent, #3B82F6);
+}
+
 .user-bar .nightmode-btn,
 .user-bar .logout-btn,
 .user-bar .web-link-btn {
@@ -1043,10 +1080,18 @@ a:hover {
   background: rgba(34, 197, 94, 0.1);
 }
 
+.user-bar .logout-btn {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  flex: 1;
+  justify-content: center;
+}
+
 .user-bar .logout-btn:hover {
-  border-color: var(--color-overdue);
-  color: var(--color-overdue);
-  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+  color: #fff;
+  background: #ef4444;
 }
 
 /* Theme Toggle Button */
@@ -1106,12 +1151,22 @@ a:hover {
   padding: 10px;
 }
 
-.sidebar.collapsed .user-bar .user-name {
+.sidebar.collapsed .user-bar .user-bar-top .user-name {
   display: none;
 }
 
-.sidebar.collapsed .user-bar .logout-btn span {
+.sidebar.collapsed .user-bar .logout-btn span,
+.sidebar.collapsed .user-bar .dashboard-link-btn span {
   display: none;
+}
+
+.sidebar.collapsed .user-bar .user-bar-actions {
+  flex-direction: column;
+}
+
+.sidebar.collapsed .user-bar .dashboard-link-btn,
+.sidebar.collapsed .user-bar .logout-btn {
+  padding: 8px;
 }
 
 .sidebar-toggle {
@@ -1460,40 +1515,118 @@ a:hover {
   outline-offset: 2px;
 }
 
-/* Kategori tabs */
 /* Kategori checkbox multi-select in customer form */
 .kategori-checkbox-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .kategori-checkbox-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 6px;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 8px;
   font-size: var(--font-size-sm);
+  font-weight: 500;
   background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
+  border: 1.5px solid var(--color-border);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
   user-select: none;
 }
 
 .kategori-checkbox-label:hover {
   background: var(--color-bg-hover);
+  border-color: var(--color-text-muted, #666);
 }
 
 .kategori-checkbox-label input[type="checkbox"] {
-  margin: 0;
-  cursor: pointer;
+  display: none;
+}
+
+.kategori-checkbox-label i {
+  font-size: 14px;
+  transition: transform 0.2s ease;
 }
 
 .kategori-checkbox-label:has(input:checked) {
-  background: var(--color-accent-subtle, rgba(59, 130, 246, 0.1));
+  background: var(--color-accent-subtle, rgba(59, 130, 246, 0.12));
   border-color: var(--color-accent, #3B82F6);
+  color: var(--color-accent, #3B82F6);
+}
+
+.kategori-checkbox-label:has(input:checked) i {
+  transform: scale(1.15);
+}
+
+/* Email toggle row */
+.email-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Estimert tid presets */
+.estimert-tid-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.estimert-tid-presets {
+  display: flex;
+  gap: 4px;
+}
+
+.tid-preset {
+  flex: 1;
+  padding: 5px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--color-bg-tertiary);
+  border: 1.5px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.tid-preset:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-text-muted, #666);
+}
+
+.tid-preset.active {
+  background: var(--color-accent-subtle, rgba(59, 130, 246, 0.12));
+  border-color: var(--color-accent, #3B82F6);
+  color: var(--color-accent, #3B82F6);
+}
+
+.estimert-tid-inputs {
+  display: flex;
+  gap: 8px;
+}
+
+.tid-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.tid-input-group input {
+  width: 100%;
+  min-width: 0;
+}
+
+.tid-unit {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
 }
 
 .kategori-tabs {
@@ -9141,7 +9274,8 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
   }
 
   .user-bar .nightmode-btn,
-  .user-bar .logout-btn {
+  .user-bar .logout-btn,
+  .user-bar .dashboard-link-btn {
     padding: 8px 10px !important;
     min-width: 40px;
     min-height: 40px;
@@ -9153,8 +9287,17 @@ body.marker-dragging .category-btn:not([data-category="all"]) {
     padding: 8px 12px !important;
   }
 
-  .sidebar.collapsed .user-bar .user-name {
+  .sidebar.collapsed .user-bar .user-bar-top .user-name {
     display: block !important;
+  }
+
+  .sidebar.collapsed .user-bar .logout-btn span,
+  .sidebar.collapsed .user-bar .dashboard-link-btn span {
+    display: inline !important;
+  }
+
+  .sidebar.collapsed .user-bar .user-bar-actions {
+    flex-direction: row !important;
   }
 }
 
@@ -17330,7 +17473,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* Visually hidden but accessible to screen readers */
-.visually-hidden {
+.visually-hidden,
+.sr-only {
   position: absolute;
   width: 1px;
   height: 1px;

@@ -96,45 +96,11 @@ const SyncManager = {
   // === Status Indicator ===
 
   createStatusIndicator() {
-    // Will be added to user-bar after login
-    const check = () => {
-      const userBar = document.querySelector('.user-bar');
-      if (userBar && !document.getElementById('connectionStatus')) {
-        const indicator = document.createElement('span');
-        indicator.id = 'connectionStatus';
-        indicator.className = 'connection-status';
-        indicator.title = this.isOnline ? 'Tilkoblet' : 'Frakoblet';
-        indicator.innerHTML = this.isOnline
-          ? '<i class="fas fa-wifi"></i>'
-          : '<i class="fas fa-wifi" style="opacity:0.4;"></i>';
-        // Insert before logout button
-        const logoutBtn = userBar.querySelector('.logout-btn');
-        if (logoutBtn) {
-          userBar.insertBefore(indicator, logoutBtn);
-        } else {
-          userBar.appendChild(indicator);
-        }
-      }
-    };
-
-    // Try immediately and retry after app init
-    check();
-    setTimeout(check, 3000);
+    // Removed — wifi indicator no longer shown in user bar
   },
 
   updateStatusIndicator() {
-    const indicator = document.getElementById('connectionStatus');
-    if (!indicator) return;
-
-    if (this.isOnline) {
-      indicator.innerHTML = '<i class="fas fa-wifi"></i>';
-      indicator.title = 'Tilkoblet';
-      indicator.style.color = '#22c55e';
-    } else {
-      indicator.innerHTML = '<i class="fas fa-wifi" style="opacity:0.4;"></i>';
-      indicator.title = 'Frakoblet';
-      indicator.style.color = '#ef4444';
-    }
+    // Removed — wifi indicator no longer shown in user bar
   },
 
   // === Banner Notifications ===

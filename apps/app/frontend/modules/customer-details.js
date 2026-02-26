@@ -69,7 +69,7 @@ function showOverdueOnMap() {
   // Show notification
   const notification = document.createElement('div');
   notification.className = 'map-notification';
-  notification.innerHTML = `<i class="fas fa-map-marker-alt"></i> Viser ${overdueCustomers.length} forfalte kunder på kartet`;
+  notification.innerHTML = `<i aria-hidden="true" class="fas fa-map-marker-alt"></i> Viser ${overdueCustomers.length} forfalte kunder på kartet`;
   document.querySelector('.map-container')?.appendChild(notification);
   setTimeout(() => notification.remove(), 3000);
 }
@@ -215,7 +215,7 @@ async function loadEmailUpcoming() {
                     data-action="sendEmail"
                     data-customer-id="${item.id}"
                     title="${hasEmail ? 'Send e-post' : 'Ingen e-post registrert'}">
-              <i class="fas fa-envelope"></i>
+              <i aria-hidden="true" class="fas fa-envelope"></i>
             </button>
             <span class="upcoming-days ${daysClass}">${daysText}</span>
           </div>
@@ -321,7 +321,7 @@ async function sendTestEmail() {
   const btn = document.getElementById('sendTestEmailBtn');
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Sender...';
   }
 
   try {
@@ -345,7 +345,7 @@ async function sendTestEmail() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-paper-plane"></i> Send Test';
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i> Send Test';
     }
   }
 }
@@ -355,7 +355,7 @@ async function triggerEmailCheck() {
   const btn = document.getElementById('triggerEmailCheckBtn');
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sender...';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Sender...';
   }
 
   try {
@@ -371,7 +371,7 @@ async function triggerEmailCheck() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-paper-plane"></i><span>Send varsler nå</span>';
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-paper-plane"></i><span>Send varsler nå</span>';
     }
   }
 }
@@ -380,16 +380,18 @@ async function triggerEmailCheck() {
 async function loadCustomerEmailSettings(kundeId) {
   try {
     const response = await apiFetch(`/api/email/innstillinger/${kundeId}`);
-    const settings = await response.json();
+    if (!response.ok) return;
+    const result = await response.json();
+    const settings = result.data || result;
 
     const emailAktiv = document.getElementById('emailAktiv');
     const forsteVarsel = document.getElementById('forsteVarsel');
     const paaminnelseEtter = document.getElementById('paaminnelseEtter');
     const emailOptions = document.getElementById('emailOptions');
 
-    if (emailAktiv) emailAktiv.checked = settings.email_aktiv === 1;
-    if (forsteVarsel) forsteVarsel.value = settings.forste_varsel_dager;
-    if (paaminnelseEtter) paaminnelseEtter.value = settings.paaminnelse_etter_dager;
+    if (emailAktiv) emailAktiv.checked = settings.email_aktiv === 1 || settings.email_aktiv === true;
+    if (forsteVarsel) forsteVarsel.value = settings.forste_varsel_dager || 30;
+    if (paaminnelseEtter) paaminnelseEtter.value = settings.paaminnelse_etter_dager || 7;
 
     // Toggle options visibility
     if (emailOptions) {
@@ -508,11 +510,11 @@ async function renderSubcatManagerBody() {
     html += `
       <div class="subcat-group-item" data-group-id="${group.id}" style="margin-bottom:12px;border:1px solid var(--color-border);border-radius:6px;padding:10px;">
         <div style="display:flex;align-items:center;gap:6px;padding:4px 0;">
-          <i class="fas fa-folder" style="color:var(--color-text-muted);font-size:12px;"></i>
+          <i aria-hidden="true" class="fas fa-folder" style="color:var(--color-text-muted);font-size:12px;"></i>
           <strong style="font-size:13px;">${escapeHtml(group.navn)}</strong>
           <span style="font-size:11px;color:var(--color-text-muted)">(${subs.length})</span>
           <button class="btn-icon-tiny btn-icon-danger" data-action="deleteGroup" data-group-id="${group.id}" title="Slett gruppe">
-            <i class="fas fa-trash"></i>
+            <i aria-hidden="true" class="fas fa-trash"></i>
           </button>
         </div>
         <div style="margin-left:12px;">
@@ -520,14 +522,14 @@ async function renderSubcatManagerBody() {
             <div style="display:flex;align-items:center;gap:4px;padding:2px 0;font-size:13px;">
               <span>${escapeHtml(sub.navn)}</span>
               <button class="btn-icon-tiny btn-icon-danger" data-action="deleteSubcat" data-subcat-id="${sub.id}" title="Slett">
-                <i class="fas fa-trash"></i>
+                <i aria-hidden="true" class="fas fa-trash"></i>
               </button>
             </div>
           `).join('')}
           <div style="display:flex;gap:4px;margin-top:4px;">
             <input type="text" class="subcat-inline-input" placeholder="Ny underkategori..." maxlength="100" data-group-id="${group.id}" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
             <button class="btn btn-small btn-primary subcat-inline-add" data-group-id="${group.id}" style="padding:4px 8px;">
-              <i class="fas fa-plus"></i>
+              <i aria-hidden="true" class="fas fa-plus"></i>
             </button>
           </div>
         </div>
@@ -541,7 +543,7 @@ async function renderSubcatManagerBody() {
       <div style="display:flex;gap:4px;">
         <input type="text" class="new-group-input" placeholder="Ny gruppe..." maxlength="100" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--color-border);border-radius:4px;">
         <button class="btn btn-small btn-secondary new-group-add" style="padding:4px 8px;">
-          <i class="fas fa-plus"></i> Gruppe
+          <i aria-hidden="true" class="fas fa-plus"></i> Gruppe
         </button>
       </div>
     </div>
@@ -676,7 +678,8 @@ async function loadKontaktlogg(kundeId) {
   try {
     const response = await apiFetch(`/api/kunder/${kundeId}/kontaktlogg`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const logg = await response.json();
+    const result = await response.json();
+    const logg = result.data || result;
 
     if (logg.length === 0) {
       listEl.innerHTML = '<div class="kontaktlogg-empty">Ingen registrerte kontakter</div>';
@@ -703,7 +706,7 @@ async function loadKontaktlogg(kundeId) {
             ${k.notat ? `<div class="kontaktlogg-notat">${escapeHtml(k.notat)}</div>` : ''}
           </div>
           <button type="button" class="kontaktlogg-delete" data-action="deleteKontakt" data-id="${k.id}" title="Slett">
-            <i class="fas fa-trash"></i>
+            <i aria-hidden="true" class="fas fa-trash"></i>
           </button>
         </div>
       `;
@@ -787,7 +790,7 @@ async function loadKontaktpersoner(kundeId) {
         ? `<span class="kontaktperson-rolle">${escapeHtml(rolleLabels[p.rolle] || p.rolle)}</span>`
         : '';
       const primaerBadge = p.er_primaer
-        ? '<span class="kontaktperson-primaer-badge"><i class="fas fa-star"></i> Primær</span>'
+        ? '<span class="kontaktperson-primaer-badge"><i aria-hidden="true" class="fas fa-star"></i> Primær</span>'
         : '';
 
       return `
@@ -799,12 +802,12 @@ async function loadKontaktpersoner(kundeId) {
               ${primaerBadge}
             </div>
             <div class="kontaktperson-details">
-              ${p.telefon ? `<span class="kontaktperson-detail"><i class="fas fa-phone"></i> ${escapeHtml(p.telefon)}</span>` : ''}
-              ${p.epost ? `<span class="kontaktperson-detail"><i class="fas fa-envelope"></i> ${escapeHtml(p.epost)}</span>` : ''}
+              ${p.telefon ? `<span class="kontaktperson-detail"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(p.telefon)}</span>` : ''}
+              ${p.epost ? `<span class="kontaktperson-detail"><i aria-hidden="true" class="fas fa-envelope"></i> ${escapeHtml(p.epost)}</span>` : ''}
             </div>
           </div>
           <button type="button" class="kontaktperson-delete" data-action="deleteKontaktperson" data-id="${p.id}" title="Slett">
-            <i class="fas fa-trash"></i>
+            <i aria-hidden="true" class="fas fa-trash"></i>
           </button>
         </div>
       `;
@@ -999,7 +1002,7 @@ function showNotification(message, type = 'success') {
 
   const toast = document.createElement('div');
   toast.className = `notification-toast notification-${type}`;
-  toast.innerHTML = `<i class="fas ${icons[type] || icons.success}"></i> ${escapeHtml(message)}`;
+  toast.innerHTML = `<i aria-hidden="true" class="fas ${icons[type] || icons.success}"></i> ${escapeHtml(message)}`;
   document.body.appendChild(toast);
 
   setTimeout(() => {

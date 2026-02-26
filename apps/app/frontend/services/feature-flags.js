@@ -62,8 +62,8 @@ function applyMvpModeUI() {
   const filterHeader = document.querySelector('.filter-panel-header h3');
   if (filterHeader) {
     filterHeader.innerHTML = isMvp
-      ? '<i class="fas fa-users"></i> Kunder'
-      : '<i class="fas fa-filter"></i> Kunder';
+      ? '<i aria-hidden="true" class="fas fa-users"></i> Kunder'
+      : '<i aria-hidden="true" class="fas fa-filter"></i> Kunder';
   }
 
   Logger.log(`Feature mode UI applied: ${isMvp ? 'MVP (simplified)' : 'Full (features enabled)'}`);

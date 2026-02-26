@@ -77,7 +77,7 @@ router.get(
     }
 
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
     res.send(result.data);
   })
 );
@@ -110,7 +110,7 @@ router.get(
     }
 
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
     res.send(result.data);
   })
 );
@@ -165,7 +165,7 @@ router.get(
     const result = exportGDPRData(exportData);
 
     res.setHeader('Content-Type', result.contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
     res.send(result.data);
   })
 );

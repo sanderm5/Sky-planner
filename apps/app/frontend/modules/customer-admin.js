@@ -119,7 +119,7 @@ function renderCustomerAdmin() {
           ${serviceInfo}
           ${nextControlInfo}
         </div>
-        ${hasCoords ? `<button class="btn-map-focus" data-customer-id="${c.id}" title="Vis på kart"><i class="fas fa-map-marker-alt"></i></button>` : ''}
+        ${hasCoords ? `<button class="btn-map-focus" data-customer-id="${c.id}" title="Vis på kart"><i aria-hidden="true" class="fas fa-map-marker-alt"></i></button>` : ''}
       </div>
     `;
   }).join('');

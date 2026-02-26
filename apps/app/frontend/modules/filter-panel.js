@@ -14,7 +14,7 @@ function renderFilterPanelCategories() {
   // Start with "Alle" button
   let html = `
     <button class="category-btn ${selectedCategory === 'all' ? 'active' : ''}" data-category="all">
-      <i class="fas fa-list"></i> Alle
+      <i aria-hidden="true" class="fas fa-list"></i> Alle
     </button>
   `;
 
@@ -23,7 +23,7 @@ function renderFilterPanelCategories() {
     const isActive = selectedCategory === st.name || selectedCategory === st.slug;
     html += `
       <button class="category-btn ${isActive ? 'active' : ''}" data-category="${st.name}">
-        <i class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
+        <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
       </button>
     `;
   });
@@ -31,7 +31,7 @@ function renderFilterPanelCategories() {
   // Add combined option if 2+ service types
   if (serviceTypes.length >= 2) {
     const combinedName = serviceTypes.map(st => st.name).join(' + ');
-    const icons = serviceTypes.map(st => `<i class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
+    const icons = serviceTypes.map(st => `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`).join('');
     const isActive = selectedCategory === combinedName;
     html += `
       <button class="category-btn ${isActive ? 'active' : ''}" data-category="${combinedName}">
@@ -67,7 +67,7 @@ function startMarkerDrag(customerId, x, y) {
   // Create floating ghost element
   dragGhost = document.createElement('div');
   dragGhost.className = 'drag-ghost';
-  dragGhost.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.navn)}`;
+  dragGhost.innerHTML = `<i aria-hidden="true" class="fas fa-map-marker-alt"></i> ${escapeHtml(customer.navn)}`;
   dragGhost.style.left = x + 'px';
   dragGhost.style.top = y + 'px';
   document.body.appendChild(dragGhost);
@@ -222,7 +222,7 @@ function renderSubcategoryFilter() {
     filterContainer.style.display = 'block';
     contentEl.innerHTML = `<div class="subcat-add-row subcat-add-group-row">
       <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
-      <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+      <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i aria-hidden="true" class="fas fa-plus"></i> Gruppe</button>
     </div>`;
     attachSubcategoryHandlers();
     return;
@@ -263,13 +263,13 @@ function renderSubcategoryFilter() {
     html += `<div class="subcat-group ${isCollapsed ? 'subcat-group-collapsed' : ''}">
       <div class="subcat-group-header">
         <span class="subcat-group-name" data-toggle-group="${group.id}">
-          <i class="fas fa-chevron-${isCollapsed ? 'right' : 'down'} subcat-chevron"></i>
+          <i aria-hidden="true" class="fas fa-chevron-${isCollapsed ? 'right' : 'down'} subcat-chevron"></i>
           ${escapeHtml(group.navn)}
           ${isCollapsed && activeSub ? `<span class="subcat-active-indicator">${escapeHtml(activeSub.navn)}</span>` : ''}
         </span>
         <span class="subcat-admin-only">
-          <button class="category-manage-btn" data-action="editGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
-          <button class="category-manage-btn subcat-delete-btn" data-action="deleteGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+          <button class="category-manage-btn" data-action="editGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Rediger"><i aria-hidden="true" class="fas fa-pen"></i></button>
+          <button class="category-manage-btn subcat-delete-btn" data-action="deleteGroup" data-group-id="${group.id}" data-group-navn="${escapeHtml(group.navn)}" title="Slett"><i aria-hidden="true" class="fas fa-trash"></i></button>
         </span>
       </div>`;
 
@@ -286,8 +286,8 @@ function renderSubcategoryFilter() {
             ${escapeHtml(sub.navn)} <span class="subcat-count">${count}</span>
           </button>
           <span class="subcat-admin-only subcat-item-actions">
-            <button class="category-manage-btn" data-action="editSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Rediger"><i class="fas fa-pen"></i></button>
-            <button class="category-manage-btn subcat-delete-btn" data-action="deleteSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Slett"><i class="fas fa-trash"></i></button>
+            <button class="category-manage-btn" data-action="editSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Rediger"><i aria-hidden="true" class="fas fa-pen"></i></button>
+            <button class="category-manage-btn subcat-delete-btn" data-action="deleteSubcat" data-subcat-id="${sub.id}" data-subcat-navn="${escapeHtml(sub.navn)}" title="Slett"><i aria-hidden="true" class="fas fa-trash"></i></button>
           </span>
         </span>`;
       });
@@ -297,7 +297,7 @@ function renderSubcategoryFilter() {
     // Add subcategory input (admin only)
     html += `<div class="subcat-add-row subcat-admin-only">
       <input type="text" class="subcat-add-input" placeholder="Ny underkategori..." maxlength="100" data-add-subcat-input data-group-id="${group.id}">
-      <button class="subcat-add-btn" data-action="addSubcat" data-group-id="${group.id}" title="Legg til"><i class="fas fa-plus"></i></button>
+      <button class="subcat-add-btn" data-action="addSubcat" data-group-id="${group.id}" title="Legg til"><i aria-hidden="true" class="fas fa-plus"></i></button>
     </div>`;
 
     html += `</div>`; // close subcat-group-body
@@ -307,7 +307,7 @@ function renderSubcategoryFilter() {
   // Add group input (admin only)
   html += `<div class="subcat-add-row subcat-add-group-row subcat-admin-only">
     <input type="text" class="subcat-add-input" placeholder="Ny gruppe..." maxlength="100" data-add-group-input>
-    <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i class="fas fa-plus"></i> Gruppe</button>
+    <button class="subcat-add-btn subcat-add-group-btn" data-action="addGroup" title="Legg til gruppe"><i aria-hidden="true" class="fas fa-plus"></i> Gruppe</button>
   </div>`;
 
   contentEl.innerHTML = html;
@@ -560,7 +560,7 @@ function renderDynamicFieldFilters() {
       <div class="category-filter dynamic-field-filter" data-field="${escapeHtml(field.field_name)}">
         <div class="category-filter-title clickable-header" data-toggle="field-${escapeHtml(field.field_name)}">
           <span>${escapeHtml(field.display_name)}</span>
-          <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'} toggle-icon"></i>
+          <i aria-hidden="true" class="fas fa-chevron-${isExpanded ? 'down' : 'right'} toggle-icon"></i>
         </div>
         <div class="dynamic-filter-content" id="fieldFilter-${escapeHtml(field.field_name)}" style="display: ${isExpanded ? 'block' : 'none'};">
           ${renderFieldFilterInput(field)}
@@ -601,7 +601,7 @@ function renderSelectFilterButtons(field, currentValue) {
   let html = `<div class="category-filter-buttons">
     <button class="category-btn dynamic-field-btn ${!currentValue || currentValue === 'all' ? 'active' : ''}"
             data-field="${escapeHtml(field.field_name)}" data-value="all">
-      <i class="fas fa-list"></i> Alle
+      <i aria-hidden="true" class="fas fa-list"></i> Alle
     </button>`;
 
   options.forEach(opt => {

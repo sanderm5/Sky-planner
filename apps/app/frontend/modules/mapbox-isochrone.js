@@ -24,7 +24,7 @@ const IsochroneManager = {
     btn.id = 'isochroneToggle';
     btn.className = 'isochrone-toggle-btn';
     btn.title = 'Vis dekningsområde';
-    btn.innerHTML = '<i class="fas fa-bullseye"></i>';
+    btn.innerHTML = '<i aria-hidden="true" class="fas fa-bullseye"></i>';
     btn.addEventListener('click', () => this.toggle());
     container.appendChild(btn);
   },
@@ -66,7 +66,7 @@ const IsochroneManager = {
     panel.className = 'isochrone-panel';
     panel.innerHTML = `
       <div class="iso-panel-header">
-        <strong><i class="fas fa-bullseye" style="margin-right:4px"></i>Dekningsområde</strong>
+        <strong><i aria-hidden="true" class="fas fa-bullseye" style="margin-right:4px"></i>Dekningsområde</strong>
         <button class="iso-close" data-action="isochroneClose" title="Lukk">&times;</button>
       </div>
       <div class="iso-panel-body">
@@ -86,7 +86,7 @@ const IsochroneManager = {
               data-minutes="${o.min}">${o.label}</button>
           `).join('')}
         </div>
-        <p class="iso-hint"><i class="fas fa-hand-pointer" style="margin-right:4px"></i>Dra markøren for å endre startpunkt</p>
+        <p class="iso-hint"><i aria-hidden="true" class="fas fa-hand-pointer" style="margin-right:4px"></i>Dra markøren for å endre startpunkt</p>
       </div>
     `;
 
@@ -120,7 +120,7 @@ const IsochroneManager = {
 
     const el = createMarkerElement('isochrone-origin-marker', `
       <div style="width:24px;height:24px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 2px 8px rgba(37,99,235,0.5);cursor:grab;display:flex;align-items:center;justify-content:center;">
-        <i class="fas fa-bullseye" style="font-size:10px;color:#fff;"></i>
+        <i aria-hidden="true" class="fas fa-bullseye" style="font-size:10px;color:#fff;"></i>
       </div>
     `, [24, 24]);
 

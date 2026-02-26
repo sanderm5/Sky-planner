@@ -210,7 +210,7 @@ function renderAddressSuggestions(results) {
 
   container.innerHTML = results.map((addr, index) => `
     <div class="address-suggestion-item" role="option" data-index="${index}">
-      <i class="fas fa-map-marker-alt"></i>
+      <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
       <div class="address-suggestion-text">
         <div class="address-suggestion-main">${escapeHtml(addr.adresse)}</div>
         <div class="address-suggestion-detail">${escapeHtml(addr.postnummer)} ${escapeHtml(addr.poststed)}${addr.kommune ? `, ${escapeHtml(addr.kommune)}` : ''}</div>
@@ -267,15 +267,15 @@ function updatePostnummerStatus(status) {
 
   switch (status) {
     case 'valid':
-      statusEl.innerHTML = '<i class="fas fa-check"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-check"></i>';
       statusEl.classList.add('valid');
       break;
     case 'invalid':
-      statusEl.innerHTML = '<i class="fas fa-times"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-times"></i>';
       statusEl.classList.add('invalid');
       break;
     case 'loading':
-      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      statusEl.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i>';
       statusEl.classList.add('loading');
       break;
     default:
@@ -323,7 +323,7 @@ function setupAddressAutocomplete() {
   function showSearchLoading() {
     suggestionsContainer.innerHTML = `
       <div class="address-suggestion-item" style="justify-content:center;opacity:0.6;pointer-events:none;">
-        <i class="fas fa-spinner fa-spin"></i>
+        <i aria-hidden="true" class="fas fa-spinner fa-spin"></i>
         <span>Søker...</span>
       </div>`;
     positionAddressSuggestions();
