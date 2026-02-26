@@ -36,10 +36,11 @@
   }
 
   h1, h2 {
-    font-family: 'Fraunces', Georgia, serif;
+    font-family: var(--font-heading), 'Fraunces', Georgia, serif;
   }
 
   body {
+    font-family: var(--font-body), 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     @apply bg-dark-950 text-dark-100 antialiased;
   }
 
