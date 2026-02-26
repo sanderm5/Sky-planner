@@ -383,6 +383,25 @@ function readdClusterLayers() {
   if (_clusterSourceReady) updateClusters();
 }
 
+// Wait for cluster source to be ready (returns a promise)
+function waitForClusterReady(timeoutMs) {
+  if (_clusterSourceReady) return Promise.resolve(true);
+  return new Promise(function(resolve) {
+    var elapsed = 0;
+    var interval = setInterval(function() {
+      elapsed += 50;
+      if (_clusterSourceReady) {
+        clearInterval(interval);
+        resolve(true);
+      } else if (elapsed >= (timeoutMs || 8000)) {
+        clearInterval(interval);
+        console.warn('waitForClusterReady: timed out after', elapsed, 'ms');
+        resolve(false);
+      }
+    }, 50);
+  });
+}
+
 
 // ========================================
 // MAPBOX MATRIX SERVICE
@@ -24859,6 +24878,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize DOM and app
     initDOMElements();
     initMap(); // Add map features (clustering, borders, etc.)
+    // Wait for cluster source before loading customers (prevents blank map)
+    if (!_clusterSourceReady && typeof waitForClusterReady === 'function') {
+      await waitForClusterReady(8000);
+    }
     // Load categories and fields first so markers render with correct icons
     await loadOrganizationCategories();
     await loadOrganizationFields();
@@ -24916,7 +24939,15 @@ async function initializeApp() {
   // Initialize map features (clustering, borders, etc.)
   // The base map is already created by initSharedMap()
   initMap();
-  Logger.log('initializeApp() after initMap, supercluster:', !!supercluster);
+  Logger.log('initializeApp() after initMap, _clusterSourceReady:', _clusterSourceReady);
+
+  // Wait for cluster source to be ready before loading customers
+  // This prevents markers from failing to render after login
+  if (!_clusterSourceReady && typeof waitForClusterReady === 'function') {
+    Logger.log('initializeApp() waiting for cluster source...');
+    await waitForClusterReady(8000);
+    Logger.log('initializeApp() cluster source ready:', _clusterSourceReady);
+  }
 
   // Load categories and fields first so markers render with correct icons
   try {

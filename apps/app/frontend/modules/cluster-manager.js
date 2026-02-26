@@ -257,3 +257,22 @@ function readdClusterLayers() {
   }
   if (_clusterSourceReady) updateClusters();
 }
+
+// Wait for cluster source to be ready (returns a promise)
+function waitForClusterReady(timeoutMs) {
+  if (_clusterSourceReady) return Promise.resolve(true);
+  return new Promise(function(resolve) {
+    var elapsed = 0;
+    var interval = setInterval(function() {
+      elapsed += 50;
+      if (_clusterSourceReady) {
+        clearInterval(interval);
+        resolve(true);
+      } else if (elapsed >= (timeoutMs || 8000)) {
+        clearInterval(interval);
+        console.warn('waitForClusterReady: timed out after', elapsed, 'ms');
+        resolve(false);
+      }
+    }, 50);
+  });
+}
