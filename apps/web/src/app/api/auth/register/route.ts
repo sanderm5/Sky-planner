@@ -251,7 +251,7 @@ export async function POST(request: NextRequest) {
         throw error;
       }
 
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://skyplannerapp-production.up.railway.app';
 
       return new Response(
         JSON.stringify({
@@ -307,7 +307,7 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://skyplannerapp-production.up.railway.app';
 
     return new Response(
       JSON.stringify({
