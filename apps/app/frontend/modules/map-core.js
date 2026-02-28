@@ -367,6 +367,14 @@ function createOfficeMarkerElement() {
   return el;
 }
 
+// Remove office marker (called on logout)
+function removeOfficeMarker() {
+  if (officeMarker) {
+    officeMarker.remove();
+    officeMarker = null;
+  }
+}
+
 // Update office marker position when org-specific config is loaded after auth
 function updateOfficeMarkerPosition() {
   const homeLng = appConfig.routeStartLng;

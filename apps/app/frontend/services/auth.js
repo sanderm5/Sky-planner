@@ -69,6 +69,16 @@ function handleLogout() {
   localStorage.removeItem('impersonatingOrgName');
   // Reset appConfig to default
   appConfig.appMode = 'mvp';
+  // Clear address/location so next login doesn't inherit previous org's data
+  appConfig.routeStartLat = undefined;
+  appConfig.routeStartLng = undefined;
+  appConfig.routeStartAddress = undefined;
+
+  // Remove office marker and address nudges from the map
+  removeOfficeMarker();
+  removeAddressNudge();
+  const adminBadge = document.getElementById('adminAddressBadge');
+  if (adminBadge) adminBadge.style.display = 'none';
 
   showLoginView();
 }
