@@ -31,7 +31,13 @@ function escapeCSVValue(value: unknown): string {
     return '';
   }
 
-  const str = String(value);
+  let str = String(value);
+
+  // Prevent CSV formula injection: prefix dangerous characters with single quote
+  // Characters =, +, -, @, \t, \r can trigger formula execution in Excel/Google Sheets
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
 
   // If contains comma, newline, or quote, wrap in quotes and escape quotes
   if (str.includes(',') || str.includes('\n') || str.includes('"') || str.includes(';')) {

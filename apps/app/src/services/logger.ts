@@ -10,6 +10,18 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Configure pino logger
 export const logger = pino({
   level: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
+  // Redact sensitive fields to prevent accidental secret leakage in logs
+  redact: {
+    paths: [
+      'password', 'passord', 'token', 'accessToken', 'refreshToken',
+      'Authorization', 'authorization', 'x-api-key',
+      'jwt_secret', 'api_key', 'apiKey', 'secret',
+      'cookie', 'csrf_token',
+      '*.password', '*.passord', '*.token', '*.accessToken', '*.refreshToken',
+      '*.Authorization', '*.authorization', '*.api_key', '*.apiKey', '*.secret',
+    ],
+    censor: '[REDACTED]',
+  },
   formatters: {
     level: (label) => ({ level: label }),
     bindings: (bindings) => ({

@@ -1153,6 +1153,11 @@ async function saveAvtale(e) {
       renderCalendar();
       applyFilters(); // Oppdater kart-markører med ny avtale-status
       closeAvtaleModal();
+      // Track for onboarding checklist (only on create, not edit)
+      if (!avtaleId) {
+        localStorage.setItem('skyplanner_firstEventCreated', 'true');
+        if (typeof refreshChecklistState === 'function') refreshChecklistState();
+      }
     } else {
       const error = await response.json();
       showMessage('Kunne ikke lagre: ' + (error.error || 'Ukjent feil'), 'error');

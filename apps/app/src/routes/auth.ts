@@ -729,10 +729,7 @@ router.post(
       return res.redirect('/?error=sso_token_expired');
     }
 
-    // Delete token immediately (one-time use)
-    await supabase.from('sso_tokens').delete().eq('id', ssoRecord.id);
-
-    // Verify IP binding — token must be redeemed from same IP that created it
+    // Verify IP binding BEFORE deleting — token must be redeemed from same IP that created it
     if (ssoRecord.ip_hash) {
       const currentIpHash = crypto.createHash('sha256').update(ip).digest('hex');
       if (currentIpHash !== ssoRecord.ip_hash) {
@@ -740,6 +737,9 @@ router.post(
         return res.redirect('/?error=invalid_sso_token');
       }
     }
+
+    // Delete token immediately (one-time use) — after all validation passes
+    await supabase.from('sso_tokens').delete().eq('id', ssoRecord.id);
 
     // Fetch user and organization
     let user: KlientRecord | BrukerRecord | null = null;

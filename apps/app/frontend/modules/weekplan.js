@@ -1028,6 +1028,9 @@ async function wpOptimizeOrder(dayKey) {
         dayData.planned = plannedOptimized;
         renderWeeklyPlan();
         showToast('Rekkefølge optimalisert', 'success');
+        // Track for onboarding checklist
+        localStorage.setItem('skyplanner_firstRoutePlanned', 'true');
+        if (typeof refreshChecklistState === 'function') refreshChecklistState();
       }
     }
   } catch (err) {

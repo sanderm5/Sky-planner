@@ -118,7 +118,7 @@ async function handleSpaLogin(e) {
           // Show onboarding wizard
           await showOnboardingWizard();
         }
-        transitionToAppView();
+        transitionToAppView({ isNewUser: needsOnboarding });
       }, 300);
     } else {
       // Handle both wrapped error format { error: { message } } and legacy format { error: "string" }
@@ -199,11 +199,13 @@ function hideUserBar() {
 
 // Transition from login to app view with smooth animations
 // Single map architecture: map never changes, only UI overlays animate
-function transitionToAppView() {
+// options.isNewUser: skip sidebar/filter panels to let onboarding banners breathe
+function transitionToAppView(options = {}) {
   const loginOverlay = document.getElementById('loginOverlay');
   const appView = document.getElementById('appView');
   const sidebar = document.getElementById('sidebar');
   const filterPanel = document.getElementById('filterPanel');
+  const isNewUser = options.isNewUser || false;
   const loginSide = document.querySelector('.login-side');
   const loginBrandContent = document.querySelector('.login-brand-content');
   const loginMapOverlay = document.querySelector('.login-map-overlay');
@@ -261,9 +263,12 @@ function transitionToAppView() {
   }, 200);
 
   // PHASE 3: Stop globe spin and fly to office location (or Norway center as fallback)
-  setTimeout(() => {
+  // Reload config first since user is now authenticated — gets org-specific office address
+  setTimeout(async () => {
     if (map) {
       stopGlobeSpin();
+      // Reload config to get office address (user just authenticated, config was loaded pre-login)
+      try { await loadConfig(); } catch (e) { /* continue with existing config */ }
       const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
       map.flyTo({
         center: hasOfficeLocation
@@ -323,68 +328,80 @@ function transitionToAppView() {
       if (typeof readdClusterLayers === 'function') readdClusterLayers();
       loadCustomers();
     }
+
+    // Initialize onboarding checklist after data is loaded
+    setTimeout(() => {
+      if (typeof initOnboardingChecklist === 'function') {
+        initOnboardingChecklist();
+      }
+    }, 500);
   }, 1700);
 
   // PHASE 6: Slide in sidebar and show tab navigation
-  setTimeout(() => {
-    if (sidebar) {
-      sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
-      sidebar.style.transform = 'translateX(0)';
-      sidebar.style.opacity = '1';
-    }
-    // Show tab navigation and sidebar toggle (hidden on logout)
-    const tabNavigation = document.querySelector('.tab-navigation');
-    if (tabNavigation) {
-      tabNavigation.style.transition = 'opacity 0.4s ease-out';
-      tabNavigation.style.opacity = '1';
-      tabNavigation.style.pointerEvents = 'auto';
-    }
-    const sidebarToggle = document.getElementById('sidebarToggle');
-    if (sidebarToggle) {
-      sidebarToggle.style.transition = 'opacity 0.4s ease-out';
-      sidebarToggle.style.opacity = '1';
-      sidebarToggle.style.pointerEvents = 'auto';
-    }
-  }, 900);
+  // For new users: keep panels hidden so address/getting-started banners aren't blocked
+  if (!isNewUser) {
+    setTimeout(() => {
+      if (sidebar) {
+        sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+        sidebar.style.transform = 'translateX(0)';
+        sidebar.style.opacity = '1';
+      }
+      // Show tab navigation and sidebar toggle (hidden on logout)
+      const tabNavigation = document.querySelector('.tab-navigation');
+      if (tabNavigation) {
+        tabNavigation.style.transition = 'opacity 0.4s ease-out';
+        tabNavigation.style.opacity = '1';
+        tabNavigation.style.pointerEvents = 'auto';
+      }
+      const sidebarToggle = document.getElementById('sidebarToggle');
+      if (sidebarToggle) {
+        sidebarToggle.style.transition = 'opacity 0.4s ease-out';
+        sidebarToggle.style.opacity = '1';
+        sidebarToggle.style.pointerEvents = 'auto';
+      }
+    }, 900);
 
-  // PHASE 7: Slide in filter panel
-  setTimeout(() => {
-    if (filterPanel) {
-      filterPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
-      filterPanel.style.transform = 'translateX(0)';
-      filterPanel.style.opacity = '1';
-    }
+    // PHASE 7: Slide in filter panel
+    setTimeout(() => {
+      if (filterPanel) {
+        filterPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+        filterPanel.style.transform = 'translateX(0)';
+        filterPanel.style.opacity = '1';
+      }
 
-    // Slide in content panel if it should be open
-    const contentPanel = document.getElementById('contentPanel');
-    const shouldOpenPanel = localStorage.getItem('contentPanelOpen') === 'true';
-    if (shouldOpenPanel && contentPanel) {
-      contentPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
-      contentPanel.style.transform = 'translateX(0)';
-      contentPanel.style.opacity = '1';
-    }
-  }, 1050);
+      // Slide in content panel if it should be open
+      const contentPanel = document.getElementById('contentPanel');
+      const shouldOpenPanel = localStorage.getItem('contentPanelOpen') === 'true';
+      if (shouldOpenPanel && contentPanel) {
+        contentPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+        contentPanel.style.transform = 'translateX(0)';
+        contentPanel.style.opacity = '1';
+      }
+    }, 1050);
+  }
 
   // PHASE 8: Clean up inline styles (after easeTo settles at ~2.6s)
   setTimeout(() => {
-    // Clean up sidebar/filter inline styles
-    if (sidebar) {
-      sidebar.style.transition = '';
-      sidebar.style.transform = '';
-      sidebar.style.opacity = '';
-    }
-    if (filterPanel) {
-      filterPanel.style.transition = '';
-      filterPanel.style.transform = '';
-      filterPanel.style.opacity = '';
-    }
+    // Clean up sidebar/filter inline styles (only if they were animated in)
+    if (!isNewUser) {
+      if (sidebar) {
+        sidebar.style.transition = '';
+        sidebar.style.transform = '';
+        sidebar.style.opacity = '';
+      }
+      if (filterPanel) {
+        filterPanel.style.transition = '';
+        filterPanel.style.transform = '';
+        filterPanel.style.opacity = '';
+      }
 
-    // Clean up content panel inline styles
-    const contentPanel = document.getElementById('contentPanel');
-    if (contentPanel) {
-      contentPanel.style.transition = '';
-      contentPanel.style.transform = '';
-      contentPanel.style.opacity = '';
+      // Clean up content panel inline styles
+      const contentPanel = document.getElementById('contentPanel');
+      if (contentPanel) {
+        contentPanel.style.transition = '';
+        contentPanel.style.transform = '';
+        contentPanel.style.opacity = '';
+      }
     }
 
     // Reset login elements for potential re-login
@@ -410,6 +427,59 @@ function transitionToAppView() {
       el.style.pointerEvents = '';
     });
   }, 2800);
+}
+
+// Reveal sidebar and filter panels (called after new user adds data or dismisses banners)
+function showAppPanels() {
+  const sidebar = document.getElementById('sidebar');
+  const filterPanel = document.getElementById('filterPanel');
+
+  // Only animate if panels are currently hidden (off-screen)
+  if (sidebar && (sidebar.style.opacity === '0' || sidebar.style.transform)) {
+    sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+    sidebar.style.transform = 'translateX(0)';
+    sidebar.style.opacity = '1';
+    setTimeout(() => {
+      sidebar.style.transition = '';
+      sidebar.style.transform = '';
+      sidebar.style.opacity = '';
+    }, 700);
+  }
+
+  if (filterPanel && (filterPanel.style.opacity === '0' || filterPanel.style.transform)) {
+    filterPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+    filterPanel.style.transform = 'translateX(0)';
+    filterPanel.style.opacity = '1';
+    setTimeout(() => {
+      filterPanel.style.transition = '';
+      filterPanel.style.transform = '';
+      filterPanel.style.opacity = '';
+    }, 700);
+  }
+
+  // Show tab navigation and sidebar toggle
+  const tabNavigation = document.querySelector('.tab-navigation');
+  if (tabNavigation) {
+    tabNavigation.style.transition = 'opacity 0.4s ease-out';
+    tabNavigation.style.opacity = '1';
+    tabNavigation.style.pointerEvents = 'auto';
+    setTimeout(() => {
+      tabNavigation.style.transition = '';
+      tabNavigation.style.opacity = '';
+      tabNavigation.style.pointerEvents = '';
+    }, 500);
+  }
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  if (sidebarToggle) {
+    sidebarToggle.style.transition = 'opacity 0.4s ease-out';
+    sidebarToggle.style.opacity = '1';
+    sidebarToggle.style.pointerEvents = 'auto';
+    setTimeout(() => {
+      sidebarToggle.style.transition = '';
+      sidebarToggle.style.opacity = '';
+      sidebarToggle.style.pointerEvents = '';
+    }, 500);
+  }
 }
 
 // Show login view (for logout)
@@ -532,6 +602,35 @@ function showLoginView() {
   // Clear route if any
   clearRoute();
 
+  // Close any open popup
+  closeMapPopup();
+
+  // Remove hover tooltip if visible
+  if (activeTooltipEl) {
+    activeTooltipEl.remove();
+    activeTooltipEl = null;
+  }
+
+  // Disable 3D terrain if active
+  if (terrainEnabled) {
+    disableTerrain();
+  }
+
+  // Deactivate isochrone if active
+  if (typeof IsochroneManager !== 'undefined' && IsochroneManager.active) {
+    IsochroneManager.deactivate();
+  }
+
+  // Deactivate area select if active
+  if (areaSelectMode) {
+    toggleAreaSelect();
+  }
+
+  // Clear coverage area overlays
+  if (typeof CoverageAreaManager !== 'undefined') {
+    CoverageAreaManager.clearOverlays();
+  }
+
   // Step 4: Show login overlay and start map fly animation
   setTimeout(() => {
     loginOverlay.classList.remove('hidden');
@@ -576,6 +675,8 @@ function showLoginView() {
     map.flyTo({
       center: [15.0, 65.0],
       zoom: 3.0,
+      pitch: 0,
+      bearing: 0,
       duration: 2000,
       essential: true,
       curve: 1.5

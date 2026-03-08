@@ -45,6 +45,7 @@ const SOURCE_FILES = [
   'frontend/modules/super-admin.js',
   'frontend/modules/mobile-ui.js',
   'frontend/modules/context-tips.js',
+  'frontend/modules/onboarding-checklist.js',
   'frontend/modules/markers.js',
   'frontend/modules/bulk-selection.js',
   'frontend/modules/geocoding.js',

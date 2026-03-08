@@ -133,33 +133,13 @@ let _clusterSourceReady = false;
 let supercluster = null; // Legacy reference (kept for compatibility with logging)
 let clusterMarkers = new Map(); // HTML marker cache for individual cluster markers
 
+let _clusterInitRetries = 0;
+
 function initClusterManager() {
   if (!map) { console.log('initClusterManager: no map'); return; }
-  if (map.getSource(CLUSTER_SOURCE)) { console.log('initClusterManager: source exists, ready'); _clusterSourceReady = true; return; }
-  // Style must be loaded before adding sources/layers.
-  if (!map.isStyleLoaded()) {
-    console.log('initClusterManager: style not loaded, deferring');
-    map.once('style.load', () => initClusterManager());
-    // Fallback: 'load' event fires after style + tiles are ready
-    map.once('load', () => {
-      if (!_clusterSourceReady) initClusterManager();
-    });
-    // Fallback: poll isStyleLoaded() in case events already fired
-    let pollCount = 0;
-    const pollInterval = setInterval(() => {
-      pollCount++;
-      if (_clusterSourceReady || pollCount > 50) {
-        clearInterval(pollInterval);
-        return;
-      }
-      if (map.isStyleLoaded()) {
-        clearInterval(pollInterval);
-        if (!_clusterSourceReady) initClusterManager();
-      }
-    }, 100);
-    return;
-  }
-  console.log('initClusterManager: creating source and layers');
+  if (map.getSource(CLUSTER_SOURCE)) { _clusterSourceReady = true; _clusterInitRetries = 0; return; }
+
+  // Try creating source/layers directly — catch handles style-not-ready errors
   try {
     map.addSource(CLUSTER_SOURCE, {
       type: 'geojson', data: { type: 'FeatureCollection', features: [] },
@@ -211,6 +191,7 @@ function initClusterManager() {
       }
     });
     _clusterSourceReady = true;
+    _clusterInitRetries = 0;
     console.log('initClusterManager: ready, source created');
     // If customers were loaded while we waited for style, render them now
     if (typeof customers !== 'undefined' && customers.length > 0 && typeof applyFilters === 'function') {
@@ -218,21 +199,20 @@ function initClusterManager() {
       applyFilters();
     }
   } catch (err) {
-    console.error('initClusterManager failed:', err);
-    // Retry after style is loaded (event + polling fallback)
-    map.once('style.load', () => initClusterManager());
-    let pollCount = 0;
-    const pollInterval = setInterval(() => {
-      pollCount++;
-      if (_clusterSourceReady || pollCount > 50) {
-        clearInterval(pollInterval);
-        return;
-      }
-      if (map.isStyleLoaded()) {
-        clearInterval(pollInterval);
-        if (!_clusterSourceReady) initClusterManager();
-      }
-    }, 100);
+    _clusterInitRetries++;
+    if (_clusterInitRetries > 60) {
+      console.error('initClusterManager: gave up after', _clusterInitRetries, 'retries:', err);
+      _clusterInitRetries = 0;
+      return;
+    }
+    console.log('initClusterManager: retry', _clusterInitRetries, '—', err.message);
+    // Retry via timeout (200ms) — works regardless of which events have already fired
+    setTimeout(() => { if (!_clusterSourceReady) initClusterManager(); }, 200);
+    // Also listen for 'idle' (fires when map finishes flyTo/tile loading) and 'style.load'
+    if (_clusterInitRetries === 1) {
+      map.once('idle', () => { if (!_clusterSourceReady) initClusterManager(); });
+      map.once('style.load', () => { if (!_clusterSourceReady) initClusterManager(); });
+    }
   }
 }
 
@@ -1229,6 +1209,19 @@ function handleLogout() {
   removeAddressNudge();
   const adminBadge = document.getElementById('adminAddressBadge');
   if (adminBadge) adminBadge.style.display = 'none';
+
+  // Clear address banner dismissal so it shows again on next login
+  sessionStorage.removeItem('addressBannerDismissed');
+
+  // Clear getting-started dismissal so new user sees it
+  localStorage.removeItem('gettingStartedDismissed');
+
+  // Clean up onboarding checklist UI
+  if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
+  localStorage.removeItem('skyplanner_checklistMinimized');
+
+  // Reset context tips so they show on next login
+  localStorage.removeItem('shownContextTips');
 
   showLoginView();
 }
@@ -5386,11 +5379,19 @@ async function showOnboardingWizard() {
     // Industry selection is now handled on the website dashboard, not in the app
     // Build wizard steps (without industry selection)
     onboardingWizard.steps = [
+      { id: 'welcome', title: 'Velkommen', icon: 'fa-hand-sparkles' },
       { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
       { id: 'import', title: 'Importer kunder', icon: 'fa-file-excel' },
       { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
       { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
     ];
+
+    // Pre-fill wizard data from existing config (for re-runs)
+    if (appConfig.routeStartAddress) {
+      onboardingWizard.data.company.address = appConfig.routeStartAddress;
+      onboardingWizard.data.company.route_start_lat = appConfig.routeStartLat;
+      onboardingWizard.data.company.route_start_lng = appConfig.routeStartLng;
+    }
 
     // Create overlay
     const overlay = document.createElement('div');
@@ -5415,9 +5416,21 @@ async function renderWizardStep() {
   const overlay = onboardingWizard.overlay;
   const step = onboardingWizard.steps[onboardingWizard.currentStep];
 
+  // Animate out existing content before switching
+  const existingContent = overlay.querySelector('.wizard-content');
+  if (existingContent) {
+    existingContent.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+    existingContent.style.opacity = '0';
+    existingContent.style.transform = 'translateX(-20px)';
+    await new Promise(r => setTimeout(r, 200));
+  }
+
   let stepContent = '';
 
   switch (step.id) {
+    case 'welcome':
+      stepContent = renderWelcomeStep();
+      break;
     case 'company':
       stepContent = renderCompanyStep();
       break;
@@ -5465,6 +5478,55 @@ function renderWizardProgress() {
           </div>
         `).join('')}
       </div>
+    </div>
+  `;
+}
+
+// Render welcome/intro step
+function renderWelcomeStep() {
+  const userName = localStorage.getItem('userName') || '';
+  const greeting = userName ? `, ${escapeHtml(userName)}` : '';
+
+  return `
+    <div class="wizard-step-header wizard-welcome">
+      <div class="wizard-welcome-icon">
+        <i aria-hidden="true" class="fas fa-hand-sparkles"></i>
+      </div>
+      <h1>Velkommen til Sky Planner${greeting}!</h1>
+      <p>Vi hjelper deg å komme i gang på under 2 minutter. Du kan når som helst hoppe over og fullføre senere.</p>
+    </div>
+
+    <div class="wizard-welcome-features">
+      <div class="wizard-feature-card">
+        <div class="wizard-feature-card-icon">
+          <i aria-hidden="true" class="fas fa-map-marked-alt"></i>
+        </div>
+        <h3>Kundekart</h3>
+        <p>Se alle kunder som markører på kartet. Klikk for detaljer, filtrer på kategorier og tags.</p>
+      </div>
+      <div class="wizard-feature-card">
+        <div class="wizard-feature-card-icon">
+          <i aria-hidden="true" class="fas fa-route"></i>
+        </div>
+        <h3>Ukeplan og ruter</h3>
+        <p>Planlegg ukens stopp dag for dag. Optimaliser kjøreruten automatisk med ett klikk.</p>
+      </div>
+      <div class="wizard-feature-card">
+        <div class="wizard-feature-card-icon">
+          <i aria-hidden="true" class="fas fa-calendar-alt"></i>
+        </div>
+        <h3>Kalender</h3>
+        <p>Opprett avtaler, sett påminnelser og hold oversikt over fremtidige oppdrag.</p>
+      </div>
+    </div>
+
+    <div class="wizard-footer wizard-footer-center">
+      <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="nextWizardStep()">
+        La oss komme i gang <i aria-hidden="true" class="fas fa-arrow-right"></i>
+      </button>
+      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
+        Hopp over
+      </button>
     </div>
   `;
 }
@@ -5570,11 +5632,17 @@ function renderCompleteStep() {
 
   return `
     <div class="wizard-step-header wizard-complete">
-      <div class="wizard-complete-icon">
-        <i aria-hidden="true" class="fas fa-check-circle"></i>
+      <div class="wizard-celebration">
+        <div class="wizard-confetti" aria-hidden="true"></div>
+        <div class="wizard-complete-icon wizard-complete-animated">
+          <svg viewBox="0 0 52 52" class="wizard-checkmark-svg">
+            <circle cx="26" cy="26" r="25" fill="none" class="wizard-checkmark-circle"/>
+            <path fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" class="wizard-checkmark-check"/>
+          </svg>
+        </div>
       </div>
-      <h1>Oppsettet er fullført!</h1>
-      <p>Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
+      <h1 class="wizard-complete-title">Oppsettet er fullført!</h1>
+      <p class="wizard-complete-subtitle">Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
     </div>
 
     <div class="wizard-complete-summary">
@@ -8839,6 +8907,11 @@ async function completeOnboardingWizard() {
     // Show first-time tips
     showContextTips();
 
+    // Initialize onboarding checklist for continued guidance
+    if (typeof initOnboardingChecklist === 'function') {
+      setTimeout(() => initOnboardingChecklist(), 1500);
+    }
+
     if (onboardingWizard.resolve) {
       onboardingWizard.resolve();
     }
@@ -8858,6 +8931,11 @@ async function handleSkipOnboarding() {
     setTimeout(() => {
       overlay.remove();
       onboardingWizard.overlay = null;
+
+      // Show checklist since user skipped setup — especially useful here
+      if (typeof initOnboardingChecklist === 'function') {
+        setTimeout(() => initOnboardingChecklist(), 1500);
+      }
 
       if (onboardingWizard.resolve) {
         onboardingWizard.resolve();
@@ -9753,6 +9831,8 @@ async function loadAdminData() {
   initTeamMembersUI();
   // Initialize fields management UI
   initFieldsManagementUI();
+  // Initialize onboarding/guidance settings UI
+  initOnboardingSettingsUI();
 
   // Load team members
   await loadTeamMembers();
@@ -9936,6 +10016,11 @@ async function saveTeamMember(e) {
     showToast(isEdit ? 'Bruker oppdatert' : 'Bruker opprettet', 'success');
     closeTeamMemberModal();
     await loadTeamMembers();
+    // Track for onboarding checklist (only on create, not edit)
+    if (!isEdit) {
+      localStorage.setItem('skyplanner_teamInviteSent', 'true');
+      if (typeof refreshChecklistState === 'function') refreshChecklistState();
+    }
   } catch (error) {
     console.error('Error saving team member:', error);
     showToast('En feil oppstod', 'error');
@@ -10584,6 +10669,12 @@ async function saveCompanyAddress() {
       const adminBadge = document.getElementById('adminAddressBadge');
       if (adminBadge) adminBadge.style.display = 'none';
 
+      // Reveal sidebar/filter if hidden for new users
+      if (typeof showAppPanels === 'function') showAppPanels();
+
+      // Update onboarding checklist progress
+      if (typeof refreshChecklistState === 'function') refreshChecklistState();
+
       showToast('Firmaadresse lagret', 'success');
     } else {
       showToast(result.error?.message || 'Kunne ikke lagre adresse', 'error');
@@ -10633,12 +10724,140 @@ async function clearCompanyAddress() {
       // Hide office marker
       updateOfficeMarkerPosition();
 
+      // Show address nudge since address is now cleared
+      showPersistentAddressNudge();
+      const adminBadge = document.getElementById('adminAddressBadge');
+      if (adminBadge) adminBadge.style.display = 'inline-flex';
+
       showToast('Firmaadresse fjernet', 'success');
     }
   } catch (err) {
     Logger.error('Clear company address error:', err);
     showToast('Feil ved fjerning av adresse', 'error');
   }
+}
+
+// ========================================
+// ONBOARDING & GUIDANCE SETTINGS
+// ========================================
+
+function initOnboardingSettingsUI() {
+  renderOnboardingSettings();
+
+  const container = document.getElementById('onboardingSettingsGrid');
+  if (!container) return;
+
+  container.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+
+    if (action === 'rerun-wizard') {
+      btn.disabled = true;
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Tilbakestiller...';
+      try {
+        await apiFetch('/api/onboarding/reset', { method: 'POST' });
+        if (typeof showOnboardingWizard === 'function') {
+          await showOnboardingWizard();
+        }
+      } catch (err) {
+        showToast('Kunne ikke starte veiviseren', 'error');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-redo"></i> Kjør veiviseren på nytt';
+    }
+
+    if (action === 'show-checklist') {
+      if (typeof showOnboardingChecklist === 'function') {
+        showOnboardingChecklist();
+        showToast('Sjekkliste vist', 'success');
+      }
+    }
+
+    if (action === 'reset-tips') {
+      if (typeof resetContextTips === 'function') resetContextTips();
+      if (typeof resetFeatureTours === 'function') resetFeatureTours();
+      showToast('Tips tilbakestilt — de vises ved neste besøk', 'success');
+    }
+  });
+
+  container.addEventListener('change', (e) => {
+    const input = e.target.closest('[data-action]');
+    if (!input) return;
+
+    if (input.dataset.action === 'toggle-guidance') {
+      const enabled = input.checked;
+      localStorage.setItem('skyplanner_guidanceEnabled', enabled ? 'true' : 'false');
+
+      if (!enabled) {
+        if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
+        if (typeof contextTips !== 'undefined' && contextTips.tipOverlay) {
+          contextTips.tipOverlay.remove();
+          contextTips.tipOverlay = null;
+        }
+        document.querySelectorAll('.context-tip-highlight').forEach(el => {
+          el.classList.remove('context-tip-highlight');
+        });
+      } else {
+        if (typeof initOnboardingChecklist === 'function') {
+          if (localStorage.getItem('skyplanner_checklistDismissed') !== 'true') {
+            initOnboardingChecklist();
+          }
+        }
+      }
+      showToast(enabled ? 'Veiledning aktivert' : 'Veiledning deaktivert', 'info');
+    }
+  });
+}
+
+function renderOnboardingSettings() {
+  const container = document.getElementById('onboardingSettingsGrid');
+  if (!container) return;
+
+  const guidanceEnabled = localStorage.getItem('skyplanner_guidanceEnabled') !== 'false';
+
+  container.innerHTML = `
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-magic"></i> Oppstartsveiviser</h4>
+        <p>Kjør gjennom oppsettet på nytt for å oppdatere firmainformasjon og kartinnstillinger.</p>
+      </div>
+      <button class="btn btn-secondary" data-action="rerun-wizard">
+        <i aria-hidden="true" class="fas fa-redo"></i> Kjør på nytt
+      </button>
+    </div>
+
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Veiledningstips</h4>
+        <p>Vis hjelpetips, sjekkliste og veiledning for nye funksjoner.</p>
+      </div>
+      <label class="guidance-toggle-switch">
+        <input type="checkbox" ${guidanceEnabled ? 'checked' : ''} data-action="toggle-guidance">
+        <span class="guidance-toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-clipboard-check"></i> Sjekkliste</h4>
+        <p>Vis sjekklisten for oppstartsoppgaver på nytt.</p>
+      </div>
+      <button class="btn btn-secondary" data-action="show-checklist">
+        <i aria-hidden="true" class="fas fa-eye"></i> Vis sjekkliste
+      </button>
+    </div>
+
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-info-circle"></i> Tips tilbakestill</h4>
+        <p>Tilbakestill alle veiledningstips slik at de vises på nytt.</p>
+      </div>
+      <button class="btn btn-secondary" data-action="reset-tips">
+        <i aria-hidden="true" class="fas fa-undo"></i> Tilbakestill
+      </button>
+    </div>
+  `;
 }
 
 
@@ -12100,44 +12319,160 @@ window.syncBottomBarBadges = syncBottomBarBadges;
 // CONTEXT TIPS - First-time user guidance
 // ========================================
 
+// Check if guidance is enabled (global helper used by multiple modules)
+function isGuidanceEnabled() {
+  return localStorage.getItem('skyplanner_guidanceEnabled') !== 'false';
+}
+
 const contextTips = {
   tips: [
     {
       id: 'map-intro',
       target: '#map',
       title: 'Interaktivt kart',
-      message: 'Her ser du alle kundene dine på kartet. Klikk på en markør for å se detaljer.',
+      message: 'Kartet viser alle kundene dine som markører. Klikk på en markør for å se kundedetaljer, og bruk musehjulet for å zoome inn/ut. Markører grupperes automatisk i klynger når du zoomer ut.',
       position: 'top',
       icon: 'fa-map-marked-alt'
     },
     {
+      id: 'sidebar-nav',
+      target: '#sidebar',
+      title: 'Navigasjon',
+      message: 'Sidemenyen gir tilgang til alle funksjonene: Kundeoversikt, Kalender, Ukeplan, Oversiktstavle og Innstillinger. Klikk på en fane for å bytte visning.',
+      position: 'right',
+      icon: 'fa-bars'
+    },
+    {
       id: 'add-customer',
-      target: '.customer-add-btn, .add-client-btn, #addClientBtn',
-      title: 'Legg til kunder',
-      message: 'Klikk her for å legge til din første kunde.',
+      target: '#addCustomerBtn, #addCustomerBtnTab',
+      title: 'Legg til kunde',
+      message: 'Klikk her for å registrere en ny kunde. Fyll ut navn, adresse og kontaktinfo. Adressen blir automatisk plassert på kartet.',
       position: 'bottom',
       icon: 'fa-user-plus'
     },
     {
-      id: 'route-planning',
-      target: '.route-btn, #routeBtn, [data-action="route"]',
-      title: 'Ruteplanlegging',
-      message: 'Planlegg effektive ruter mellom kundene dine.',
+      id: 'import-customers',
+      target: '#importCustomersBtn',
+      title: 'Importer kunder',
+      message: 'Importer kundelisten din fra Excel eller CSV. Veiviseren hjelper deg med å koble kolonnene til riktige felt og renser dataene automatisk.',
+      position: 'bottom',
+      icon: 'fa-file-import'
+    },
+    {
+      id: 'filter-panel',
+      target: '#filterPanelToggle',
+      title: 'Filtrer og søk',
+      message: 'Åpne filterpanelet for å søke etter kunder, filtrere på kategorier og tags, eller velge kunder for ruteplanlegging. Markerte kunder vises direkte på kartet.',
+      position: 'left',
+      icon: 'fa-filter'
+    },
+    {
+      id: 'weekly-plan-intro',
+      target: '[data-tab="weekly-plan"]',
+      title: 'Ukeplan',
+      message: 'Planlegg ukens ruter dag for dag. Søk opp kunder, legg dem til som nummererte stopp, og optimaliser rekkefølgen for korteste kjørerute.',
+      position: 'bottom',
+      icon: 'fa-calendar-week'
+    },
+    {
+      id: 'calendar-intro',
+      target: '[data-tab="calendar"]',
+      title: 'Kalender',
+      message: 'Opprett og administrer avtaler. Klikk på en dato for å legge til en avtale, og dra for å flytte den. Bytt mellom måned- og ukevisning.',
+      position: 'bottom',
+      icon: 'fa-calendar-alt'
+    },
+    {
+      id: 'plan-route-btn',
+      target: '#planRouteBtn',
+      title: 'Planlegg rute',
+      message: 'Velg kunder i filterpanelet og klikk her for å beregne optimal kjørerute mellom dem. Ruten vises på kartet med avstand og estimert tid.',
       position: 'bottom',
       icon: 'fa-route'
     },
     {
-      id: 'calendar',
-      target: '.calendar-btn, #calendarBtn, [data-view="calendar"]',
-      title: 'Kalender',
-      message: 'Hold oversikt over avtaler og oppgaver i kalenderen.',
+      id: 'admin-settings',
+      target: '#adminTab',
+      title: 'Innstillinger',
+      message: 'Sett firmaadresse (startpunkt for ruter), administrer kategorier og egendefinerte felt, inviter teammedlemmer og tilpass appen.',
       position: 'bottom',
-      icon: 'fa-calendar-alt'
+      icon: 'fa-cog'
     }
   ],
   shownTips: [],
   currentTipIndex: 0,
   tipOverlay: null
+};
+
+// Feature-specific mini-tours (shown when entering a feature tab for the first time)
+const featureTours = {
+  'weekly-plan': {
+    id: 'tour-weekplan',
+    storageKey: 'skyplanner_tour_weekplan',
+    tips: [
+      {
+        target: '.wp-day',
+        title: 'Velg dag',
+        message: 'Klikk på en ukedag for å planlegge stopp. Hver dag viser antall stopp og estimert tid. Aktiv dag er markert med blå farge.',
+        position: 'bottom',
+        icon: 'fa-calendar-day'
+      },
+      {
+        target: '#wpCustomerSearch',
+        title: 'Søk og legg til stopp',
+        message: 'Skriv kundenavn eller adresse for å søke. Klikk på en kunde i resultatlisten for å legge den til som stopp i dagens rute.',
+        position: 'bottom',
+        icon: 'fa-search'
+      },
+      {
+        target: '[data-action="wpOptimizeOrder"]',
+        title: 'Optimaliser rekkefølge',
+        message: 'Beregner den korteste kjøreruten mellom alle stoppene for valgt dag. Bruker firmaadresse som start- og sluttpunkt.',
+        position: 'bottom',
+        icon: 'fa-sort-amount-down'
+      }
+    ]
+  },
+  'calendar': {
+    id: 'tour-calendar',
+    storageKey: 'skyplanner_tour_calendar',
+    tips: [
+      {
+        target: '#calendarContainer',
+        title: 'Opprett avtale',
+        message: 'Klikk på en dato i kalenderen for å opprette en ny avtale. Du kan velge kunde, sette tidspunkt og legge til beskrivelse.',
+        position: 'top',
+        icon: 'fa-calendar-plus'
+      },
+      {
+        target: '.fc-toolbar',
+        title: 'Navigasjon og visning',
+        message: 'Bruk pilene for å bla mellom måneder/uker. Knappene til høyre bytter mellom måneds- og ukevisning.',
+        position: 'bottom',
+        icon: 'fa-exchange-alt'
+      }
+    ]
+  },
+  'customers': {
+    id: 'tour-customers',
+    storageKey: 'skyplanner_tour_customers',
+    tips: [
+      {
+        target: '#searchInput',
+        title: 'Søk etter kunder',
+        message: 'Skriv inn kundenavn, adresse eller telefonnummer for å finne kunder raskt. Resultatlisten oppdateres mens du skriver.',
+        position: 'bottom',
+        icon: 'fa-search'
+      },
+      {
+        target: '#categoryFilterButtons',
+        title: 'Filtrer på kategori',
+        message: 'Klikk på en kategori for å vise kun kunder i den kategorien. Du kan kombinere flere kategorier.',
+        position: 'bottom',
+        icon: 'fa-tags'
+      }
+    ]
+  }
 };
 
 // Initialize context tips
@@ -12154,6 +12489,8 @@ function initContextTips() {
 
 // Show context tips for first-time users
 function showContextTips() {
+  if (!isGuidanceEnabled()) return;
+
   initContextTips();
 
   // Filter tips that haven't been shown
@@ -12169,6 +12506,8 @@ function showContextTips() {
 
 // Show a single tip
 function showTip(tip) {
+  if (!isGuidanceEnabled()) return;
+
   const target = document.querySelector(tip.target);
   if (!target) {
     // Target not found, mark as shown and try next
@@ -12330,6 +12669,459 @@ function resetContextTips() {
   contextTips.shownTips = [];
   contextTips.currentTipIndex = 0;
   localStorage.removeItem('shownContextTips');
+}
+
+// ========================================
+// FEATURE-SPECIFIC MINI-TOURS
+// ========================================
+
+// Active mini-tour state
+let activeMiniTour = null;
+let miniTourTipIndex = 0;
+
+// Show feature tour when entering a tab for the first time
+function showFeatureTourIfNeeded(tabName) {
+  if (!isGuidanceEnabled()) return;
+
+  const tour = featureTours[tabName];
+  if (!tour) return;
+
+  // Already shown this tour
+  if (localStorage.getItem(tour.storageKey) === 'true') return;
+
+  // Delay to let tab content render
+  setTimeout(() => {
+    showMiniTour(tour);
+  }, 600);
+}
+
+// Show a mini-tour (sequence of tips for a specific feature)
+function showMiniTour(tour) {
+  if (!isGuidanceEnabled()) return;
+
+  activeMiniTour = tour;
+  miniTourTipIndex = 0;
+  showMiniTourTip();
+}
+
+// Show current mini-tour tip
+function showMiniTourTip() {
+  if (!activeMiniTour || miniTourTipIndex >= activeMiniTour.tips.length) {
+    completeMiniTour();
+    return;
+  }
+
+  const tip = activeMiniTour.tips[miniTourTipIndex];
+  const target = document.querySelector(tip.target);
+
+  if (!target) {
+    // Skip this tip, try next
+    miniTourTipIndex++;
+    showMiniTourTip();
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'context-tip-overlay mini-tour-overlay';
+  overlay.innerHTML = `
+    <div class="context-tip-backdrop" onclick="dismissMiniTourTip()"></div>
+    <div class="context-tip mini-tour-tip" id="miniTourTip-${miniTourTipIndex}">
+      <div class="context-tip-arrow"></div>
+      <div class="context-tip-icon">
+        <i aria-hidden="true" class="fas ${tip.icon}"></i>
+      </div>
+      <div class="context-tip-content">
+        <h4>${escapeHtml(tip.title)}</h4>
+        <p>${escapeHtml(tip.message)}</p>
+      </div>
+      <div class="context-tip-actions">
+        <button class="context-tip-btn context-tip-btn-skip" onclick="skipMiniTour()">
+          Hopp over
+        </button>
+        <button class="context-tip-btn context-tip-btn-next" onclick="dismissMiniTourTip()">
+          ${miniTourTipIndex < activeMiniTour.tips.length - 1 ? 'Neste <i aria-hidden="true" class="fas fa-arrow-right"></i>' : 'Forstått <i aria-hidden="true" class="fas fa-check"></i>'}
+        </button>
+      </div>
+      <div class="context-tip-progress">
+        ${miniTourTipIndex + 1} av ${activeMiniTour.tips.length}
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  contextTips.tipOverlay = overlay;
+
+  positionTip(overlay.querySelector('.context-tip'), target, tip.position);
+  target.classList.add('context-tip-highlight');
+
+  requestAnimationFrame(() => {
+    overlay.classList.add('visible');
+  });
+}
+
+// Dismiss current mini-tour tip and show next
+function dismissMiniTourTip() {
+  document.querySelectorAll('.context-tip-highlight').forEach(el => {
+    el.classList.remove('context-tip-highlight');
+  });
+
+  if (contextTips.tipOverlay) {
+    contextTips.tipOverlay.classList.remove('visible');
+    setTimeout(() => {
+      contextTips.tipOverlay.remove();
+      contextTips.tipOverlay = null;
+      miniTourTipIndex++;
+      showMiniTourTip();
+    }, 300);
+  }
+}
+
+// Skip entire mini-tour
+function skipMiniTour() {
+  document.querySelectorAll('.context-tip-highlight').forEach(el => {
+    el.classList.remove('context-tip-highlight');
+  });
+
+  if (contextTips.tipOverlay) {
+    contextTips.tipOverlay.classList.remove('visible');
+    setTimeout(() => {
+      contextTips.tipOverlay.remove();
+      contextTips.tipOverlay = null;
+    }, 300);
+  }
+
+  completeMiniTour();
+}
+
+// Mark mini-tour as completed
+function completeMiniTour() {
+  if (activeMiniTour) {
+    localStorage.setItem(activeMiniTour.storageKey, 'true');
+    activeMiniTour = null;
+    miniTourTipIndex = 0;
+  }
+}
+
+// Reset all feature tours (for testing / re-run)
+function resetFeatureTours() {
+  Object.values(featureTours).forEach(tour => {
+    localStorage.removeItem(tour.storageKey);
+  });
+}
+
+
+// ========================================
+// ONBOARDING CHECKLIST - Persistent setup progress
+// ========================================
+
+const onboardingChecklist = {
+  tasks: [
+    {
+      id: 'set-address',
+      label: 'Sett firmaadresse',
+      description: 'Startpunkt for alle ruter og avstandsberegninger',
+      icon: 'fa-map-marker-alt',
+      check: () => !!(appConfig.routeStartLat && appConfig.routeStartLng),
+      action: () => {
+        const adminTab = document.querySelector('[data-tab="admin"]');
+        if (adminTab) adminTab.click();
+        setTimeout(() => {
+          const section = document.getElementById('companyAddressSection');
+          if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 300);
+      }
+    },
+    {
+      id: 'add-customer',
+      label: 'Legg til din første kunde',
+      description: 'Opprett manuelt eller importer fra Excel/CSV',
+      icon: 'fa-user-plus',
+      check: () => typeof customers !== 'undefined' && customers.length > 0,
+      action: () => {
+        if (typeof addCustomer === 'function') addCustomer();
+      }
+    },
+    {
+      id: 'plan-route',
+      label: 'Planlegg en rute',
+      description: 'Bruk ukeplanen til å legge inn stopp og optimaliser rekkefølgen',
+      icon: 'fa-route',
+      check: () => localStorage.getItem('skyplanner_firstRoutePlanned') === 'true',
+      action: () => {
+        const wpTab = document.querySelector('[data-tab="weekly-plan"]');
+        if (wpTab) wpTab.click();
+      }
+    },
+    {
+      id: 'calendar-event',
+      label: 'Opprett en avtale',
+      description: 'Klikk på en dato i kalenderen for å opprette en avtale',
+      icon: 'fa-calendar-plus',
+      check: () => localStorage.getItem('skyplanner_firstEventCreated') === 'true',
+      action: () => {
+        const calTab = document.querySelector('[data-tab="calendar"]');
+        if (calTab) calTab.click();
+      }
+    },
+    {
+      id: 'invite-team',
+      label: 'Inviter et teammedlem',
+      description: 'Del tilgang med kollegaer for samarbeid',
+      icon: 'fa-user-friends',
+      check: () => localStorage.getItem('skyplanner_teamInviteSent') === 'true',
+      action: () => {
+        const adminTab = document.querySelector('[data-tab="admin"]');
+        if (adminTab) adminTab.click();
+        setTimeout(() => {
+          const section = document.getElementById('teamMembersSection');
+          if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 300);
+      }
+    }
+  ],
+  completedTasks: [],
+  minimized: false,
+  dismissed: false
+};
+
+// Calculate right offset based on filter panel state
+function getChecklistRightOffset() {
+  const filterPanel = document.getElementById('filterPanel');
+  if (!filterPanel) return '24px';
+  const isCollapsed = filterPanel.classList.contains('collapsed');
+  return isCollapsed ? '64px' : '350px';
+}
+
+// Initialize the onboarding checklist
+function initOnboardingChecklist() {
+  if (!isGuidanceEnabled()) return;
+  if (localStorage.getItem('skyplanner_checklistDismissed') === 'true') return;
+
+  // Refresh state to see which tasks are done
+  refreshChecklistState();
+
+  // All tasks done — no need to show
+  if (onboardingChecklist.completedTasks.length === onboardingChecklist.tasks.length) return;
+
+  // Restore minimized state
+  onboardingChecklist.minimized = localStorage.getItem('skyplanner_checklistMinimized') === 'true';
+  onboardingChecklist.dismissed = false;
+
+  renderChecklist();
+}
+
+// Refresh which tasks are completed
+function refreshChecklistState() {
+  const prevCompleted = onboardingChecklist.completedTasks.length;
+  onboardingChecklist.completedTasks = onboardingChecklist.tasks
+    .filter(task => task.check())
+    .map(task => task.id);
+
+  // If checklist is visible, re-render
+  const existing = document.getElementById('onboardingChecklist') || document.getElementById('checklistFab');
+  if (existing) {
+    renderChecklist();
+
+    // Animate newly completed task
+    if (onboardingChecklist.completedTasks.length > prevCompleted) {
+      animateTaskCompletion();
+    }
+
+    // All tasks complete — congratulate and auto-minimize
+    if (onboardingChecklist.completedTasks.length === onboardingChecklist.tasks.length) {
+      if (typeof showToast === 'function') {
+        showToast('Alle oppstartsoppgaver fullført!', 'success');
+      }
+      setTimeout(() => {
+        minimizeChecklist();
+      }, 3000);
+    }
+  }
+}
+
+// Animate when a task is newly completed
+function animateTaskCompletion() {
+  const checklist = document.getElementById('onboardingChecklist');
+  if (!checklist) return;
+
+  const completedItems = checklist.querySelectorAll('.checklist-task.completed');
+  const lastCompleted = completedItems[completedItems.length - 1];
+  if (lastCompleted) {
+    lastCompleted.classList.add('just-completed');
+    setTimeout(() => lastCompleted.classList.remove('just-completed'), 600);
+  }
+}
+
+// Render the checklist (expanded or minimized)
+function renderChecklist() {
+  // Remove existing
+  const existingChecklist = document.getElementById('onboardingChecklist');
+  if (existingChecklist) existingChecklist.remove();
+  const existingFab = document.getElementById('checklistFab');
+  if (existingFab) existingFab.remove();
+
+  if (onboardingChecklist.dismissed) return;
+
+  const completedCount = onboardingChecklist.completedTasks.length;
+  const totalCount = onboardingChecklist.tasks.length;
+  const progressPercent = Math.round((completedCount / totalCount) * 100);
+
+  if (onboardingChecklist.minimized) {
+    renderChecklistFab(completedCount, totalCount, progressPercent);
+  } else {
+    renderChecklistExpanded(completedCount, totalCount, progressPercent);
+  }
+}
+
+// Render the minimized FAB (floating action button with progress ring)
+function renderChecklistFab(completedCount, totalCount, progressPercent) {
+  const fab = document.createElement('button');
+  fab.id = 'checklistFab';
+  fab.className = 'checklist-fab';
+  fab.style.right = getChecklistRightOffset();
+  fab.title = 'Vis sjekkliste';
+  fab.onclick = expandChecklist;
+
+  // SVG progress ring
+  const radius = 22;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (progressPercent / 100) * circumference;
+
+  fab.innerHTML = `
+    <svg class="checklist-fab-ring" viewBox="0 0 52 52">
+      <circle cx="26" cy="26" r="${radius}" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+      <circle cx="26" cy="26" r="${radius}" fill="none" stroke="currentColor" stroke-width="3"
+        stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+        stroke-linecap="round" transform="rotate(-90 26 26)"/>
+    </svg>
+    <span class="checklist-fab-count">${completedCount}/${totalCount}</span>
+  `;
+
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer) {
+    mapContainer.appendChild(fab);
+  } else {
+    document.body.appendChild(fab);
+  }
+}
+
+// Render the expanded checklist widget
+function renderChecklistExpanded(completedCount, totalCount, progressPercent) {
+  const widget = document.createElement('div');
+  widget.id = 'onboardingChecklist';
+  widget.className = 'onboarding-checklist';
+
+  const tasksHtml = onboardingChecklist.tasks.map(task => {
+    const isCompleted = onboardingChecklist.completedTasks.includes(task.id);
+    return `
+      <div class="checklist-task ${isCompleted ? 'completed' : ''}" data-task-id="${task.id}">
+        <div class="checklist-task-check">
+          ${isCompleted
+            ? '<i aria-hidden="true" class="fas fa-check-circle"></i>'
+            : '<i aria-hidden="true" class="far fa-circle"></i>'}
+        </div>
+        <div class="checklist-task-content">
+          <span class="checklist-task-label">${escapeHtml(task.label)}</span>
+          <span class="checklist-task-desc">${escapeHtml(task.description)}</span>
+        </div>
+        ${!isCompleted ? '<i aria-hidden="true" class="fas fa-chevron-right checklist-task-arrow"></i>' : ''}
+      </div>
+    `;
+  }).join('');
+
+  widget.innerHTML = `
+    <div class="checklist-header">
+      <div class="checklist-header-top">
+        <h3><i aria-hidden="true" class="fas fa-clipboard-check"></i> Kom i gang</h3>
+        <div class="checklist-header-actions">
+          <button class="checklist-header-btn" onclick="minimizeChecklist()" title="Minimer">
+            <i aria-hidden="true" class="fas fa-minus"></i>
+          </button>
+          <button class="checklist-header-btn" onclick="dismissChecklist()" title="Lukk">
+            <i aria-hidden="true" class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+      <div class="checklist-progress">
+        <div class="checklist-progress-bar">
+          <div class="checklist-progress-fill" style="width: ${progressPercent}%"></div>
+        </div>
+        <span class="checklist-progress-text">${completedCount} av ${totalCount} fullført</span>
+      </div>
+    </div>
+    <div class="checklist-tasks">
+      ${tasksHtml}
+    </div>
+  `;
+
+  // Event delegation for task clicks
+  widget.addEventListener('click', (e) => {
+    const taskEl = e.target.closest('.checklist-task:not(.completed)');
+    if (!taskEl) return;
+    const taskId = taskEl.dataset.taskId;
+    const task = onboardingChecklist.tasks.find(t => t.id === taskId);
+    if (task && task.action) {
+      task.action();
+    }
+  });
+
+  const mapContainer = document.getElementById('sharedMapContainer');
+  if (mapContainer) {
+    mapContainer.appendChild(widget);
+  } else {
+    document.body.appendChild(widget);
+  }
+
+  // Animate in
+  requestAnimationFrame(() => {
+    widget.classList.add('visible');
+  });
+}
+
+// Minimize the checklist to a FAB
+function minimizeChecklist() {
+  onboardingChecklist.minimized = true;
+  localStorage.setItem('skyplanner_checklistMinimized', 'true');
+  renderChecklist();
+}
+
+// Expand the checklist from FAB
+function expandChecklist() {
+  onboardingChecklist.minimized = false;
+  localStorage.setItem('skyplanner_checklistMinimized', 'false');
+  renderChecklist();
+}
+
+// Permanently dismiss the checklist
+function dismissChecklist() {
+  onboardingChecklist.dismissed = true;
+  localStorage.setItem('skyplanner_checklistDismissed', 'true');
+
+  const widget = document.getElementById('onboardingChecklist');
+  if (widget) {
+    widget.classList.remove('visible');
+    widget.classList.add('dismissing');
+    setTimeout(() => widget.remove(), 300);
+  }
+  const fab = document.getElementById('checklistFab');
+  if (fab) fab.remove();
+}
+
+// Hide the checklist without dismissing (used on logout or guidance toggle off)
+function hideOnboardingChecklist() {
+  const widget = document.getElementById('onboardingChecklist');
+  if (widget) widget.remove();
+  const fab = document.getElementById('checklistFab');
+  if (fab) fab.remove();
+}
+
+// Show the checklist again (used when guidance toggled back on or "Vis sjekkliste" clicked)
+function showOnboardingChecklist() {
+  localStorage.removeItem('skyplanner_checklistDismissed');
+  onboardingChecklist.dismissed = false;
+  onboardingChecklist.minimized = false;
+  localStorage.removeItem('skyplanner_checklistMinimized');
+  initOnboardingChecklist();
 }
 
 
@@ -15342,6 +16134,9 @@ async function wpOptimizeOrder(dayKey) {
         dayData.planned = plannedOptimized;
         renderWeeklyPlan();
         showToast('Rekkefølge optimalisert', 'success');
+        // Track for onboarding checklist
+        localStorage.setItem('skyplanner_firstRoutePlanned', 'true');
+        if (typeof refreshChecklistState === 'function') refreshChecklistState();
       }
     }
   } catch (err) {
@@ -16906,6 +17701,11 @@ async function saveAvtale(e) {
       renderCalendar();
       applyFilters(); // Oppdater kart-markører med ny avtale-status
       closeAvtaleModal();
+      // Track for onboarding checklist (only on create, not edit)
+      if (!avtaleId) {
+        localStorage.setItem('skyplanner_firstEventCreated', 'true');
+        if (typeof refreshChecklistState === 'function') refreshChecklistState();
+      }
     } else {
       const error = await response.json();
       showMessage('Kunne ikke lagre: ' + (error.error || 'Ukjent feil'), 'error');
@@ -19744,6 +20544,18 @@ function showAddressBannerIfNeeded() {
   // Only show if no address is configured
   if (getRouteStartLocation()) return;
 
+  // Don't show if getting-started banner is or will be visible (avoid visual collision)
+  // Check both: banner already in DOM, OR banner will appear (no customers + not dismissed)
+  const gettingStartedWillShow = document.getElementById('gettingStartedBanner')
+    || (customers.length === 0 && localStorage.getItem('gettingStartedDismissed') !== 'true');
+  if (gettingStartedWillShow) {
+    // Address prompt will show after getting-started banner is dismissed
+    showPersistentAddressNudge();
+    const adminBadge = document.getElementById('adminAddressBadge');
+    if (adminBadge) adminBadge.style.display = 'inline-flex';
+    return;
+  }
+
   // If already dismissed this session, show persistent nudge instead
   if (sessionStorage.getItem('addressBannerDismissed')) {
     showPersistentAddressNudge();
@@ -19796,10 +20608,14 @@ function dismissAddressBanner() {
     prompt.classList.remove('visible');
     setTimeout(() => prompt.remove(), 300);
   }
+  // Track dismissal for this login session (cleared on logout)
   sessionStorage.setItem('addressBannerDismissed', 'true');
 
   // Show persistent nudge pill after banner is dismissed
   setTimeout(() => showPersistentAddressNudge(), 400);
+
+  // Reveal sidebar/filter if hidden for new users
+  if (typeof showAppPanels === 'function') showAppPanels();
 }
 
 function openAdminAddressTab() {
@@ -19983,16 +20799,9 @@ function initMap() {
   }
   map.addControl(new LocateControl(), 'top-left');
 
-  // Initialize clustering — must wait for map style to be loaded
-  if (map.isStyleLoaded()) {
-    initClusterManager();
-  } else {
-    map.once('style.load', () => initClusterManager());
-    // Fallback: 'load' event fires after style + tiles are ready
-    map.once('load', () => {
-      if (!_clusterSourceReady) initClusterManager();
-    });
-  }
+  // Initialize clustering — initClusterManager handles retry internally
+  // if the style isn't fully ready yet (e.g. during flyTo animation after login)
+  initClusterManager();
 
   // Update clusters after map movement completes (not during zoom — markers are
   // geo-anchored and follow the map automatically, updating mid-zoom causes jitter)
@@ -20115,7 +20924,7 @@ function addNorwayBorder() {
   if (!map) return;
 
   // Remove existing layers if present (needed after style change)
-  ['norway-border-line', 'sweden-overlay', 'sweden-overlay-fill'].forEach(id => {
+  ['norway-border-line'].forEach(id => {
     if (map.getLayer(id)) map.removeLayer(id);
     if (map.getSource(id)) map.removeSource(id);
   });
@@ -20149,29 +20958,6 @@ function addNorwayBorder() {
     }
   });
 
-  // Sweden dim overlay (east of border)
-  const swedenCoords = [[
-    [20.5, 71.5], [32.0, 71.5], [32.0, 58.0], [11.0, 58.0],
-    [11.5, 59.0], [12.2, 61.0], [12.5, 63.5], [14.5, 66.0],
-    [17.5, 68.0], [20.0, 69.0], [20.5, 71.5]
-  ]];
-
-  map.addSource('sweden-overlay', {
-    type: 'geojson',
-    data: {
-      type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: swedenCoords }
-    }
-  });
-  map.addLayer({
-    id: 'sweden-overlay-fill',
-    type: 'fill',
-    source: 'sweden-overlay',
-    paint: {
-      'fill-color': '#000',
-      'fill-opacity': 0.25
-    }
-  });
 }
 
 /**
@@ -20417,7 +21203,7 @@ async function handleSpaLogin(e) {
           // Show onboarding wizard
           await showOnboardingWizard();
         }
-        transitionToAppView();
+        transitionToAppView({ isNewUser: needsOnboarding });
       }, 300);
     } else {
       // Handle both wrapped error format { error: { message } } and legacy format { error: "string" }
@@ -20498,11 +21284,13 @@ function hideUserBar() {
 
 // Transition from login to app view with smooth animations
 // Single map architecture: map never changes, only UI overlays animate
-function transitionToAppView() {
+// options.isNewUser: skip sidebar/filter panels to let onboarding banners breathe
+function transitionToAppView(options = {}) {
   const loginOverlay = document.getElementById('loginOverlay');
   const appView = document.getElementById('appView');
   const sidebar = document.getElementById('sidebar');
   const filterPanel = document.getElementById('filterPanel');
+  const isNewUser = options.isNewUser || false;
   const loginSide = document.querySelector('.login-side');
   const loginBrandContent = document.querySelector('.login-brand-content');
   const loginMapOverlay = document.querySelector('.login-map-overlay');
@@ -20560,9 +21348,12 @@ function transitionToAppView() {
   }, 200);
 
   // PHASE 3: Stop globe spin and fly to office location (or Norway center as fallback)
-  setTimeout(() => {
+  // Reload config first since user is now authenticated — gets org-specific office address
+  setTimeout(async () => {
     if (map) {
       stopGlobeSpin();
+      // Reload config to get office address (user just authenticated, config was loaded pre-login)
+      try { await loadConfig(); } catch (e) { /* continue with existing config */ }
       const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
       map.flyTo({
         center: hasOfficeLocation
@@ -20622,68 +21413,80 @@ function transitionToAppView() {
       if (typeof readdClusterLayers === 'function') readdClusterLayers();
       loadCustomers();
     }
+
+    // Initialize onboarding checklist after data is loaded
+    setTimeout(() => {
+      if (typeof initOnboardingChecklist === 'function') {
+        initOnboardingChecklist();
+      }
+    }, 500);
   }, 1700);
 
   // PHASE 6: Slide in sidebar and show tab navigation
-  setTimeout(() => {
-    if (sidebar) {
-      sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
-      sidebar.style.transform = 'translateX(0)';
-      sidebar.style.opacity = '1';
-    }
-    // Show tab navigation and sidebar toggle (hidden on logout)
-    const tabNavigation = document.querySelector('.tab-navigation');
-    if (tabNavigation) {
-      tabNavigation.style.transition = 'opacity 0.4s ease-out';
-      tabNavigation.style.opacity = '1';
-      tabNavigation.style.pointerEvents = 'auto';
-    }
-    const sidebarToggle = document.getElementById('sidebarToggle');
-    if (sidebarToggle) {
-      sidebarToggle.style.transition = 'opacity 0.4s ease-out';
-      sidebarToggle.style.opacity = '1';
-      sidebarToggle.style.pointerEvents = 'auto';
-    }
-  }, 900);
+  // For new users: keep panels hidden so address/getting-started banners aren't blocked
+  if (!isNewUser) {
+    setTimeout(() => {
+      if (sidebar) {
+        sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+        sidebar.style.transform = 'translateX(0)';
+        sidebar.style.opacity = '1';
+      }
+      // Show tab navigation and sidebar toggle (hidden on logout)
+      const tabNavigation = document.querySelector('.tab-navigation');
+      if (tabNavigation) {
+        tabNavigation.style.transition = 'opacity 0.4s ease-out';
+        tabNavigation.style.opacity = '1';
+        tabNavigation.style.pointerEvents = 'auto';
+      }
+      const sidebarToggle = document.getElementById('sidebarToggle');
+      if (sidebarToggle) {
+        sidebarToggle.style.transition = 'opacity 0.4s ease-out';
+        sidebarToggle.style.opacity = '1';
+        sidebarToggle.style.pointerEvents = 'auto';
+      }
+    }, 900);
 
-  // PHASE 7: Slide in filter panel
-  setTimeout(() => {
-    if (filterPanel) {
-      filterPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
-      filterPanel.style.transform = 'translateX(0)';
-      filterPanel.style.opacity = '1';
-    }
+    // PHASE 7: Slide in filter panel
+    setTimeout(() => {
+      if (filterPanel) {
+        filterPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+        filterPanel.style.transform = 'translateX(0)';
+        filterPanel.style.opacity = '1';
+      }
 
-    // Slide in content panel if it should be open
-    const contentPanel = document.getElementById('contentPanel');
-    const shouldOpenPanel = localStorage.getItem('contentPanelOpen') === 'true';
-    if (shouldOpenPanel && contentPanel) {
-      contentPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
-      contentPanel.style.transform = 'translateX(0)';
-      contentPanel.style.opacity = '1';
-    }
-  }, 1050);
+      // Slide in content panel if it should be open
+      const contentPanel = document.getElementById('contentPanel');
+      const shouldOpenPanel = localStorage.getItem('contentPanelOpen') === 'true';
+      if (shouldOpenPanel && contentPanel) {
+        contentPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+        contentPanel.style.transform = 'translateX(0)';
+        contentPanel.style.opacity = '1';
+      }
+    }, 1050);
+  }
 
   // PHASE 8: Clean up inline styles (after easeTo settles at ~2.6s)
   setTimeout(() => {
-    // Clean up sidebar/filter inline styles
-    if (sidebar) {
-      sidebar.style.transition = '';
-      sidebar.style.transform = '';
-      sidebar.style.opacity = '';
-    }
-    if (filterPanel) {
-      filterPanel.style.transition = '';
-      filterPanel.style.transform = '';
-      filterPanel.style.opacity = '';
-    }
+    // Clean up sidebar/filter inline styles (only if they were animated in)
+    if (!isNewUser) {
+      if (sidebar) {
+        sidebar.style.transition = '';
+        sidebar.style.transform = '';
+        sidebar.style.opacity = '';
+      }
+      if (filterPanel) {
+        filterPanel.style.transition = '';
+        filterPanel.style.transform = '';
+        filterPanel.style.opacity = '';
+      }
 
-    // Clean up content panel inline styles
-    const contentPanel = document.getElementById('contentPanel');
-    if (contentPanel) {
-      contentPanel.style.transition = '';
-      contentPanel.style.transform = '';
-      contentPanel.style.opacity = '';
+      // Clean up content panel inline styles
+      const contentPanel = document.getElementById('contentPanel');
+      if (contentPanel) {
+        contentPanel.style.transition = '';
+        contentPanel.style.transform = '';
+        contentPanel.style.opacity = '';
+      }
     }
 
     // Reset login elements for potential re-login
@@ -20709,6 +21512,59 @@ function transitionToAppView() {
       el.style.pointerEvents = '';
     });
   }, 2800);
+}
+
+// Reveal sidebar and filter panels (called after new user adds data or dismisses banners)
+function showAppPanels() {
+  const sidebar = document.getElementById('sidebar');
+  const filterPanel = document.getElementById('filterPanel');
+
+  // Only animate if panels are currently hidden (off-screen)
+  if (sidebar && (sidebar.style.opacity === '0' || sidebar.style.transform)) {
+    sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+    sidebar.style.transform = 'translateX(0)';
+    sidebar.style.opacity = '1';
+    setTimeout(() => {
+      sidebar.style.transition = '';
+      sidebar.style.transform = '';
+      sidebar.style.opacity = '';
+    }, 700);
+  }
+
+  if (filterPanel && (filterPanel.style.opacity === '0' || filterPanel.style.transform)) {
+    filterPanel.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
+    filterPanel.style.transform = 'translateX(0)';
+    filterPanel.style.opacity = '1';
+    setTimeout(() => {
+      filterPanel.style.transition = '';
+      filterPanel.style.transform = '';
+      filterPanel.style.opacity = '';
+    }, 700);
+  }
+
+  // Show tab navigation and sidebar toggle
+  const tabNavigation = document.querySelector('.tab-navigation');
+  if (tabNavigation) {
+    tabNavigation.style.transition = 'opacity 0.4s ease-out';
+    tabNavigation.style.opacity = '1';
+    tabNavigation.style.pointerEvents = 'auto';
+    setTimeout(() => {
+      tabNavigation.style.transition = '';
+      tabNavigation.style.opacity = '';
+      tabNavigation.style.pointerEvents = '';
+    }, 500);
+  }
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  if (sidebarToggle) {
+    sidebarToggle.style.transition = 'opacity 0.4s ease-out';
+    sidebarToggle.style.opacity = '1';
+    sidebarToggle.style.pointerEvents = 'auto';
+    setTimeout(() => {
+      sidebarToggle.style.transition = '';
+      sidebarToggle.style.opacity = '';
+      sidebarToggle.style.pointerEvents = '';
+    }, 500);
+  }
 }
 
 // Show login view (for logout)
@@ -20831,6 +21687,35 @@ function showLoginView() {
   // Clear route if any
   clearRoute();
 
+  // Close any open popup
+  closeMapPopup();
+
+  // Remove hover tooltip if visible
+  if (activeTooltipEl) {
+    activeTooltipEl.remove();
+    activeTooltipEl = null;
+  }
+
+  // Disable 3D terrain if active
+  if (terrainEnabled) {
+    disableTerrain();
+  }
+
+  // Deactivate isochrone if active
+  if (typeof IsochroneManager !== 'undefined' && IsochroneManager.active) {
+    IsochroneManager.deactivate();
+  }
+
+  // Deactivate area select if active
+  if (areaSelectMode) {
+    toggleAreaSelect();
+  }
+
+  // Clear coverage area overlays
+  if (typeof CoverageAreaManager !== 'undefined') {
+    CoverageAreaManager.clearOverlays();
+  }
+
   // Step 4: Show login overlay and start map fly animation
   setTimeout(() => {
     loginOverlay.classList.remove('hidden');
@@ -20875,6 +21760,8 @@ function showLoginView() {
     map.flyTo({
       center: [15.0, 65.0],
       zoom: 3.0,
+      pitch: 0,
+      bearing: 0,
       duration: 2000,
       essential: true,
       curve: 1.5
@@ -22436,6 +23323,14 @@ async function loadCustomers() {
     updateDashboard(); // Update dashboard stats
     updateGettingStartedBanner(); // Show/hide getting started banner
 
+    // Reveal sidebar/filter panels if they were hidden for new users
+    if (customers.length > 0 && typeof showAppPanels === 'function') {
+      showAppPanels();
+    }
+
+    // Update onboarding checklist progress
+    if (typeof refreshChecklistState === 'function') refreshChecklistState();
+
     // Load avtaler and subcategory assignments in parallel
     if (!weekPlanState.weekStart) initWeekPlanState(new Date());
     await Promise.all([
@@ -22485,8 +23380,9 @@ function updateGettingStartedBanner() {
       dismissGettingStartedBanner();
     } else if (action === 'open-integrations') {
       window.open(target.dataset.url, '_blank');
-    } else if (action === 'contact-import') {
-      window.location.href = target.dataset.url;
+    } else if (action === 'open-import') {
+      dismissGettingStartedBanner();
+      showImportModal();
     } else if (action === 'add-customer-manual') {
       dismissGettingStartedBanner();
       addCustomer();
@@ -22516,12 +23412,12 @@ function renderGettingStartedBanner() {
         <h3>Koble til regnskapssystem</h3>
         <p>Synkroniser kunder fra Tripletex, Fiken eller PowerOffice.</p>
       </div>
-      <div class="getting-started-card" data-action="contact-import" data-url="mailto:support@skyplanner.no?subject=Hjelp med dataimport">
+      <div class="getting-started-card" data-action="open-import">
         <div class="getting-started-card-icon">
           <i aria-hidden="true" class="fas fa-file-import"></i>
         </div>
-        <h3>Importer eksisterende data</h3>
-        <p>Har du data i Excel eller annet format? Kontakt oss, s&aring; hjelper vi deg.</p>
+        <h3>Importer fra fil</h3>
+        <p>Last opp kundedata fra Excel eller CSV-fil med vår importveiviser.</p>
       </div>
       <div class="getting-started-card" data-action="add-customer-manual">
         <div class="getting-started-card-icon">
@@ -22543,6 +23439,13 @@ function dismissGettingStartedBanner() {
     banner.style.transform = 'translateY(-20px)';
     setTimeout(() => banner.remove(), 300);
   }
+  // Reveal sidebar/filter if hidden for new users
+  if (typeof showAppPanels === 'function') showAppPanels();
+
+  // Now that banner is gone, show address prompt if needed (was deferred to avoid collision)
+  setTimeout(() => {
+    if (typeof showAddressBannerIfNeeded === 'function') showAddressBannerIfNeeded();
+  }, 400);
 }
 
 // Load områder for filter
@@ -25516,6 +26419,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize chat system
     initChat();
     initChatEventListeners();
+
+    // Show address setup banner if no office address is configured
+    showAddressBannerIfNeeded();
   } else {
     // Not logged in - login overlay is already visible by default
     currentView = 'login';
@@ -25548,6 +26454,7 @@ async function initializeApp() {
 
   // Reload config now that user is authenticated
   // (initial loadConfig() ran before login, so org-specific data like subcategories was missing)
+  // Note: transitionToAppView Phase 3 already reloads config and flies to office location
   await loadConfig();
 
   // Initialize DOM references
@@ -25618,7 +26525,11 @@ async function initializeApp() {
 }
 
 // Setup all event listeners
+let _eventListenersInitialized = false;
 function setupEventListeners() {
+  if (_eventListenersInitialized) return;
+  _eventListenersInitialized = true;
+
   // WCAG 2.1.1: Keyboard support for role="button" elements (Enter/Space activates click)
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"]')) {
@@ -25983,6 +26894,10 @@ function setupEventListeners() {
   // Open content panel
   function openContentPanel() {
     if (contentPanel) {
+      // Clear any stale inline styles from login animation
+      contentPanel.style.transform = '';
+      contentPanel.style.opacity = '';
+      contentPanel.style.transition = '';
       contentPanel.classList.remove('closed');
       contentPanel.classList.add('open');
       localStorage.setItem('contentPanelOpen', 'true');
@@ -26002,6 +26917,10 @@ function setupEventListeners() {
   // Close content panel
   function closeContentPanel() {
     if (contentPanel) {
+      // Clear any inline styles left by login animation or resize
+      contentPanel.style.transform = '';
+      contentPanel.style.opacity = '';
+      contentPanel.style.transition = '';
       contentPanel.classList.add('closed');
       contentPanel.classList.remove('open', 'half-height', 'full-height');
       localStorage.setItem('contentPanelOpen', 'false');
@@ -26236,6 +27155,11 @@ function setupEventListeners() {
           loadTodaysWork();
         } else if (tabName === 'chat') {
           onChatTabOpened();
+        }
+
+        // Show feature tour if this is the user's first visit to this tab
+        if (typeof showFeatureTourIfNeeded === 'function') {
+          showFeatureTourIfNeeded(tabName);
         }
       }
     });

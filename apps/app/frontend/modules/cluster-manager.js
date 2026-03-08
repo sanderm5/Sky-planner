@@ -8,33 +8,13 @@ let _clusterSourceReady = false;
 let supercluster = null; // Legacy reference (kept for compatibility with logging)
 let clusterMarkers = new Map(); // HTML marker cache for individual cluster markers
 
+let _clusterInitRetries = 0;
+
 function initClusterManager() {
   if (!map) { console.log('initClusterManager: no map'); return; }
-  if (map.getSource(CLUSTER_SOURCE)) { console.log('initClusterManager: source exists, ready'); _clusterSourceReady = true; return; }
-  // Style must be loaded before adding sources/layers.
-  if (!map.isStyleLoaded()) {
-    console.log('initClusterManager: style not loaded, deferring');
-    map.once('style.load', () => initClusterManager());
-    // Fallback: 'load' event fires after style + tiles are ready
-    map.once('load', () => {
-      if (!_clusterSourceReady) initClusterManager();
-    });
-    // Fallback: poll isStyleLoaded() in case events already fired
-    let pollCount = 0;
-    const pollInterval = setInterval(() => {
-      pollCount++;
-      if (_clusterSourceReady || pollCount > 50) {
-        clearInterval(pollInterval);
-        return;
-      }
-      if (map.isStyleLoaded()) {
-        clearInterval(pollInterval);
-        if (!_clusterSourceReady) initClusterManager();
-      }
-    }, 100);
-    return;
-  }
-  console.log('initClusterManager: creating source and layers');
+  if (map.getSource(CLUSTER_SOURCE)) { _clusterSourceReady = true; _clusterInitRetries = 0; return; }
+
+  // Try creating source/layers directly — catch handles style-not-ready errors
   try {
     map.addSource(CLUSTER_SOURCE, {
       type: 'geojson', data: { type: 'FeatureCollection', features: [] },
@@ -86,6 +66,7 @@ function initClusterManager() {
       }
     });
     _clusterSourceReady = true;
+    _clusterInitRetries = 0;
     console.log('initClusterManager: ready, source created');
     // If customers were loaded while we waited for style, render them now
     if (typeof customers !== 'undefined' && customers.length > 0 && typeof applyFilters === 'function') {
@@ -93,21 +74,20 @@ function initClusterManager() {
       applyFilters();
     }
   } catch (err) {
-    console.error('initClusterManager failed:', err);
-    // Retry after style is loaded (event + polling fallback)
-    map.once('style.load', () => initClusterManager());
-    let pollCount = 0;
-    const pollInterval = setInterval(() => {
-      pollCount++;
-      if (_clusterSourceReady || pollCount > 50) {
-        clearInterval(pollInterval);
-        return;
-      }
-      if (map.isStyleLoaded()) {
-        clearInterval(pollInterval);
-        if (!_clusterSourceReady) initClusterManager();
-      }
-    }, 100);
+    _clusterInitRetries++;
+    if (_clusterInitRetries > 60) {
+      console.error('initClusterManager: gave up after', _clusterInitRetries, 'retries:', err);
+      _clusterInitRetries = 0;
+      return;
+    }
+    console.log('initClusterManager: retry', _clusterInitRetries, '—', err.message);
+    // Retry via timeout (200ms) — works regardless of which events have already fired
+    setTimeout(() => { if (!_clusterSourceReady) initClusterManager(); }, 200);
+    // Also listen for 'idle' (fires when map finishes flyTo/tile loading) and 'style.load'
+    if (_clusterInitRetries === 1) {
+      map.once('idle', () => { if (!_clusterSourceReady) initClusterManager(); });
+      map.once('style.load', () => { if (!_clusterSourceReady) initClusterManager(); });
+    }
   }
 }
 

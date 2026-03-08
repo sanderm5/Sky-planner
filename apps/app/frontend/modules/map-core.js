@@ -408,6 +408,18 @@ function showAddressBannerIfNeeded() {
   // Only show if no address is configured
   if (getRouteStartLocation()) return;
 
+  // Don't show if getting-started banner is or will be visible (avoid visual collision)
+  // Check both: banner already in DOM, OR banner will appear (no customers + not dismissed)
+  const gettingStartedWillShow = document.getElementById('gettingStartedBanner')
+    || (customers.length === 0 && localStorage.getItem('gettingStartedDismissed') !== 'true');
+  if (gettingStartedWillShow) {
+    // Address prompt will show after getting-started banner is dismissed
+    showPersistentAddressNudge();
+    const adminBadge = document.getElementById('adminAddressBadge');
+    if (adminBadge) adminBadge.style.display = 'inline-flex';
+    return;
+  }
+
   // If already dismissed this session, show persistent nudge instead
   if (sessionStorage.getItem('addressBannerDismissed')) {
     showPersistentAddressNudge();
@@ -460,10 +472,14 @@ function dismissAddressBanner() {
     prompt.classList.remove('visible');
     setTimeout(() => prompt.remove(), 300);
   }
+  // Track dismissal for this login session (cleared on logout)
   sessionStorage.setItem('addressBannerDismissed', 'true');
 
   // Show persistent nudge pill after banner is dismissed
   setTimeout(() => showPersistentAddressNudge(), 400);
+
+  // Reveal sidebar/filter if hidden for new users
+  if (typeof showAppPanels === 'function') showAppPanels();
 }
 
 function openAdminAddressTab() {
@@ -647,16 +663,9 @@ function initMap() {
   }
   map.addControl(new LocateControl(), 'top-left');
 
-  // Initialize clustering — must wait for map style to be loaded
-  if (map.isStyleLoaded()) {
-    initClusterManager();
-  } else {
-    map.once('style.load', () => initClusterManager());
-    // Fallback: 'load' event fires after style + tiles are ready
-    map.once('load', () => {
-      if (!_clusterSourceReady) initClusterManager();
-    });
-  }
+  // Initialize clustering — initClusterManager handles retry internally
+  // if the style isn't fully ready yet (e.g. during flyTo animation after login)
+  initClusterManager();
 
   // Update clusters after map movement completes (not during zoom — markers are
   // geo-anchored and follow the map automatically, updating mid-zoom causes jitter)
@@ -779,7 +788,7 @@ function addNorwayBorder() {
   if (!map) return;
 
   // Remove existing layers if present (needed after style change)
-  ['norway-border-line', 'sweden-overlay', 'sweden-overlay-fill'].forEach(id => {
+  ['norway-border-line'].forEach(id => {
     if (map.getLayer(id)) map.removeLayer(id);
     if (map.getSource(id)) map.removeSource(id);
   });
@@ -813,29 +822,6 @@ function addNorwayBorder() {
     }
   });
 
-  // Sweden dim overlay (east of border)
-  const swedenCoords = [[
-    [20.5, 71.5], [32.0, 71.5], [32.0, 58.0], [11.0, 58.0],
-    [11.5, 59.0], [12.2, 61.0], [12.5, 63.5], [14.5, 66.0],
-    [17.5, 68.0], [20.0, 69.0], [20.5, 71.5]
-  ]];
-
-  map.addSource('sweden-overlay', {
-    type: 'geojson',
-    data: {
-      type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: swedenCoords }
-    }
-  });
-  map.addLayer({
-    id: 'sweden-overlay-fill',
-    type: 'fill',
-    source: 'sweden-overlay',
-    paint: {
-      'fill-color': '#000',
-      'fill-opacity': 0.25
-    }
-  });
 }
 
 /**

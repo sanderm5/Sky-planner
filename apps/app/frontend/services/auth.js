@@ -80,6 +80,19 @@ function handleLogout() {
   const adminBadge = document.getElementById('adminAddressBadge');
   if (adminBadge) adminBadge.style.display = 'none';
 
+  // Clear address banner dismissal so it shows again on next login
+  sessionStorage.removeItem('addressBannerDismissed');
+
+  // Clear getting-started dismissal so new user sees it
+  localStorage.removeItem('gettingStartedDismissed');
+
+  // Clean up onboarding checklist UI
+  if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
+  localStorage.removeItem('skyplanner_checklistMinimized');
+
+  // Reset context tips so they show on next login
+  localStorage.removeItem('shownContextTips');
+
   showLoginView();
 }
 

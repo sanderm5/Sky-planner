@@ -89,11 +89,19 @@ async function showOnboardingWizard() {
     // Industry selection is now handled on the website dashboard, not in the app
     // Build wizard steps (without industry selection)
     onboardingWizard.steps = [
+      { id: 'welcome', title: 'Velkommen', icon: 'fa-hand-sparkles' },
       { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
       { id: 'import', title: 'Importer kunder', icon: 'fa-file-excel' },
       { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
       { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
     ];
+
+    // Pre-fill wizard data from existing config (for re-runs)
+    if (appConfig.routeStartAddress) {
+      onboardingWizard.data.company.address = appConfig.routeStartAddress;
+      onboardingWizard.data.company.route_start_lat = appConfig.routeStartLat;
+      onboardingWizard.data.company.route_start_lng = appConfig.routeStartLng;
+    }
 
     // Create overlay
     const overlay = document.createElement('div');
@@ -118,9 +126,21 @@ async function renderWizardStep() {
   const overlay = onboardingWizard.overlay;
   const step = onboardingWizard.steps[onboardingWizard.currentStep];
 
+  // Animate out existing content before switching
+  const existingContent = overlay.querySelector('.wizard-content');
+  if (existingContent) {
+    existingContent.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+    existingContent.style.opacity = '0';
+    existingContent.style.transform = 'translateX(-20px)';
+    await new Promise(r => setTimeout(r, 200));
+  }
+
   let stepContent = '';
 
   switch (step.id) {
+    case 'welcome':
+      stepContent = renderWelcomeStep();
+      break;
     case 'company':
       stepContent = renderCompanyStep();
       break;
@@ -168,6 +188,55 @@ function renderWizardProgress() {
           </div>
         `).join('')}
       </div>
+    </div>
+  `;
+}
+
+// Render welcome/intro step
+function renderWelcomeStep() {
+  const userName = localStorage.getItem('userName') || '';
+  const greeting = userName ? `, ${escapeHtml(userName)}` : '';
+
+  return `
+    <div class="wizard-step-header wizard-welcome">
+      <div class="wizard-welcome-icon">
+        <i aria-hidden="true" class="fas fa-hand-sparkles"></i>
+      </div>
+      <h1>Velkommen til Sky Planner${greeting}!</h1>
+      <p>Vi hjelper deg å komme i gang på under 2 minutter. Du kan når som helst hoppe over og fullføre senere.</p>
+    </div>
+
+    <div class="wizard-welcome-features">
+      <div class="wizard-feature-card">
+        <div class="wizard-feature-card-icon">
+          <i aria-hidden="true" class="fas fa-map-marked-alt"></i>
+        </div>
+        <h3>Kundekart</h3>
+        <p>Se alle kunder som markører på kartet. Klikk for detaljer, filtrer på kategorier og tags.</p>
+      </div>
+      <div class="wizard-feature-card">
+        <div class="wizard-feature-card-icon">
+          <i aria-hidden="true" class="fas fa-route"></i>
+        </div>
+        <h3>Ukeplan og ruter</h3>
+        <p>Planlegg ukens stopp dag for dag. Optimaliser kjøreruten automatisk med ett klikk.</p>
+      </div>
+      <div class="wizard-feature-card">
+        <div class="wizard-feature-card-icon">
+          <i aria-hidden="true" class="fas fa-calendar-alt"></i>
+        </div>
+        <h3>Kalender</h3>
+        <p>Opprett avtaler, sett påminnelser og hold oversikt over fremtidige oppdrag.</p>
+      </div>
+    </div>
+
+    <div class="wizard-footer wizard-footer-center">
+      <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="nextWizardStep()">
+        La oss komme i gang <i aria-hidden="true" class="fas fa-arrow-right"></i>
+      </button>
+      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
+        Hopp over
+      </button>
     </div>
   `;
 }
@@ -273,11 +342,17 @@ function renderCompleteStep() {
 
   return `
     <div class="wizard-step-header wizard-complete">
-      <div class="wizard-complete-icon">
-        <i aria-hidden="true" class="fas fa-check-circle"></i>
+      <div class="wizard-celebration">
+        <div class="wizard-confetti" aria-hidden="true"></div>
+        <div class="wizard-complete-icon wizard-complete-animated">
+          <svg viewBox="0 0 52 52" class="wizard-checkmark-svg">
+            <circle cx="26" cy="26" r="25" fill="none" class="wizard-checkmark-circle"/>
+            <path fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" class="wizard-checkmark-check"/>
+          </svg>
+        </div>
       </div>
-      <h1>Oppsettet er fullført!</h1>
-      <p>Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
+      <h1 class="wizard-complete-title">Oppsettet er fullført!</h1>
+      <p class="wizard-complete-subtitle">Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
     </div>
 
     <div class="wizard-complete-summary">
@@ -3542,6 +3617,11 @@ async function completeOnboardingWizard() {
     // Show first-time tips
     showContextTips();
 
+    // Initialize onboarding checklist for continued guidance
+    if (typeof initOnboardingChecklist === 'function') {
+      setTimeout(() => initOnboardingChecklist(), 1500);
+    }
+
     if (onboardingWizard.resolve) {
       onboardingWizard.resolve();
     }
@@ -3561,6 +3641,11 @@ async function handleSkipOnboarding() {
     setTimeout(() => {
       overlay.remove();
       onboardingWizard.overlay = null;
+
+      // Show checklist since user skipped setup — especially useful here
+      if (typeof initOnboardingChecklist === 'function') {
+        setTimeout(() => initOnboardingChecklist(), 1500);
+      }
 
       if (onboardingWizard.resolve) {
         onboardingWizard.resolve();

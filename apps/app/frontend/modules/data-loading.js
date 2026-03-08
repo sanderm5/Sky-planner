@@ -25,6 +25,14 @@ async function loadCustomers() {
     updateDashboard(); // Update dashboard stats
     updateGettingStartedBanner(); // Show/hide getting started banner
 
+    // Reveal sidebar/filter panels if they were hidden for new users
+    if (customers.length > 0 && typeof showAppPanels === 'function') {
+      showAppPanels();
+    }
+
+    // Update onboarding checklist progress
+    if (typeof refreshChecklistState === 'function') refreshChecklistState();
+
     // Load avtaler and subcategory assignments in parallel
     if (!weekPlanState.weekStart) initWeekPlanState(new Date());
     await Promise.all([
@@ -74,8 +82,9 @@ function updateGettingStartedBanner() {
       dismissGettingStartedBanner();
     } else if (action === 'open-integrations') {
       window.open(target.dataset.url, '_blank');
-    } else if (action === 'contact-import') {
-      window.location.href = target.dataset.url;
+    } else if (action === 'open-import') {
+      dismissGettingStartedBanner();
+      showImportModal();
     } else if (action === 'add-customer-manual') {
       dismissGettingStartedBanner();
       addCustomer();
@@ -105,12 +114,12 @@ function renderGettingStartedBanner() {
         <h3>Koble til regnskapssystem</h3>
         <p>Synkroniser kunder fra Tripletex, Fiken eller PowerOffice.</p>
       </div>
-      <div class="getting-started-card" data-action="contact-import" data-url="mailto:support@skyplanner.no?subject=Hjelp med dataimport">
+      <div class="getting-started-card" data-action="open-import">
         <div class="getting-started-card-icon">
           <i aria-hidden="true" class="fas fa-file-import"></i>
         </div>
-        <h3>Importer eksisterende data</h3>
-        <p>Har du data i Excel eller annet format? Kontakt oss, s&aring; hjelper vi deg.</p>
+        <h3>Importer fra fil</h3>
+        <p>Last opp kundedata fra Excel eller CSV-fil med vår importveiviser.</p>
       </div>
       <div class="getting-started-card" data-action="add-customer-manual">
         <div class="getting-started-card-icon">
@@ -132,6 +141,13 @@ function dismissGettingStartedBanner() {
     banner.style.transform = 'translateY(-20px)';
     setTimeout(() => banner.remove(), 300);
   }
+  // Reveal sidebar/filter if hidden for new users
+  if (typeof showAppPanels === 'function') showAppPanels();
+
+  // Now that banner is gone, show address prompt if needed (was deferred to avoid collision)
+  setTimeout(() => {
+    if (typeof showAddressBannerIfNeeded === 'function') showAddressBannerIfNeeded();
+  }, 400);
 }
 
 // Load områder for filter

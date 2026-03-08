@@ -216,6 +216,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize chat system
     initChat();
     initChatEventListeners();
+
+    // Show address setup banner if no office address is configured
+    showAddressBannerIfNeeded();
   } else {
     // Not logged in - login overlay is already visible by default
     currentView = 'login';
@@ -248,6 +251,7 @@ async function initializeApp() {
 
   // Reload config now that user is authenticated
   // (initial loadConfig() ran before login, so org-specific data like subcategories was missing)
+  // Note: transitionToAppView Phase 3 already reloads config and flies to office location
   await loadConfig();
 
   // Initialize DOM references
@@ -318,7 +322,11 @@ async function initializeApp() {
 }
 
 // Setup all event listeners
+let _eventListenersInitialized = false;
 function setupEventListeners() {
+  if (_eventListenersInitialized) return;
+  _eventListenersInitialized = true;
+
   // WCAG 2.1.1: Keyboard support for role="button" elements (Enter/Space activates click)
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"]')) {
@@ -683,6 +691,10 @@ function setupEventListeners() {
   // Open content panel
   function openContentPanel() {
     if (contentPanel) {
+      // Clear any stale inline styles from login animation
+      contentPanel.style.transform = '';
+      contentPanel.style.opacity = '';
+      contentPanel.style.transition = '';
       contentPanel.classList.remove('closed');
       contentPanel.classList.add('open');
       localStorage.setItem('contentPanelOpen', 'true');
@@ -702,6 +714,10 @@ function setupEventListeners() {
   // Close content panel
   function closeContentPanel() {
     if (contentPanel) {
+      // Clear any inline styles left by login animation or resize
+      contentPanel.style.transform = '';
+      contentPanel.style.opacity = '';
+      contentPanel.style.transition = '';
       contentPanel.classList.add('closed');
       contentPanel.classList.remove('open', 'half-height', 'full-height');
       localStorage.setItem('contentPanelOpen', 'false');
@@ -936,6 +952,11 @@ function setupEventListeners() {
           loadTodaysWork();
         } else if (tabName === 'chat') {
           onChatTabOpened();
+        }
+
+        // Show feature tour if this is the user's first visit to this tab
+        if (typeof showFeatureTourIfNeeded === 'function') {
+          showFeatureTourIfNeeded(tabName);
         }
       }
     });

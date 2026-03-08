@@ -12,6 +12,8 @@ async function loadAdminData() {
   initTeamMembersUI();
   // Initialize fields management UI
   initFieldsManagementUI();
+  // Initialize onboarding/guidance settings UI
+  initOnboardingSettingsUI();
 
   // Load team members
   await loadTeamMembers();
@@ -195,6 +197,11 @@ async function saveTeamMember(e) {
     showToast(isEdit ? 'Bruker oppdatert' : 'Bruker opprettet', 'success');
     closeTeamMemberModal();
     await loadTeamMembers();
+    // Track for onboarding checklist (only on create, not edit)
+    if (!isEdit) {
+      localStorage.setItem('skyplanner_teamInviteSent', 'true');
+      if (typeof refreshChecklistState === 'function') refreshChecklistState();
+    }
   } catch (error) {
     console.error('Error saving team member:', error);
     showToast('En feil oppstod', 'error');
@@ -843,6 +850,12 @@ async function saveCompanyAddress() {
       const adminBadge = document.getElementById('adminAddressBadge');
       if (adminBadge) adminBadge.style.display = 'none';
 
+      // Reveal sidebar/filter if hidden for new users
+      if (typeof showAppPanels === 'function') showAppPanels();
+
+      // Update onboarding checklist progress
+      if (typeof refreshChecklistState === 'function') refreshChecklistState();
+
       showToast('Firmaadresse lagret', 'success');
     } else {
       showToast(result.error?.message || 'Kunne ikke lagre adresse', 'error');
@@ -892,11 +905,139 @@ async function clearCompanyAddress() {
       // Hide office marker
       updateOfficeMarkerPosition();
 
+      // Show address nudge since address is now cleared
+      showPersistentAddressNudge();
+      const adminBadge = document.getElementById('adminAddressBadge');
+      if (adminBadge) adminBadge.style.display = 'inline-flex';
+
       showToast('Firmaadresse fjernet', 'success');
     }
   } catch (err) {
     Logger.error('Clear company address error:', err);
     showToast('Feil ved fjerning av adresse', 'error');
   }
+}
+
+// ========================================
+// ONBOARDING & GUIDANCE SETTINGS
+// ========================================
+
+function initOnboardingSettingsUI() {
+  renderOnboardingSettings();
+
+  const container = document.getElementById('onboardingSettingsGrid');
+  if (!container) return;
+
+  container.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+
+    if (action === 'rerun-wizard') {
+      btn.disabled = true;
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Tilbakestiller...';
+      try {
+        await apiFetch('/api/onboarding/reset', { method: 'POST' });
+        if (typeof showOnboardingWizard === 'function') {
+          await showOnboardingWizard();
+        }
+      } catch (err) {
+        showToast('Kunne ikke starte veiviseren', 'error');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i aria-hidden="true" class="fas fa-redo"></i> Kjør veiviseren på nytt';
+    }
+
+    if (action === 'show-checklist') {
+      if (typeof showOnboardingChecklist === 'function') {
+        showOnboardingChecklist();
+        showToast('Sjekkliste vist', 'success');
+      }
+    }
+
+    if (action === 'reset-tips') {
+      if (typeof resetContextTips === 'function') resetContextTips();
+      if (typeof resetFeatureTours === 'function') resetFeatureTours();
+      showToast('Tips tilbakestilt — de vises ved neste besøk', 'success');
+    }
+  });
+
+  container.addEventListener('change', (e) => {
+    const input = e.target.closest('[data-action]');
+    if (!input) return;
+
+    if (input.dataset.action === 'toggle-guidance') {
+      const enabled = input.checked;
+      localStorage.setItem('skyplanner_guidanceEnabled', enabled ? 'true' : 'false');
+
+      if (!enabled) {
+        if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
+        if (typeof contextTips !== 'undefined' && contextTips.tipOverlay) {
+          contextTips.tipOverlay.remove();
+          contextTips.tipOverlay = null;
+        }
+        document.querySelectorAll('.context-tip-highlight').forEach(el => {
+          el.classList.remove('context-tip-highlight');
+        });
+      } else {
+        if (typeof initOnboardingChecklist === 'function') {
+          if (localStorage.getItem('skyplanner_checklistDismissed') !== 'true') {
+            initOnboardingChecklist();
+          }
+        }
+      }
+      showToast(enabled ? 'Veiledning aktivert' : 'Veiledning deaktivert', 'info');
+    }
+  });
+}
+
+function renderOnboardingSettings() {
+  const container = document.getElementById('onboardingSettingsGrid');
+  if (!container) return;
+
+  const guidanceEnabled = localStorage.getItem('skyplanner_guidanceEnabled') !== 'false';
+
+  container.innerHTML = `
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-magic"></i> Oppstartsveiviser</h4>
+        <p>Kjør gjennom oppsettet på nytt for å oppdatere firmainformasjon og kartinnstillinger.</p>
+      </div>
+      <button class="btn btn-secondary" data-action="rerun-wizard">
+        <i aria-hidden="true" class="fas fa-redo"></i> Kjør på nytt
+      </button>
+    </div>
+
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Veiledningstips</h4>
+        <p>Vis hjelpetips, sjekkliste og veiledning for nye funksjoner.</p>
+      </div>
+      <label class="guidance-toggle-switch">
+        <input type="checkbox" ${guidanceEnabled ? 'checked' : ''} data-action="toggle-guidance">
+        <span class="guidance-toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-clipboard-check"></i> Sjekkliste</h4>
+        <p>Vis sjekklisten for oppstartsoppgaver på nytt.</p>
+      </div>
+      <button class="btn btn-secondary" data-action="show-checklist">
+        <i aria-hidden="true" class="fas fa-eye"></i> Vis sjekkliste
+      </button>
+    </div>
+
+    <div class="onboarding-setting-card">
+      <div class="setting-info">
+        <h4><i aria-hidden="true" class="fas fa-info-circle"></i> Tips tilbakestill</h4>
+        <p>Tilbakestill alle veiledningstips slik at de vises på nytt.</p>
+      </div>
+      <button class="btn btn-secondary" data-action="reset-tips">
+        <i aria-hidden="true" class="fas fa-undo"></i> Tilbakestill
+      </button>
+    </div>
+  `;
 }
 
