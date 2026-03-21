@@ -164,14 +164,17 @@ export function BrukereManager({ users: initialUsers, currentUserId, isCurrentUs
   }
 
   function rolleLabel(rolle: string): string {
-    if (rolle === 'admin') return 'Admin';
-    if (rolle === 'redigerer') return 'Redigerer';
+    if (rolle === 'admin') return 'Administrator';
+    if (rolle === 'teammedlem') return 'Teammedlem';
+    if (rolle === 'kontor') return 'Kontor';
+    if (rolle === 'redigerer') return 'Teammedlem'; // bakoverkompatibilitet
     return 'Leser';
   }
 
   function rolleBadgeClass(rolle: string): string {
     if (rolle === 'admin') return 'bg-purple-500/10 text-purple-400';
-    if (rolle === 'redigerer') return 'bg-blue-500/10 text-blue-400';
+    if (rolle === 'teammedlem' || rolle === 'redigerer') return 'bg-blue-500/10 text-blue-400';
+    if (rolle === 'kontor') return 'bg-green-500/10 text-green-400';
     return 'bg-dark-600/50 text-dark-400';
   }
 
@@ -341,10 +344,11 @@ export function BrukereManager({ users: initialUsers, currentUserId, isCurrentUs
                     <label className="input-label" htmlFor="invite-rolle">Rolle</label>
                     <select id="invite-rolle" className="input" value={inviteRolle} onChange={e => setInviteRolle(e.target.value)}>
                       <option value="leser">Leser</option>
-                      <option value="redigerer">Redigerer</option>
-                      <option value="admin">Admin</option>
+                      <option value="kontor">Kontor</option>
+                      <option value="teammedlem">Teammedlem</option>
+                      <option value="admin">Administrator</option>
                     </select>
-                    <p className="text-xs text-dark-400 mt-1">Leser kan kun se data. Redigerer kan opprette og endre. Admin har full tilgang.</p>
+                    <p className="text-xs text-dark-400 mt-1">Leser kan kun se data. Kontor kan redigere kunder og kalender. Teammedlem har full skrivetilgang. Admin har full tilgang inkl. innstillinger.</p>
                   </div>
                 )}
 
@@ -399,8 +403,9 @@ export function BrukereManager({ users: initialUsers, currentUserId, isCurrentUs
                     <label className="input-label" htmlFor="edit-rolle">Rolle</label>
                     <select id="edit-rolle" className="input" value={editRolle} onChange={e => setEditRolle(e.target.value)}>
                       <option value="leser">Leser</option>
-                      <option value="redigerer">Redigerer</option>
-                      <option value="admin">Admin</option>
+                      <option value="kontor">Kontor</option>
+                      <option value="teammedlem">Teammedlem</option>
+                      <option value="admin">Administrator</option>
                     </select>
                   </div>
                 )}

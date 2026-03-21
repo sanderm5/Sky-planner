@@ -154,7 +154,7 @@ router.get(
  */
 router.post(
   '/templates',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { name, subject_template, body_template, category } = req.body;
 
@@ -205,7 +205,7 @@ router.post(
  */
 router.put(
   '/templates/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -248,7 +248,7 @@ router.put(
  */
 router.delete(
   '/templates/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -340,7 +340,7 @@ router.post(
  */
 router.post(
   '/send',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { template_id, kunde_id, custom_variables } = req.body;
 

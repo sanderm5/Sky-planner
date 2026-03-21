@@ -161,7 +161,7 @@ class ServiceTypeRegistry {
       ? this.getBySlug(slugOrServiceType)
       : slugOrServiceType;
     if (!st) return '<i aria-hidden="true" class="fas fa-wrench"></i>';
-    return `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`;
+    return `<i aria-hidden="true" class="fas ${escapeHtml(st.icon)}" style="color: ${escapeHtml(st.color)}"></i>`;
   }
 
   /**
@@ -256,7 +256,7 @@ class ServiceTypeRegistry {
       html += `
         <label class="kategori-checkbox-label">
           <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
-          <i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
+          <i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')}"></i>
           ${escapeHtml(st.name)}
         </label>`;
     });
@@ -581,7 +581,7 @@ class ServiceTypeRegistry {
       html += `
         <div class="control-section service-section" data-service-slug="${st.slug}" data-service-id="${st.id}">
           <div class="control-section-header">
-            <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
+            <i aria-hidden="true" class="fas ${escapeHtml(st.icon)}" style="color: ${escapeHtml(st.color)}"></i> ${escapeHtml(st.name)}
           </div>
 
           ${hasSubtypes ? `
@@ -757,8 +757,8 @@ class ServiceTypeRegistry {
 
           return `
             <div class="popup-control-info">
-              <p class="popup-status ${controlStatus.class}">
-                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+              <p class="popup-status ${escapeHtml(controlStatus.class)}">
+                <strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
                 <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
               </p>
               ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -799,7 +799,7 @@ class ServiceTypeRegistry {
           html += `
             <div style="margin-bottom:8px;">
               <p style="margin:0;">
-                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
+                <strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')};"></i> ${escapeHtml(st.name)}:</strong>
               </p>
               <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</p>
               ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -833,8 +833,8 @@ class ServiceTypeRegistry {
 
       return `
         <div class="popup-control-info">
-          <p class="popup-status ${controlStatus.class}">
-            <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+          <p class="popup-status ${escapeHtml(controlStatus.class)}">
+            <strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
             <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
           </p>
           ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -866,7 +866,7 @@ class ServiceTypeRegistry {
         }
 
         html += `
-          <p><strong><i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color};"></i> ${st.name}:</strong></p>
+          <p><strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon)}" style="color: ${escapeHtml(st.color)};"></i> ${escapeHtml(st.name)}:</strong></p>
           <p style="margin-left: 20px;">Neste: ${nesteKontroll ? escapeHtml(nesteKontroll) : 'Ikke satt'}</p>
           ${sisteKontroll ? `<p style="margin-left: 20px; font-size: 11px; color: var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
         `;

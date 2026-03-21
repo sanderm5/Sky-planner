@@ -51,7 +51,8 @@ async function selectCustomersNeedingControl() {
     const varselKunder = varselResult.data || varselResult;
 
     selectedCustomers.clear();
-    varselKunder.forEach(k => {
+    const kundeList = Array.isArray(varselKunder) ? varselKunder : [];
+    kundeList.forEach(k => {
       if (k.lat && k.lng) {
         selectedCustomers.add(k.id);
       }
@@ -60,15 +61,23 @@ async function selectCustomersNeedingControl() {
     updateSelectionUI();
 
     if (selectedCustomers.size > 0) {
+      // Switch to Kunder tab so user can see selection and plan route
+      switchToTab('customers');
+
       // Zoom to selected customers
       const selectedData = customers.filter(c => selectedCustomers.has(c.id) && c.lat && c.lng);
       if (selectedData.length > 0) {
         const bounds = boundsFromCustomers(selectedData);
         map.fitBounds(bounds, { padding: 50 });
       }
+
+      showToast(`${selectedCustomers.size} kunder valgt. Bruk «Planlegg rute» for å beregne rute.`, 'success');
+    } else {
+      showToast('Ingen kommende kontroller med koordinater funnet', 'info');
     }
   } catch (error) {
     console.error('Feil ved henting av varsler:', error);
+    showToast('Kunne ikke hente kontrollvarsler', 'error');
   }
 }
 
@@ -166,6 +175,9 @@ function logoutUser(logoutAllDevices = false) {
 
   // Stop inactivity tracking and dismiss any warning modal
   stopInactivityTracking();
+
+  // Cleanup Arbeid tab (stop polling, clear timers)
+  if (typeof unloadArbeidTab === 'function') unloadArbeidTab();
 
   // Show login screen (SPA - no redirect)
   showLoginView();

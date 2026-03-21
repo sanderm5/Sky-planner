@@ -101,6 +101,7 @@ export async function POST(request: NextRequest) {
     if (activeCount >= organization.max_brukere) {
       return Response.json(
         {
+          success: false,
           error: `Brukergrensen er nådd (${organization.max_brukere} brukere). Oppgrader abonnementet for å legge til flere brukere.`,
         },
         { status: 403 }
@@ -120,7 +121,7 @@ export async function POST(request: NextRequest) {
     const passordHash = await bcrypt.hash(passord, 12);
 
     // Validate rolle if provided (defaults to 'leser' in DB)
-    const validRoles = ['admin', 'redigerer', 'leser'];
+    const validRoles = ['admin', 'teammedlem', 'kontor', 'leser'];
     const userRolle = rolle && validRoles.includes(rolle) ? rolle : undefined;
 
     // Create user

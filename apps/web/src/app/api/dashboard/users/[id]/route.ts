@@ -101,10 +101,10 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     if (rolle !== undefined) {
-      const validRoles = ['admin', 'redigerer', 'leser'];
+      const validRoles = ['admin', 'teammedlem', 'kontor', 'leser'];
       if (!validRoles.includes(rolle)) {
         return Response.json(
-          { success: false, error: { code: 'ERROR', message: 'Ugyldig rolle. Gyldige roller: admin, redigerer, leser' } },
+          { success: false, error: { code: 'ERROR', message: 'Ugyldig rolle. Gyldige roller: admin, teammedlem, kontor, leser' } },
           { status: 400 }
         );
       }

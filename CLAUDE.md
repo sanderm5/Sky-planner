@@ -30,8 +30,11 @@ Dette er en **monorepo** med Turborepo og pnpm workspaces.
 Intern applikasjon for kundeadministrasjon med:
 - Interaktivt kart med kundemarkører og smarte klynger
 - Ruteoptimalisering for serviceturer (VROOM/ORS)
-- Ukeplan med manuell kundesøk, nummererte stopp, tidsestimater, progresjonslinje og ruteoptimalisering
+- Arbeid-fane med sub-navigation: Oversikt (team overview), Ukeplan, Kalender, Planlegger
+- Ukeplan med kundesøk, nummererte stopp, tidsestimater, huskeliste/notater og ruteoptimalisering
+- Team Overview med daglig status, push-route og quick-assign
 - Kalender og avtaler
+- Mobil-grensesnitt med 8 dedikerte moduler (feltarbeid, admin, ukeplan, kalender, chat)
 - Import-system for kundedata (CSV, Excel) med AI-mapping, duplikatdeteksjon og auto-rensing
 - Eksport-system (CSV, JSON) med GDPR-komplett dataeksport
 - API-nøkler og Public API (v1)
@@ -41,6 +44,8 @@ Intern applikasjon for kundeadministrasjon med:
 - Patch notes / changelog-system med feature-filtrering
 - Chat-system
 - CSRF-beskyttelse, rate limiting, sikkerhetshoder (Helmet)
+- CSP-compliant event delegation med allowlist
+- Circuit breaker, cron watchdog, metrics collector, startup checks
 - Cron-jobber for opprydding, kontosletting og integrasjonssynkronisering
 - Varslingssystem (Slack, Discord, generisk webhook)
 - Inaktivitets-auto-logout (15 min)

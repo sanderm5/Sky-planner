@@ -281,8 +281,12 @@ router.post(
   '/init',
   requireTenantAuth,
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const t0 = Date.now();
     const orgConv = await dbService.getOrCreateOrgConversation(req.organizationId!);
+    const t1 = Date.now();
     const total = await dbService.getChatTotalUnread(req.user!.userId, req.organizationId!);
+    const t2 = Date.now();
+    console.log(`[chat/init] getOrCreateOrgConversation: ${t1 - t0}ms, getChatTotalUnread: ${t2 - t1}ms, total: ${t2 - t0}ms`);
 
     const response: ApiResponse<{ orgConversationId: number; totalUnread: number }> = {
       success: true,

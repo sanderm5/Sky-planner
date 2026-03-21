@@ -80,8 +80,25 @@ export async function requireAuth(
     req.user = decoded;
     req.organizationId = decoded.organizationId;
 
-    // Log impersonation activity for audit trail
+    // Validate impersonation tokens: verify originalUserId is still a super admin
     if (decoded.isImpersonating && decoded.originalUserId) {
+      try {
+        const { getDatabase } = await import('../services/database');
+        const db = await getDatabase();
+        const originalUser = await db.getBrukerById(decoded.originalUserId);
+
+        if (!originalUser || !originalUser.is_super_admin) {
+          authLogger.warn({
+            originalUserId: decoded.originalUserId,
+            organizationId: decoded.organizationId,
+          }, 'Impersonation token rejected: original user is no longer super admin');
+          return next(Errors.unauthorized('Impersoneringstoken ugyldiggjort'));
+        }
+      } catch (err) {
+        authLogger.error({ error: err }, 'Failed to validate impersonation token');
+        return next(Errors.internal('Kunne ikke validere impersoneringstoken'));
+      }
+
       authLogger.info({
         impersonatedUserId: decoded.userId,
         originalUserId: decoded.originalUserId,
@@ -150,30 +167,35 @@ export function requireAdmin(
 }
 
 /**
- * Role hierarchy: admin > tekniker > kontor > leser
+ * Role hierarchy: admin > teammedlem > kontor > leser
  * Higher roles include all permissions of lower roles
  */
 const ROLE_HIERARCHY: Record<string, number> = {
   admin: 40,
-  tekniker: 30,
+  teammedlem: 30,
   kontor: 20,
   leser: 10,
 };
 
 /**
- * Maps klient roles to the equivalent bruker role hierarchy level.
- * klient.rolle: admin | redigerer | leser
+ * Maps klient roles to the hierarchy, including legacy values for backwards compatibility.
+ * Standard roles: admin | teammedlem | kontor | leser
  */
 const KLIENT_ROLE_MAP: Record<string, string> = {
   admin: 'admin',
-  redigerer: 'tekniker',
+  teammedlem: 'teammedlem',
+  kontor: 'kontor',
   leser: 'leser',
+  // Bakoverkompatibilitet:
+  redigerer: 'teammedlem',
+  tekniker: 'teammedlem',
+  medlem: 'leser',
 };
 
 /**
  * Requires a specific role (or higher) for both bruker and klient users.
- * Klient roles (admin/redigerer/leser) are mapped to the bruker hierarchy.
- * Usage: requireRole('kontor') — allows admin, tekniker/redigerer, and kontor
+ * Klient roles are mapped to the hierarchy via KLIENT_ROLE_MAP.
+ * Usage: requireRole('kontor') — allows admin, teammedlem, and kontor
  */
 export function requireRole(minimumRole: string) {
   const minimumLevel = ROLE_HIERARCHY[minimumRole] || 0;
@@ -189,7 +211,11 @@ export function requireRole(minimumRole: string) {
         // Klient users — check their rolle column
         if (req.user?.type === 'klient') {
           const klient = await db.getKlientById(req.user.userId);
-          const klientRolle = klient?.rolle || 'leser';
+          if (!klient) {
+            authLogger.warn({ userId: req.user.userId }, 'Klient not found during role check');
+            return next(Errors.forbidden('Bruker ikke funnet'));
+          }
+          const klientRolle = klient.rolle || 'leser';
           const mappedRole = KLIENT_ROLE_MAP[klientRolle] || 'leser';
           const userLevel = ROLE_HIERARCHY[mappedRole] || 0;
 

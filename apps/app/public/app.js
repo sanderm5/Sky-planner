@@ -72,6 +72,15 @@ function rectangleGeoJSON(corner1, corner2) {
   };
 }
 
+// Clear route line and stop markers from the map
+function clearRoute() {
+  removeLayerAndSource('route-line');
+  if (typeof routeMarkers !== 'undefined') {
+    routeMarkers.forEach(m => m.remove());
+    routeMarkers.length = 0;
+  }
+}
+
 // Draw a route line from [lng, lat] coordinates array with custom styling
 // Uses the shared 'route-line' source/layer from clearRoute()
 function drawRouteGeoJSON(lngLatCoords, options = {}) {
@@ -101,6 +110,7 @@ function drawRouteGeoJSON(lngLatCoords, options = {}) {
 let currentPopup = null;
 
 function showMapPopup(lngLatCoord, html, options = {}) {
+  hideMarkerTooltip();
   if (currentPopup) currentPopup.remove();
   currentPopup = new mapboxgl.Popup({
     maxWidth: options.maxWidth || '350px',
@@ -223,6 +233,8 @@ function loadClusterData(customerData) {
   }));
   const src = map && map.getSource(CLUSTER_SOURCE);
   if (src) src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
+  // Re-filter if route/team/calendar focus is active
+  if (wpRouteActive || wpFocusedMemberIds || (typeof calendarFocusedKundeIds !== 'undefined' && calendarFocusedKundeIds)) refreshClusters();
 }
 
 function updateClusters() {
@@ -277,6 +289,7 @@ function setClusterLayerVisibility(visible) {
 }
 
 function onClusterClick(e) {
+  hideMarkerTooltip();
   const feats = map.queryRenderedFeatures(e.point, { layers: [CLUSTER_CIRCLE_LAYER] });
   if (!feats.length) return;
   const clusterId = feats[0].properties.cluster_id;
@@ -312,7 +325,7 @@ function onClusterClick(e) {
 function generateClusterPopupContent(clusterCustomers) {
   const list = clusterCustomers.slice(0, 10).map(c => {
     const status = getControlStatus(c);
-    return `<div class="cluster-popup-item" onclick="focusOnCustomer(${c.id})" style="cursor:pointer;padding:4px 0;border-bottom:1px solid var(--color-border);">
+    return `<div class="cluster-popup-item" data-action="focusOnCustomer" data-customer-id="${c.id}" style="cursor:pointer;padding:4px 0;border-bottom:1px solid var(--color-border);">
       <span class="popup-status ${status.class}" style="display:inline-block;width:8px;height:8px;border-radius:50;margin-right:6px;"></span>
       <strong>${escapeHtml(c.navn)}</strong>
       ${c.poststed ? `<span style="color:var(--color-text-secondary);font-size:12px;"> — ${escapeHtml(c.poststed)}</span>` : ''}
@@ -340,7 +353,17 @@ function refreshClusters() {
   if (!map || !_clusterSourceReady) return;
   const src = map.getSource(CLUSTER_SOURCE);
   if (src && clusterGeoJSONFeatures.length > 0) {
-    src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
+    let features = clusterGeoJSONFeatures;
+    if (!wpShowAllMarkers) {
+      if (wpRouteActive && wpRouteStopIds) {
+        features = clusterGeoJSONFeatures.filter(f => wpRouteStopIds.has(f.properties.customerId));
+      } else if (wpFocusedMemberIds) {
+        features = clusterGeoJSONFeatures.filter(f => wpFocusedMemberIds.has(f.properties.customerId));
+      } else if (typeof calendarFocusedKundeIds !== 'undefined' && calendarFocusedKundeIds) {
+        features = clusterGeoJSONFeatures.filter(f => calendarFocusedKundeIds.has(f.properties.customerId));
+      }
+    }
+    src.setData({ type: 'FeatureCollection', features });
   }
   updateClusters();
 }
@@ -501,6 +524,246 @@ function escapeJsString(text) {
     .replace(/\r/g, '\\r')
     .replace(/\//g, '\\/');
 }
+
+
+// ========================================
+// GLOBAL EVENT DELEGATION (with allowlist)
+// Replaces inline onclick/onchange/onsubmit/oninput handlers
+// for CSP scriptSrcAttr compliance (no 'unsafe-inline')
+//
+// SECURITY: Only allowlisted function names can be called.
+// This prevents injected HTML from invoking arbitrary globals.
+// ========================================
+
+(function initGlobalDelegation() {
+
+  // ---- Allowlisted action names ----
+  // Only these functions can be invoked via data-action/data-on-change/etc.
+  // To add a new delegated action, add its name here.
+  const ALLOWED_ACTIONS = new Set([
+    // Built-in (handled internally)
+    'none','toggleParentClass','hideElement','removeSelf','removeParent','removeAncestor',
+    // Navigation & general (handled by app-legacy switch-case, NOT delegation)
+    // 'focusOnCustomer','navigateToCustomer','selectCustomer','editCustomer','toggleCustomerSelection',
+    // 'selectOrganization','toggleSection',
+    // Calendar (handled by app-legacy switch-case, NOT delegation)
+    // 'calendar','openDayDetail','confirmDay','editAvtale','deleteAvtale',
+    // 'quickAddAvtale','quickAddToday','quickAddToSplitDay','quickDeleteAvtale','quickMarkVisited',
+    // 'showCalendarQuickMenu','addCustomerToCalendar','setActiveDay','setSplitActiveDay',
+    // Weekplan — delegation-only actions (use data-args, no switch-case)
+    'clearDayAvtaler',
+    'wpAddNoteToDay','wpCancelNote',
+    'wpDeleteNote','wpFilterNotes',
+    'wpSaveNote','wpSelectNoteCustomer','wpSelectNoteDay','wpSelectNoteType','wpSetMaldag',
+    'wpNotifyCustomer',
+    'wpToggleCompleted','wpToggleNote','wpToggleOverforte','wpTransferNote',
+    // Weekplan — handled by app-legacy switch-case, NOT delegation
+    // 'weekPlanNext','weekPlanPrev','weekPlanPickDate','saveWeeklyPlan','clearWeekPlan',
+    // 'closeWpRoute','removeFromPlan','setEstimatedTime','toggleRouteMarkers','toggleShowAllRecommendations',
+    // 'wpAddAllSuggested','wpAddSearchResult','wpAddSuggested','wpAutoFillWeek',
+    // 'wpCloseSuggestions','wpExportMaps','wpNavigateDay','wpOptimizeOrder','wpSuggestStops',
+    // Mobile field
+    'mfNavigate','mfNavigateAndCloseInfo','mfNotifyCustomer','mfStartRoute','mfCompleteRoute','mfShowVisitForm',
+    'mfShowCustomerInfo','mfLogout','mfSwitchTab','mfPrevDay','mfNextDay',
+    // Mobile chat
+    'mfOpenChatConversation','mfSendChatMessage','mfShowChatList','mfShowNewDmView','mfStartDm',
+    // Mobile calendar
+    'mfCompleteAvtale','mfShowNewAvtaleSheet','mfCloseNewAvtaleSheet','mfSubmitNewAvtale',
+    'mfSelectNewAvtaleKunde','mfClearNewAvtaleKunde',
+    // Mobile admin
+    'mfTeamPrevDay','mfTeamNextDay','mfExpandTeamRoute','mfShowWeekplanEditor',
+    'mfTeamPrevWeek','mfTeamNextWeek','mfTeamThisWeek','mfToggleTeamMember','mfToggleTeamDay',
+    'mfShowPushRouteSheet','mfClosePushRouteSheet','mfSetPushDate','mfSubmitPushRoute',
+    'mfShowQuickAssign','mfCloseQuickAssign','mfSelectQuickAssignKunde',
+    'mfClearQuickAssignSelection','mfSubmitQuickAssign','mfShowCustomerHistory',
+    // Mobile weekplan editor
+    'mfCloseWeekplanEditor','mfWpNavigateWeek','mfWpSave','mfWpScrollToDay',
+    'mfWpAddCustomer','mfWpShowAssignAll','mfWpShowReassign','mfWpRemoveStop',
+    'mfWpCloseReassign','mfWpConfirmReassign','mfWpCloseAssignAll','mfWpConfirmAssignAll',
+    'mfWpCloseAddSheet','mfWpSelectCustomerToAdd',
+    // Mobile weekplan areas
+    'mfWpCloseAreaSheet','mfWpSwitchAreaTab','mfWpAddSelectedToDay','mfWpExpandArea',
+    'mfWpSelectAllInArea','mfWpToggleCustomerSelect','mfWpCloseMethodSheet',
+    'mfWpMethodSearch','mfWpMethodArea',
+    // Team overview
+    'teamOverviewPrevDay','teamOverviewNextDay','teamOverviewToday','teamOverviewToggle',
+    'raoToggleView','raoPrevWeek','raoNextWeek','raoThisWeek','raoExpandRoute','raoOpenWeekplan','raoOpenTeamSettings',
+    'toShowPushRoute','toClosePushRoute','toSetPushDate','toSubmitPushRoute',
+    'toShowQuickAssign','toCloseQuickAssign','toSelectQuickAssignKunde',
+    'toClearQuickAssignSelection','toSubmitQuickAssign','toShowCustomerLookup',
+    'toCloseCustomerLookup','toShowCustomerDetail','toBackToCustomerSearch',
+    'toOpenWeekplanEditor','toShowRouteOnMap',
+    // Todays work
+    'twNavigateToCustomer','twMarkVisited',
+    // Overdue warnings (handled by app-legacy switch-case)
+    // 'sendReminder','addGroupToWeekPlan',
+    'toggleUpcomingAreas',
+    // Dashboard
+    'closeMorningBrief',
+    // Chat
+    'loadOlderChatMessages',
+    // Email dialog
+    'closeEmailDialog','previewEmail','sendEmailFromDialog',
+    // Onboarding wizard
+    'nextWizardStep','prevWizardStep','handleSkipOnboarding','completeOnboardingWizard',
+    'useAddressAsRouteStart','selectImportMethodFile','selectImportMethodIntegration',
+    'skipWizardImport','wizardImportRetry','wizardCleaningBack','wizardCleaningApprove',
+    'wizardCleaningSkip','wizardCleaningTablePage','wizardImportBack','wizardImportNext',
+    'skipAIQuestions','wizardPreviewTablePage','wizardSelectAllRows','wizardDeselectAllRows',
+    'wizardStartImport','wizardImportComplete','wizardRollbackImport','wizardReimportFailed',
+    'wizardDownloadErrorReport','wizardFixAllSimilar','wizardDeselectErrorRows',
+    'closeImportModal',
+    // Admin fields & categories
+    'openFieldModal','confirmDeleteField','openCategoryListModal','openCategoryModal',
+    'openCategoryModalFromList','deleteCategoryFromBtn','confirmDeleteCategory',
+    'selectCategoryIcon','addSubcatGroupBtn','addSubcatItemBtn',
+    'editCategoryFromList','editSubcatGroup','deleteSubcatGroup',
+    'editSubcatItem','deleteSubcatItem',
+    // Admin tab (editTeamMember, deleteTeamMember, focusTeamMember handled by switch-case)
+    'selectAdminAddressSuggestionByIndex',
+    'rerun-wizard','reset-tips','show-checklist','toggle-guidance',
+    // Map & address
+    'openAdminAddressTab','dismissAddressBanner','saveCompanyAddress','clearCompanyAddress',
+    'saveInlineAddress','dismissInlineAddress',
+    // Context tips & onboarding checklist
+    'dismissCurrentTip','skipAllTips','dismissMiniTourTip','skipMiniTour',
+    'minimizeChecklist','dismissChecklist',
+    // Route groups & clusters (showGroupOnMap, createRouteFromGroup, showClusterOnMap, createRouteFromCluster handled by switch-case)
+    'editGroup','deleteGroup','addGroup',
+    // Coverage area
+    'coverageFilterAll','coverageFilterInside','coverageFilterOutside',
+    // Isochrone
+    'isochroneClose',
+    // Industry
+    'select',
+    // Subscription (sendEmail handled by switch-case)
+    // Org customer admin (editOrgCustomer, deleteOrgCustomer, selectOrganization handled by switch-case)
+    // Arbeid
+    'showArbeidUke','showArbeidMaaned',
+    // Popup weekplan & team assign
+    'popupAddToWeekDay','popupAssignTeam',
+    // Calendar map focus
+    'focusCalendarDayOnMap',
+    // Team map (RAO)
+    'raoFocusMember',
+    // Popover
+    'popover-accounting','popover-import','popover-manual',
+    // Add subcat
+    'addSubcat','editSubcat','deleteSubcat',
+  ]);
+
+  // ---- Allowlisted handler names for change/input/submit/keydown ----
+  const ALLOWED_HANDLERS = new Set([
+    // Change handlers
+    'handleAIQuestionAnswer','handleUnmappedColumn','mfSetPushDateCustom',
+    'onEmailTemplateChange','toSetPushDateCustom','updateRequiredMapping',
+    'updateWizardCategoryMapping','wizardToggleAllRows','wizardToggleBeforeAfter',
+    'wizardToggleCleaningRule','wizardToggleRow',
+    // Input handlers
+    'mfKunderSearchHandler','mfQuickAssignSearchHandler','mfNewAvtaleSearchHandler',
+    'mfSetEstimertTidHandler','mfWpSetEstimertTidHandler','toCustomerLookupSearchHandler',
+    'toQuickAssignSearchHandler','updateCategoryColorPreview',
+    // Submit handlers
+    'saveCategory',
+    // Keydown handlers
+    'addSubcatGroupFromInput','addSubcatItemFromInput',
+  ]);
+
+  // ---- Built-in actions ----
+  const BUILTIN_ACTIONS = {
+    'none': () => {},
+    'toggleParentClass': (el) => {
+      const cls = el.dataset.class || 'expanded';
+      el.parentElement.classList.toggle(cls);
+    },
+    'hideElement': (el) => {
+      const targetId = el.dataset.target;
+      if (targetId) {
+        const target = document.getElementById(targetId);
+        if (target) target.classList.add('hidden');
+      }
+    },
+    'removeSelf': (el) => { el.remove(); },
+    'removeParent': (el) => { el.parentElement.remove(); },
+    'removeAncestor': (el) => {
+      const selector = el.dataset.ancestor;
+      if (selector) {
+        const ancestor = el.closest(selector);
+        if (ancestor) ancestor.remove();
+      }
+    },
+  };
+
+  function resolveArgs(el) {
+    if (el.dataset.args) {
+      try { return JSON.parse(el.dataset.args); }
+      catch { return []; }
+    }
+    return null;
+  }
+
+  function callAction(actionName, el, event) {
+    if (BUILTIN_ACTIONS[actionName]) {
+      BUILTIN_ACTIONS[actionName](el, event);
+      return;
+    }
+    if (!ALLOWED_ACTIONS.has(actionName)) return;
+    const fn = window[actionName];
+    if (typeof fn !== 'function') return;
+    const args = resolveArgs(el);
+    if (args !== null) { fn(...args); } else { fn(); }
+  }
+
+  function callHandler(actionName, el, extraArgs) {
+    if (!ALLOWED_HANDLERS.has(actionName)) {
+      console.warn(`[delegation] Blocked disallowed handler: ${actionName}`);
+      return;
+    }
+    const fn = window[actionName];
+    if (typeof fn !== 'function') return;
+    const args = resolveArgs(el);
+    if (args !== null) { fn(...args, ...extraArgs); } else { fn(...extraArgs); }
+  }
+
+  // Click
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    if (el.dataset.stopPropagation === 'true') e.stopPropagation();
+    callAction(el.dataset.action, el, e);
+  });
+
+  // Change — passes element as last arg for .checked/.value access
+  document.addEventListener('change', (e) => {
+    const el = e.target.closest('[data-on-change]');
+    if (!el) return;
+    callHandler(el.dataset.onChange, el, [el]);
+  });
+
+  // Submit — passes event
+  document.addEventListener('submit', (e) => {
+    const el = e.target.closest('[data-on-submit]');
+    if (!el) return;
+    callHandler(el.dataset.onSubmit, el, [e]);
+  });
+
+  // Input — passes el.value
+  document.addEventListener('input', (e) => {
+    const el = e.target.closest('[data-on-input]');
+    if (!el) return;
+    callHandler(el.dataset.onInput, el, [el.value]);
+  });
+
+  // Keydown — filters by data-key, passes element
+  document.addEventListener('keydown', (e) => {
+    const el = e.target.closest('[data-on-keydown]');
+    if (!el) return;
+    const key = el.dataset.key;
+    if (key && e.key !== key) return;
+    e.preventDefault();
+    callHandler(el.dataset.onKeydown, el, [el]);
+  });
+})();
 
 
 // ========================================
@@ -1139,7 +1402,7 @@ function applyMvpModeUI() {
  */
 function canEdit() {
   const role = localStorage.getItem('userRole') || 'leser';
-  return role === 'admin' || role === 'redigerer';
+  return role === 'admin' || role === 'teammedlem' || role === 'kontor';
 }
 
 /**
@@ -1204,24 +1467,90 @@ function handleLogout() {
   appConfig.routeStartLng = undefined;
   appConfig.routeStartAddress = undefined;
 
+  // =====================================================
+  // CRITICAL: Clear ALL in-memory data to prevent leaking
+  // customer/organization data between different logins
+  // =====================================================
+
+  // Clear customer data and map markers
+  customers = [];
+  selectedCustomers.clear();
+  routeMarkers = [];
+  avtaler = [];
+  omrader = [];
+
+  // Clear filter state
+  currentFilter = 'alle';
+  showOnlyWarnings = false;
+  selectedCategory = 'all';
+  selectedSubcategories = {};
+  dynamicFieldFilters = {};
+  if (filterAbortController) {
+    filterAbortController.abort();
+    filterAbortController = null;
+  }
+
+  // Clear organization-specific data
+  organizationFields = [];
+  organizationCategories = [];
+  kundeSubcatMap = {};
+  allSubcategoryGroups = [];
+  teamMembersData = [];
+  subscriptionInfo = null;
+  accessTokenExpiresAt = null;
+
+  // Clear calendar state
+  currentCalendarMonth = new Date().getMonth();
+  currentCalendarYear = new Date().getFullYear();
+  calendarViewMode = 'month';
+  currentWeekStart = null;
+
+  // Clear weekplan state
+  if (typeof weekPlanState !== 'undefined') {
+    weekPlanState.days = {};
+    weekPlanState.activeDay = null;
+    weekPlanState.globalAssignedTo = '';
+  }
+  if (typeof wpTeamMembers !== 'undefined') wpTeamMembers = null;
+
+  // Clear cluster data
+  if (typeof clusterGeoJSONFeatures !== 'undefined') clusterGeoJSONFeatures = [];
+  if (typeof _clusterSourceReady !== 'undefined') _clusterSourceReady = false;
+  if (typeof clusterMarkers !== 'undefined') clusterMarkers.clear();
+
+  // Close WebSocket connection (prevents data from previous session leaking via real-time updates)
+  if (ws && ws.readyState <= 1) {
+    ws.close();
+  }
+  ws = null;
+  wsInitialized = false;
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  wsReconnectAttempts = 0;
+  presenceClaims.clear();
+  currentClaimedKundeId = null;
+  myUserId = null;
+  myInitials = null;
+
+  // Clear route planning data
+  if (typeof currentRouteData !== 'undefined') currentRouteData = null;
+
   // Remove office marker and address nudges from the map
   removeOfficeMarker();
   removeAddressNudge();
   const adminBadge = document.getElementById('adminAddressBadge');
   if (adminBadge) adminBadge.style.display = 'none';
 
-  // Clear address banner dismissal so it shows again on next login
+  // Clear onboarding dismissals for next login
   sessionStorage.removeItem('addressBannerDismissed');
+  sessionStorage.removeItem('inlineAddressDismissed');
 
-  // Clear getting-started dismissal so new user sees it
-  localStorage.removeItem('gettingStartedDismissed');
-
-  // Clean up onboarding checklist UI
+  // Clean up onboarding UI
   if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
+  if (typeof removeInlineAddressCard === 'function') removeInlineAddressCard();
   localStorage.removeItem('skyplanner_checklistMinimized');
-
-  // Reset context tips so they show on next login
-  localStorage.removeItem('shownContextTips');
 
   showLoginView();
 }
@@ -1241,6 +1570,11 @@ async function stopImpersonation() {
       headers: stopImpHeaders,
       credentials: 'include'
     });
+
+    if (!response.ok) {
+      showNotification('Kunne ikke stoppe representasjon', 'error');
+      return;
+    }
 
     const data = await response.json();
 
@@ -1617,6 +1951,221 @@ function showMaintenanceOverlay(message) {
 
 
 // ========================================
+// ROUTE SERVICE
+// Shared API layer for route optimization, directions, and matrix
+// Uses apiFetch for auth/CSRF handling
+// ========================================
+
+const RouteService = {
+  // In-memory cache with TTL
+  _cache: new Map(),
+  _cacheTTL: 5 * 60 * 1000, // 5 minutes
+
+  _cacheKey(type, data) {
+    return type + ':' + JSON.stringify(data);
+  },
+
+  _getCached(key) {
+    const entry = this._cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expires) {
+      this._cache.delete(key);
+      return null;
+    }
+    return entry.value;
+  },
+
+  _setCache(key, value) {
+    this._cache.set(key, { value, expires: Date.now() + this._cacheTTL });
+  },
+
+  clearCache() {
+    this._cache.clear();
+  },
+
+  /**
+   * Build VROOM optimization request body
+   * @param {Array} stops - [{lng, lat, estimertTid?}]
+   * @param {{lng, lat}} routeStart - Company address
+   * @returns {object} VROOM request body
+   */
+  buildVroomRequest(stops, routeStart) {
+    return {
+      jobs: stops.map((s, idx) => ({
+        id: idx + 1,
+        location: [s.lng, s.lat],
+        service: (s.estimertTid || 30) * 60
+      })),
+      vehicles: [{
+        id: 1,
+        profile: 'driving-car',
+        start: [routeStart.lng, routeStart.lat],
+        end: [routeStart.lng, routeStart.lat]
+      }]
+    };
+  },
+
+  /**
+   * Optimize stop order via VROOM API
+   * @param {Array} stops - Customers/stops with lng, lat, estimertTid
+   * @param {{lng, lat}} routeStart - Company address
+   * @returns {object|null} VROOM route result or null on failure
+   */
+  async optimize(stops, routeStart) {
+    const cacheCoords = stops.map(s => [s.lng, s.lat]);
+    const key = this._cacheKey('optimize', { stops: cacheCoords, start: [routeStart.lng, routeStart.lat] });
+    const cached = this._getCached(key);
+    if (cached) return cached;
+
+    try {
+      const body = this.buildVroomRequest(stops, routeStart);
+      const response = await apiFetch('/api/routes/optimize', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) return null;
+
+      const result = await response.json();
+      const data = result.data || result;
+      const route = data.routes?.[0];
+      if (!route?.steps) return null;
+
+      this._setCache(key, route);
+      return route;
+    } catch (err) {
+      console.warn('[RouteService.optimize] Failed:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Get driving directions (road-following geometry) via ORS
+   * @param {Array} coordinates - [[lng, lat], ...] in order
+   * @returns {object|null} GeoJSON Feature or null
+   */
+  async directions(coordinates) {
+    const key = this._cacheKey('directions', coordinates);
+    const cached = this._getCached(key);
+    if (cached) return cached;
+
+    try {
+      const response = await apiFetch('/api/routes/directions', {
+        method: 'POST',
+        body: JSON.stringify({ coordinates })
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        if (errBody.error?.message?.includes('Could not find routable point')) {
+          throw new Error('En eller flere kunder har koordinater som ikke er nær en vei.');
+        }
+        throw new Error(errBody.error?.message || 'Kunne ikke beregne rute');
+      }
+
+      const rawData = await response.json();
+      const geoData = rawData.data || rawData;
+      const feature = geoData.features?.[0] || null;
+
+      if (feature) this._setCache(key, feature);
+      return feature;
+    } catch (err) {
+      console.warn('[RouteService.directions] Failed:', err);
+      throw err;
+    }
+  },
+
+  /**
+   * Extract driving summary from ORS feature
+   * @param {object} feature - GeoJSON Feature from ORS
+   * @returns {{drivingSeconds: number, distanceMeters: number}}
+   */
+  extractSummary(feature) {
+    let drivingSeconds = 0;
+    let distanceMeters = 0;
+
+    if (feature?.properties?.summary) {
+      drivingSeconds = feature.properties.summary.duration || 0;
+      distanceMeters = feature.properties.summary.distance || 0;
+    }
+    // Fallback: sum segments
+    if (drivingSeconds === 0 && feature?.properties?.segments?.length > 0) {
+      for (const seg of feature.properties.segments) {
+        drivingSeconds += seg.duration || 0;
+        distanceMeters += seg.distance || 0;
+      }
+    }
+
+    return { drivingSeconds, distanceMeters };
+  },
+
+  /**
+   * Build coordinate array for directions: start → stops → start
+   * @param {Array} stops - [{lng, lat}]
+   * @param {{lng, lat}} routeStart
+   * @returns {Array} [[lng, lat], ...]
+   */
+  buildDirectionsCoords(stops, routeStart) {
+    return [
+      [routeStart.lng, routeStart.lat],
+      ...stops.map(s => [s.lng, s.lat]),
+      [routeStart.lng, routeStart.lat]
+    ];
+  },
+
+  /**
+   * Reorder stops array based on VROOM result
+   * @param {Array} stops - Original stops array
+   * @param {object} vroomRoute - VROOM route result (with steps)
+   * @returns {Array} Reordered stops
+   */
+  reorderByVroom(stops, vroomRoute) {
+    const jobSteps = vroomRoute.steps.filter(s => s.type === 'job');
+    const optimized = jobSteps.map(step => stops[step.job - 1]).filter(Boolean);
+    return optimized.length === stops.length ? optimized : stops;
+  },
+
+  /**
+   * Format duration for display
+   * @param {number} seconds
+   * @returns {string} e.g. "1t 23min" or "23 min"
+   */
+  formatDuration(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return hours > 0 ? `${hours}t ${minutes}min` : `${minutes} min`;
+  },
+
+  /**
+   * Format distance for display
+   * @param {number} meters
+   * @returns {string} e.g. "12.3"
+   */
+  formatKm(meters) {
+    return (meters / 1000).toFixed(1);
+  },
+
+  /**
+   * Calculate ETA for each stop from VROOM route data
+   * @param {object} vroomRoute - VROOM route result (with steps)
+   * @param {number} [startMinutes=480] - Start time in minutes from midnight (default 08:00)
+   * @returns {Array|null} [{eta: '09:45', arrivalMin}] per job stop, or null
+   */
+  calculateETAs(vroomRoute, startMinutes = 480) {
+    if (!vroomRoute?.steps) return null;
+    const jobs = vroomRoute.steps.filter(s => s.type === 'job');
+    if (jobs.length === 0) return null;
+    return jobs.map(step => {
+      const arrivalMin = startMinutes + Math.round(step.arrival / 60);
+      const h = Math.floor(arrivalMin / 60);
+      const m = arrivalMin % 60;
+      return { eta: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, arrivalMin };
+    });
+  }
+};
+
+
+// ========================================
 // SUBSCRIPTION ERROR HANDLING
 // ========================================
 
@@ -1642,7 +2191,7 @@ function showSubscriptionWarningBanner(message) {
       <i aria-hidden="true" class="fas fa-exclamation-circle"></i>
       <span>${escapeHtml(message)}</span>
     </div>
-    <button onclick="this.parentElement.remove()" style="background:none;border:none;color:white;cursor:pointer;font-size:18px;padding:0 5px;">&times;</button>
+    <button data-action="removeParent" style="background:none;border:none;color:white;cursor:pointer;font-size:18px;padding:0 5px;">&times;</button>
   `;
 
   document.body.prepend(banner);
@@ -1847,6 +2396,13 @@ function updateWsConnectionIndicator(connected) {
     indicator.className = connected ? 'ws-indicator ws-connected' : 'ws-indicator ws-disconnected';
     indicator.title = connected ? 'Sanntidsoppdateringer aktiv' : 'Frakoblet - prøver å koble til...';
   }
+
+  // Mobile field view: update status dot in Account tab
+  const mfStatusDot = document.querySelector('#mfAccountContent .mf-status-dot');
+  if (mfStatusDot) {
+    mfStatusDot.className = 'mf-status-dot ' + (connected ? 'online' : 'offline');
+    mfStatusDot.textContent = connected ? 'Online' : 'Frakoblet';
+  }
 }
 
 // Initialize WebSocket connection for real-time updates
@@ -1913,137 +2469,33 @@ function attemptReconnect() {
 function handleRealtimeUpdate(message) {
   const { type, data } = message;
 
-  switch (type) {
-    case 'connected':
-      Logger.log('Server:', data || message.message);
-      // Store own identity
-      if (data && data.userId) {
-        myUserId = data.userId;
-        myInitials = data.initials || '';
+  // Connection-level events stay here (not state-sync concerns)
+  if (type === 'connected') {
+    Logger.log('Server:', data || message.message);
+    if (data && data.userId) {
+      myUserId = data.userId;
+      myInitials = data.initials || '';
+    }
+    if (data && data.presence) {
+      presenceClaims.clear();
+      for (const [kundeId, claim] of Object.entries(data.presence)) {
+        presenceClaims.set(Number(kundeId), claim);
       }
-      // Load initial presence state
-      if (data && data.presence) {
-        presenceClaims.clear();
-        for (const [kundeId, claim] of Object.entries(data.presence)) {
-          presenceClaims.set(Number(kundeId), claim);
-        }
-        updatePresenceBadges();
-      }
-      break;
+      updatePresenceBadges();
+    }
+    return;
+  }
 
-    case 'kunde_created':
-      // Add new customer to list and re-render
-      customers.push(data);
-      applyFilters();
-      renderCustomerAdmin();
-      renderMissingData(); // Update missing data badge
-      updateOverdueBadge();
-      showNotification(`Ny kunde opprettet: ${data.navn}`);
-      break;
+  if (type === 'pong') return;
 
-    case 'kunde_updated':
-      // Update existing customer
-      const updateIndex = customers.findIndex(c => c.id === Number.parseInt(data.id));
-      if (updateIndex !== -1) {
-        customers[updateIndex] = { ...customers[updateIndex], ...data };
-        applyFilters();
-        renderCustomerAdmin();
-        renderMissingData(); // Update missing data badge
-        updateOverdueBadge();
-      }
-      break;
+  // Delegate all state/render events to centralized sync
+  if (typeof dispatchStateSync === 'function') {
+    dispatchStateSync(message);
+  }
 
-    case 'kunde_deleted':
-      // Remove customer from list
-      customers = customers.filter(c => c.id !== data.id);
-      selectedCustomers.delete(data.id);
-      applyFilters();
-      renderCustomerAdmin();
-      renderMissingData(); // Update missing data badge
-      updateOverdueBadge();
-      updateSelectionUI();
-      break;
-
-    case 'kunder_bulk_updated':
-      // Bulk update - reload all customers
-      Logger.log(`Bulk update: ${data.count} kunder oppdatert av annen bruker`);
-      loadCustomers();
-      break;
-
-    case 'avtale_created':
-    case 'avtale_updated':
-    case 'avtale_deleted':
-    case 'avtale_series_deleted':
-    case 'avtaler_bulk_created':
-      // Calendar changed - reload data and re-render
-      Logger.log(`Avtale ${type.replace('avtale_', '').replace('avtaler_', '')}`);
-      if (typeof loadAvtaler === 'function') {
-        loadAvtaler().then(() => {
-          if (typeof renderCalendar === 'function') renderCalendar();
-        });
-      }
-      break;
-
-    case 'rute_created':
-    case 'rute_updated':
-    case 'rute_deleted':
-      // Rute-endringer kan oppdatere kundedata (f.eks. kontrolldatoer ved rute-fullføring)
-      Logger.log(`Rute ${type.replace('rute_', '')}`);
-      if (typeof loadCustomers === 'function') {
-        loadCustomers();
-      }
-      break;
-
-    case 'customer_claimed':
-      // Someone started working on a customer
-      presenceClaims.set(data.kundeId, {
-        userId: data.userId,
-        userName: data.userName,
-        initials: data.initials,
-      });
-      updatePresenceBadgeForKunde(data.kundeId);
-      // Show notification if someone else claimed (not ourselves)
-      if (data.userId !== myUserId) {
-        Logger.log(`${data.userName} jobber med kunde #${data.kundeId}`);
-      }
-      break;
-
-    case 'customer_released':
-      // Someone stopped working on a customer
-      presenceClaims.delete(data.kundeId);
-      updatePresenceBadgeForKunde(data.kundeId);
-      break;
-
-    case 'user_offline':
-      // Another user went offline — remove all their claims
-      for (const [kundeId, claim] of presenceClaims) {
-        if (claim.userId === data.userId) {
-          presenceClaims.delete(kundeId);
-          updatePresenceBadgeForKunde(kundeId);
-        }
-      }
-      Logger.log(`Bruker frakoblet: ${data.userName}`);
-      break;
-
-    case 'time_update':
-      // Periodic time update - refresh day counters
-      updateDayCounters();
-      break;
-
-    case 'chat_message':
-      handleIncomingChatMessage(data);
-      break;
-
-    case 'chat_typing':
-      handleChatTyping(data);
-      break;
-
-    case 'chat_typing_stop':
-      handleChatTypingStop(data);
-      break;
-
-    case 'pong':
-      break;
+  // Dispatch to mobile field view handler (if active)
+  if (typeof handleMobileRealtimeUpdate === 'function') {
+    handleMobileRealtimeUpdate(message);
   }
 }
 
@@ -2129,6 +2581,281 @@ function updatePresenceBadges() {
   if (!markers) return;
   for (const kundeId of Object.keys(markers)) {
     updatePresenceBadgeForKunde(Number(kundeId));
+  }
+}
+
+
+// ========================================
+// STATE SYNC - Sentralisert WS → UI oppdatering
+// Mapper WebSocket-events til state-mutasjoner og render-funksjoner.
+// Debouncer burst-events og prioriterer aktiv tab.
+// ========================================
+
+// Named helper for calendar reload (same reference = dedup works)
+function _syncReloadCalendar() {
+  if (typeof loadAvtaler === 'function') {
+    return loadAvtaler().then(() => {
+      if (typeof renderCalendar === 'function') renderCalendar();
+    });
+  }
+}
+
+// Refresh Arbeid "idag" sub-view (team-overview + todays-work)
+// Debounced to avoid 10+ concurrent fetches during batch route creation
+let _arbeidRefreshTimer = null;
+function _syncRefreshArbeidIdag() {
+  if (_arbeidRefreshTimer) clearTimeout(_arbeidRefreshTimer);
+  _arbeidRefreshTimer = setTimeout(() => {
+    _arbeidRefreshTimer = null;
+    if (typeof currentArbeidView !== 'undefined' && currentArbeidView === 'idag') {
+      if (typeof teamOverviewFetchData === 'function') teamOverviewFetchData();
+      if (typeof loadTodaysWork === 'function' && typeof hasFeature === 'function' && hasFeature('todays_work')) {
+        loadTodaysWork();
+      }
+    }
+  }, 500);
+}
+
+// Refresh weekplan badges after avtale changes
+function _syncRefreshWeekPlanBadges() {
+  if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+}
+
+// Declarative event → mutation + render map
+// _always: runs regardless of active tab
+// Tab-keyed arrays: only run when that tab is active, otherwise tab is marked dirty
+// immediate: bypass debounce (for latency-sensitive events)
+const STATE_SYNC_MAP = {
+  // ---- Kunde events ----
+  kunde_created: {
+    mutate(data) {
+      customers.push(data);
+    },
+    renders: {
+      _always: [applyFilters],
+      customers: [renderCustomerAdmin],
+      dashboard: [updateDashboard, renderMissingData, updateOverdueBadge],
+    },
+    notify(data) { return `Ny kunde opprettet: ${escapeHtml(data.navn || '')}`; },
+  },
+
+  kunde_updated: {
+    mutate(data) {
+      const idx = customers.findIndex(c => c.id === Number.parseInt(data.id));
+      if (idx !== -1) customers[idx] = { ...customers[idx], ...data };
+      // Sync embedded customer data in todays-work cache
+      if (typeof twRouteData !== 'undefined' && twRouteData && twRouteData.kunder) {
+        const twIdx = twRouteData.kunder.findIndex(k => k.id === Number.parseInt(data.id));
+        if (twIdx !== -1) {
+          twRouteData.kunder[twIdx] = { ...twRouteData.kunder[twIdx], ...data };
+          if (typeof renderTodaysWork === 'function') renderTodaysWork();
+        }
+      }
+    },
+    renders: {
+      _always: [applyFilters],
+      customers: [renderCustomerAdmin],
+      dashboard: [updateDashboard, renderMissingData, updateOverdueBadge],
+    },
+  },
+
+  kunde_deleted: {
+    mutate(data) {
+      customers = customers.filter(c => c.id !== data.id);
+      selectedCustomers.delete(data.id);
+    },
+    renders: {
+      _always: [applyFilters, updateSelectionUI],
+      customers: [renderCustomerAdmin],
+      dashboard: [updateDashboard, renderMissingData, updateOverdueBadge],
+    },
+  },
+
+  kunder_bulk_updated: {
+    mutate: null,
+    renders: { _always: [loadCustomers] },
+  },
+
+  // ---- Avtale events ----
+  avtale_created:        { mutate: null, renders: { _always: [_syncRefreshWeekPlanBadges], arbeid: [_syncRefreshArbeidIdag], calendar: [_syncReloadCalendar] } },
+  avtale_updated:        { mutate: null, renders: { _always: [_syncRefreshWeekPlanBadges], arbeid: [_syncRefreshArbeidIdag], calendar: [_syncReloadCalendar] } },
+  avtale_deleted:        { mutate: null, renders: { _always: [_syncRefreshWeekPlanBadges], arbeid: [_syncRefreshArbeidIdag], calendar: [_syncReloadCalendar] } },
+  avtale_series_deleted: { mutate: null, renders: { _always: [_syncRefreshWeekPlanBadges], arbeid: [_syncRefreshArbeidIdag], calendar: [_syncReloadCalendar] } },
+  avtaler_bulk_created:  { mutate: null, renders: { _always: [_syncRefreshWeekPlanBadges], arbeid: [_syncRefreshArbeidIdag], calendar: [_syncReloadCalendar] } },
+
+  // ---- Rute events ----
+  rute_created: { mutate: null, renders: { _always: [loadCustomers], arbeid: [_syncRefreshArbeidIdag] } },
+  rute_updated: { mutate: null, renders: { _always: [loadCustomers], arbeid: [_syncRefreshArbeidIdag] } },
+  rute_deleted: { mutate: null, renders: { _always: [loadCustomers], arbeid: [_syncRefreshArbeidIdag] } },
+
+  // ---- Presence events (immediate, no debounce) ----
+  customer_claimed: {
+    mutate(data) {
+      presenceClaims.set(data.kundeId, {
+        userId: data.userId,
+        userName: data.userName,
+        initials: data.initials,
+      });
+    },
+    renders: { _always: ['_presenceBadge'] },
+    immediate: true,
+  },
+
+  customer_released: {
+    mutate(data) {
+      presenceClaims.delete(data.kundeId);
+    },
+    renders: { _always: ['_presenceBadge'] },
+    immediate: true,
+  },
+
+  user_offline: {
+    mutate(data) {
+      for (const [kundeId, claim] of presenceClaims) {
+        if (claim.userId === data.userId) {
+          presenceClaims.delete(kundeId);
+          updatePresenceBadgeForKunde(kundeId);
+        }
+      }
+    },
+    renders: {},
+    immediate: true,
+  },
+
+  // ---- Chat events (immediate, delegated) ----
+  chat_message:     { mutate: null, renders: { _always: ['_chatMessage'] }, immediate: true },
+  chat_typing:      { mutate: null, renders: { _always: ['_chatTyping'] }, immediate: true },
+  chat_typing_stop: { mutate: null, renders: { _always: ['_chatTypingStop'] }, immediate: true },
+
+  // ---- Time update ----
+  time_update: { mutate: null, renders: { _always: ['_timeUpdate'] }, immediate: true },
+};
+
+// ========================================
+// DEBOUNCE & DIRTY-TAB QUEUE
+// ========================================
+
+const SYNC_DEBOUNCE_MS = 150;
+let _syncFlushTimer = null;
+const _pendingRenderFns = new Set();
+const _pendingTabKeys = new Set();
+const _dirtyTabs = new Set();
+
+function _getActiveTab() {
+  return document.querySelector('.tab-item.active')?.dataset?.tab || 'dashboard';
+}
+
+function _scheduleSyncFlush() {
+  if (_syncFlushTimer) clearTimeout(_syncFlushTimer);
+  _syncFlushTimer = setTimeout(_flushSyncRenders, SYNC_DEBOUNCE_MS);
+}
+
+function _flushSyncRenders() {
+  _syncFlushTimer = null;
+  const activeTab = _getActiveTab();
+
+  for (const fn of _pendingRenderFns) {
+    // Check if this fn belongs to _always or the active tab
+    // We run all collected fns — tab filtering was done at collection time
+    try { fn(); } catch (e) { console.error('State sync render error:', e); }
+  }
+
+  // Mark non-active tabs as dirty
+  for (const tabKey of _pendingTabKeys) {
+    if (tabKey !== '_always' && tabKey !== activeTab) {
+      _dirtyTabs.add(tabKey);
+    }
+  }
+
+  _pendingRenderFns.clear();
+  _pendingTabKeys.clear();
+}
+
+// Tab re-render map: what to run when switching to a dirty tab
+const _tabRefreshMap = {
+  customers:      () => { if (typeof renderCustomerAdmin === 'function') renderCustomerAdmin(); },
+  dashboard:      () => { if (typeof updateDashboard === 'function') updateDashboard(); if (typeof renderMissingData === 'function') renderMissingData(); if (typeof updateOverdueBadge === 'function') updateOverdueBadge(); },
+  overdue:        () => { if (typeof renderOverdueTab === 'function') renderOverdueTab(); },
+  upcoming:       () => { if (typeof renderUpcomingTab === 'function') renderUpcomingTab(); },
+  calendar:       () => _syncReloadCalendar(),
+  'weekly-plan':  () => { if (typeof renderWeekPlan === 'function') renderWeekPlan(); },
+  arbeid:         () => { if (typeof renderArbeidView === 'function') renderArbeidView(typeof currentArbeidView !== 'undefined' ? currentArbeidView : 'idag'); },
+  chat:           () => { if (typeof renderChatConversations === 'function') renderChatConversations(); },
+};
+
+// Called from app-legacy.js on tab switch
+function onTabSwitch(tabName) {
+  if (_dirtyTabs.has(tabName)) {
+    _dirtyTabs.delete(tabName);
+    const refreshFn = _tabRefreshMap[tabName];
+    if (refreshFn) {
+      try { refreshFn(); } catch (e) { console.error('Tab refresh error:', e); }
+    }
+  }
+}
+
+// ========================================
+// MAIN DISPATCH
+// ========================================
+
+function dispatchStateSync(message) {
+  const { type, data } = message;
+  const entry = STATE_SYNC_MAP[type];
+  if (!entry) return;
+
+  // 1. Always run mutation immediately
+  if (entry.mutate) {
+    try { entry.mutate(data); } catch (e) { console.error('State sync mutate error:', e); }
+  }
+
+  // 2. Notification
+  if (entry.notify) {
+    const msg = entry.notify(data);
+    if (msg && typeof showNotification === 'function') showNotification(msg);
+  }
+
+  // 3. Immediate events — bypass debounce
+  if (entry.immediate) {
+    _executeImmediateRenders(entry, data);
+    return;
+  }
+
+  // 4. Debounced — collect renders and schedule flush
+  const activeTab = _getActiveTab();
+  for (const [tabKey, fns] of Object.entries(entry.renders)) {
+    _pendingTabKeys.add(tabKey);
+    if (tabKey === '_always' || tabKey === activeTab) {
+      for (const fn of fns) {
+        _pendingRenderFns.add(fn); // dedup by reference
+      }
+    }
+  }
+  _scheduleSyncFlush();
+}
+
+function _executeImmediateRenders(entry, data) {
+  for (const [tabKey, fns] of Object.entries(entry.renders)) {
+    if (tabKey !== '_always') continue;
+    for (const fn of fns) {
+      try {
+        // Handle string-tagged immediate renders
+        if (fn === '_presenceBadge') {
+          updatePresenceBadgeForKunde(data.kundeId);
+        } else if (fn === '_chatMessage') {
+          if (typeof handleIncomingChatMessage === 'function') handleIncomingChatMessage(data);
+        } else if (fn === '_chatTyping') {
+          if (typeof handleChatTyping === 'function') handleChatTyping(data);
+        } else if (fn === '_chatTypingStop') {
+          if (typeof handleChatTypingStop === 'function') handleChatTypingStop(data);
+        } else if (fn === '_timeUpdate') {
+          if (typeof updateDayCounters === 'function') updateDayCounters();
+        } else if (typeof fn === 'function') {
+          fn(data);
+        }
+      } catch (e) {
+        console.error('State sync immediate render error:', e);
+      }
+    }
   }
 }
 
@@ -2296,7 +3023,7 @@ class ServiceTypeRegistry {
       ? this.getBySlug(slugOrServiceType)
       : slugOrServiceType;
     if (!st) return '<i aria-hidden="true" class="fas fa-wrench"></i>';
-    return `<i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>`;
+    return `<i aria-hidden="true" class="fas ${escapeHtml(st.icon)}" style="color: ${escapeHtml(st.color)}"></i>`;
   }
 
   /**
@@ -2391,7 +3118,7 @@ class ServiceTypeRegistry {
       html += `
         <label class="kategori-checkbox-label">
           <input type="checkbox" name="kategori" value="${escapeHtml(st.name)}" ${checked}>
-          <i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'}"></i>
+          <i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')}"></i>
           ${escapeHtml(st.name)}
         </label>`;
     });
@@ -2716,7 +3443,7 @@ class ServiceTypeRegistry {
       html += `
         <div class="control-section service-section" data-service-slug="${st.slug}" data-service-id="${st.id}">
           <div class="control-section-header">
-            <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i> ${st.name}
+            <i aria-hidden="true" class="fas ${escapeHtml(st.icon)}" style="color: ${escapeHtml(st.color)}"></i> ${escapeHtml(st.name)}
           </div>
 
           ${hasSubtypes ? `
@@ -2892,8 +3619,8 @@ class ServiceTypeRegistry {
 
           return `
             <div class="popup-control-info">
-              <p class="popup-status ${controlStatus.class}">
-                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+              <p class="popup-status ${escapeHtml(controlStatus.class)}">
+                <strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
                 <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
               </p>
               ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -2934,7 +3661,7 @@ class ServiceTypeRegistry {
           html += `
             <div style="margin-bottom:8px;">
               <p style="margin:0;">
-                <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};"></i> ${escapeHtml(st.name)}:</strong>
+                <strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')};"></i> ${escapeHtml(st.name)}:</strong>
               </p>
               <p style="margin:2px 0 0 20px;font-size:13px;">Neste: ${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</p>
               ${sisteKontroll ? `<p style="margin:2px 0 0 20px;font-size:11px;color:var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -2968,8 +3695,8 @@ class ServiceTypeRegistry {
 
       return `
         <div class="popup-control-info">
-          <p class="popup-status ${controlStatus.class}">
-            <strong><i aria-hidden="true" class="fas ${st.icon || 'fa-clipboard-check'}" style="color:${st.color || '#3B82F6'};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
+          <p class="popup-status ${escapeHtml(controlStatus.class)}">
+            <strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon || 'fa-clipboard-check')}" style="color:${escapeHtml(st.color || '#3B82F6')};display:inline-block;width:14px;text-align:center;"></i> Neste kontroll:</strong>
             <span class="control-days">${nesteKontroll ? formatDate(nesteKontroll) : '<span style="color:#5E81AC;">Ikke satt</span>'}</span>
           </p>
           ${sisteKontroll ? `<p style="font-size: 11px; color: var(--color-text-muted, #b3b3b3); margin-top: 4px;">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
@@ -3001,7 +3728,7 @@ class ServiceTypeRegistry {
         }
 
         html += `
-          <p><strong><i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color};"></i> ${st.name}:</strong></p>
+          <p><strong><i aria-hidden="true" class="fas ${escapeHtml(st.icon)}" style="color: ${escapeHtml(st.color)};"></i> ${escapeHtml(st.name)}:</strong></p>
           <p style="margin-left: 20px;">Neste: ${nesteKontroll ? escapeHtml(nesteKontroll) : 'Ikke satt'}</p>
           ${sisteKontroll ? `<p style="margin-left: 20px; font-size: 11px; color: var(--color-text-muted, #b3b3b3);">Sist: ${formatDate(sisteKontroll)}</p>` : ''}
         `;
@@ -3340,9 +4067,10 @@ const SmartRouteEngine = {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Start-lokasjon (fra config eller default)
-    const startLat = appConfig.routeStartLat || 59.9139;
-    const startLng = appConfig.routeStartLng || 10.7522;
+    // Start-lokasjon (fra config)
+    const startLat = appConfig.routeStartLat;
+    const startLng = appConfig.routeStartLng;
+    if (!startLat || !startLng) return null;
 
     // Sentroid
     const centroid = this.getCentroid(cluster);
@@ -4284,9 +5012,47 @@ function clearMapHighlights() {
  * Switch to a specific tab
  */
 function switchToTab(tabName) {
-  const tabBtn = document.querySelector(`.tab-item[data-tab="${tabName}"]`);
+  // Map old tab names to new consolidated structure
+  const migrationMap = {
+    'overdue': 'overdue',
+    'warnings': 'upcoming',
+    'statistikk': 'dashboard',
+    'missingdata': 'dashboard',
+    'team-overview': 'arbeid',
+    'todays-work': 'arbeid',
+    'calendar': 'arbeid',
+    'weekly-plan': 'arbeid',
+    'planner': 'arbeid'
+  };
+  const arbeidViewMap = {
+    'team-overview': 'idag',
+    'todays-work': 'idag',
+    'calendar': 'maaned',
+    'weekly-plan': 'uke',
+    'planner': 'planlegger'
+  };
+
+  const mappedTab = migrationMap[tabName] || tabName;
+  const arbeidView = arbeidViewMap[tabName];
+
+  const tabBtn = document.querySelector(`.tab-item[data-tab="${mappedTab}"]`);
   if (tabBtn) {
     tabBtn.click();
+    // If switching to arbeid with a specific sub-view, switch to it
+    if (arbeidView && typeof switchArbeidView === 'function') {
+      setTimeout(() => switchArbeidView(arbeidView), 50);
+    }
+    // If switching to dashboard with a specific section, scroll to it
+    if (mappedTab === 'dashboard' && tabName !== 'dashboard') {
+      const sectionMap = { 'overdue': 'dash-overdue', 'warnings': 'dash-warnings', 'statistikk': 'dash-statistikk', 'missingdata': 'dash-missingdata' };
+      const sectionId = sectionMap[tabName];
+      if (sectionId) {
+        setTimeout(() => {
+          const el = document.getElementById(sectionId);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 100);
+      }
+    }
   }
 }
 
@@ -4395,6 +5161,7 @@ async function initChat() {
     const response = await fetch('/api/chat/init', {
       method: 'POST',
       headers: chatHeaders(),
+      credentials: 'include',
     });
     if (!response.ok) {
       console.error('Chat init failed:', response.status, response.statusText);
@@ -4415,7 +5182,7 @@ async function initChat() {
 // Fetch conversations
 async function loadChatConversations() {
   try {
-    const response = await fetch('/api/chat/conversations');
+    const response = await fetch('/api/chat/conversations', { credentials: 'include' });
     if (!response.ok) return;
     const result = await response.json();
     if (result.success && result.data) {
@@ -4442,7 +5209,7 @@ async function loadChatMessages(conversationId, before) {
   try {
     let url = `/api/chat/conversations/${conversationId}/messages?limit=50`;
     if (before) url += `&before=${before}`;
-    const response = await fetch(url);
+    const response = await fetch(url, { credentials: 'include' });
     if (!response.ok) return;
     const result = await response.json();
     if (result.success && result.data) {
@@ -4466,6 +5233,7 @@ async function sendChatMessage(conversationId, content) {
     const response = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
       method: 'POST',
       headers: chatHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ content: content.trim() }),
     });
     if (!response.ok) return;
@@ -4493,6 +5261,7 @@ async function markChatAsRead(conversationId) {
     await fetch(`/api/chat/conversations/${conversationId}/read`, {
       method: 'PUT',
       headers: chatHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ messageId: lastMsg.id }),
     });
     // Update local state
@@ -4511,6 +5280,7 @@ async function startDmConversation(targetUserId) {
     const response = await fetch('/api/chat/conversations/dm', {
       method: 'POST',
       headers: chatHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ targetUserId }),
     });
     if (!response.ok) return null;
@@ -4593,13 +5363,16 @@ function sendChatTypingStart(conversationId) {
 // Update chat badge
 function updateChatBadge() {
   const badge = document.getElementById('chatUnreadBadge');
-  if (!badge) return;
-  if (chatState.totalUnread > 0) {
-    badge.textContent = chatState.totalUnread > 99 ? '99+' : chatState.totalUnread;
-    badge.style.display = '';
-  } else {
-    badge.style.display = 'none';
+  if (badge) {
+    if (chatState.totalUnread > 0) {
+      badge.textContent = chatState.totalUnread > 99 ? '99+' : chatState.totalUnread;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
   }
+  // Mobile chat badge
+  if (typeof mfUpdateChatBadge === 'function') mfUpdateChatBadge();
 }
 
 // Format chat timestamp
@@ -4682,6 +5455,9 @@ function renderChatConversations() {
       openChatConversation(convId, convType);
     });
   });
+
+  // Mobile delegation
+  if (typeof mfRenderChatConversations === 'function') mfRenderChatConversations();
 }
 
 // Open a conversation
@@ -4733,7 +5509,7 @@ function renderChatMessages(conversationId) {
 
   // Load more button if we have exactly 50 messages (might be more)
   if (messages.length >= 50) {
-    html += `<div class="chat-load-more"><button onclick="loadOlderChatMessages()">Last eldre meldinger</button></div>`;
+    html += `<div class="chat-load-more"><button data-action="loadOlderChatMessages">Last eldre meldinger</button></div>`;
   }
 
   for (const msg of messages) {
@@ -4755,6 +5531,9 @@ function renderChatMessages(conversationId) {
   }
 
   container.innerHTML = html;
+
+  // Mobile delegation
+  if (typeof mfRenderChatMessages === 'function') mfRenderChatMessages(conversationId);
 }
 
 // Scroll chat to bottom
@@ -4797,6 +5576,9 @@ function renderTypingIndicator(conversationId) {
       text.textContent = `${typingNames.join(' og ')} skriver...`;
     }
   }
+
+  // Mobile delegation
+  if (typeof mfRenderTypingIndicator === 'function') mfRenderTypingIndicator(conversationId);
 }
 
 // Show new DM view
@@ -4815,7 +5597,7 @@ async function showNewDmView() {
 
   // Load team members
   try {
-    const response = await fetch('/api/chat/team-members');
+    const response = await fetch('/api/chat/team-members', { credentials: 'include' });
     if (!response.ok) {
       console.error('Team members failed:', response.status, response.statusText);
       try { console.error('Team members body:', await response.text()); } catch {}
@@ -4955,28 +5737,29 @@ window.loadOlderChatMessages = loadOlderChatMessages;
 
 let twCurrentDate = new Date().toISOString().split('T')[0];
 let twRouteData = null;
+let twInitialized = false;
+
+function twHandlePrevDay() {
+  const d = new Date(twCurrentDate);
+  d.setDate(d.getDate() - 1);
+  twCurrentDate = d.toISOString().split('T')[0];
+  loadTodaysWork();
+}
+
+function twHandleNextDay() {
+  const d = new Date(twCurrentDate);
+  d.setDate(d.getDate() + 1);
+  twCurrentDate = d.toISOString().split('T')[0];
+  loadTodaysWork();
+}
 
 function initTodaysWork() {
-  // Show tab if feature is enabled
-  if (hasFeature('todays_work')) {
-    const tab = document.getElementById('todaysWorkTab');
-    if (tab) tab.style.display = '';
-  }
+  if (twInitialized) return;
+  twInitialized = true;
 
   // Date navigation
-  document.getElementById('twPrevDay')?.addEventListener('click', () => {
-    const d = new Date(twCurrentDate);
-    d.setDate(d.getDate() - 1);
-    twCurrentDate = d.toISOString().split('T')[0];
-    loadTodaysWork();
-  });
-
-  document.getElementById('twNextDay')?.addEventListener('click', () => {
-    const d = new Date(twCurrentDate);
-    d.setDate(d.getDate() + 1);
-    twCurrentDate = d.toISOString().split('T')[0];
-    loadTodaysWork();
-  });
+  document.getElementById('twPrevDay')?.addEventListener('click', twHandlePrevDay);
+  document.getElementById('twNextDay')?.addEventListener('click', twHandleNextDay);
 
   // Start route button
   document.getElementById('twStartRouteBtn')?.addEventListener('click', startTodaysRoute);
@@ -4987,19 +5770,22 @@ async function loadTodaysWork() {
   const today = new Date().toISOString().split('T')[0];
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
-  if (twCurrentDate === today) {
-    dateLabel.textContent = 'I dag';
-  } else if (twCurrentDate === tomorrow) {
-    dateLabel.textContent = 'I morgen';
-  } else {
-    const d = new Date(twCurrentDate);
-    dateLabel.textContent = d.toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' });
+  if (dateLabel) {
+    if (twCurrentDate === today) {
+      dateLabel.textContent = 'I dag';
+    } else if (twCurrentDate === tomorrow) {
+      dateLabel.textContent = 'I morgen';
+    } else {
+      const d = new Date(twCurrentDate);
+      dateLabel.textContent = d.toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' });
+    }
   }
 
   try {
     const csrfToken = getCsrfToken();
     const response = await fetch(`/api/todays-work/my-route?date=${twCurrentDate}`, {
-      headers: { 'X-CSRF-Token': csrfToken }
+      headers: { 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
     });
     if (!response.ok) return;
     const json = await response.json();
@@ -5075,6 +5861,8 @@ function renderTodaysWork() {
   if (route.total_distanse) {
     document.getElementById('twDistanceStat').style.display = '';
     document.getElementById('twDistance').textContent = (route.total_distanse / 1000).toFixed(1) + ' km';
+  } else {
+    document.getElementById('twDistanceStat').style.display = 'none';
   }
 
   updateTodaysWorkBadge(completed, total);
@@ -5113,11 +5901,11 @@ function renderTodaysWork() {
         <p class="tw-next-stop-address">${escapeHtml(address)}</p>
         ${nextKunde.telefon ? `<p class="tw-next-stop-phone"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(nextKunde.telefon)}</p>` : ''}
         <div class="tw-next-stop-actions">
-          <button class="btn btn-primary tw-next-nav-btn" onclick="twNavigateToCustomer(${nextKunde.id})">
+          <button class="btn btn-primary tw-next-nav-btn" data-action="twNavigateToCustomer" data-args='[${nextKunde.id}]'>
             <i aria-hidden="true" class="fas fa-directions"></i> Naviger hit
           </button>
           ${nextKunde.telefon ? `<a href="tel:${escapeHtml(nextKunde.telefon)}" class="btn btn-secondary tw-next-call-btn"><i aria-hidden="true" class="fas fa-phone"></i> Ring</a>` : ''}
-          <button class="btn btn-success tw-next-done-btn" onclick="twMarkVisited(${nextKunde.id})">
+          <button class="btn btn-success tw-next-done-btn" data-action="twMarkVisited" data-args='[${nextKunde.id}]'>
             <i aria-hidden="true" class="fas fa-check"></i> Fullført
           </button>
         </div>
@@ -5144,10 +5932,10 @@ function renderTodaysWork() {
         </div>
         <div class="tw-stop-actions">
           ${!isVisited && kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="btn btn-icon btn-small tw-action-call" title="Ring"><i aria-hidden="true" class="fas fa-phone"></i></a>` : ''}
-          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" onclick="twNavigateToCustomer(${kunde.id})" title="Naviger"><i aria-hidden="true" class="fas fa-directions"></i></button>` : ''}
+          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" data-action="twNavigateToCustomer" data-args='[${kunde.id}]' title="Naviger"><i aria-hidden="true" class="fas fa-directions"></i></button>` : ''}
           ${isVisited
             ? '<span class="tw-visited-check"><i aria-hidden="true" class="fas fa-check-circle"></i></span>'
-            : `<button class="btn btn-icon btn-small tw-action-visit" onclick="twMarkVisited(${kunde.id})" title="Marker besøkt"><i aria-hidden="true" class="fas fa-check"></i></button>`
+            : `<button class="btn btn-icon btn-small tw-action-visit" data-action="twMarkVisited" data-args='[${kunde.id}]' title="Marker besøkt"><i aria-hidden="true" class="fas fa-check"></i></button>`
           }
         </div>
       </div>
@@ -5166,7 +5954,7 @@ function renderTodaysWork() {
   if (visitedStops.length > 0) {
     html += `
       <div class="tw-visited-section">
-        <button class="tw-visited-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+        <button class="tw-visited-toggle" data-action="toggleParentClass" data-class="expanded">
           <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Besøkt (${visitedStops.length})</span>
           <i aria-hidden="true" class="fas fa-chevron-down tw-visited-chevron"></i>
@@ -5191,6 +5979,16 @@ function updateTodaysWorkBadge(completed, total) {
       badge.style.display = 'none';
     }
   }
+  // Also update the visible desktop tab badge
+  const tabBadge = document.getElementById('teamOverviewBadge');
+  if (tabBadge) {
+    if (total > 0) {
+      tabBadge.textContent = `${completed}/${total}`;
+      tabBadge.style.display = '';
+    } else {
+      tabBadge.style.display = 'none';
+    }
+  }
 }
 
 async function startTodaysRoute() {
@@ -5200,7 +5998,8 @@ async function startTodaysRoute() {
     const csrfToken = getCsrfToken();
     const response = await fetch(`/api/todays-work/start-route/${twRouteData.id}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
     });
     const json = await response.json();
     if (json.success) {
@@ -5220,6 +6019,7 @@ async function twMarkVisited(kundeId) {
     const response = await fetch(`/api/todays-work/visit/${kundeId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ rute_id: twRouteData.id, completed: true })
     });
     const json = await response.json();
@@ -5229,7 +6029,7 @@ async function twMarkVisited(kundeId) {
     }
   } catch (err) {
     // Offline: optimistic update + queue for sync
-    if (!navigator.onLine && window.SyncManager) {
+    if (!navigator.onLine && window.SyncManager && twRouteData) {
       // Update local state optimistically
       if (twRouteData.visits) {
         const existing = twRouteData.visits.find(v => v.kunde_id === kundeId);
@@ -5239,8 +6039,8 @@ async function twMarkVisited(kundeId) {
         } else {
           twRouteData.visits.push({ kunde_id: kundeId, completed: true, visited_at: new Date().toISOString() });
         }
+        twRouteData.completed_count = twRouteData.visits.filter(v => v.completed).length;
       }
-      twRouteData.completed_count = (twRouteData.completed_count || 0) + 1;
       renderTodaysWork();
 
       // Queue for sync
@@ -5270,13 +6070,13 @@ function twNavigateToCustomer(kundeId) {
 
   const address = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', ');
 
-  if (kunde.latitude && kunde.longitude) {
+  if (kunde.lat && kunde.lng) {
     // Use coordinates for precision
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     if (isIOS) {
-      window.open(`maps://maps.apple.com/?daddr=${kunde.latitude},${kunde.longitude}&dirflg=d`);
+      window.open(`maps://maps.apple.com/?daddr=${kunde.lat},${kunde.lng}&dirflg=d`);
     } else {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${kunde.latitude},${kunde.longitude}`);
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${kunde.lat},${kunde.lng}`);
     }
   } else if (address) {
     // Fallback to address
@@ -5286,6 +6086,7148 @@ function twNavigateToCustomer(kundeId) {
 
 window.twMarkVisited = twMarkVisited;
 window.twNavigateToCustomer = twNavigateToCustomer;
+
+
+// ============================================
+// MOBILE VISIT FORM — Bottom sheet for logging visits
+// ============================================
+
+function mfShowVisitForm(kundeId) {
+  const kunde = mfRouteData?.kunder?.find(k => k.id === kundeId);
+  if (!kunde) return;
+
+  // Claim presence while working on this customer
+  if (typeof mfClaimCustomer === 'function') mfClaimCustomer(kundeId);
+
+  const address = [kunde.adresse, kunde.poststed].filter(Boolean).join(', ');
+
+  // Remove existing form if any
+  const existing = document.querySelector('.mf-visit-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-visit-overlay';
+  overlay.innerHTML = `
+    <div class="mf-visit-sheet">
+      <div class="mf-visit-handle"></div>
+      <div class="mf-visit-header">
+        <div>
+          <h3>${escapeHtml(kunde.navn)}</h3>
+          <p>${escapeHtml(address)}</p>
+        </div>
+        <button class="mf-visit-close" aria-label="Lukk"><i class="fas fa-times" aria-hidden="true"></i></button>
+      </div>
+
+      <div class="mf-visit-body">
+        <div class="mf-visit-field">
+          <label for="mfVisitComment">Notater</label>
+          <textarea id="mfVisitComment" rows="3" placeholder="Beskriv arbeidet som ble utf\u00f8rt..."></textarea>
+        </div>
+
+        <div class="mf-visit-field">
+          <label for="mfVisitMaterials">Materialer brukt</label>
+          <textarea id="mfVisitMaterials" rows="2" placeholder="F.eks. kabler, sikringer, sensorer..."></textarea>
+        </div>
+
+        <button class="mf-btn mf-btn-navigate mf-visit-nav-btn" data-action="mfNavigate" data-args='[${kunde.id}]'>
+          <i class="fas fa-directions" aria-hidden="true"></i> Naviger hit
+        </button>
+      </div>
+
+      <div class="mf-visit-footer">
+        <button class="mf-btn mf-btn-complete mf-visit-submit" id="mfVisitSubmitBtn" data-kunde-id="${kunde.id}">
+          <i class="fas fa-check-circle" aria-hidden="true"></i> Marker som fullf\u00f8rt
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('mobileFieldView').appendChild(overlay);
+
+  // Animate in
+  requestAnimationFrame(() => {
+    overlay.classList.add('open');
+  });
+
+  // Close handlers
+  const closeBtn = overlay.querySelector('.mf-visit-close');
+  closeBtn.addEventListener('click', () => mfCloseVisitForm(overlay));
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) mfCloseVisitForm(overlay);
+  });
+
+  // Submit handler
+  const submitBtn = overlay.querySelector('#mfVisitSubmitBtn');
+  submitBtn.addEventListener('click', () => mfSubmitVisit(kundeId, overlay));
+
+  // Swipe down to close
+  let touchStartY = 0;
+  const sheet = overlay.querySelector('.mf-visit-sheet');
+  sheet.addEventListener('touchstart', (e) => {
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    if (!touchStartY) return;
+    const diff = touchStartY - e.touches[0].clientY;
+    if (diff < -60) {
+      mfCloseVisitForm(overlay);
+      touchStartY = 0;
+    }
+  }, { passive: true });
+}
+
+function mfCloseVisitForm(overlay) {
+  // Release presence claim
+  const submitBtn = overlay.querySelector('#mfVisitSubmitBtn');
+  const kundeId = submitBtn ? parseInt(submitBtn.dataset.kundeId, 10) : null;
+  if (kundeId && typeof mfReleaseCustomer === 'function') mfReleaseCustomer(kundeId);
+
+  overlay.classList.remove('open');
+  setTimeout(() => overlay.remove(), 300);
+}
+
+async function mfSubmitVisit(kundeId, overlay) {
+  const comment = document.getElementById('mfVisitComment')?.value?.trim() || '';
+  const materialsRaw = document.getElementById('mfVisitMaterials')?.value?.trim() || '';
+  const materials = materialsRaw ? materialsRaw.split(',').map(m => m.trim()).filter(Boolean) : [];
+
+  const submitBtn = document.getElementById('mfVisitSubmitBtn');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<div class="mf-spinner-small"></div> Lagrer...';
+  }
+
+  const payload = {
+    rute_id: mfRouteData.id,
+    completed: true,
+    comment: comment || undefined,
+    materials_used: materials.length > 0 ? materials : undefined
+  };
+
+  try {
+    const csrfToken = getCsrfToken();
+    const response = await fetch(`/api/todays-work/visit/${kundeId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify(payload)
+    });
+    const json = await response.json();
+
+    if (json.success) {
+      // Haptic feedback
+      if (navigator.vibrate) navigator.vibrate(200);
+      mfShowBanner('Bes\u00f8k registrert!', 'success');
+      mfCloseVisitForm(overlay);
+      mfLoadRoute();
+    } else {
+      throw new Error('Server error');
+    }
+  } catch (err) {
+    // Offline: optimistic update + queue
+    if (!navigator.onLine && window.SyncManager) {
+      // Optimistic UI update
+      if (mfRouteData.visits) {
+        const existing = mfRouteData.visits.find(v => v.kunde_id === kundeId);
+        if (existing) {
+          existing.completed = true;
+          existing.visited_at = new Date().toISOString();
+          existing.comment = comment;
+        } else {
+          mfRouteData.visits.push({
+            kunde_id: kundeId,
+            completed: true,
+            visited_at: new Date().toISOString(),
+            comment: comment
+          });
+        }
+      }
+      mfRouteData.completed_count = (mfRouteData.completed_count || 0) + 1;
+
+      // Queue for sync
+      await SyncManager.queueOfflineAction({
+        type: 'VISIT_CUSTOMER',
+        url: `/api/todays-work/visit/${kundeId}`,
+        method: 'POST',
+        body: payload
+      });
+
+      // Update offline cache
+      if (window.OfflineStorage) {
+        const userId = localStorage.getItem('userId') || '0';
+        OfflineStorage.saveTodaysRoute(mfCurrentDate, userId, mfRouteData).catch(() => {});
+      }
+
+      if (navigator.vibrate) navigator.vibrate(200);
+      mfShowBanner('Bes\u00f8k registrert (synkes n\u00e5r du er online)', 'warning');
+      mfCloseVisitForm(overlay);
+      mfRenderRoute();
+    } else {
+      mfShowBanner('Kunne ikke registrere bes\u00f8k', 'error');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-check-circle" aria-hidden="true"></i> Marker som fullf\u00f8rt';
+      }
+    }
+  }
+}
+
+// Expose globally
+window.mfShowVisitForm = mfShowVisitForm;
+
+
+// ============================================
+// MOBILE CALENDAR — Agenda view for mobile field view
+// Adds a Calendar tab to the bottom bar for ALL users.
+// Shows upcoming appointments as a day-grouped list.
+// ============================================
+
+let mfCalAvtaler = [];
+let mfCalLoading = false;
+let mfCalTeamCache = null;
+
+// ---- Tab injection ----
+
+function mfSetupCalendarTab() {
+  const mfView = document.getElementById('mobileFieldView');
+  if (!mfView) return;
+
+  const bottomBar = mfView.querySelector('.mf-bottom-bar');
+  if (!bottomBar) return;
+
+  // Check if already injected
+  if (mfView.querySelector('#mfCalendarView')) return;
+
+  // Create Calendar tab view container
+  const calendarView = document.createElement('div');
+  calendarView.className = 'mf-tab-view';
+  calendarView.id = 'mfCalendarView';
+  calendarView.style.display = 'none';
+  calendarView.innerHTML = '<div class="mf-calendar-content" id="mfCalendarContent"></div>';
+
+  // Insert before bottom bar
+  mfView.insertBefore(calendarView, bottomBar);
+
+  // Add Calendar tab button after Route tab
+  const routeBtn = bottomBar.querySelector('[data-tab="route"]');
+  if (routeBtn && routeBtn.nextElementSibling) {
+    const calBtn = document.createElement('button');
+    calBtn.className = 'mf-tab-btn';
+    calBtn.dataset.tab = 'calendar';
+    calBtn.dataset.action = 'mfSwitchTab';
+    calBtn.dataset.args = '["calendar"]';
+    calBtn.setAttribute('role', 'tab');
+    calBtn.setAttribute('aria-label', 'Kalender');
+    calBtn.innerHTML = `
+      <i class="fas fa-calendar-alt" aria-hidden="true"></i>
+      <span>Kalender</span>
+    `;
+    routeBtn.parentElement.insertBefore(calBtn, routeBtn.nextElementSibling);
+  }
+}
+
+// ---- Tab lifecycle ----
+
+function mfOnCalendarTabShown() {
+  mfLoadCalendarData();
+}
+
+// ---- Load data ----
+
+async function mfLoadCalendarData() {
+  if (mfCalLoading) return;
+  mfCalLoading = true;
+
+  const content = document.getElementById('mfCalendarContent');
+  if (content && mfCalAvtaler.length === 0) {
+    content.innerHTML = '<div class="mf-loading"><div class="mf-spinner"></div><p>Laster avtaler...</p></div>';
+  }
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const endDate = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
+    const csrfToken = getCsrfToken();
+
+    const response = await fetch(`/api/avtaler?start=${today}&end=${endDate}`, {
+      headers: { 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      mfCalAvtaler = [];
+      mfRenderCalendarView();
+      return;
+    }
+
+    const json = await response.json();
+    if (json.success && json.data) {
+      mfCalAvtaler = json.data;
+    } else {
+      mfCalAvtaler = [];
+    }
+  } catch (err) {
+    console.error('Mobile calendar: Error loading appointments:', err);
+  } finally {
+    mfCalLoading = false;
+  }
+
+  mfRenderCalendarView();
+}
+
+// ---- Render ----
+
+function mfRenderCalendarView() {
+  const content = document.getElementById('mfCalendarContent');
+  if (!content) return;
+
+  if (mfCalAvtaler.length === 0) {
+    content.innerHTML = `
+      <div class="mf-cal-header">
+        <h3><i class="fas fa-calendar-alt" aria-hidden="true"></i> Kalender</h3>
+        <button class="mf-action-btn" data-action="mfShowNewAvtaleSheet" aria-label="Ny avtale">
+          <i class="fas fa-plus" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="mf-empty-state">
+        <i class="fas fa-calendar-check" aria-hidden="true"></i>
+        <p>Ingen avtaler de neste 14 dagene.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Sort by date + time
+  const sorted = [...mfCalAvtaler].sort((a, b) => {
+    const dateCompare = (a.dato || '').localeCompare(b.dato || '');
+    if (dateCompare !== 0) return dateCompare;
+    return (a.klokkeslett || '').localeCompare(b.klokkeslett || '');
+  });
+
+  // Group by date
+  const groups = {};
+  for (const avtale of sorted) {
+    const date = avtale.dato || 'Ukjent';
+    if (!groups[date]) groups[date] = [];
+    groups[date].push(avtale);
+  }
+
+  let html = `
+    <div class="mf-cal-header">
+      <h3><i class="fas fa-calendar-alt" aria-hidden="true"></i> Kalender</h3>
+      <button class="mf-action-btn" data-action="mfShowNewAvtaleSheet" aria-label="Ny avtale">
+        <i class="fas fa-plus" aria-hidden="true"></i>
+      </button>
+    </div>
+  `;
+
+  for (const [date, avtaler] of Object.entries(groups)) {
+    const label = mfFormatDateLabel(date);
+    html += `<div class="mf-cal-date-header">${escapeHtml(label)}</div>`;
+
+    for (const avtale of avtaler) {
+      const isCompleted = avtale.status === 'fullf\u00f8rt';
+      const time = avtale.klokkeslett || '';
+      const name = avtale.kunde_navn || 'Ingen kunde';
+      const desc = avtale.beskrivelse || avtale.type || '';
+      const address = [avtale.adresse, avtale.poststed].filter(Boolean).join(', ');
+
+      html += `
+        <div class="mf-cal-card ${isCompleted ? 'completed' : ''}">
+          <div class="mf-cal-card-left">
+            ${time ? `<div class="mf-cal-time">${escapeHtml(time)}</div>` : ''}
+            <span class="mf-cal-status ${isCompleted ? 'done' : 'planned'}">${isCompleted ? 'Fullf\u00f8rt' : 'Planlagt'}</span>
+          </div>
+          <div class="mf-cal-card-info">
+            <h4>${escapeHtml(name)}</h4>
+            ${desc ? `<p class="mf-cal-desc">${escapeHtml(desc)}</p>` : ''}
+            ${address ? `<p class="mf-cal-address"><i class="fas fa-map-marker-alt" aria-hidden="true"></i> ${escapeHtml(address)}</p>` : ''}
+            ${avtale.opprettet_av ? `<p class="mf-cal-assigned"><i class="fas fa-user" aria-hidden="true"></i> ${escapeHtml(avtale.opprettet_av)}</p>` : ''}
+          </div>
+          <div class="mf-cal-card-actions">
+            ${!isCompleted ? `
+              <button class="mf-action-btn mf-action-complete" data-action="mfCompleteAvtale" data-args='[${avtale.id}]' title="Fullf\u00f8r">
+                <i class="fas fa-check" aria-hidden="true"></i>
+              </button>
+            ` : `
+              <span class="mf-visited-icon"><i class="fas fa-check-circle" aria-hidden="true"></i></span>
+            `}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  content.innerHTML = html;
+}
+
+// ---- Complete appointment ----
+
+async function mfCompleteAvtale(avtaleId) {
+  try {
+    const csrfToken = getCsrfToken();
+    const response = await fetch(`/api/avtaler/${avtaleId}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
+    });
+
+    const json = await response.json();
+    if (json.success) {
+      if (navigator.vibrate) navigator.vibrate(100);
+      mfShowBanner('Avtale markert som fullf\u00f8rt!', 'success');
+      // Update locally
+      const avtale = mfCalAvtaler.find(a => a.id === avtaleId);
+      if (avtale) avtale.status = 'fullf\u00f8rt';
+      mfRenderCalendarView();
+    } else {
+      mfShowBanner(json.error || 'Kunne ikke fullf\u00f8re avtalen', 'error');
+    }
+  } catch (err) {
+    mfShowBanner('Feil ved fullf\u00f8ring av avtale', 'error');
+  }
+}
+
+// ---- New appointment bottom sheet ----
+
+function mfShowNewAvtaleSheet() {
+  const today = new Date().toISOString().split('T')[0];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfNewAvtaleSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfCloseNewAvtaleSheet"></div>
+    <div class="mf-sheet-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Ny avtale</h3>
+
+      <label class="mf-sheet-label">Kunde (s\u00f8k)</label>
+      <input type="text" id="mfNewAvtaleKundeSearch" class="mf-search-input" placeholder="S\u00f8k kundenavn..." data-on-input="mfNewAvtaleSearchHandler" autocomplete="off">
+      <div id="mfNewAvtaleKundeResults" class="mf-assign-results"></div>
+      <div id="mfNewAvtaleKundeSelected" class="mf-assign-selected"></div>
+
+      <label class="mf-sheet-label">Dato</label>
+      <input type="date" id="mfNewAvtaleDato" class="mf-sheet-date" value="${today}">
+
+      <label class="mf-sheet-label">Klokkeslett</label>
+      <input type="time" id="mfNewAvtaleKlokkeslett" class="mf-sheet-date" value="09:00">
+
+      <label class="mf-sheet-label">Beskrivelse</label>
+      <textarea id="mfNewAvtaleBeskrivelse" class="mf-sheet-textarea" rows="3" placeholder="Valgfri beskrivelse..."></textarea>
+
+      <div id="mfNewAvtaleTildeltWrapper" style="display:none">
+        <label class="mf-sheet-label">Tildelt</label>
+        <select id="mfNewAvtaleTildelt" class="mf-sheet-date">
+          <option value="">Meg selv</option>
+        </select>
+      </div>
+
+      <button class="mf-btn mf-btn-primary mf-sheet-submit" data-action="mfSubmitNewAvtale">
+        <i class="fas fa-calendar-plus" aria-hidden="true"></i> Opprett avtale
+      </button>
+    </div>
+  `;
+
+  document.getElementById('mobileFieldView').appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+
+  // Populate team member dropdown (hidden for solo admin)
+  mfCalLoadTeamMembers().then(members => {
+    const currentEmail = (localStorage.getItem('userEmail') || '').toLowerCase();
+    const others = members.filter(m => (m.epost || '').toLowerCase() !== currentEmail);
+    if (others.length === 0) return;
+    const wrapper = document.getElementById('mfNewAvtaleTildeltWrapper');
+    const select = document.getElementById('mfNewAvtaleTildelt');
+    if (!wrapper || !select) return;
+    wrapper.style.display = '';
+    for (const m of others) {
+      const opt = document.createElement('option');
+      opt.value = m.navn;
+      opt.textContent = m.navn;
+      select.appendChild(opt);
+    }
+  });
+}
+
+function mfCloseNewAvtaleSheet() {
+  const sheet = document.getElementById('mfNewAvtaleSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+}
+
+// Customer search for new appointment
+let mfNewAvtaleSearchTimer = null;
+let mfNewAvtaleKundeId = null;
+
+function mfNewAvtaleSearchHandler(query) {
+  if (mfNewAvtaleSearchTimer) clearTimeout(mfNewAvtaleSearchTimer);
+  if (!query || query.length < 2) {
+    const results = document.getElementById('mfNewAvtaleKundeResults');
+    if (results) results.innerHTML = '';
+    return;
+  }
+  mfNewAvtaleSearchTimer = setTimeout(() => mfNewAvtaleDoSearch(query), 300);
+}
+
+async function mfNewAvtaleDoSearch(query) {
+  const results = document.getElementById('mfNewAvtaleKundeResults');
+  if (!results) return;
+
+  try {
+    const resp = await fetch(`/api/kunder?search=${encodeURIComponent(query)}&limit=5`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    const rawData = json.success ? json.data : json;
+    const kunder = Array.isArray(rawData) ? rawData : (rawData?.data || []);
+
+    if (kunder.length === 0) {
+      results.innerHTML = '<p class="mf-assign-empty">Ingen treff</p>';
+      return;
+    }
+
+    let html = '';
+    for (const k of kunder) {
+      html += `
+        <div class="mf-assign-row" data-action="mfSelectNewAvtaleKunde" data-args='[${k.id}, "${escapeHtml(k.navn).replace(/"/g, '&quot;')}"]'>
+          <div class="mf-assign-row-info">
+            <strong>${escapeHtml(k.navn)}</strong>
+          </div>
+          <i class="fas fa-chevron-right" aria-hidden="true"></i>
+        </div>
+      `;
+    }
+    results.innerHTML = html;
+  } catch (e) {
+    results.innerHTML = '<p class="mf-assign-empty">Feil ved s\u00f8k</p>';
+  }
+}
+
+function mfSelectNewAvtaleKunde(kundeId, kundeName) {
+  mfNewAvtaleKundeId = kundeId;
+
+  const selected = document.getElementById('mfNewAvtaleKundeSelected');
+  if (selected) {
+    selected.innerHTML = `
+      <div class="mf-assign-selected-card">
+        <strong>${escapeHtml(kundeName)}</strong>
+        <button class="mf-info-close" data-action="mfClearNewAvtaleKunde" aria-label="Fjern">
+          <i class="fas fa-times" aria-hidden="true"></i>
+        </button>
+      </div>
+    `;
+  }
+
+  const results = document.getElementById('mfNewAvtaleKundeResults');
+  if (results) results.innerHTML = '';
+  const search = document.getElementById('mfNewAvtaleKundeSearch');
+  if (search) search.value = '';
+}
+
+function mfClearNewAvtaleKunde() {
+  mfNewAvtaleKundeId = null;
+  const selected = document.getElementById('mfNewAvtaleKundeSelected');
+  if (selected) selected.innerHTML = '';
+}
+
+async function mfSubmitNewAvtale() {
+  const dato = document.getElementById('mfNewAvtaleDato')?.value;
+  const klokkeslett = document.getElementById('mfNewAvtaleKlokkeslett')?.value;
+  const beskrivelse = document.getElementById('mfNewAvtaleBeskrivelse')?.value;
+
+  if (!dato) {
+    mfShowBanner('Velg en dato', 'warning');
+    return;
+  }
+
+  try {
+    const csrfToken = getCsrfToken();
+    const tildelt = document.getElementById('mfNewAvtaleTildelt')?.value || '';
+    const body = {
+      dato,
+      klokkeslett: klokkeslett || null,
+      beskrivelse: beskrivelse || null,
+      type: 'Sky Planner',
+      kunde_id: mfNewAvtaleKundeId || null,
+      opprettet_av: tildelt || (localStorage.getItem('userName') || null)
+    };
+
+    const resp = await fetch('/api/avtaler', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify(body)
+    });
+
+    const json = await resp.json();
+    if (json.success) {
+      mfShowBanner('Avtale opprettet!', 'success');
+      mfCloseNewAvtaleSheet();
+      mfNewAvtaleKundeId = null;
+      mfLoadCalendarData();
+    } else {
+      mfShowBanner(json.error || 'Kunne ikke opprette avtalen', 'error');
+    }
+  } catch (err) {
+    mfShowBanner('Feil ved oppretting av avtale', 'error');
+  }
+}
+
+// ---- Team member loading ----
+
+async function mfCalLoadTeamMembers() {
+  if (mfCalTeamCache) return mfCalTeamCache;
+  try {
+    const resp = await fetch('/api/team-members', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    const data = json.success && json.data;
+    const members = Array.isArray(data?.members) ? data.members : Array.isArray(data) ? data : [];
+    mfCalTeamCache = members.filter(m => m.aktiv !== false);
+  } catch (e) {
+    mfCalTeamCache = [];
+  }
+  return mfCalTeamCache;
+}
+
+// ---- Cleanup ----
+
+function mfCalendarCleanup() {
+  mfCalAvtaler = [];
+  mfCalLoading = false;
+  mfNewAvtaleKundeId = null;
+  mfCalTeamCache = null;
+}
+
+// ---- Expose globally ----
+
+window.mfSetupCalendarTab = mfSetupCalendarTab;
+window.mfOnCalendarTabShown = mfOnCalendarTabShown;
+window.mfCompleteAvtale = mfCompleteAvtale;
+window.mfShowNewAvtaleSheet = mfShowNewAvtaleSheet;
+window.mfCloseNewAvtaleSheet = mfCloseNewAvtaleSheet;
+window.mfNewAvtaleSearchHandler = mfNewAvtaleSearchHandler;
+window.mfSelectNewAvtaleKunde = mfSelectNewAvtaleKunde;
+window.mfClearNewAvtaleKunde = mfClearNewAvtaleKunde;
+window.mfSubmitNewAvtale = mfSubmitNewAvtale;
+window.mfCalendarCleanup = mfCalendarCleanup;
+
+
+// ============================================
+// MOBILE CHAT — Chat tab for mobile field view
+// Adds a Chat tab to the bottom bar for ALL users.
+// Reuses chatState and API functions from chat.js.
+// ============================================
+
+let mfChatInitialized = false;
+
+// ---- Tab injection ----
+
+function mfSetupChatTab() {
+  const mfView = document.getElementById('mobileFieldView');
+  if (!mfView) return;
+
+  const bottomBar = mfView.querySelector('.mf-bottom-bar');
+  if (!bottomBar) return;
+
+  // Check if already injected
+  if (mfView.querySelector('#mfChatView')) return;
+
+  // Create Chat tab view container
+  const chatView = document.createElement('div');
+  chatView.className = 'mf-tab-view';
+  chatView.id = 'mfChatView';
+  chatView.style.display = 'none';
+  chatView.innerHTML = `
+    <div id="mfChatListView" class="mf-chat-list-view">
+      <div class="mf-chat-header">
+        <h3><i class="fas fa-comments" aria-hidden="true"></i> Meldinger</h3>
+        <button class="mf-action-btn" data-action="mfShowNewDmView" aria-label="Ny melding">
+          <i class="fas fa-plus" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div id="mfChatConversations" class="mf-chat-conversations"></div>
+    </div>
+    <div id="mfChatMessageView" class="mf-chat-message-view" style="display:none;">
+      <div class="mf-chat-msg-header">
+        <button class="mf-action-btn" data-action="mfShowChatList" aria-label="Tilbake">
+          <i class="fas fa-arrow-left" aria-hidden="true"></i>
+        </button>
+        <span id="mfChatMessageTitle">Teamchat</span>
+      </div>
+      <div id="mfChatMessages" class="mf-chat-messages"></div>
+      <div id="mfChatTypingIndicator" class="mf-chat-typing" style="display:none;">
+        <span id="mfChatTypingText"></span>
+      </div>
+      <div class="mf-chat-input-area">
+        <input type="text" id="mfChatInput" class="mf-chat-input" placeholder="Skriv en melding..." maxlength="2000" autocomplete="off">
+        <button class="mf-chat-send-btn" data-action="mfSendChatMessage" aria-label="Send">
+          <i class="fas fa-paper-plane" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+    <div id="mfChatNewDm" class="mf-chat-newdm-view" style="display:none;">
+      <div class="mf-chat-msg-header">
+        <button class="mf-action-btn" data-action="mfShowChatList" aria-label="Tilbake">
+          <i class="fas fa-arrow-left" aria-hidden="true"></i>
+        </button>
+        <span>Ny melding</span>
+      </div>
+      <div id="mfChatTeamList" class="mf-chat-team-list"></div>
+    </div>
+  `;
+
+  // Insert before bottom bar
+  mfView.insertBefore(chatView, bottomBar);
+
+  // Add Chat tab button to bottom bar (before Account tab)
+  const accountBtn = bottomBar.querySelector('[data-tab="account"]');
+  if (accountBtn) {
+    const chatBtn = document.createElement('button');
+    chatBtn.className = 'mf-tab-btn';
+    chatBtn.dataset.tab = 'chat';
+    chatBtn.dataset.action = 'mfSwitchTab';
+    chatBtn.dataset.args = '["chat"]';
+    chatBtn.setAttribute('role', 'tab');
+    chatBtn.setAttribute('aria-label', 'Chat');
+    chatBtn.innerHTML = `
+      <i class="fas fa-comments" aria-hidden="true"></i>
+      <span>Chat</span>
+      <span id="mfChatBadge" class="mf-tab-badge" style="display:none;"></span>
+    `;
+    accountBtn.parentElement.insertBefore(chatBtn, accountBtn);
+  }
+
+  // Set up input event listeners
+  mfSetupChatInputListeners();
+}
+
+// ---- Input listeners ----
+
+function mfSetupChatInputListeners() {
+  // Enter key to send
+  const input = document.getElementById('mfChatInput');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        mfSendChatMessage();
+      }
+    });
+
+    // Typing indicator
+    input.addEventListener('input', () => {
+      if (chatState.activeConversation) {
+        sendChatTypingStart(chatState.activeConversation);
+      }
+    });
+  }
+}
+
+// ---- Tab lifecycle hooks ----
+
+function mfOnChatTabShown() {
+  if (!mfChatInitialized) {
+    initChat().then(() => {
+      mfChatInitialized = true;
+      loadChatConversations();
+    });
+  } else {
+    loadChatConversations();
+  }
+}
+
+function mfOnChatTabHidden() {
+  // Nothing to clean up on hide
+}
+
+// ---- Conversation list rendering ----
+
+function mfRenderChatConversations() {
+  const container = document.getElementById('mfChatConversations');
+  if (!container) return;
+
+  if (chatState.conversations.length === 0) {
+    container.innerHTML = `
+      <div class="mf-empty-state">
+        <i class="fas fa-comments" aria-hidden="true"></i>
+        <p>Ingen samtaler enn\u00e5</p>
+        <span class="mf-empty-hint">Trykk + for \u00e5 starte en ny samtale</span>
+      </div>
+    `;
+    return;
+  }
+
+  let html = '';
+  for (const conv of chatState.conversations) {
+    const unread = chatState.unreadCounts[conv.id] || 0;
+    const isOrg = conv.type === 'org';
+    const name = isOrg ? 'Teamchat' : escapeHtml(conv.participant_name || 'Ukjent');
+    const icon = isOrg ? 'fa-users' : 'fa-user';
+    const preview = conv.last_message
+      ? escapeHtml(conv.last_message.content.substring(0, 60))
+      : 'Ingen meldinger enn\u00e5';
+    const time = conv.last_message ? formatChatTime(conv.last_message.created_at) : '';
+
+    html += `
+      <div class="mf-chat-conv-item ${unread > 0 ? 'unread' : ''}" data-action="mfOpenChatConversation" data-args='[${conv.id}, "${conv.type}"]'>
+        <div class="mf-chat-conv-icon"><i class="fas ${icon}" aria-hidden="true"></i></div>
+        <div class="mf-chat-conv-info">
+          <div class="mf-chat-conv-name">${name}</div>
+          <div class="mf-chat-conv-preview">${preview}</div>
+        </div>
+        <div class="mf-chat-conv-meta">
+          <span class="mf-chat-conv-time">${time}</span>
+          ${unread > 0 ? `<span class="mf-chat-conv-unread">${unread}</span>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+}
+
+// ---- Open conversation ----
+
+async function mfOpenChatConversation(conversationId, type) {
+  chatState.activeConversation = conversationId;
+  chatState.activeConversationType = type;
+  chatState.view = 'messages';
+
+  // Set title
+  const titleEl = document.getElementById('mfChatMessageTitle');
+  if (titleEl) {
+    if (type === 'org') {
+      titleEl.textContent = 'Teamchat';
+    } else {
+      const conv = chatState.conversations.find(c => c.id === conversationId);
+      titleEl.textContent = conv?.participant_name || 'Direktemelding';
+    }
+  }
+
+  // Show message view, hide others
+  const listView = document.getElementById('mfChatListView');
+  const msgView = document.getElementById('mfChatMessageView');
+  const newDmView = document.getElementById('mfChatNewDm');
+  if (listView) listView.style.display = 'none';
+  if (newDmView) newDmView.style.display = 'none';
+  if (msgView) msgView.style.display = 'flex';
+
+  // Load messages
+  await loadChatMessages(conversationId);
+  mfScrollChatToBottom();
+
+  // Mark as read
+  markChatAsRead(conversationId);
+
+  // Focus input
+  const input = document.getElementById('mfChatInput');
+  if (input) setTimeout(() => input.focus(), 300);
+}
+
+// ---- Render messages ----
+
+function mfRenderChatMessages(conversationId) {
+  const container = document.getElementById('mfChatMessages');
+  if (!container || chatState.activeConversation !== conversationId) return;
+
+  // Only render if mobile chat view is visible
+  const chatView = document.getElementById('mfChatView');
+  if (!chatView || chatView.style.display === 'none') return;
+
+  const messages = chatState.messages[conversationId] || [];
+  if (messages.length === 0) {
+    container.innerHTML = `
+      <div class="mf-empty-state">
+        <i class="fas fa-comment-dots" aria-hidden="true"></i>
+        <p>Ingen meldinger enn\u00e5. Si hei!</p>
+      </div>
+    `;
+    return;
+  }
+
+  let lastDate = '';
+  let html = '';
+
+  // Load more button
+  if (messages.length >= 50) {
+    html += `<div class="mf-chat-load-more"><button data-action="loadOlderChatMessages">Last eldre meldinger</button></div>`;
+  }
+
+  for (const msg of messages) {
+    const msgDate = new Date(msg.created_at).toDateString();
+    if (msgDate !== lastDate) {
+      lastDate = msgDate;
+      html += `<div class="mf-chat-date-sep">${formatChatDate(msg.created_at)}</div>`;
+    }
+
+    const isSelf = msg.sender_id === myUserId;
+    const time = new Date(msg.created_at).toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' });
+
+    html += `
+      <div class="mf-chat-msg ${isSelf ? 'self' : 'other'}">
+        ${!isSelf ? `<div class="mf-chat-msg-sender">${escapeHtml(msg.sender_name)}</div>` : ''}
+        <div class="mf-chat-msg-content">${escapeHtml(msg.content)}</div>
+        <div class="mf-chat-msg-time">${time}</div>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+  mfScrollChatToBottom();
+}
+
+// ---- Scroll to bottom ----
+
+function mfScrollChatToBottom() {
+  const container = document.getElementById('mfChatMessages');
+  if (container) {
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+  }
+}
+
+// ---- Send message ----
+
+function mfSendChatMessage() {
+  const input = document.getElementById('mfChatInput');
+  if (!input || !chatState.activeConversation) return;
+  const content = input.value.trim();
+  if (!content) return;
+
+  sendChatMessage(chatState.activeConversation, content);
+  input.value = '';
+  chatIsTyping = false;
+}
+
+// ---- Navigation ----
+
+function mfShowChatList() {
+  chatState.view = 'list';
+  chatState.activeConversation = null;
+  chatState.activeConversationType = null;
+
+  const listView = document.getElementById('mfChatListView');
+  const msgView = document.getElementById('mfChatMessageView');
+  const newDmView = document.getElementById('mfChatNewDm');
+  if (msgView) msgView.style.display = 'none';
+  if (newDmView) newDmView.style.display = 'none';
+  if (listView) listView.style.display = '';
+
+  loadChatConversations();
+}
+
+// ---- New DM view ----
+
+async function mfShowNewDmView() {
+  chatState.view = 'newDm';
+
+  const listView = document.getElementById('mfChatListView');
+  const msgView = document.getElementById('mfChatMessageView');
+  const newDmView = document.getElementById('mfChatNewDm');
+  if (listView) listView.style.display = 'none';
+  if (msgView) msgView.style.display = 'none';
+  if (newDmView) newDmView.style.display = 'flex';
+
+  const container = document.getElementById('mfChatTeamList');
+  if (!container) return;
+
+  container.innerHTML = '<div class="mf-loading"><div class="mf-spinner"></div><p>Laster teammedlemmer...</p></div>';
+
+  try {
+    const response = await fetch('/api/chat/team-members');
+    if (!response.ok) {
+      container.innerHTML = `
+        <div class="mf-empty-state">
+          <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+          <p>Kunne ikke laste teammedlemmer</p>
+        </div>
+      `;
+      return;
+    }
+    const result = await response.json();
+    if (result.success && result.data) {
+      if (result.data.length === 0) {
+        container.innerHTML = `
+          <div class="mf-empty-state">
+            <i class="fas fa-user-slash" aria-hidden="true"></i>
+            <p>Ingen andre teammedlemmer funnet</p>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '';
+      for (const member of result.data) {
+        const initials = mfGetInitials(member.navn);
+        html += `
+          <div class="mf-chat-team-item" data-action="mfStartDm" data-args='[${member.id}]'>
+            <div class="mf-chat-team-avatar">${escapeHtml(initials)}</div>
+            <div class="mf-chat-team-name">${escapeHtml(member.navn)}</div>
+            <i class="fas fa-chevron-right" aria-hidden="true" style="opacity:0.3;"></i>
+          </div>
+        `;
+      }
+      container.innerHTML = html;
+    }
+  } catch (e) {
+    console.error('Mobile chat: Failed to load team members:', e);
+    container.innerHTML = `
+      <div class="mf-empty-state">
+        <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+        <p>Feil ved lasting av teammedlemmer</p>
+      </div>
+    `;
+  }
+}
+
+async function mfStartDm(targetUserId) {
+  const convId = await startDmConversation(targetUserId);
+  if (convId) {
+    await loadChatConversations();
+    mfOpenChatConversation(convId, 'dm');
+  }
+}
+
+// ---- Typing indicator ----
+
+function mfRenderTypingIndicator(conversationId) {
+  const indicator = document.getElementById('mfChatTypingIndicator');
+  const text = document.getElementById('mfChatTypingText');
+  if (!indicator || !text || chatState.activeConversation !== conversationId) return;
+
+  const prefix = `${conversationId}-`;
+  const typingNames = Object.entries(chatState.typingUsers)
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([, name]) => name);
+
+  if (typingNames.length === 0) {
+    indicator.style.display = 'none';
+  } else {
+    indicator.style.display = '';
+    text.textContent = typingNames.length === 1
+      ? `${typingNames[0]} skriver...`
+      : `${typingNames.join(' og ')} skriver...`;
+  }
+}
+
+// ---- Badge update ----
+
+function mfUpdateChatBadge() {
+  const badge = document.getElementById('mfChatBadge');
+  if (!badge) return;
+  if (chatState.totalUnread > 0) {
+    badge.textContent = chatState.totalUnread > 99 ? '99+' : chatState.totalUnread;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// ---- Cleanup ----
+
+function mfChatCleanup() {
+  mfChatInitialized = false;
+  chatState.activeConversation = null;
+  chatState.view = 'list';
+}
+
+// ---- Expose globally ----
+
+window.mfSetupChatTab = mfSetupChatTab;
+window.mfOnChatTabShown = mfOnChatTabShown;
+window.mfOnChatTabHidden = mfOnChatTabHidden;
+window.mfRenderChatConversations = mfRenderChatConversations;
+window.mfOpenChatConversation = mfOpenChatConversation;
+window.mfRenderChatMessages = mfRenderChatMessages;
+window.mfScrollChatToBottom = mfScrollChatToBottom;
+window.mfSendChatMessage = mfSendChatMessage;
+window.mfShowChatList = mfShowChatList;
+window.mfShowNewDmView = mfShowNewDmView;
+window.mfStartDm = mfStartDm;
+window.mfRenderTypingIndicator = mfRenderTypingIndicator;
+window.mfUpdateChatBadge = mfUpdateChatBadge;
+window.mfChatCleanup = mfChatCleanup;
+
+
+// ============================================
+// MOBILE FIELD VIEW — Dedicated mobile experience
+// Replaces the full desktop app on mobile devices.
+// Focused on: today's route, visit logging, navigation.
+// ============================================
+
+let mfCurrentDate = new Date().toISOString().split('T')[0];
+let mfRouteData = null;
+let mfActiveTab = 'ukeplan'; // 'ukeplan' | 'map' | 'account'
+let mfMapInitialized = false;
+
+// ---- Detection & activation ----
+
+function isMobileDevice() {
+  // Catch phones (<= 768px) and tablets (touch + <= 1024px)
+  if (window.innerWidth <= 768) return true;
+  if (window.innerWidth <= 1024 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
+  return false;
+}
+
+function showMobileFieldView() {
+  const mfView = document.getElementById('mobileFieldView');
+  const appView = document.getElementById('appView');
+  if (!mfView) return;
+
+  // Hide desktop app, show mobile field view
+  if (appView) appView.classList.add('hidden');
+  mfView.style.display = 'flex';
+
+  // Allow renderMarkers() to run (it returns early when currentView === 'login')
+  currentView = 'app';
+
+  // Remove bottom tab bar if it was created by mobile-ui.js
+  const bottomTabBar = document.getElementById('bottomTabBar');
+  if (bottomTabBar) bottomTabBar.remove();
+
+  // Remove other mobile-ui elements that conflict
+  const searchFab = document.getElementById('mobileSearchFab');
+  if (searchFab) searchFab.remove();
+  const selectionFab = document.getElementById('mobileSelectionFab');
+  if (selectionFab) selectionFab.remove();
+  const moreMenu = document.getElementById('moreMenuOverlay');
+  if (moreMenu) moreMenu.remove();
+
+  // Show user bar (for token refresh etc)
+  showUserBar();
+  // But hide the desktop user bar on mobile field view
+  const userBar = document.getElementById('userBar');
+  if (userBar) userBar.style.display = 'none';
+
+  // Start token refresh
+  setupTokenRefresh();
+
+  // Stop globe spin and prepare map for interactive use
+  if (window.map) {
+    stopGlobeSpin();
+    setMapInteractive(true);
+
+    // Load config to get office coordinates, then fly map to correct location
+    (async () => {
+      try { await loadConfig(); } catch (e) { /* continue with existing config */ }
+      const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
+      map.flyTo({
+        center: hasOfficeLocation
+          ? [appConfig.routeStartLng, appConfig.routeStartLat]
+          : NORWAY_CENTER,
+        zoom: hasOfficeLocation ? 12 : 5,
+        pitch: 0,
+        bearing: 0,
+        duration: 1500
+      });
+    })();
+  }
+
+  // Set active tab
+  mfActiveTab = 'ukeplan';
+  mfUpdateBottomBar();
+
+  // Inject admin tabs if user is admin/bruker
+  if (typeof mfSetupAdminTabs === 'function') {
+    mfSetupAdminTabs();
+  }
+
+  // Inject calendar tab (all users)
+  if (typeof mfSetupCalendarTab === 'function') {
+    mfSetupCalendarTab();
+  }
+
+  // Inject chat tab (all users)
+  if (typeof mfSetupChatTab === 'function') {
+    mfSetupChatTab();
+  }
+
+  // Initialize inline weekplan
+  if (typeof mfShowWeekplanInline === 'function') {
+    mfShowWeekplanInline();
+  }
+}
+
+function hideMobileFieldView() {
+  const mfView = document.getElementById('mobileFieldView');
+  if (mfView) mfView.style.display = 'none';
+}
+
+// ---- Date navigation ----
+
+function mfPrevDay() {
+  const d = new Date(mfCurrentDate);
+  d.setDate(d.getDate() - 1);
+  mfCurrentDate = d.toISOString().split('T')[0];
+  mfLoadRoute();
+}
+
+function mfNextDay() {
+  const d = new Date(mfCurrentDate);
+  d.setDate(d.getDate() + 1);
+  mfCurrentDate = d.toISOString().split('T')[0];
+  mfLoadRoute();
+}
+
+function mfFormatDateLabel(dateStr) {
+  const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+
+  if (dateStr === today) return 'I dag';
+  if (dateStr === tomorrow) return 'I morgen';
+  if (dateStr === yesterday) return 'I g\u00e5r';
+
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('nb-NO', { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+// ---- Route loading ----
+
+async function mfLoadRoute() {
+  const dateLabel = document.getElementById('mfDateLabel');
+  if (dateLabel) dateLabel.textContent = mfFormatDateLabel(mfCurrentDate);
+
+  // Show loading state
+  const content = document.getElementById('mfRouteContent');
+  if (content) {
+    content.innerHTML = '<div class="mf-loading"><div class="mf-spinner"></div><p>Laster rute...</p></div>';
+  }
+
+  try {
+    const csrfToken = getCsrfToken();
+    const response = await fetch(`/api/todays-work/my-route?date=${mfCurrentDate}`, {
+      headers: { 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      mfRouteData = null;
+      mfRenderEmpty();
+      return;
+    }
+
+    const json = await response.json();
+
+    if (json.success && json.data) {
+      mfRouteData = json.data;
+      mfRenderRoute();
+
+      // Cache for offline
+      if (window.OfflineStorage) {
+        const userId = localStorage.getItem('userId') || '0';
+        OfflineStorage.saveTodaysRoute(mfCurrentDate, userId, json.data).catch(() => {});
+        OfflineStorage.setLastSyncTime().catch(() => {});
+      }
+    } else {
+      mfRouteData = null;
+      mfRenderEmpty();
+    }
+  } catch (err) {
+    console.error('Mobile field: Error loading route:', err);
+
+    // Offline fallback
+    if (window.OfflineStorage) {
+      const userId = localStorage.getItem('userId') || '0';
+      const cached = await OfflineStorage.getTodaysRoute(mfCurrentDate, userId);
+      if (cached) {
+        mfRouteData = cached;
+        mfRenderRoute();
+        mfShowBanner('Viser lagret rute (frakoblet)', 'warning');
+        return;
+      }
+    }
+
+    mfRouteData = null;
+    mfRenderEmpty('Kunne ikke laste rute. Sjekk internettforbindelsen.');
+  }
+}
+
+// ---- Rendering ----
+
+function mfRenderEmpty(message) {
+  const content = document.getElementById('mfRouteContent');
+  if (!content) return;
+
+  const msg = message || 'Ingen rute planlagt for denne dagen.';
+  content.innerHTML = `
+    <div class="mf-empty-state">
+      <i class="fas fa-route" aria-hidden="true"></i>
+      <p>${escapeHtml(msg)}</p>
+      <span class="mf-empty-hint">Ruter planlegges fra desktop-versjonen.</span>
+    </div>
+  `;
+
+  // Update progress
+  const progress = document.getElementById('mfProgressBar');
+  if (progress) progress.style.display = 'none';
+}
+
+function mfRenderRoute() {
+  const route = mfRouteData;
+  if (!route) return mfRenderEmpty();
+
+  const content = document.getElementById('mfRouteContent');
+  if (!content) return;
+
+  const isStarted = !!route.execution_started_at;
+  const isCompleted = !!route.execution_ended_at;
+  const kunder = route.kunder || [];
+  const visits = route.visits || [];
+  const completed = isStarted ? (route.completed_count || 0) : 0;
+  const total = route.total_count || kunder.length || 0;
+
+  // Update progress bar
+  mfUpdateProgress(completed, total, isCompleted);
+
+  if (kunder.length === 0) {
+    return mfRenderEmpty('Ruten har ingen kunder.');
+  }
+
+  // Find next unvisited stop
+  let nextStopIndex = -1;
+  if (isStarted && !isCompleted) {
+    nextStopIndex = kunder.findIndex(k => {
+      const v = visits.find(v => v.kunde_id === k.id);
+      return !v || !v.completed;
+    });
+  }
+
+  let html = '';
+
+  // Start route button (if not started)
+  if (!isStarted) {
+    html += `
+      <button class="mf-start-route-btn" data-action="mfStartRoute">
+        <i class="fas fa-play-circle" aria-hidden="true"></i>
+        Start ruten (${kunder.length} stopp)
+      </button>
+    `;
+  }
+
+  // Route summary with technician and time estimate
+  const totalEstMin = kunder.reduce((sum, k) => sum + (k.estimert_tid || 30), 0);
+  const estHours = Math.floor(totalEstMin / 60);
+  const estMins = totalEstMin % 60;
+  const estLabel = estHours > 0 ? `${estHours}t ${estMins > 0 ? estMins + 'min' : ''}` : `${estMins} min`;
+  const assignedName = route.technician_name || route.assigned_to_name || '';
+
+  html += `
+    <div class="mf-route-summary">
+      ${assignedName ? `<span><i class="fas fa-user-hard-hat" aria-hidden="true"></i> ${escapeHtml(assignedName)}</span>` : ''}
+      ${route.total_distanse ? `<span><i class="fas fa-road" aria-hidden="true"></i> ${(route.total_distanse / 1000).toFixed(1)} km</span>` : ''}
+      <span><i class="fas fa-map-marker-alt" aria-hidden="true"></i> ${total} stopp</span>
+      <span><i class="fas fa-clock" aria-hidden="true"></i> ~${estLabel}</span>
+      ${isCompleted ? '<span class="mf-route-done"><i class="fas fa-check-circle" aria-hidden="true"></i> Fullf\u00f8rt</span>' : ''}
+    </div>
+  `;
+
+  // "Next stop" prominent card
+  if (isStarted && !isCompleted && nextStopIndex >= 0) {
+    const next = kunder[nextStopIndex];
+    const address = [next.adresse, next.postnummer, next.poststed].filter(Boolean).join(', ');
+
+    const nextEstMin = next.estimert_tid || 30;
+    html += `
+      <div class="mf-next-stop">
+        <div class="mf-next-label">Neste stopp (${nextStopIndex + 1}/${kunder.length})</div>
+        <h2 class="mf-next-name">${escapeHtml(next.navn)}</h2>
+        <p class="mf-next-address">${escapeHtml(address)}</p>
+        <div class="mf-next-est">
+          <i class="fas fa-clock" aria-hidden="true"></i>
+          <input type="number" class="mf-est-input" value="${nextEstMin}" min="5" step="5"
+            data-on-change="mfSetEstimertTidHandler" data-args='[${next.id}]'>
+          <span>min</span>
+        </div>
+        ${next.telefon ? `<a href="tel:${escapeHtml(next.telefon)}" class="mf-next-phone"><i class="fas fa-phone" aria-hidden="true"></i> ${escapeHtml(next.telefon)}</a>` : ''}
+        <div class="mf-next-actions">
+          <button class="mf-btn mf-btn-navigate" data-action="mfNavigate" data-args='[${next.id}]'>
+            <i class="fas fa-directions" aria-hidden="true"></i> Naviger
+          </button>
+          ${next.epost ? `<button class="mf-btn mf-btn-notify" data-action="mfNotifyCustomer" data-args='[${next.id}]'>
+            <i class="fas fa-envelope" aria-hidden="true"></i> Varsle
+          </button>` : ''}
+          <button class="mf-btn mf-btn-complete" data-action="mfShowVisitForm" data-args='[${next.id}]'>
+            <i class="fas fa-check" aria-hidden="true"></i> Fullf\u00f8rt
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Remaining stops
+  const visitedCards = [];
+  const remainingCards = [];
+
+  kunder.forEach((kunde, index) => {
+    const visit = isStarted ? visits.find(v => v.kunde_id === kunde.id) : null;
+    const isVisited = visit && visit.completed === true;
+    const isNext = index === nextStopIndex;
+
+    if (isNext && isStarted) return; // Already rendered as "Next stop" card
+
+    const address = [kunde.adresse, kunde.poststed].filter(Boolean).join(', ');
+    const stopEstMin = kunde.estimert_tid || 30;
+    const card = `
+      <div class="mf-stop-card ${isVisited ? 'mf-stop-visited' : ''}" data-kunde-id="${kunde.id}">
+        <div class="mf-stop-num">${index + 1}</div>
+        <div class="mf-stop-info" data-action="mfShowCustomerInfo" data-args='[${kunde.id}]'>
+          <h4>${escapeHtml(kunde.navn)}</h4>
+          ${!isVisited ? `<p>${escapeHtml(address)}</p>` : ''}
+        </div>
+        ${!isVisited ? `
+          <div class="mf-stop-est">
+            <input type="number" class="mf-est-input" value="${stopEstMin}" min="5" step="5"
+              data-on-change="mfSetEstimertTidHandler" data-args='[${kunde.id}]'>
+            <span>min</span>
+          </div>
+        ` : ''}
+        <div class="mf-stop-actions">
+          ${isVisited
+            ? '<span class="mf-visited-icon"><i class="fas fa-check-circle" aria-hidden="true"></i></span>'
+            : `
+              ${kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="mf-action-btn" title="Ring"><i class="fas fa-phone" aria-hidden="true"></i></a>` : ''}
+              ${kunde.epost ? `<button class="mf-action-btn mf-action-notify" data-action="mfNotifyCustomer" data-args='[${kunde.id}]' title="Varsle kunde"><i class="fas fa-envelope" aria-hidden="true"></i></button>` : ''}
+              <button class="mf-action-btn" data-action="mfNavigate" data-args='[${kunde.id}]' title="Naviger"><i class="fas fa-directions" aria-hidden="true"></i></button>
+              <button class="mf-action-btn mf-action-complete" data-action="mfShowVisitForm" data-args='[${kunde.id}]' title="Fullf\u00f8rt"><i class="fas fa-check" aria-hidden="true"></i></button>
+            `
+          }
+        </div>
+      </div>
+    `;
+
+    if (isVisited) {
+      visitedCards.push(card);
+    } else {
+      remainingCards.push(card);
+    }
+  });
+
+  html += remainingCards.join('');
+
+  // Visited section (collapsed)
+  if (visitedCards.length > 0) {
+    html += `
+      <div class="mf-visited-section">
+        <button class="mf-visited-toggle" data-action="toggleParentClass" data-class="expanded">
+          <i class="fas fa-check-circle" aria-hidden="true"></i>
+          <span>Bes\u00f8kt (${visitedCards.length})</span>
+          <i class="fas fa-chevron-down mf-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="mf-visited-list">
+          ${visitedCards.join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  // Complete route button
+  if (isStarted && !isCompleted && completed === total && total > 0) {
+    html += `
+      <button class="mf-complete-route-btn" data-action="mfCompleteRoute">
+        <i class="fas fa-flag-checkered" aria-hidden="true"></i>
+        Fullf\u00f8r ruten
+      </button>
+    `;
+  }
+
+  content.innerHTML = html;
+
+  // Apply presence badges after render
+  if (typeof presenceClaims !== 'undefined' && presenceClaims.size > 0) {
+    for (const [kundeId] of presenceClaims) {
+      mfUpdatePresenceOnRoute(kundeId);
+    }
+  }
+}
+
+function mfUpdateProgress(completed, total, isCompleted) {
+  const bar = document.getElementById('mfProgressBar');
+  if (!bar) return;
+
+  if (total === 0) {
+    bar.style.display = 'none';
+    return;
+  }
+
+  bar.style.display = 'flex';
+  const fill = bar.querySelector('.mf-progress-fill');
+  const label = bar.querySelector('.mf-progress-label');
+  const pct = total > 0 ? (completed / total) * 100 : 0;
+
+  if (fill) fill.style.width = pct + '%';
+  if (label) label.textContent = isCompleted ? 'Fullf\u00f8rt!' : `${completed} av ${total}`;
+}
+
+// ---- Actions ----
+
+async function mfStartRoute() {
+  if (!mfRouteData) return;
+
+  try {
+    const csrfToken = getCsrfToken();
+    const response = await fetch(`/api/todays-work/start-route/${mfRouteData.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
+    });
+    const json = await response.json();
+    if (json.success) {
+      mfShowBanner('Rute startet!', 'success');
+      mfLoadRoute();
+    }
+  } catch (err) {
+    mfShowBanner('Kunne ikke starte ruten', 'error');
+  }
+}
+
+async function mfCompleteRoute() {
+  if (!mfRouteData) return;
+
+  try {
+    const csrfToken = getCsrfToken();
+    const response = await fetch(`/api/todays-work/complete-route/${mfRouteData.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
+    });
+    const json = await response.json();
+    if (json.success) {
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      mfShowBanner('Ruten er fullf\u00f8rt!', 'success');
+      mfLoadRoute();
+    }
+  } catch (err) {
+    mfShowBanner('Kunne ikke fullf\u00f8re ruten', 'error');
+  }
+}
+
+function mfNavigate(kundeId) {
+  const kunde = mfRouteData?.kunder?.find(k => k.id === kundeId);
+  if (!kunde) return;
+
+  const address = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', ');
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  if (kunde.lat && kunde.lng) {
+    if (isIOS) {
+      window.open(`maps://maps.apple.com/?daddr=${kunde.lat},${kunde.lng}&dirflg=d`);
+    } else {
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${kunde.lat},${kunde.lng}`);
+    }
+  } else if (address) {
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`);
+  }
+}
+
+// ---- Customer info card ----
+
+function mfShowCustomerInfo(kundeId) {
+  const kunde = mfRouteData?.kunder?.find(k => k.id === kundeId);
+  if (!kunde) return;
+
+  // Claim this customer (presence)
+  mfClaimCustomer(kundeId);
+
+  const address = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', ');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-info-overlay';
+  overlay.innerHTML = `
+    <div class="mf-info-card">
+      <div class="mf-info-header">
+        <h3>${escapeHtml(kunde.navn)}</h3>
+        <button class="mf-info-close" aria-label="Lukk"><i class="fas fa-times" aria-hidden="true"></i></button>
+      </div>
+      <div class="mf-info-body">
+        ${address ? `<div class="mf-info-row"><i class="fas fa-map-marker-alt" aria-hidden="true"></i><span>${escapeHtml(address)}</span></div>` : ''}
+        ${kunde.telefon ? `<div class="mf-info-row"><i class="fas fa-phone" aria-hidden="true"></i><a href="tel:${escapeHtml(kunde.telefon)}">${escapeHtml(kunde.telefon)}</a></div>` : ''}
+        ${kunde.epost ? `<div class="mf-info-row"><i class="fas fa-envelope" aria-hidden="true"></i><a href="mailto:${escapeHtml(kunde.epost)}">${escapeHtml(kunde.epost)}</a></div>` : ''}
+        ${kunde.kontaktperson ? `<div class="mf-info-row"><i class="fas fa-user" aria-hidden="true"></i><span>${escapeHtml(kunde.kontaktperson)}</span></div>` : ''}
+        ${kunde.siste_kontroll ? `<div class="mf-info-row"><i class="fas fa-calendar-check" aria-hidden="true"></i><span>Siste kontroll: ${escapeHtml(new Date(kunde.siste_kontroll).toLocaleDateString('nb-NO'))}</span></div>` : ''}
+        ${kunde.neste_kontroll ? `<div class="mf-info-row"><i class="fas fa-calendar-alt" aria-hidden="true"></i><span>Neste kontroll: ${escapeHtml(new Date(kunde.neste_kontroll).toLocaleDateString('nb-NO'))}</span></div>` : ''}
+        ${kunde.estimert_tid ? `<div class="mf-info-row"><i class="fas fa-clock" aria-hidden="true"></i><span>Estimert tid: ${kunde.estimert_tid} min</span></div>` : ''}
+        ${kunde.notat ? `<div class="mf-info-row mf-info-note"><i class="fas fa-sticky-note" aria-hidden="true"></i><span>${escapeHtml(kunde.notat)}</span></div>` : ''}
+      </div>
+      <div class="mf-info-actions">
+        <button class="mf-btn mf-btn-navigate" data-action="mfNavigateAndCloseInfo" data-args='[${kunde.id}]'>
+          <i class="fas fa-directions" aria-hidden="true"></i> Naviger
+        </button>
+        ${kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="mf-btn mf-btn-call"><i class="fas fa-phone" aria-hidden="true"></i> Ring</a>` : ''}
+      </div>
+    </div>
+  `;
+
+  document.getElementById('mobileFieldView').appendChild(overlay);
+
+  // Close handlers — release presence on close
+  const closeOverlay = () => {
+    mfReleaseCustomer(kundeId);
+    overlay.remove();
+  };
+  const closeBtn = overlay.querySelector('.mf-info-close');
+  closeBtn.addEventListener('click', closeOverlay);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeOverlay();
+  });
+}
+
+// ---- Bottom bar tab switching ----
+
+function mfSwitchTab(tab) {
+  const prevTab = mfActiveTab;
+  mfActiveTab = tab;
+  mfUpdateBottomBar();
+
+  const weekplanView = document.getElementById('mfWeekplanView');
+  const mapView = document.getElementById('mfMapView');
+  const accountView = document.getElementById('mfAccountView');
+  const teamView = document.getElementById('mfTeamView');
+  const kunderView = document.getElementById('mfKunderView');
+  const calendarView = document.getElementById('mfCalendarView');
+  const chatView = document.getElementById('mfChatView');
+
+  if (weekplanView) weekplanView.style.display = tab === 'ukeplan' ? 'flex' : 'none';
+  if (mapView) mapView.style.display = tab === 'map' ? 'flex' : 'none';
+  if (accountView) accountView.style.display = tab === 'account' ? 'flex' : 'none';
+  if (teamView) teamView.style.display = tab === 'team' ? 'flex' : 'none';
+  if (kunderView) kunderView.style.display = tab === 'kunder' ? 'flex' : 'none';
+  if (calendarView) calendarView.style.display = tab === 'calendar' ? 'flex' : 'none';
+  if (chatView) chatView.style.display = tab === 'chat' ? 'flex' : 'none';
+
+  if (tab === 'ukeplan' && typeof mfShowWeekplanInline === 'function') {
+    mfShowWeekplanInline();
+  }
+
+  if (tab === 'map') {
+    if (!mfMapInitialized) mfInitMap();
+    // Fly-to animation: only once after login
+    if (map && !window._mobileMapIntroPlayed) {
+      window._mobileMapIntroPlayed = true;
+      const hasOffice = appConfig?.routeStartLat && appConfig?.routeStartLng;
+      const target = hasOffice
+        ? [appConfig.routeStartLng, appConfig.routeStartLat]
+        : [10.0, 62.0];
+      map.jumpTo({ center: target, zoom: 2.5 });
+      setTimeout(() => {
+        map.flyTo({
+          center: target,
+          zoom: hasOffice ? 8 : 5,
+          duration: 3000,
+          essential: true,
+          curve: 1.6
+        });
+      }, 1200);
+    }
+  }
+
+  if (tab === 'account') {
+    mfRenderAccount();
+  }
+
+  // Admin tab hooks
+  if (tab === 'team' && typeof mfOnTeamTabShown === 'function') {
+    mfOnTeamTabShown();
+  }
+  if (prevTab === 'team' && tab !== 'team' && typeof mfOnTeamTabHidden === 'function') {
+    mfOnTeamTabHidden();
+  }
+  if (tab === 'kunder' && typeof mfRenderKunderView === 'function') {
+    mfRenderKunderView();
+  }
+
+  // Calendar tab hook
+  if (tab === 'calendar' && typeof mfOnCalendarTabShown === 'function') {
+    mfOnCalendarTabShown();
+  }
+
+  // Chat tab hooks
+  if (tab === 'chat' && typeof mfOnChatTabShown === 'function') {
+    mfOnChatTabShown();
+  }
+  if (prevTab === 'chat' && tab !== 'chat' && typeof mfOnChatTabHidden === 'function') {
+    mfOnChatTabHidden();
+  }
+}
+
+function mfUpdateBottomBar() {
+  document.querySelectorAll('.mf-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === mfActiveTab);
+  });
+}
+
+// ---- Simplified map ----
+
+function mfInitMap() {
+  const mapContainer = document.getElementById('mfMapContainer');
+  if (!mapContainer || mfMapInitialized) return;
+
+  // Reuse existing shared map if available, or create a simple one
+  if (window.map && window.mapboxgl) {
+    mfMapInitialized = true;
+    // Move the shared map into the mobile map view temporarily
+    const sharedMap = document.getElementById('sharedMapContainer');
+    if (sharedMap) {
+      mapContainer.appendChild(sharedMap);
+      sharedMap.style.position = 'relative';
+      sharedMap.style.width = '100%';
+      sharedMap.style.height = '100%';
+    }
+    // Recalculate viewport after container move
+    setTimeout(() => { if (map) map.resize(); }, 100);
+
+    // Load all customers + clusters, then overlay today's stops
+    mfInitMapData();
+    mfShowStopsOnMap();
+  }
+}
+
+async function mfInitMapData() {
+  try {
+    if (typeof initDOMElements === 'function') initDOMElements();
+    if (typeof initClusterManager === 'function') initClusterManager();
+    if (typeof waitForClusterReady === 'function') await waitForClusterReady(8000);
+
+    await Promise.all([
+      typeof loadOrganizationCategories === 'function' ? loadOrganizationCategories() : Promise.resolve(),
+      typeof loadOrganizationFields === 'function' ? loadOrganizationFields() : Promise.resolve()
+    ]);
+
+    if (typeof loadCustomers === 'function' && (!customers || customers.length === 0)) {
+      await loadCustomers();
+    } else if (customers && customers.length > 0 && typeof applyFilters === 'function') {
+      applyFilters();
+    }
+  } catch (err) {
+    console.error('Mobile map data init error:', err);
+  }
+}
+
+function mfShowStopsOnMap() {
+  if (!window.map || !mfRouteData?.kunder) return;
+
+  const kunder = mfRouteData.kunder;
+  const visits = mfRouteData.visits || [];
+  const bounds = new mapboxgl.LngLatBounds();
+  let hasPoints = false;
+
+  // Clear existing mobile markers
+  document.querySelectorAll('.mf-map-marker').forEach(el => el.remove());
+
+  kunder.forEach((kunde, index) => {
+    if (!kunde.lat || !kunde.lng) return;
+
+    const visit = visits.find(v => v.kunde_id === kunde.id);
+    const isVisited = visit && visit.completed;
+
+    const el = document.createElement('div');
+    el.className = 'mf-map-marker' + (isVisited ? ' visited' : '');
+    el.innerHTML = `<span>${index + 1}</span>`;
+    el.addEventListener('click', () => mfShowCustomerInfo(kunde.id));
+
+    new mapboxgl.Marker({ element: el })
+      .setLngLat([kunde.lng, kunde.lat])
+      .addTo(map);
+
+    bounds.extend([kunde.lng, kunde.lat]);
+    hasPoints = true;
+  });
+
+  if (hasPoints) {
+    map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 500 });
+  }
+}
+
+// ---- Account tab ----
+
+function mfRenderAccount() {
+  const container = document.getElementById('mfAccountContent');
+  if (!container) return;
+
+  const userName = localStorage.getItem('userName') || 'Bruker';
+  const userEmail = localStorage.getItem('userEmail') || '';
+  const orgName = localStorage.getItem('organizationName') || '';
+  const isOnline = navigator.onLine;
+
+  let pendingHtml = '';
+  if (window.OfflineStorage) {
+    OfflineStorage.getPendingActionCount().then(count => {
+      const badge = document.getElementById('mfSyncBadge');
+      if (badge) {
+        badge.textContent = count > 0 ? `${count} ventende` : 'Synkronisert';
+        badge.className = 'mf-sync-badge ' + (count > 0 ? 'pending' : 'synced');
+      }
+    });
+  }
+
+  container.innerHTML = `
+    <div class="mf-account-card">
+      <div class="mf-account-user">
+        <div class="mf-account-avatar"><i class="fas fa-user" aria-hidden="true"></i></div>
+        <div>
+          <h3>${escapeHtml(userName)}</h3>
+          <p>${escapeHtml(userEmail)}</p>
+          ${orgName ? `<p class="mf-account-org">${escapeHtml(orgName)}</p>` : ''}
+        </div>
+      </div>
+    </div>
+
+    <div class="mf-account-card">
+      <h4>Status</h4>
+      <div class="mf-account-row">
+        <span>Tilkobling</span>
+        <span class="mf-status-dot ${isOnline ? 'online' : 'offline'}">${isOnline ? 'Online' : 'Frakoblet'}</span>
+      </div>
+      <div class="mf-account-row">
+        <span>Synkronisering</span>
+        <span id="mfSyncBadge" class="mf-sync-badge synced">Synkronisert</span>
+      </div>
+    </div>
+
+    <button class="mf-btn mf-btn-logout" data-action="mfLogout">
+      <i class="fas fa-sign-out-alt" aria-hidden="true"></i> Logg ut
+    </button>
+  `;
+}
+
+// ---- Logout ----
+
+async function mfLogout() {
+  try {
+    const csrfToken = getCsrfToken();
+    await fetch('/api/klient/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
+    });
+  } catch (e) { /* continue anyway */ }
+
+  // Clear local state
+  localStorage.removeItem('userName');
+  localStorage.removeItem('userEmail');
+  localStorage.removeItem('userRole');
+  localStorage.removeItem('userType');
+  localStorage.removeItem('organizationId');
+  localStorage.removeItem('organizationSlug');
+  localStorage.removeItem('organizationName');
+  localStorage.removeItem('appMode');
+  localStorage.removeItem('isSuperAdmin');
+
+  // Hide mobile field view, show login
+  hideMobileFieldView();
+
+  // Restore shared map if it was moved
+  mfRestoreMap();
+
+  // Show login overlay
+  const loginOverlay = document.getElementById('loginOverlay');
+  if (loginOverlay) {
+    loginOverlay.classList.remove('hidden');
+    // Reset login form
+    const loginForm = document.getElementById('spaLoginForm');
+    if (loginForm) loginForm.reset();
+    resetLoginButton();
+  }
+
+  // Release any presence claim before closing WebSocket
+  if (mfCurrentClaimedKundeId) {
+    mfReleaseCustomer(mfCurrentClaimedKundeId);
+  }
+
+  // Close WebSocket
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.close();
+  }
+  wsInitialized = false;
+
+  // Clean up admin polling timers
+  if (typeof mfAdminCleanup === 'function') {
+    mfAdminCleanup();
+  }
+
+  // Clean up chat
+  if (typeof mfChatCleanup === 'function') {
+    mfChatCleanup();
+  }
+
+  // Clean up calendar
+  if (typeof mfCalendarCleanup === 'function') {
+    mfCalendarCleanup();
+  }
+
+  // Reset state
+  mfRouteData = null;
+  mfMapInitialized = false;
+  mfActiveTab = 'route';
+
+  // Start globe spin
+  if (window.map && typeof startGlobeSpin === 'function') {
+    startGlobeSpin();
+  }
+}
+
+function mfRestoreMap() {
+  const sharedMap = document.getElementById('sharedMapContainer');
+  if (sharedMap && sharedMap.parentElement?.id === 'mfMapContainer') {
+    document.body.insertBefore(sharedMap, document.getElementById('loginOverlay'));
+    sharedMap.style.position = 'fixed';
+    sharedMap.style.width = '';
+    sharedMap.style.height = '';
+  }
+  // Clean up mobile markers
+  document.querySelectorAll('.mf-map-marker').forEach(el => el.remove());
+  mfMapInitialized = false;
+}
+
+// ---- Estimated time adjustment ----
+
+let mfEstSaveTimer = null;
+
+// Called by delegation change handler — receives (kundeId, element)
+function mfSetEstimertTidHandler(kundeId, el) {
+  const val = Math.max(5, parseInt(el.value) || 30);
+  el.value = val;
+  mfSetEstimertTid(kundeId, val);
+}
+
+function mfSetEstimertTid(kundeId, val) {
+  if (!val) val = 30;
+
+  // Update local data
+  if (mfRouteData?.kunder) {
+    const kunde = mfRouteData.kunder.find(k => k.id === kundeId);
+    if (kunde) kunde.estimert_tid = val;
+  }
+
+  // Update summary estimate display
+  const kunder = mfRouteData?.kunder || [];
+  const totalEstMin = kunder.reduce((sum, k) => sum + (k.estimert_tid || 30), 0);
+  const estHours = Math.floor(totalEstMin / 60);
+  const estMins = totalEstMin % 60;
+  const estLabel = estHours > 0 ? `${estHours}t ${estMins > 0 ? estMins + 'min' : ''}` : `${estMins} min`;
+  const summaryClockSpan = document.querySelector('.mf-route-summary .fa-clock')?.parentElement;
+  if (summaryClockSpan) summaryClockSpan.innerHTML = `<i class="fas fa-clock" aria-hidden="true"></i> ~${estLabel}`;
+
+  // Debounce save to backend
+  if (mfEstSaveTimer) clearTimeout(mfEstSaveTimer);
+  mfEstSaveTimer = setTimeout(() => mfSaveEstimertTid(kundeId, val), 1000);
+}
+
+async function mfSaveEstimertTid(kundeId, minutes) {
+  try {
+    const csrfToken = getCsrfToken();
+    await fetch(`/api/kunder/${kundeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
+      body: JSON.stringify({ estimert_tid: minutes })
+    });
+  } catch (err) {
+    console.warn('Mobile field: Could not save estimated time:', err);
+  }
+}
+
+// ---- Notification banner ----
+
+function mfShowBanner(message, type) {
+  const existing = document.querySelector('.mf-banner');
+  if (existing) existing.remove();
+
+  const banner = document.createElement('div');
+  banner.className = `mf-banner mf-banner-${type || 'info'}`;
+  banner.textContent = message;
+  document.getElementById('mobileFieldView')?.prepend(banner);
+
+  setTimeout(() => banner.remove(), 3000);
+}
+
+// ---- Prefetch customer details for offline ----
+
+async function mfPrefetchCustomerDetails() {
+  if (!mfRouteData?.kunder || !window.OfflineStorage) return;
+
+  try {
+    const kundeList = mfRouteData.kunder;
+    // Save the embedded customer data to IndexedDB for offline access
+    await OfflineStorage.saveCustomers(kundeList);
+  } catch (e) {
+    console.warn('Mobile field: Could not prefetch customer details:', e);
+  }
+}
+
+// ---- WebSocket real-time handler for mobile ----
+
+let mfWsReloadTimer = null;
+
+function mfDebouncedRouteReload() {
+  if (mfWsReloadTimer) clearTimeout(mfWsReloadTimer);
+  mfWsReloadTimer = setTimeout(() => mfLoadRoute(), 500);
+}
+
+function isMobileFieldActive() {
+  const mfView = document.getElementById('mobileFieldView');
+  return mfView && mfView.style.display !== 'none';
+}
+
+// Mobile presence tracking
+let mfCurrentClaimedKundeId = null;
+
+function mfClaimCustomer(kundeId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (mfCurrentClaimedKundeId && mfCurrentClaimedKundeId !== kundeId) {
+    mfReleaseCustomer(mfCurrentClaimedKundeId);
+  }
+  mfCurrentClaimedKundeId = kundeId;
+  const userName = localStorage.getItem('userName') || 'Bruker';
+  ws.send(JSON.stringify({ type: 'claim_customer', kundeId, userName }));
+}
+
+function mfReleaseCustomer(kundeId) {
+  if (!kundeId) return;
+  if (mfCurrentClaimedKundeId === kundeId) mfCurrentClaimedKundeId = null;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'release_customer', kundeId }));
+}
+
+function handleMobileRealtimeUpdate(message) {
+  if (!isMobileFieldActive()) return;
+
+  const { type, data } = message;
+
+  switch (type) {
+    // ---- Route sync ----
+    case 'rute_created':
+    case 'rute_updated':
+    case 'rute_deleted':
+      mfDebouncedRouteReload();
+      break;
+
+    // ---- Customer data sync ----
+    case 'kunde_created':
+    case 'kunde_deleted':
+    case 'kunder_bulk_updated':
+      // Reload route if any current route customer is affected
+      if (mfRouteData?.kunder) mfDebouncedRouteReload();
+      break;
+
+    case 'kunde_updated':
+      // Update customer data in current route if present
+      if (mfRouteData?.kunder) {
+        const idx = mfRouteData.kunder.findIndex(k => k.id === Number.parseInt(data.id));
+        if (idx !== -1) {
+          mfRouteData.kunder[idx] = { ...mfRouteData.kunder[idx], ...data };
+          mfRenderRoute();
+        }
+      }
+      break;
+
+    // ---- Calendar sync ----
+    case 'avtale_created':
+    case 'avtale_updated':
+    case 'avtale_deleted':
+    case 'avtale_series_deleted':
+    case 'avtaler_bulk_created':
+      if (typeof mfLoadCalendarData === 'function') {
+        mfLoadCalendarData();
+      }
+      break;
+
+    // ---- Presence sync ----
+    case 'customer_claimed':
+      presenceClaims.set(data.kundeId, {
+        userId: data.userId,
+        userName: data.userName,
+        initials: data.initials,
+      });
+      mfUpdatePresenceOnRoute(data.kundeId);
+      break;
+
+    case 'customer_released':
+      presenceClaims.delete(data.kundeId);
+      mfUpdatePresenceOnRoute(data.kundeId);
+      break;
+
+    case 'user_offline':
+      for (const [kundeId, claim] of presenceClaims) {
+        if (claim.userId === data.userId) {
+          presenceClaims.delete(kundeId);
+          mfUpdatePresenceOnRoute(kundeId);
+        }
+      }
+      break;
+  }
+
+  // Chain to admin handler if present
+  if (typeof handleMobileAdminRealtimeUpdate === 'function') {
+    handleMobileAdminRealtimeUpdate(message);
+  }
+
+  // Chain to weekplan editor handler if present
+  if (typeof handleMobileWeekplanRealtimeUpdate === 'function') {
+    handleMobileWeekplanRealtimeUpdate(message);
+  }
+}
+
+// Show presence indicators on mobile route stop cards
+function mfUpdatePresenceOnRoute(kundeId) {
+  const card = document.querySelector(`.mf-stop-card[data-kunde-id="${kundeId}"]`);
+  if (!card) return;
+
+  // Remove existing presence badge
+  const existing = card.querySelector('.mf-presence-badge');
+  if (existing) existing.remove();
+
+  // Add badge if someone else has claimed this customer
+  const claim = presenceClaims.get(kundeId);
+  if (claim && claim.userId !== myUserId) {
+    const badge = document.createElement('span');
+    badge.className = 'mf-presence-badge';
+    badge.textContent = claim.initials || '??';
+    badge.title = `${claim.userName} jobber med denne kunden`;
+    badge.style.backgroundColor = getPresenceColor(claim.userId);
+    const info = card.querySelector('.mf-stop-info');
+    if (info) info.appendChild(badge);
+  }
+}
+
+// ---- Online/offline listener ----
+
+function mfSetupConnectivityListeners() {
+  window.addEventListener('online', () => {
+    mfShowBanner('Tilkoblet igjen \u2014 synkroniserer...', 'success');
+    // Reset WebSocket reconnect and reconnect immediately
+    wsReconnectAttempts = 0;
+    wsInitialized = false;
+    initWebSocket();
+    setTimeout(() => mfLoadRoute(), 1000);
+  });
+
+  window.addEventListener('offline', () => {
+    mfShowBanner('Frakoblet \u2014 endringer lagres lokalt', 'warning');
+  });
+
+  // Reconnect WebSocket when app returns from background
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && isMobileFieldActive()) {
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        wsReconnectAttempts = 0;
+        wsInitialized = false;
+        initWebSocket();
+      }
+      mfDebouncedRouteReload();
+    }
+  });
+}
+
+// Initialize connectivity listeners on load
+mfSetupConnectivityListeners();
+
+// ---- Compound action wrappers (for data-action delegation) ----
+
+// ---- Notify customer ("på vei" email) ----
+
+async function mfNotifyCustomer(kundeId) {
+  if (!mfRouteData || !mfRouteData.kunder) return;
+  const kunde = mfRouteData.kunder.find(k => k.id === kundeId);
+  if (!kunde) return;
+
+  if (!kunde.epost) {
+    mfShowBanner('Kunden har ikke registrert e-post', 'error');
+    return;
+  }
+
+  const estMin = kunde.estimert_tid || 10;
+
+  // Build confirmation dialog
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-info-overlay';
+  overlay.innerHTML = `
+    <div class="mf-info-card" style="max-width:360px">
+      <div class="mf-info-header">
+        <h3>Varsle kunde</h3>
+        <button class="mf-info-close" aria-label="Lukk"><i class="fas fa-times" aria-hidden="true"></i></button>
+      </div>
+      <div class="mf-info-body">
+        <p style="margin:0 0 12px">Send «på vei»-varsel til <strong>${escapeHtml(kunde.kontaktperson || kunde.navn)}</strong>?</p>
+        <p style="margin:0 0 8px;color:#a1a1aa;font-size:13px"><i class="fas fa-envelope" aria-hidden="true"></i> ${escapeHtml(kunde.epost)}</p>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
+          <span>Estimert ankomst:</span>
+          <input type="number" id="mfNotifyEstMin" value="${estMin}" min="1" max="180" step="5"
+            style="width:60px;padding:4px 8px;border:1px solid #3f3f46;border-radius:6px;background:#27272a;color:#e4e4e7;text-align:center">
+          <span>min</span>
+        </label>
+      </div>
+      <div class="mf-info-actions" style="gap:8px">
+        <button class="mf-btn mf-btn-notify" id="mfNotifySendBtn">
+          <i class="fas fa-paper-plane" aria-hidden="true"></i> Send varsel
+        </button>
+        <button class="mf-btn" id="mfNotifyCancelBtn" style="background:#3f3f46">
+          Avbryt
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('mobileFieldView').appendChild(overlay);
+
+  const closeOverlay = () => overlay.remove();
+  overlay.querySelector('.mf-info-close').addEventListener('click', closeOverlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+  overlay.querySelector('#mfNotifyCancelBtn').addEventListener('click', closeOverlay);
+
+  overlay.querySelector('#mfNotifySendBtn').addEventListener('click', async () => {
+    const minInput = document.getElementById('mfNotifyEstMin');
+    const estimertTid = parseInt(minInput.value) || 10;
+    const sendBtn = overlay.querySelector('#mfNotifySendBtn');
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Sender...';
+
+    try {
+      const csrfToken = typeof getCsrfToken === 'function' ? getCsrfToken() : '';
+      const resp = await fetch(`/api/todays-work/notify-customer/${kundeId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        credentials: 'include',
+        body: JSON.stringify({ estimert_tid: estimertTid }),
+      });
+      const data = await resp.json();
+      closeOverlay();
+
+      if (data.success) {
+        mfShowBanner(`Varsel sendt til ${escapeHtml(kunde.epost)}`, 'success');
+        // Mark notify buttons for this customer as sent
+        document.querySelectorAll(`[data-action="mfNotifyCustomer"][data-args='[${kundeId}]']`).forEach(btn => {
+          btn.classList.add('mf-notified');
+          btn.disabled = true;
+          btn.title = 'Varsel sendt';
+          if (btn.classList.contains('mf-btn')) {
+            btn.innerHTML = '<i class="fas fa-check" aria-hidden="true"></i> Varslet';
+          }
+        });
+      } else {
+        mfShowBanner(data.error || 'Kunne ikke sende varsel', 'error');
+      }
+    } catch (err) {
+      closeOverlay();
+      mfShowBanner('Nettverksfeil — prøv igjen', 'error');
+    }
+  });
+}
+
+function mfNavigateAndCloseInfo(kundeId) {
+  mfNavigate(kundeId);
+  const overlay = document.querySelector('.mf-info-overlay');
+  if (overlay) overlay.remove();
+}
+
+// ---- Expose globally ----
+
+window.showMobileFieldView = showMobileFieldView;
+window.hideMobileFieldView = hideMobileFieldView;
+window.handleMobileRealtimeUpdate = handleMobileRealtimeUpdate;
+window.isMobileFieldActive = isMobileFieldActive;
+window.mfPrevDay = mfPrevDay;
+window.mfNextDay = mfNextDay;
+window.mfSwitchTab = mfSwitchTab;
+window.mfNavigate = mfNavigate;
+window.mfShowVisitForm = mfShowVisitForm; // Defined in mobile-visit-form.js
+window.mfShowCustomerInfo = mfShowCustomerInfo;
+window.mfStartRoute = mfStartRoute;
+window.mfCompleteRoute = mfCompleteRoute;
+window.mfLogout = mfLogout;
+window.mfLoadRoute = mfLoadRoute;
+window.mfNavigateAndCloseInfo = mfNavigateAndCloseInfo;
+window.mfSetEstimertTid = mfSetEstimertTid;
+window.mfSetEstimertTidHandler = mfSetEstimertTidHandler;
+window.mfNotifyCustomer = mfNotifyCustomer;
+
+
+// ============================================
+// MOBILE ADMIN — Admin/planner features for mobile field view
+// Extends the mobile field view with Team overview, push-route,
+// quick-assign, and customer history tabs (admin/bruker only).
+// ============================================
+
+let mfTeamDate = new Date().toISOString().split('T')[0];
+let mfTeamData = null;
+let mfTeamSummary = null;
+let mfTeamPollingTimer = null;
+let mfTeamMembers = null;
+let mfExpandedRouteId = null;
+let mfTeamWeekStart = null;
+let mfTeamWeekData = null;
+let mfTeamExpandedMember = null;
+let mfTeamExpandedDay = null;
+let mfKunderSearchTimer = null;
+let mfKunderResults = [];
+
+// ---- Role detection ----
+
+function mfIsAdmin() {
+  const role = localStorage.getItem('userRole');
+  const type = localStorage.getItem('userType');
+  return role === 'admin' || type === 'bruker';
+}
+
+// ---- Tab injection ----
+
+function mfSetupAdminTabs() {
+  if (!mfIsAdmin()) return;
+
+  const mfView = document.getElementById('mobileFieldView');
+  if (!mfView) return;
+
+  const bottomBar = mfView.querySelector('.mf-bottom-bar');
+  if (!bottomBar) return;
+
+  // Check if already injected
+  if (mfView.querySelector('#mfTeamView')) return;
+
+  // Create Team tab view
+  const teamView = document.createElement('div');
+  teamView.className = 'mf-tab-view';
+  teamView.id = 'mfTeamView';
+  teamView.style.display = 'none';
+  teamView.innerHTML = '<div class="mf-team-content" id="mfTeamContent"></div>';
+
+  // Create Kunder tab view
+  const kunderView = document.createElement('div');
+  kunderView.className = 'mf-tab-view';
+  kunderView.id = 'mfKunderView';
+  kunderView.style.display = 'none';
+  kunderView.innerHTML = '<div class="mf-kunder-content" id="mfKunderContent"></div>';
+
+  // Insert before bottom bar
+  mfView.insertBefore(teamView, bottomBar);
+  mfView.insertBefore(kunderView, bottomBar);
+
+  // Replace bottom bar with 5 tabs
+  bottomBar.classList.add('admin-mode');
+  bottomBar.innerHTML = `
+    <button class="mf-tab-btn active" data-tab="ukeplan" data-action="mfSwitchTab" data-args='["ukeplan"]' role="tab" aria-label="Ukeplan">
+      <i class="fas fa-calendar-week" aria-hidden="true"></i>
+      <span>Ukeplan</span>
+    </button>
+    <button class="mf-tab-btn" data-tab="team" data-action="mfSwitchTab" data-args='["team"]' role="tab" aria-label="Team">
+      <i class="fas fa-users" aria-hidden="true"></i>
+      <span>Team</span>
+    </button>
+    <button class="mf-tab-btn" data-tab="map" data-action="mfSwitchTab" data-args='["map"]' role="tab" aria-label="Kart">
+      <i class="fas fa-map" aria-hidden="true"></i>
+      <span>Kart</span>
+    </button>
+    <button class="mf-tab-btn" data-tab="kunder" data-action="mfSwitchTab" data-args='["kunder"]' role="tab" aria-label="Kunder">
+      <i class="fas fa-address-book" aria-hidden="true"></i>
+      <span>Kunder</span>
+    </button>
+    <button class="mf-tab-btn" data-tab="account" data-action="mfSwitchTab" data-args='["account"]' role="tab" aria-label="Konto">
+      <i class="fas fa-user-circle" aria-hidden="true"></i>
+      <span>Konto</span>
+    </button>
+  `;
+}
+
+// ---- Team tab switching hooks ----
+
+function mfOnTeamTabShown() {
+  if (!mfTeamWeekStart) mfTeamWeekStart = mfGetWeekStart();
+  mfLoadTeamWeekData();
+  mfStartTeamPolling();
+}
+
+function mfOnTeamTabHidden() {
+  mfStopTeamPolling();
+}
+
+function mfStartTeamPolling() {
+  mfStopTeamPolling();
+  mfTeamPollingTimer = setInterval(() => {
+    mfLoadTeamWeekData();
+  }, 30000);
+}
+
+function mfStopTeamPolling() {
+  if (mfTeamPollingTimer) {
+    clearInterval(mfTeamPollingTimer);
+    mfTeamPollingTimer = null;
+  }
+}
+
+function mfGetWeekStart(d) {
+  const date = d ? new Date(d) : new Date();
+  const day = date.getDay();
+  date.setDate(date.getDate() - ((day + 6) % 7));
+  return date.toISOString().split('T')[0];
+}
+
+function mfTeamPrevWeek() {
+  const d = new Date(mfTeamWeekStart);
+  d.setDate(d.getDate() - 7);
+  mfTeamWeekStart = d.toISOString().split('T')[0];
+  mfLoadTeamWeekData();
+}
+
+function mfTeamNextWeek() {
+  const d = new Date(mfTeamWeekStart);
+  d.setDate(d.getDate() + 7);
+  mfTeamWeekStart = d.toISOString().split('T')[0];
+  mfLoadTeamWeekData();
+}
+
+function mfTeamThisWeek() {
+  mfTeamWeekStart = mfGetWeekStart();
+  mfLoadTeamWeekData();
+}
+
+async function mfLoadTeamWeekData() {
+  const content = document.getElementById('mfTeamContent');
+  if (!content) return;
+
+  if (!mfTeamWeekData) {
+    content.innerHTML = '<div class="mf-loading"><i class="fas fa-spinner fa-spin"></i> Laster...</div>';
+  }
+
+  try {
+    const resp = await fetch(`/api/todays-work/team-overview-week?week_start=${mfTeamWeekStart}`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    mfTeamWeekData = (json.success && json.data) ? json.data : null;
+  } catch (e) {
+    console.error('Mobile team: Could not load week data:', e);
+    mfTeamWeekData = null;
+  }
+
+  mfRenderTeamWeekView();
+}
+
+function mfToggleTeamMember(memberName) {
+  if (mfTeamExpandedMember === memberName) {
+    mfTeamExpandedMember = null;
+    mfTeamExpandedDay = null;
+  } else {
+    mfTeamExpandedMember = memberName;
+    mfTeamExpandedDay = null;
+  }
+  mfRenderTeamWeekView();
+}
+
+function mfToggleTeamDay(memberName, date) {
+  if (mfTeamExpandedMember === memberName && mfTeamExpandedDay === date) {
+    mfTeamExpandedDay = null;
+  } else {
+    mfTeamExpandedMember = memberName;
+    mfTeamExpandedDay = date;
+  }
+  mfRenderTeamWeekView();
+}
+
+// ---- Team date navigation ----
+
+function mfTeamPrevDay() {
+  const d = new Date(mfTeamDate);
+  d.setDate(d.getDate() - 1);
+  mfTeamDate = d.toISOString().split('T')[0];
+  mfLoadTeamData();
+}
+
+function mfTeamNextDay() {
+  const d = new Date(mfTeamDate);
+  d.setDate(d.getDate() + 1);
+  mfTeamDate = d.toISOString().split('T')[0];
+  mfLoadTeamData();
+}
+
+// ---- Load team members ----
+
+async function mfLoadTeamMembers() {
+  if (mfTeamMembers) return mfTeamMembers;
+  try {
+    const resp = await fetch('/api/team-members', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    if (json.success && json.data) {
+      const members = Array.isArray(json.data) ? json.data : (json.data.members || []);
+      mfTeamMembers = members.filter(m => m.aktiv);
+    }
+  } catch (e) {
+    console.error('Mobile admin: Could not load team members:', e);
+  }
+  return mfTeamMembers || [];
+}
+
+// ---- Render week-based team view ----
+
+function mfRenderTeamWeekView() {
+  const content = document.getElementById('mfTeamContent');
+  if (!content) return;
+
+  if (!mfTeamWeekData) {
+    content.innerHTML = '<div class="mf-empty-state"><i class="fas fa-calendar-week"></i><p>Ingen data tilgjengelig.</p></div>';
+    return;
+  }
+
+  const { dates, members, unassigned, summary } = mfTeamWeekData;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isThisWeek = mfTeamWeekStart === mfGetWeekStart();
+  const TEAM_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#ca8a04'];
+  const dayLabelsShort = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
+
+  // Week number
+  const ws = new Date(mfTeamWeekStart + 'T00:00:00');
+  const weekNum = Math.ceil(((ws - new Date(ws.getFullYear(), 0, 1)) / 86400000 + new Date(ws.getFullYear(), 0, 1).getDay() + 1) / 7);
+
+  let html = '';
+
+  // Week navigation
+  html += `
+    <div class="mf-header mf-team-date-nav">
+      <button class="mf-date-nav" data-action="mfTeamPrevWeek" aria-label="Forrige uke">
+        <i class="fas fa-chevron-left" aria-hidden="true"></i>
+      </button>
+      <span class="mf-date-label" data-action="mfTeamThisWeek" style="cursor:pointer;">
+        Uke ${weekNum}${isThisWeek ? ' <span style="color:var(--color-accent);font-size:11px;"> — denne uken</span>' : ''}
+      </span>
+      <button class="mf-date-nav" data-action="mfTeamNextWeek" aria-label="Neste uke">
+        <i class="fas fa-chevron-right" aria-hidden="true"></i>
+      </button>
+    </div>
+  `;
+
+  // Summary
+  html += `
+    <div class="mf-summary-card">
+      <div class="mf-summary-stat">
+        <span class="mf-summary-num">${summary.total_routes}</span>
+        <span>Ruter</span>
+      </div>
+      <div class="mf-summary-stat">
+        <span class="mf-summary-num">${summary.total_customers}</span>
+        <span>Kunder</span>
+      </div>
+      <div class="mf-summary-stat">
+        <span class="mf-summary-num">${members.length}</span>
+        <span>Teknikere</span>
+      </div>
+    </div>
+  `;
+
+  // Action buttons
+  html += `
+    <div class="mf-team-actions">
+      <button class="mf-btn mf-btn-primary" data-action="mfShowWeekplanEditor">
+        <i class="fas fa-calendar-week" aria-hidden="true"></i> Rediger ukeplan
+      </button>
+      <button class="mf-btn mf-btn-secondary" data-action="mfShowPushRouteSheet">
+        <i class="fas fa-paper-plane" aria-hidden="true"></i> Send rute
+      </button>
+      <button class="mf-btn mf-btn-secondary" data-action="mfShowQuickAssign">
+        <i class="fas fa-plus-circle" aria-hidden="true"></i> Legg til kunde
+      </button>
+    </div>
+  `;
+
+  // Team member cards with week overview
+  if (members.length === 0) {
+    html += '<div class="mf-empty-state"><i class="fas fa-users"></i><p>Ingen teammedlemmer med ruter denne uken.</p></div>';
+  } else {
+    members.forEach((member, mIdx) => {
+      const color = TEAM_COLORS[mIdx % TEAM_COLORS.length];
+      const initials = mfGetInitials(member.navn);
+      const isExpanded = mfTeamExpandedMember === member.navn;
+      const totalStops = dates.reduce((s, d) => {
+        const routes = member.days[d] || [];
+        return s + routes.reduce((rs, r) => rs + (r.total_count || 0), 0);
+      }, 0);
+
+      html += `
+        <div class="mf-team-card ${isExpanded ? 'expanded' : ''}" data-action="mfToggleTeamMember" data-args='["${escapeHtml(member.navn)}"]'>
+          <div class="mf-team-avatar" style="background:${color}">${escapeHtml(initials)}</div>
+          <div class="mf-team-info">
+            <h4>${escapeHtml(member.navn)}</h4>
+            <p>${totalStops} stopp denne uken</p>
+          </div>
+          <div class="mf-team-progress">
+            <i class="fas fa-chevron-${isExpanded ? 'up' : 'down'}" style="color:var(--color-text-secondary);font-size:12px;"></i>
+          </div>
+        </div>
+      `;
+
+      // Expanded: show each day
+      if (isExpanded) {
+        html += '<div class="mf-team-week-grid">';
+        dates.forEach((date, dIdx) => {
+          const routes = member.days[date] || [];
+          const dayStops = routes.reduce((s, r) => s + (r.total_count || 0), 0);
+          const isToday = date === todayStr;
+          const isDayExpanded = mfTeamExpandedDay === date;
+          const dayLabel = dayLabelsShort[dIdx] || date.slice(5);
+          const dateNum = new Date(date + 'T00:00:00').getDate();
+
+          html += `
+            <div class="mf-team-day ${isToday ? 'mf-today' : ''} ${isDayExpanded ? 'expanded' : ''}" data-action="mfToggleTeamDay" data-args='["${escapeHtml(member.navn)}", "${date}"]'>
+              <div class="mf-team-day-header">
+                <span class="mf-team-day-label">${dayLabel} ${dateNum}.</span>
+                <span class="mf-team-day-count">${dayStops > 0 ? dayStops + ' stopp' : '—'}</span>
+              </div>
+            </div>
+          `;
+
+          // Expanded day: show customer stops
+          if (isDayExpanded && routes.length > 0) {
+            html += '<div class="mf-team-stops">';
+            for (const route of routes) {
+              if (route.kunder && route.kunder.length > 0) {
+                route.kunder.forEach((kunde, ki) => {
+                  const isDone = kunde.completed || kunde.execution_ended_at;
+                  html += `
+                    <div class="mf-team-stop ${isDone ? 'mf-stop-done' : ''}">
+                      <span class="mf-team-stop-num">${ki + 1}</span>
+                      <span class="mf-team-stop-name">${escapeHtml(kunde.navn || 'Ukjent')}</span>
+                      ${isDone ? '<i class="fas fa-check" style="color:var(--color-success);font-size:10px;margin-left:auto;"></i>' : ''}
+                    </div>
+                  `;
+                });
+              }
+            }
+            html += '</div>';
+          }
+        });
+        html += '</div>';
+      }
+    });
+  }
+
+  // Unassigned routes
+  const hasUnassigned = dates.some(d => unassigned[d] && unassigned[d].length > 0);
+  if (hasUnassigned) {
+    const totalUnassigned = dates.reduce((s, d) => s + (unassigned[d]?.length || 0), 0);
+    html += `
+      <div class="mf-team-section-label">Utildelte ruter (${totalUnassigned})</div>
+    `;
+    dates.forEach((date, dIdx) => {
+      const routes = unassigned[date] || [];
+      if (routes.length === 0) return;
+      const dayLabel = dayLabelsShort[dIdx] || date.slice(5);
+      const dateNum = new Date(date + 'T00:00:00').getDate();
+      routes.forEach(route => {
+        html += `
+          <div class="mf-team-card mf-team-idle">
+            <div class="mf-team-avatar mf-avatar-idle"><i class="fas fa-exclamation" style="font-size:11px;"></i></div>
+            <div class="mf-team-info">
+              <h4>${escapeHtml(route.navn || 'Rute')}</h4>
+              <p>${dayLabel} ${dateNum}. — ${route.total_count || 0} stopp</p>
+            </div>
+          </div>
+        `;
+      });
+    });
+  }
+
+  content.innerHTML = html;
+}
+
+function mfGetInitials(name) {
+  if (!name) return '??';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.substring(0, 2).toUpperCase();
+}
+
+function mfExpandTeamRoute(routeId) {
+  if (mfExpandedRouteId === routeId) {
+    mfExpandedRouteId = null;
+  } else {
+    mfExpandedRouteId = routeId;
+  }
+  mfRenderTeamView();
+}
+
+// ---- Push Route (bottom sheet) ----
+
+async function mfShowPushRouteSheet() {
+  // Load data in parallel
+  const [members, routesResp] = await Promise.all([
+    mfLoadTeamMembers(),
+    fetch('/api/ruter', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    }).then(r => r.json()).catch(() => ({ success: false, data: [] }))
+  ]);
+
+  const routes = (routesResp.success ? routesResp.data : []) || [];
+  const teamMembers = members || [];
+
+  // Build route options
+  let routeOptions = '<option value="">Velg rute...</option>';
+  routes.forEach(r => {
+    const name = r.navn || r.name || `Rute #${r.id}`;
+    routeOptions += `<option value="${r.id}">${escapeHtml(name)}</option>`;
+  });
+
+  // Build team member options
+  let memberOptions = '<option value="">Velg teammedlem...</option>';
+  teamMembers.forEach(m => {
+    const name = m.navn || m.name || '';
+    memberOptions += `<option value="${m.id}">${escapeHtml(name)}</option>`;
+  });
+
+  // Today / tomorrow helper
+  const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfPushRouteSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfClosePushRouteSheet"></div>
+    <div class="mf-sheet-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Send rute til teammedlem</h3>
+
+      <label class="mf-sheet-label">Rute</label>
+      <select id="mfPushRouteSelect" class="mf-sheet-select">${routeOptions}</select>
+
+      <label class="mf-sheet-label">Teammedlem</label>
+      <select id="mfPushMemberSelect" class="mf-sheet-select">${memberOptions}</select>
+
+      <label class="mf-sheet-label">Dato</label>
+      <div class="mf-push-date-row">
+        <button class="mf-btn mf-btn-chip mf-push-date-chip active" data-date="${today}" data-action="mfSetPushDate" data-args='["${today}"]'>I dag</button>
+        <button class="mf-btn mf-btn-chip mf-push-date-chip" data-date="${tomorrow}" data-action="mfSetPushDate" data-args='["${tomorrow}"]'>I morgen</button>
+        <input type="date" id="mfPushDateInput" class="mf-sheet-date" value="${today}" data-on-change="mfSetPushDateCustom">
+      </div>
+
+      <button class="mf-btn mf-btn-primary mf-sheet-submit" data-action="mfSubmitPushRoute">
+        <i class="fas fa-paper-plane" aria-hidden="true"></i> Send rute
+      </button>
+    </div>
+  `;
+
+  document.getElementById('mobileFieldView').appendChild(overlay);
+
+  // Animate in
+  requestAnimationFrame(() => overlay.classList.add('open'));
+}
+
+function mfSetPushDate(date) {
+  document.querySelectorAll('.mf-push-date-chip').forEach(b => {
+    b.classList.toggle('active', b.dataset.date === date);
+  });
+  document.getElementById('mfPushDateInput').value = date;
+}
+
+function mfSetPushDateCustom() {
+  const date = document.getElementById('mfPushDateInput')?.value || '';
+  document.querySelectorAll('.mf-push-date-chip').forEach(b => b.classList.remove('active'));
+}
+
+function mfClosePushRouteSheet() {
+  const sheet = document.getElementById('mfPushRouteSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+}
+
+async function mfSubmitPushRoute() {
+  const routeSelect = document.getElementById('mfPushRouteSelect');
+  const memberSelect = document.getElementById('mfPushMemberSelect');
+  const routeId = routeSelect?.value;
+  const memberId = memberSelect?.value;
+  const date = document.getElementById('mfPushDateInput')?.value;
+
+  if (!routeId || !memberId) {
+    mfShowBanner('Velg rute og teammedlem', 'warning');
+    return;
+  }
+
+  const routeName = routeSelect?.selectedOptions[0]?.textContent || 'Rute';
+  const memberName = memberSelect?.selectedOptions[0]?.textContent || 'Teammedlem';
+
+  try {
+    const csrfToken = getCsrfToken();
+    const resp = await fetch(`/api/ruter/${routeId}/assign`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        assigned_to: parseInt(memberId, 10),
+        planned_date: date
+      })
+    });
+
+    const json = await resp.json();
+    if (json.success) {
+      mfClosePushRouteSheet();
+      // Navigate team overview to the assigned date so the update is visible
+      if (date) mfTeamDate = date;
+      mfLoadTeamData();
+      mfShowBanner(`Rute tildelt ${memberName}`, 'success');
+    } else {
+      mfShowBanner(json.error || 'Kunne ikke sende ruten', 'error');
+    }
+  } catch (e) {
+    mfShowBanner('Feil ved sending av rute', 'error');
+  }
+}
+
+
+// ---- Quick-Assign Customer (bottom sheet) ----
+
+function mfShowQuickAssign() {
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfQuickAssignSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfCloseQuickAssign"></div>
+    <div class="mf-sheet-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Legg til kunde i rute</h3>
+
+      <label class="mf-sheet-label">Søk etter kunde</label>
+      <input type="text" id="mfQuickAssignSearch" class="mf-search-input" placeholder="Søk navn, adresse..." data-on-input="mfQuickAssignSearchHandler" autocomplete="off">
+
+      <div id="mfQuickAssignResults" class="mf-assign-results"></div>
+
+      <div id="mfQuickAssignForm" class="mf-assign-form" style="display:none;">
+        <div id="mfQuickAssignSelected" class="mf-assign-selected"></div>
+
+        <label class="mf-sheet-label">Teammedlem</label>
+        <select id="mfQuickAssignMember" class="mf-sheet-select">
+          <option value="">Velg teammedlem...</option>
+        </select>
+
+        <label class="mf-sheet-label">Rute</label>
+        <select id="mfQuickAssignRoute" class="mf-sheet-select">
+          <option value="">Velg rute...</option>
+        </select>
+
+        <button class="mf-btn mf-btn-primary mf-sheet-submit" data-action="mfSubmitQuickAssign">
+          <i class="fas fa-plus-circle" aria-hidden="true"></i> Legg til
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('mobileFieldView').appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+
+  // Load dropdowns
+  mfLoadQuickAssignOptions();
+}
+
+async function mfLoadQuickAssignOptions() {
+  const [members, routesResp] = await Promise.all([
+    mfLoadTeamMembers(),
+    fetch('/api/ruter', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    }).then(r => r.json()).catch(() => ({ success: false, data: [] }))
+  ]);
+
+  const memberSelect = document.getElementById('mfQuickAssignMember');
+  if (memberSelect && members) {
+    members.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.navn || m.name || '';
+      memberSelect.appendChild(opt);
+    });
+  }
+
+  const routeSelect = document.getElementById('mfQuickAssignRoute');
+  const routes = (routesResp.success ? routesResp.data : []) || [];
+  if (routeSelect) {
+    routes.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = r.navn || r.name || `Rute #${r.id}`;
+      routeSelect.appendChild(opt);
+    });
+  }
+}
+
+function mfQuickAssignSearchHandler(query) {
+  if (mfKunderSearchTimer) clearTimeout(mfKunderSearchTimer);
+  if (!query || query.length < 2) {
+    const resultsDiv = document.getElementById('mfQuickAssignResults');
+    if (resultsDiv) resultsDiv.innerHTML = '';
+    return;
+  }
+  mfKunderSearchTimer = setTimeout(() => mfQuickAssignDoSearch(query), 300);
+}
+
+async function mfQuickAssignDoSearch(query) {
+  const resultsDiv = document.getElementById('mfQuickAssignResults');
+  if (!resultsDiv) return;
+
+  try {
+    const resp = await fetch(`/api/kunder?search=${encodeURIComponent(query)}&limit=10`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    // Paginated response: json.data is { data: [...], total, pagination }
+    const rawData = json.success ? json.data : json;
+    mfKunderResults = Array.isArray(rawData) ? rawData : (rawData?.data || []);
+
+    if (mfKunderResults.length === 0) {
+      resultsDiv.innerHTML = '<p class="mf-assign-empty">Ingen treff</p>';
+      return;
+    }
+
+    let html = '';
+    mfKunderResults.forEach(k => {
+      const address = [k.adresse, k.poststed].filter(Boolean).join(', ');
+      html += `
+        <div class="mf-assign-row" data-action="mfSelectQuickAssignKunde" data-args='[${k.id}]'>
+          <div class="mf-assign-row-info">
+            <strong>${escapeHtml(k.navn)}</strong>
+            ${address ? `<span>${escapeHtml(address)}</span>` : ''}
+          </div>
+          <i class="fas fa-chevron-right" aria-hidden="true"></i>
+        </div>
+      `;
+    });
+    resultsDiv.innerHTML = html;
+  } catch (e) {
+    resultsDiv.innerHTML = '<p class="mf-assign-empty">Feil ved søk</p>';
+  }
+}
+
+function mfSelectQuickAssignKunde(kundeId) {
+  const kunde = mfKunderResults.find(k => k.id === kundeId);
+  if (!kunde) return;
+
+  const selectedDiv = document.getElementById('mfQuickAssignSelected');
+  if (selectedDiv) {
+    selectedDiv.innerHTML = `
+      <div class="mf-assign-selected-card">
+        <strong>${escapeHtml(kunde.navn)}</strong>
+        <button class="mf-info-close" data-action="mfClearQuickAssignSelection" aria-label="Fjern">
+          <i class="fas fa-times" aria-hidden="true"></i>
+        </button>
+      </div>
+    `;
+    selectedDiv.dataset.kundeId = kundeId;
+  }
+
+  const form = document.getElementById('mfQuickAssignForm');
+  if (form) form.style.display = 'block';
+
+  const results = document.getElementById('mfQuickAssignResults');
+  if (results) results.innerHTML = '';
+
+  const search = document.getElementById('mfQuickAssignSearch');
+  if (search) search.value = '';
+}
+
+function mfClearQuickAssignSelection() {
+  const selectedDiv = document.getElementById('mfQuickAssignSelected');
+  if (selectedDiv) {
+    selectedDiv.innerHTML = '';
+    selectedDiv.dataset.kundeId = '';
+  }
+  const form = document.getElementById('mfQuickAssignForm');
+  if (form) form.style.display = 'none';
+}
+
+function mfCloseQuickAssign() {
+  const sheet = document.getElementById('mfQuickAssignSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+}
+
+async function mfSubmitQuickAssign() {
+  const kundeId = document.getElementById('mfQuickAssignSelected')?.dataset?.kundeId;
+  const routeId = document.getElementById('mfQuickAssignRoute')?.value;
+
+  if (!kundeId || !routeId) {
+    mfShowBanner('Velg kunde og rute', 'warning');
+    return;
+  }
+
+  try {
+    const csrfToken = getCsrfToken();
+    const resp = await fetch(`/api/ruter/${routeId}/add-customer`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken
+      },
+      credentials: 'include',
+      body: JSON.stringify({ kunde_id: parseInt(kundeId, 10) })
+    });
+
+    const json = await resp.json();
+    if (json.success) {
+      mfShowBanner('Kunde lagt til i ruten!', 'success');
+      mfCloseQuickAssign();
+      mfLoadTeamData();
+    } else {
+      mfShowBanner(json.error || 'Kunne ikke legge til kunde', 'error');
+    }
+  } catch (e) {
+    mfShowBanner('Feil ved tilordning', 'error');
+  }
+}
+
+// ---- Kunder (Customer History) tab ----
+
+function mfRenderKunderView() {
+  const content = document.getElementById('mfKunderContent');
+  if (!content) return;
+
+  content.innerHTML = `
+    <div class="mf-kunder-search-bar">
+      <i class="fas fa-search" aria-hidden="true"></i>
+      <input type="text" id="mfKunderSearchInput" class="mf-search-input" placeholder="Søk kunde..." data-on-input="mfKunderSearchHandler" autocomplete="off">
+    </div>
+    <div id="mfKunderResultsList" class="mf-kunder-results">
+      <div class="mf-empty-state">
+        <i class="fas fa-address-book" aria-hidden="true"></i>
+        <p>Søk etter en kunde for å se historikk.</p>
+      </div>
+    </div>
+  `;
+}
+
+function mfKunderSearchHandler(query) {
+  if (mfKunderSearchTimer) clearTimeout(mfKunderSearchTimer);
+  if (!query || query.length < 2) {
+    const list = document.getElementById('mfKunderResultsList');
+    if (list) {
+      list.innerHTML = `
+        <div class="mf-empty-state">
+          <i class="fas fa-address-book" aria-hidden="true"></i>
+          <p>Søk etter en kunde for å se historikk.</p>
+        </div>
+      `;
+    }
+    return;
+  }
+  mfKunderSearchTimer = setTimeout(() => mfKunderDoSearch(query), 300);
+}
+
+async function mfKunderDoSearch(query) {
+  const list = document.getElementById('mfKunderResultsList');
+  if (!list) return;
+
+  list.innerHTML = '<div class="mf-loading"><div class="mf-spinner"></div></div>';
+
+  try {
+    const resp = await fetch(`/api/kunder?search=${encodeURIComponent(query)}&limit=20`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    // Paginated response: json.data is { data: [...], total, pagination }
+    const rawData = json.success ? json.data : json;
+    const kunder = Array.isArray(rawData) ? rawData : (rawData?.data || []);
+
+    if (kunder.length === 0) {
+      list.innerHTML = `
+        <div class="mf-empty-state">
+          <i class="fas fa-search" aria-hidden="true"></i>
+          <p>Ingen kunder funnet.</p>
+        </div>
+      `;
+      return;
+    }
+
+    let html = '';
+    kunder.forEach(k => {
+      const address = [k.adresse, k.poststed].filter(Boolean).join(', ');
+      html += `
+        <div class="mf-kunder-card" data-action="mfShowCustomerHistory" data-args='[${k.id}]'>
+          <div class="mf-kunder-card-info">
+            <h4>${escapeHtml(k.navn)}</h4>
+            ${address ? `<p>${escapeHtml(address)}</p>` : ''}
+          </div>
+          ${k.telefon ? `<a href="tel:${escapeHtml(k.telefon)}" class="mf-action-btn" data-action="none" data-stop-propagation="true" title="Ring"><i class="fas fa-phone" aria-hidden="true"></i></a>` : ''}
+          <i class="fas fa-chevron-right mf-kunder-chevron" aria-hidden="true"></i>
+        </div>
+      `;
+    });
+    list.innerHTML = html;
+  } catch (e) {
+    list.innerHTML = `
+      <div class="mf-empty-state">
+        <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+        <p>Feil ved søk. Prøv igjen.</p>
+      </div>
+    `;
+  }
+}
+
+async function mfShowCustomerHistory(kundeId) {
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-history-overlay';
+  overlay.innerHTML = `
+    <div class="mf-history-card">
+      <div class="mf-info-header">
+        <h3>Laster...</h3>
+        <button class="mf-info-close" aria-label="Lukk"><i class="fas fa-times" aria-hidden="true"></i></button>
+      </div>
+      <div class="mf-history-body">
+        <div class="mf-loading"><div class="mf-spinner"></div></div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('mobileFieldView').appendChild(overlay);
+
+  // Close handlers
+  const closeBtn = overlay.querySelector('.mf-info-close');
+  closeBtn.addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  try {
+    // Load customer details and contact log in parallel
+    const csrfToken = getCsrfToken();
+    const [kundeResp, logResp] = await Promise.all([
+      fetch(`/api/kunder/${kundeId}`, {
+        headers: { 'X-CSRF-Token': csrfToken },
+        credentials: 'include'
+      }).then(r => r.json()),
+      fetch(`/api/kontaktlogg/${kundeId}`, {
+        headers: { 'X-CSRF-Token': csrfToken },
+        credentials: 'include'
+      }).then(r => r.json()).catch(() => ({ success: false, data: [] }))
+    ]);
+
+    const kunde = kundeResp.success ? kundeResp.data : kundeResp;
+    const logs = (logResp.success ? logResp.data : []) || [];
+
+    if (!kunde) {
+      overlay.remove();
+      mfShowBanner('Kunne ikke laste kundeinfo', 'error');
+      return;
+    }
+
+    const header = overlay.querySelector('.mf-info-header h3');
+    if (header) header.textContent = kunde.navn || 'Ukjent kunde';
+
+    const body = overlay.querySelector('.mf-history-body');
+    if (!body) return;
+
+    const address = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', ');
+
+    let html = '';
+
+    // Customer info section
+    html += '<div class="mf-history-section">';
+    if (address) html += `<div class="mf-info-row"><i class="fas fa-map-marker-alt" aria-hidden="true"></i><span>${escapeHtml(address)}</span></div>`;
+    if (kunde.telefon) html += `<div class="mf-info-row"><i class="fas fa-phone" aria-hidden="true"></i><a href="tel:${escapeHtml(kunde.telefon)}">${escapeHtml(kunde.telefon)}</a></div>`;
+    if (kunde.epost) html += `<div class="mf-info-row"><i class="fas fa-envelope" aria-hidden="true"></i><a href="mailto:${escapeHtml(kunde.epost)}">${escapeHtml(kunde.epost)}</a></div>`;
+    if (kunde.kontaktperson) html += `<div class="mf-info-row"><i class="fas fa-user" aria-hidden="true"></i><span>${escapeHtml(kunde.kontaktperson)}</span></div>`;
+    if (kunde.siste_kontroll) html += `<div class="mf-info-row"><i class="fas fa-calendar-check" aria-hidden="true"></i><span>Siste kontroll: ${escapeHtml(new Date(kunde.siste_kontroll).toLocaleDateString('nb-NO'))}</span></div>`;
+    if (kunde.neste_kontroll) html += `<div class="mf-info-row"><i class="fas fa-calendar-alt" aria-hidden="true"></i><span>Neste kontroll: ${escapeHtml(new Date(kunde.neste_kontroll).toLocaleDateString('nb-NO'))}</span></div>`;
+    html += '</div>';
+
+    // Contact log section
+    html += '<div class="mf-history-section">';
+    html += '<h4>Kontaktlogg</h4>';
+    if (logs.length === 0) {
+      html += '<p class="mf-history-empty">Ingen kontaktlogg registrert.</p>';
+    } else {
+      logs.forEach(log => {
+        const dateStr = log.opprettet_dato
+          ? new Date(log.opprettet_dato).toLocaleDateString('nb-NO', { day: 'numeric', month: 'short', year: 'numeric' })
+          : '';
+        const typeIcon = log.type === 'telefon' ? 'fa-phone' : log.type === 'epost' ? 'fa-envelope' : log.type === 'besok' ? 'fa-walking' : 'fa-comment';
+        html += `
+          <div class="mf-history-entry">
+            <div class="mf-history-entry-icon"><i class="fas ${typeIcon}" aria-hidden="true"></i></div>
+            <div class="mf-history-entry-content">
+              <div class="mf-history-entry-date">${escapeHtml(dateStr)}</div>
+              <div class="mf-history-entry-text">${escapeHtml(log.notat || log.beskrivelse || '')}</div>
+              ${log.utfort_av ? `<div class="mf-history-entry-by">${escapeHtml(log.utfort_av)}</div>` : ''}
+            </div>
+          </div>
+        `;
+      });
+    }
+    html += '</div>';
+
+    body.innerHTML = html;
+  } catch (e) {
+    console.error('Mobile admin: Error loading customer history:', e);
+    overlay.remove();
+    mfShowBanner('Kunne ikke laste kundehistorikk', 'error');
+  }
+}
+
+// ---- WebSocket handler for admin views ----
+
+function handleMobileAdminRealtimeUpdate(message) {
+  if (!mfIsAdmin()) return;
+  const teamView = document.getElementById('mfTeamView');
+  if (!teamView || teamView.style.display === 'none') return;
+
+  const { type } = message;
+  switch (type) {
+    case 'rute_created':
+    case 'rute_updated':
+    case 'rute_deleted':
+      mfLoadTeamData();
+      break;
+  }
+}
+
+// ---- Cleanup ----
+
+function mfAdminCleanup() {
+  mfStopTeamPolling();
+  mfTeamData = null;
+  mfTeamSummary = null;
+  mfTeamMembers = null;
+  mfExpandedRouteId = null;
+}
+
+// ---- Expose globally ----
+
+window.mfIsAdmin = mfIsAdmin;
+window.mfSetupAdminTabs = mfSetupAdminTabs;
+window.mfTeamPrevDay = mfTeamPrevDay;
+window.mfTeamNextDay = mfTeamNextDay;
+window.mfExpandTeamRoute = mfExpandTeamRoute;
+window.mfShowPushRouteSheet = mfShowPushRouteSheet;
+window.mfClosePushRouteSheet = mfClosePushRouteSheet;
+window.mfSetPushDate = mfSetPushDate;
+window.mfSetPushDateCustom = mfSetPushDateCustom;
+window.mfSubmitPushRoute = mfSubmitPushRoute;
+window.mfShowQuickAssign = mfShowQuickAssign;
+window.mfCloseQuickAssign = mfCloseQuickAssign;
+window.mfSelectQuickAssignKunde = mfSelectQuickAssignKunde;
+window.mfClearQuickAssignSelection = mfClearQuickAssignSelection;
+window.mfSubmitQuickAssign = mfSubmitQuickAssign;
+window.mfRenderKunderView = mfRenderKunderView;
+window.mfKunderSearchHandler = mfKunderSearchHandler;
+window.mfShowCustomerHistory = mfShowCustomerHistory;
+window.mfQuickAssignSearchHandler = mfQuickAssignSearchHandler;
+window.mfAdminCleanup = mfAdminCleanup;
+window.mfOnTeamTabShown = mfOnTeamTabShown;
+window.mfOnTeamTabHidden = mfOnTeamTabHidden;
+window.handleMobileAdminRealtimeUpdate = handleMobileAdminRealtimeUpdate;
+
+
+// ============================================
+// MOBILE WEEKPLAN EDITOR — Touch-friendly weekly plan editor
+// Full-screen overlay for editing the weekly plan on mobile/tablet.
+// Supports drag-and-drop reordering, day-to-day moves, technician
+// assignment, customer search & add, and swipe-to-delete.
+// ============================================
+
+let mfWeekplanState = {
+  weekStart: null,        // Date object (Monday)
+  days: {},               // { 'mandag': { date: 'YYYY-MM-DD', stops: [{ ruteId, kundeId, kundeNavn, adresse, assignedTo, assignedToId, estimertTid, rekkefolge }] }, ... }
+  teamMembers: [],        // cached team members
+  routes: {},             // cached raw route data keyed by id
+  dirty: false,           // unsaved changes flag
+  dirtyGen: 0,            // generation counter — incremented on each change, used to detect concurrent edits during async save
+  activeDay: 0            // index of currently visible day (0-4)
+};
+
+let mfWpAutoSaveTimer = null;
+let mfWpSaving = false;
+
+function mfWpScheduleAutoSave() {
+  if (mfWpAutoSaveTimer) clearTimeout(mfWpAutoSaveTimer);
+  mfWpAutoSaveTimer = setTimeout(() => {
+    if (mfWeekplanState.dirty && !mfWpSaving) {
+      mfWpSave();
+    }
+  }, 500);
+}
+
+const mfWpDayKeys = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag'];
+const mfWpDayLabels = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag'];
+
+// ---- Drag state ----
+let mfWpDragState = {
+  active: false,
+  element: null,
+  ghostEl: null,
+  kundeId: null,
+  fromDay: null,
+  startX: 0,
+  startY: 0,
+  offsetX: 0,
+  offsetY: 0,
+  longPressTimer: null,
+  scrolling: false
+};
+
+// ---- Week helpers ----
+
+function mfWpGetMonday(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  if (day !== 1) {
+    d.setDate(d.getDate() - ((day + 6) % 7));
+  }
+  return d;
+}
+
+function mfWpFormatDate(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function mfWpGetWeekNumber(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const yearStart = new Date(d.getFullYear(), 0, 4);
+  return Math.round(((d - yearStart) / 86400000 + yearStart.getDay() + 6) / 7);
+}
+
+function mfWpGetInitials(name) {
+  if (!name) return '??';
+  name = String(name);
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.substring(0, 2).toUpperCase();
+}
+
+// ---- Open / Close ----
+
+function mfShowWeekplanEditor() {
+  // Remove any existing overlay
+  const existing = document.querySelector('.mf-weekplan-overlay');
+  if (existing) existing.remove();
+
+  // Initialize state
+  mfWeekplanState.weekStart = mfWpGetMonday(new Date());
+  mfWeekplanState.dirty = false;
+  mfWeekplanState.activeDay = 0;
+
+  // Init days
+  mfWpInitDays();
+
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-weekplan-overlay';
+  overlay.id = 'mfWeekplanOverlay';
+
+  const weekNum = mfWpGetWeekNumber(mfWeekplanState.weekStart);
+
+  overlay.innerHTML = `
+    <div class="mf-weekplan-header">
+      <button class="mf-weekplan-close" data-action="mfCloseWeekplanEditor" aria-label="Lukk">
+        <i class="fas fa-times" aria-hidden="true"></i>
+      </button>
+      <div class="mf-weekplan-title-group">
+        <button class="mf-weekplan-nav" data-action="mfWpNavigateWeek" data-args='[-1]' aria-label="Forrige uke">
+          <i class="fas fa-chevron-left" aria-hidden="true"></i>
+        </button>
+        <h3 id="mfWpTitle">Uke ${weekNum}</h3>
+        <button class="mf-weekplan-nav" data-action="mfWpNavigateWeek" data-args='[1]' aria-label="Neste uke">
+          <i class="fas fa-chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="mf-weekplan-day-dots" id="mfWpDayDots"></div>
+
+    <div class="mf-weekplan-days" id="mfWpDaysContainer"></div>
+
+    <div class="mf-weekplan-loading" id="mfWpLoading">
+      <div class="mf-spinner"></div>
+      <p>Laster ukeplan...</p>
+    </div>
+  `;
+
+  const mfv = document.getElementById('mobileFieldView');
+  const mountTarget = (mfv && mfv.style.display !== 'none') ? mfv : document.body;
+  mountTarget.appendChild(overlay);
+
+  // Animate in
+  requestAnimationFrame(() => {
+    overlay.classList.add('open');
+  });
+
+  // Load data
+  mfWpLoadWeek();
+}
+
+async function mfCloseWeekplanEditor() {
+  // Cancel any pending auto-save timer
+  if (mfWpAutoSaveTimer) { clearTimeout(mfWpAutoSaveTimer); mfWpAutoSaveTimer = null; }
+
+  // Wait for any in-progress save, then save pending changes
+  if (mfWpSaving) {
+    // Wait for current save to finish (max 5s)
+    for (let i = 0; i < 50 && mfWpSaving; i++) await new Promise(r => setTimeout(r, 100));
+  }
+  if (mfWeekplanState.dirty) {
+    await mfWpSave();
+  }
+
+  const overlay = document.getElementById('mfWeekplanOverlay');
+  if (overlay) {
+    overlay.classList.remove('open');
+    setTimeout(() => overlay.remove(), 300);
+  }
+
+  mfWeekplanState.dirty = false;
+  mfWpCleanupDrag();
+
+  // Refresh all views that depend on ruter/avtaler
+  if (typeof raoLoadWeekData === 'function') raoLoadWeekData();
+  if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+  if (typeof loadAvtaler === 'function') {
+    loadAvtaler().then(() => {
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+    });
+  }
+}
+
+// ---- Init days structure ----
+
+function mfWpInitDays() {
+  mfWeekplanState.days = {};
+  const start = new Date(mfWeekplanState.weekStart);
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    mfWeekplanState.days[mfWpDayKeys[i]] = {
+      date: mfWpFormatDate(d),
+      stops: []
+    };
+  }
+}
+
+// ---- Load week data ----
+
+async function mfWpLoadWeek() {
+  const loading = document.getElementById('mfWpLoading');
+  const container = document.getElementById('mfWpDaysContainer');
+  if (loading) loading.style.display = 'flex';
+  if (container) container.style.display = 'none';
+
+  // Update title
+  const weekNum = mfWpGetWeekNumber(mfWeekplanState.weekStart);
+  const titleEl = document.getElementById('mfWpTitle');
+  if (titleEl) titleEl.textContent = `Uke ${weekNum}`;
+
+  // Init fresh days
+  mfWpInitDays();
+
+  try {
+    // Load routes and team members in parallel
+    const csrfToken = getCsrfToken();
+    const [ruterResp, teamResp] = await Promise.all([
+      fetch('/api/ruter', {
+        headers: { 'X-CSRF-Token': csrfToken },
+        credentials: 'include'
+      }),
+      fetch('/api/team-members', {
+        headers: { 'X-CSRF-Token': csrfToken },
+        credentials: 'include'
+      })
+    ]);
+
+    const ruterJson = await ruterResp.json();
+    const teamJson = await teamResp.json();
+
+    if (teamJson.success && teamJson.data) {
+      const members = Array.isArray(teamJson.data) ? teamJson.data : (teamJson.data.members || []);
+      mfWeekplanState.teamMembers = members.filter(m => m.aktiv);
+    }
+
+    const rawRouteData = ruterJson.success ? ruterJson.data : [];
+    const allRoutes = Array.isArray(rawRouteData) ? rawRouteData : (rawRouteData?.data || []);
+
+    // Filter routes for this week's dates
+    const weekDates = new Set();
+    for (const dayKey of mfWpDayKeys) {
+      weekDates.add(mfWeekplanState.days[dayKey].date);
+    }
+
+    const weekRoutes = allRoutes.filter(r => r.planlagt_dato && weekDates.has(r.planlagt_dato));
+
+    // For each matching route, load its customers
+    const routeDetails = await Promise.all(
+      weekRoutes.map(async (route) => {
+        try {
+          const detailResp = await fetch(`/api/ruter/${route.id}`, {
+            headers: { 'X-CSRF-Token': csrfToken },
+            credentials: 'include'
+          });
+          const detailJson = await detailResp.json();
+          return detailJson.success ? detailJson.data : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    // Build team member lookup map: id → name
+    const teamLookup = new Map();
+    if (mfWeekplanState.teamMembers) {
+      for (const m of mfWeekplanState.teamMembers) {
+        teamLookup.set(m.id, m.navn || m.name || '');
+      }
+    }
+
+    // Map routes to days
+    mfWeekplanState.routes = {};
+    routeDetails.forEach(route => {
+      if (!route) return;
+      mfWeekplanState.routes[route.id] = route;
+
+      // Find which day this route belongs to
+      const dayKey = mfWpDayKeys.find(k => mfWeekplanState.days[k].date === route.planlagt_dato);
+      if (!dayKey) return;
+
+      // Resolve technician name from ID
+      const rawAssignedTo = route.assigned_to;
+      let assignedToId = null;
+      let assignedToName = '';
+
+      if (typeof rawAssignedTo === 'number') {
+        assignedToId = rawAssignedTo;
+        assignedToName = teamLookup.get(rawAssignedTo) || '';
+      } else if (typeof rawAssignedTo === 'string' && rawAssignedTo) {
+        // Already a name (shouldn't happen, but handle gracefully)
+        assignedToName = rawAssignedTo;
+      }
+
+      const kunder = route.kunder || [];
+
+      kunder.forEach((kunde, idx) => {
+        mfWeekplanState.days[dayKey].stops.push({
+          ruteId: route.id,
+          kundeId: kunde.id,
+          kundeNavn: kunde.navn || 'Ukjent',
+          adresse: [kunde.adresse, kunde.poststed].filter(Boolean).join(', '),
+          assignedTo: assignedToName,
+          assignedToId: assignedToId,
+          estimertTid: kunde.estimert_tid || 30,
+          rekkefolge: kunde.rekkefolge || idx
+        });
+      });
+
+      // Sort stops by rekkefolge
+      mfWeekplanState.days[dayKey].stops.sort((a, b) => a.rekkefolge - b.rekkefolge);
+
+      // Track known route IDs for this day (needed for delete/update save logic)
+      if (!mfWeekplanState.days[dayKey].knownRouteIds) {
+        mfWeekplanState.days[dayKey].knownRouteIds = new Set();
+      }
+      mfWeekplanState.days[dayKey].knownRouteIds.add(route.id);
+    });
+
+  } catch (err) {
+    console.error('Mobile weekplan: Error loading week data:', err);
+    mfShowBanner('Kunne ikke laste ukeplan', 'error');
+  }
+
+  if (loading) loading.style.display = 'none';
+  if (container) container.style.display = 'flex';
+
+  mfWeekplanState.dirty = false;
+  mfWpUpdateSaveBtn();
+  mfWpRenderDots();
+  mfWpRenderDays();
+  mfWpInitDragDrop();
+  mfWpSetupScrollSnap();
+}
+
+// ---- Week navigation ----
+
+async function mfWpNavigateWeek(direction) {
+  // Save pending changes before switching week
+  if (mfWpAutoSaveTimer) { clearTimeout(mfWpAutoSaveTimer); mfWpAutoSaveTimer = null; }
+  if (mfWeekplanState.dirty && !mfWpSaving) {
+    await mfWpSave();
+  }
+  const d = new Date(mfWeekplanState.weekStart);
+  d.setDate(d.getDate() + (direction * 7));
+  mfWeekplanState.weekStart = mfWpGetMonday(d);
+  mfWeekplanState.activeDay = 0;
+  mfWpLoadWeek();
+}
+
+// ---- Render day dots ----
+
+function mfWpRenderDots() {
+  const dotsEl = document.getElementById('mfWpDayDots');
+  if (!dotsEl) return;
+
+  let html = '';
+  mfWpDayKeys.forEach((dayKey, i) => {
+    const dayData = mfWeekplanState.days[dayKey];
+    const count = dayData ? dayData.stops.length : 0;
+    const isActive = i === mfWeekplanState.activeDay;
+    const dayDate = dayData ? new Date(dayData.date) : null;
+    const dayLabel = dayDate ? dayDate.getDate() : '';
+    const shortLabel = mfWpDayLabels[i].substring(0, 3);
+
+    html += `
+      <button class="mf-wp-dot ${isActive ? 'active' : ''}" data-action="mfWpScrollToDay" data-args='[${i}]' aria-label="${mfWpDayLabels[i]}">
+        <span class="mf-wp-dot-label">${escapeHtml(shortLabel)}</span>
+        <span class="mf-wp-dot-date">${escapeHtml(String(dayLabel))}</span>
+        ${count > 0 ? `<span class="mf-wp-dot-count">${count}</span>` : ''}
+      </button>
+    `;
+  });
+
+  dotsEl.innerHTML = html;
+}
+
+// ---- Render all days ----
+
+function mfWpRenderDays() {
+  const container = document.getElementById('mfWpDaysContainer');
+  if (!container) return;
+
+  let html = '';
+  mfWpDayKeys.forEach((dayKey, i) => {
+    html += mfWpRenderDay(dayKey, i);
+  });
+
+  container.innerHTML = html;
+}
+
+// ---- Render one day column ----
+
+function mfWpRenderDay(dayKey, dayIndex) {
+  const dayData = mfWeekplanState.days[dayKey];
+  if (!dayData) return '';
+
+  const dayDate = new Date(dayData.date);
+  const dayNum = dayDate.getDate();
+  const monthName = dayDate.toLocaleDateString('nb-NO', { month: 'short' });
+  const stops = dayData.stops || [];
+  const todayStr = mfWpFormatDate(new Date());
+  const isToday = dayData.date === todayStr;
+
+  // Group stops by technician
+  const techGroups = new Map();
+  const unassigned = [];
+
+  stops.forEach((stop, idx) => {
+    const tech = stop.assignedTo || '';
+    if (!tech) {
+      unassigned.push({ ...stop, displayIndex: idx + 1 });
+    } else {
+      if (!techGroups.has(tech)) {
+        techGroups.set(tech, []);
+      }
+      techGroups.get(tech).push({ ...stop, displayIndex: idx + 1 });
+    }
+  });
+
+  let stopsHtml = '';
+
+  // Render tech groups
+  techGroups.forEach((techStops, techName) => {
+    const initials = mfWpGetInitials(techName);
+    const techId = techStops[0]?.assignedToId || '';
+
+    stopsHtml += `
+      <div class="mf-wp-tech-group" data-tech-name="${escapeHtml(techName)}">
+        <div class="mf-wp-tech-header">
+          <span class="mf-wp-tech-avatar">${escapeHtml(initials)}</span>
+          <span class="mf-wp-tech-name">${escapeHtml(techName)}</span>
+          <span class="mf-wp-tech-count">${techStops.length} stopp</span>
+        </div>
+        ${techStops.map((stop, idx) => mfWpRenderStop(stop, dayKey, idx)).join('')}
+      </div>
+    `;
+  });
+
+  // Render unassigned stops
+  if (unassigned.length > 0) {
+    stopsHtml += `
+      <div class="mf-wp-tech-group mf-wp-unassigned" data-tech-name="">
+        <div class="mf-wp-tech-header">
+          <span class="mf-wp-tech-avatar mf-wp-tech-unassigned">?</span>
+          <span class="mf-wp-tech-name">Ikke tildelt</span>
+          <span class="mf-wp-tech-count">${unassigned.length} stopp</span>
+        </div>
+        ${unassigned.map((stop, idx) => mfWpRenderStop(stop, dayKey, idx)).join('')}
+      </div>
+    `;
+  }
+
+  // Empty state
+  if (stops.length === 0) {
+    stopsHtml = `
+      <div class="mf-wp-empty">
+        <i class="fas fa-calendar-plus" aria-hidden="true"></i>
+        <p>Ingen stopp</p>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="mf-weekplan-day ${isToday ? 'mf-wp-today' : ''}" data-day="${escapeHtml(dayKey)}" data-day-index="${dayIndex}">
+      <div class="mf-weekplan-day-header">
+        <div class="mf-wp-day-title">
+          <h4>${escapeHtml(mfWpDayLabels[dayIndex])} ${dayNum}. ${escapeHtml(monthName)}</h4>
+          ${isToday ? '<span class="mf-wp-today-badge">I dag</span>' : ''}
+        </div>
+        <div class="mf-wp-day-meta">
+          <span class="mf-day-count">${stops.length} stopp</span>
+          ${stops.length > 0 ? `<button class="mf-day-assign-all" data-action="mfWpShowAssignAll" data-args='["${escapeHtml(dayKey)}"]' title="Tildel alle" aria-label="Tildel alle">
+            <i class="fas fa-user-check" aria-hidden="true"></i>
+          </button>` : ''}
+          <button class="mf-day-add" data-action="mfWpAddCustomer" data-args='["${escapeHtml(dayKey)}"]' title="Legg til kunde" aria-label="Legg til kunde">
+            <i class="fas fa-plus" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+      <div class="mf-wp-stops-list" data-day="${escapeHtml(dayKey)}">
+        ${stopsHtml}
+      </div>
+    </div>
+  `;
+}
+
+// ---- Render single stop card ----
+
+function mfWpRenderStop(stop, dayKey, index) {
+  const estMin = stop.estimertTid || 30;
+  const assignedLabel = stop.assignedTo ? escapeHtml(stop.assignedTo) : '';
+  return `
+    <div class="mf-wp-stop" data-kunde-id="${stop.kundeId}" data-day="${escapeHtml(dayKey)}" data-rute-id="${stop.ruteId}">
+      <div class="mf-wp-stop-delete" aria-hidden="true">
+        <i class="fas fa-trash-alt" aria-hidden="true"></i>
+      </div>
+      <div class="mf-wp-stop-content">
+        <div class="mf-wp-stop-num">${index + 1}</div>
+        <div class="mf-wp-stop-info">
+          <span class="mf-wp-stop-name">${escapeHtml(stop.kundeNavn)}</span>
+          <span class="mf-wp-stop-addr">${escapeHtml(stop.adresse)}</span>
+          <span class="mf-wp-stop-meta">
+            ${assignedLabel ? `<span class="mf-wp-stop-tech"><i class="fas fa-user" aria-hidden="true"></i> ${assignedLabel}</span>` : ''}
+            <span class="mf-wp-stop-time">
+              <i class="fas fa-clock" aria-hidden="true"></i>
+              <input type="number" class="mf-wp-est-input" value="${estMin}" min="5" step="5"
+                data-on-change="mfWpSetEstimertTidHandler" data-args='[${stop.kundeId}, "${escapeHtml(dayKey)}"]'>min
+            </span>
+          </span>
+        </div>
+        <div class="mf-wp-stop-actions">
+          <button class="mf-wp-reassign" data-action="mfWpShowReassign" data-args='[${stop.kundeId}, "${escapeHtml(dayKey)}"]' title="Tilordne teammedlem" aria-label="Tilordne teammedlem">
+            <i class="fas fa-user" aria-hidden="true"></i>
+          </button>
+          <button class="mf-wp-delete-btn" data-action="mfWpRemoveStop" data-args='[${stop.kundeId}, "${escapeHtml(dayKey)}"]' title="Fjern kunde" aria-label="Fjern kunde">
+            <i class="fas fa-times" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---- Scroll snap setup ----
+
+function mfWpSetupScrollSnap() {
+  const container = document.getElementById('mfWpDaysContainer');
+  if (!container) return;
+
+  let scrollTimer = null;
+  container.addEventListener('scroll', () => {
+    if (scrollTimer) clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+      // Detect which day is in view
+      const scrollLeft = container.scrollLeft;
+      const dayWidth = container.querySelector('.mf-weekplan-day')?.offsetWidth || container.clientWidth;
+      const gap = 12;
+      const newIndex = Math.round(scrollLeft / (dayWidth + gap));
+      const clampedIndex = Math.max(0, Math.min(4, newIndex));
+
+      if (clampedIndex !== mfWeekplanState.activeDay) {
+        mfWeekplanState.activeDay = clampedIndex;
+        mfWpRenderDots();
+      }
+    }, 100);
+  }, { passive: true });
+}
+
+function mfWpScrollToDay(dayIndex) {
+  mfWeekplanState.activeDay = dayIndex;
+  mfWpRenderDots();
+
+  const container = document.getElementById('mfWpDaysContainer');
+  if (!container) return;
+
+  const dayEl = container.querySelector(`.mf-weekplan-day[data-day-index="${dayIndex}"]`);
+  if (dayEl) {
+    dayEl.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+  }
+}
+
+// ---- Touch drag-and-drop ----
+
+function mfWpInitDragDrop() {
+  const container = document.getElementById('mfWpDaysContainer');
+  if (!container) return;
+
+  // Remove old listeners by replacing the container's event delegation
+  container.addEventListener('touchstart', mfWpOnTouchStart, { passive: false });
+  container.addEventListener('touchmove', mfWpOnTouchMove, { passive: false });
+  container.addEventListener('touchend', mfWpOnTouchEnd, { passive: false });
+
+  // Swipe-to-delete setup
+  mfWpInitSwipeDelete(container);
+}
+
+function mfWpOnTouchStart(e) {
+  const stopEl = e.target.closest('.mf-wp-stop');
+  if (!stopEl) return;
+
+  // Don't intercept taps on buttons
+  if (e.target.closest('button') || e.target.closest('a')) return;
+
+  const touch = e.touches[0];
+  mfWpDragState.startX = touch.clientX;
+  mfWpDragState.startY = touch.clientY;
+  mfWpDragState.element = stopEl;
+  mfWpDragState.scrolling = false;
+
+  // Start long press timer (300ms)
+  mfWpDragState.longPressTimer = setTimeout(() => {
+    if (!mfWpDragState.scrolling) {
+      mfWpActivateDrag(stopEl, touch);
+    }
+  }, 300);
+}
+
+function mfWpOnTouchMove(e) {
+  if (mfWpDragState.active) {
+    e.preventDefault();
+    const touch = e.touches[0];
+    mfWpMoveDrag(touch);
+    return;
+  }
+
+  // Check if user has moved enough to be considered scrolling
+  if (mfWpDragState.longPressTimer) {
+    const touch = e.touches[0];
+    const dx = Math.abs(touch.clientX - mfWpDragState.startX);
+    const dy = Math.abs(touch.clientY - mfWpDragState.startY);
+    if (dx > 10 || dy > 10) {
+      // It's a scroll, cancel long press
+      clearTimeout(mfWpDragState.longPressTimer);
+      mfWpDragState.longPressTimer = null;
+      mfWpDragState.scrolling = true;
+    }
+  }
+}
+
+function mfWpOnTouchEnd(e) {
+  if (mfWpDragState.longPressTimer) {
+    clearTimeout(mfWpDragState.longPressTimer);
+    mfWpDragState.longPressTimer = null;
+  }
+
+  if (mfWpDragState.active) {
+    mfWpEndDrag(e);
+    return;
+  }
+}
+
+function mfWpActivateDrag(stopEl, touch) {
+  const kundeId = parseInt(stopEl.dataset.kundeId);
+  const fromDay = stopEl.dataset.day;
+  if (!kundeId || !fromDay) return;
+
+  // Haptic feedback
+  if (navigator.vibrate) navigator.vibrate(50);
+
+  mfWpDragState.active = true;
+  mfWpDragState.kundeId = kundeId;
+  mfWpDragState.fromDay = fromDay;
+
+  // Get the stop content element (not the delete bg)
+  const contentEl = stopEl.querySelector('.mf-wp-stop-content');
+
+  // Create ghost
+  const rect = stopEl.getBoundingClientRect();
+  const ghost = stopEl.cloneNode(true);
+  ghost.className = 'mf-wp-stop mf-wp-drag-ghost';
+  ghost.style.position = 'fixed';
+  ghost.style.width = rect.width + 'px';
+  ghost.style.left = rect.left + 'px';
+  ghost.style.top = rect.top + 'px';
+  ghost.style.zIndex = '10001';
+  ghost.style.pointerEvents = 'none';
+
+  document.body.appendChild(ghost);
+  mfWpDragState.ghostEl = ghost;
+  mfWpDragState.offsetX = touch.clientX - rect.left;
+  mfWpDragState.offsetY = touch.clientY - rect.top;
+
+  // Mark original as placeholder
+  stopEl.classList.add('mf-wp-drag-placeholder');
+
+  // Show drop zones
+  document.querySelectorAll('.mf-wp-stops-list').forEach(list => {
+    list.classList.add('mf-wp-drop-active');
+  });
+}
+
+function mfWpMoveDrag(touch) {
+  const ghost = mfWpDragState.ghostEl;
+  if (!ghost) return;
+
+  ghost.style.left = (touch.clientX - mfWpDragState.offsetX) + 'px';
+  ghost.style.top = (touch.clientY - mfWpDragState.offsetY) + 'px';
+
+  // Detect drop target via elementFromPoint
+  ghost.style.display = 'none';
+  const target = document.elementFromPoint(touch.clientX, touch.clientY);
+  ghost.style.display = '';
+
+  // Remove all drop indicators
+  document.querySelectorAll('.mf-wp-drop-indicator').forEach(el => el.remove());
+  document.querySelectorAll('.mf-wp-stop.mf-wp-drop-above').forEach(el => el.classList.remove('mf-wp-drop-above'));
+  document.querySelectorAll('.mf-wp-stop.mf-wp-drop-below').forEach(el => el.classList.remove('mf-wp-drop-below'));
+
+  if (!target) return;
+
+  // Find nearest stop card or stops list
+  const targetStop = target.closest('.mf-wp-stop:not(.mf-wp-drag-placeholder):not(.mf-wp-drag-ghost)');
+  const targetList = target.closest('.mf-wp-stops-list');
+
+  if (targetStop) {
+    const rect = targetStop.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    if (touch.clientY < midY) {
+      targetStop.classList.add('mf-wp-drop-above');
+    } else {
+      targetStop.classList.add('mf-wp-drop-below');
+    }
+  } else if (targetList) {
+    // Dropping into empty area of the list
+    targetList.classList.add('mf-wp-drop-zone-highlight');
+    setTimeout(() => targetList.classList.remove('mf-wp-drop-zone-highlight'), 200);
+  }
+
+  // Auto-scroll horizontal container if near edges
+  const container = document.getElementById('mfWpDaysContainer');
+  if (container) {
+    const cRect = container.getBoundingClientRect();
+    const edgeThreshold = 50;
+    if (touch.clientX < cRect.left + edgeThreshold) {
+      container.scrollLeft -= 8;
+    } else if (touch.clientX > cRect.right - edgeThreshold) {
+      container.scrollLeft += 8;
+    }
+  }
+}
+
+function mfWpEndDrag() {
+  if (!mfWpDragState.active) return;
+
+  const ghost = mfWpDragState.ghostEl;
+  if (ghost) {
+    // Find drop target under ghost center
+    const ghostRect = ghost.getBoundingClientRect();
+    const cx = ghostRect.left + ghostRect.width / 2;
+    const cy = ghostRect.top + ghostRect.height / 2;
+
+    ghost.style.display = 'none';
+    const target = document.elementFromPoint(cx, cy);
+    ghost.style.display = '';
+
+    if (target) {
+      const targetStop = target.closest('.mf-wp-stop:not(.mf-wp-drag-placeholder):not(.mf-wp-drag-ghost)');
+      const targetDay = target.closest('.mf-weekplan-day');
+
+      if (targetDay) {
+        const toDay = targetDay.dataset.day;
+        let newIndex = -1;
+
+        if (targetStop) {
+          const targetKundeId = parseInt(targetStop.dataset.kundeId);
+          const targetDayData = mfWeekplanState.days[toDay];
+          const targetIdx = targetDayData.stops.findIndex(s => s.kundeId === targetKundeId);
+
+          const rect = targetStop.getBoundingClientRect();
+          const midY = rect.top + rect.height / 2;
+          newIndex = cy < midY ? targetIdx : targetIdx + 1;
+        } else {
+          // Drop at end
+          newIndex = mfWeekplanState.days[toDay].stops.length;
+        }
+
+        mfWpOnDrop(mfWpDragState.kundeId, mfWpDragState.fromDay, toDay, newIndex);
+      }
+    }
+
+    ghost.remove();
+  }
+
+  // Cleanup
+  mfWpCleanupDrag();
+  mfWpRenderDays();
+  mfWpRenderDots();
+  mfWpInitDragDrop();
+}
+
+function mfWpCleanupDrag() {
+  if (mfWpDragState.longPressTimer) {
+    clearTimeout(mfWpDragState.longPressTimer);
+  }
+  if (mfWpDragState.ghostEl) {
+    mfWpDragState.ghostEl.remove();
+  }
+
+  document.querySelectorAll('.mf-wp-drag-placeholder').forEach(el => el.classList.remove('mf-wp-drag-placeholder'));
+  document.querySelectorAll('.mf-wp-drop-active').forEach(el => el.classList.remove('mf-wp-drop-active'));
+  document.querySelectorAll('.mf-wp-drop-above').forEach(el => el.classList.remove('mf-wp-drop-above'));
+  document.querySelectorAll('.mf-wp-drop-below').forEach(el => el.classList.remove('mf-wp-drop-below'));
+  document.querySelectorAll('.mf-wp-drop-indicator').forEach(el => el.remove());
+
+  mfWpDragState = {
+    active: false,
+    element: null,
+    ghostEl: null,
+    kundeId: null,
+    fromDay: null,
+    startX: 0,
+    startY: 0,
+    offsetX: 0,
+    offsetY: 0,
+    longPressTimer: null,
+    scrolling: false
+  };
+}
+
+// ---- Drop handler ----
+
+function mfWpOnDrop(kundeId, fromDay, toDay, newIndex) {
+  const fromStops = mfWeekplanState.days[fromDay].stops;
+  const stopIdx = fromStops.findIndex(s => s.kundeId === kundeId);
+  if (stopIdx === -1) return;
+
+  const stop = fromStops[stopIdx];
+
+  // Remove from source
+  fromStops.splice(stopIdx, 1);
+
+  // Adjust index if moving within same day and from above target
+  let insertIdx = newIndex;
+  if (fromDay === toDay && stopIdx < newIndex) {
+    insertIdx = Math.max(0, newIndex - 1);
+  }
+
+  // Insert into target
+  const toStops = mfWeekplanState.days[toDay].stops;
+  insertIdx = Math.max(0, Math.min(insertIdx, toStops.length));
+  toStops.splice(insertIdx, 0, stop);
+
+  mfWeekplanState.dirty = true; mfWeekplanState.dirtyGen++;
+  mfWpUpdateSaveBtn();
+  mfWpScheduleAutoSave();
+
+  if (navigator.vibrate) navigator.vibrate(30);
+}
+
+// ---- Swipe-to-delete ----
+
+function mfWpInitSwipeDelete(container) {
+  let swipeState = { el: null, startX: 0, currentX: 0, swiping: false };
+
+  container.addEventListener('touchstart', (e) => {
+    if (mfWpDragState.active) return;
+    const stopContent = e.target.closest('.mf-wp-stop-content');
+    if (!stopContent) return;
+    const stopEl = stopContent.closest('.mf-wp-stop');
+    if (!stopEl) return;
+
+    swipeState.el = stopEl;
+    swipeState.startX = e.touches[0].clientX;
+    swipeState.swiping = false;
+  }, { passive: true });
+
+  container.addEventListener('touchmove', (e) => {
+    if (!swipeState.el || mfWpDragState.active) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - swipeState.startX;
+    const dy = Math.abs(touch.clientY - (swipeState.startY || touch.clientY));
+
+    if (!swipeState.swiping && Math.abs(dx) > 15 && Math.abs(dx) > dy) {
+      swipeState.swiping = true;
+      swipeState.startY = touch.clientY;
+    }
+
+    if (swipeState.swiping && dx < 0) {
+      // Only swipe left
+      const translateX = Math.max(dx, -80);
+      const content = swipeState.el.querySelector('.mf-wp-stop-content');
+      if (content) {
+        content.style.transform = `translateX(${translateX}px)`;
+        content.style.transition = 'none';
+      }
+    }
+  }, { passive: true });
+
+  container.addEventListener('touchend', () => {
+    if (!swipeState.el) return;
+    const content = swipeState.el.querySelector('.mf-wp-stop-content');
+
+    if (swipeState.swiping && content) {
+      const matrix = window.getComputedStyle(content).transform;
+      let currentX = 0;
+      if (matrix && matrix !== 'none') {
+        const values = matrix.split(',');
+        currentX = parseFloat(values[4]) || 0;
+      }
+
+      if (currentX < -50) {
+        // Delete threshold reached
+        const kundeId = parseInt(swipeState.el.dataset.kundeId);
+        const dayKey = swipeState.el.dataset.day;
+        content.style.transition = 'transform 0.2s ease';
+        content.style.transform = 'translateX(-100%)';
+        setTimeout(() => {
+          mfWpRemoveStop(kundeId, dayKey);
+        }, 200);
+      } else {
+        // Snap back
+        content.style.transition = 'transform 0.2s ease';
+        content.style.transform = 'translateX(0)';
+      }
+    }
+
+    swipeState = { el: null, startX: 0, currentX: 0, swiping: false };
+  }, { passive: true });
+}
+
+// ---- Remove stop ----
+
+function mfWpRemoveStop(kundeId, dayKey) {
+  const stops = mfWeekplanState.days[dayKey]?.stops;
+  if (!stops) return;
+
+  const idx = stops.findIndex(s => s.kundeId === kundeId);
+  if (idx === -1) return;
+
+  const removed = stops[idx];
+  const dayDate = mfWeekplanState.days[dayKey]?.date;
+  stops.splice(idx, 1);
+
+  mfWeekplanState.dirty = true; mfWeekplanState.dirtyGen++;
+  mfWpUpdateSaveBtn();
+  mfWpScheduleAutoSave();
+  mfWpRenderDays();
+  mfWpRenderDots();
+  mfWpInitDragDrop();
+
+  // Directly delete any avtaler for this customer on this date
+  // (fixes orphaned avtaler that have stale/missing rute_id)
+  if (dayDate) {
+    mfWpDeleteAvtalerForCustomer(kundeId, dayDate);
+  }
+
+  if (typeof showToast === 'function') showToast(`${removed.kundeNavn} fjernet`, 'info');
+  mfShowBanner(`${removed.kundeNavn} fjernet`, 'info');
+}
+
+// Delete all avtaler for a specific customer on a specific date.
+// Fetches directly from API to find ALL duplicates (the local avtaler array
+// is deduped by loadAvtaler and may miss older orphaned entries).
+async function mfWpDeleteAvtalerForCustomer(kundeId, date) {
+  try {
+    const csrfToken = getCsrfToken();
+
+    // Fetch all avtaler for this date range directly from API
+    // (bypasses the deduped local array which hides duplicates)
+    const resp = await fetch(`/api/avtaler?start=${date}&end=${date}`, {
+      headers: { 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
+    });
+    if (!resp.ok) return;
+    const json = await resp.json();
+    const allAvtaler = json.data || [];
+    const matching = allAvtaler.filter(a => a.kunde_id === kundeId);
+
+    if (matching.length === 0) return;
+
+    await Promise.all(matching.map(async (a) => {
+      try {
+        await fetch(`/api/avtaler/${a.id}`, {
+          method: 'DELETE',
+          headers: { 'X-CSRF-Token': csrfToken },
+          credentials: 'include'
+        });
+      } catch { /* ignore — auto-save will retry */ }
+    }));
+
+    // Remove from global avtaler array
+    if (typeof avtaler !== 'undefined') {
+      const idsToRemove = new Set(matching.map(a => a.id));
+      const newAvtaler = avtaler.filter(a => !idsToRemove.has(a.id));
+      avtaler.length = 0;
+      avtaler.push(...newAvtaler);
+    }
+  } catch (e) {
+    console.error('[mfWpDeleteAvtaler] Error:', e);
+  }
+}
+
+// ---- Reassign technician ----
+
+function mfWpShowReassign(kundeId, dayKey) {
+  const stops = mfWeekplanState.days[dayKey]?.stops;
+  if (!stops) return;
+  const stop = stops.find(s => s.kundeId === kundeId);
+  if (!stop) return;
+
+  const members = mfWeekplanState.teamMembers || [];
+  let memberOptions = '';
+  members.forEach(m => {
+    const name = m.navn || m.name || '';
+    const selected = name === stop.assignedTo ? 'selected' : '';
+    memberOptions += `<option value="${escapeHtml(String(m.id))}" data-name="${escapeHtml(name)}" ${selected}>${escapeHtml(name)}</option>`;
+  });
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfWpReassignSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfWpCloseReassign"></div>
+    <div class="mf-sheet-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Tilordne teammedlem</h3>
+      <p class="mf-wp-reassign-customer">${escapeHtml(stop.kundeNavn)}</p>
+
+      <label class="mf-sheet-label">Velg teammedlem</label>
+      <select id="mfWpReassignSelect" class="mf-sheet-select">
+        <option value="">Ikke tildelt</option>
+        ${memberOptions}
+      </select>
+
+      <button class="mf-btn mf-btn-primary mf-sheet-submit" data-action="mfWpConfirmReassign" data-args='[${kundeId}, "${escapeHtml(dayKey)}"]'>
+        <i class="fas fa-check" aria-hidden="true"></i> Tilordne
+      </button>
+    </div>
+  `;
+
+  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+}
+
+function mfWpCloseReassign() {
+  const sheet = document.getElementById('mfWpReassignSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+}
+
+function mfWpConfirmReassign(kundeId, dayKey) {
+  const select = document.getElementById('mfWpReassignSelect');
+  if (!select) return;
+
+  const newTechId = select.value ? parseInt(select.value) : null;
+  const selectedOption = select.options[select.selectedIndex];
+  const newTechName = selectedOption?.dataset?.name || '';
+
+  mfWpReassign(kundeId, dayKey, newTechId, newTechName);
+  mfWpCloseReassign();
+}
+
+function mfWpReassign(kundeId, dayKey, newTechId, newTechName) {
+  const stops = mfWeekplanState.days[dayKey]?.stops;
+  if (!stops) return;
+
+  const stop = stops.find(s => s.kundeId === kundeId);
+  if (!stop) return;
+
+  stop.assignedTo = newTechName;
+  stop.assignedToId = newTechId;
+
+  mfWeekplanState.dirty = true; mfWeekplanState.dirtyGen++;
+  mfWpUpdateSaveBtn();
+  mfWpScheduleAutoSave();
+  mfWpRenderDays();
+  mfWpInitDragDrop();
+}
+
+// ---- Assign all stops in a day ----
+
+function mfWpShowAssignAll(dayKey) {
+  const stops = mfWeekplanState.days[dayKey]?.stops;
+  if (!stops || stops.length === 0) return;
+
+  const members = mfWeekplanState.teamMembers || [];
+  let memberOptions = '';
+  members.forEach(m => {
+    const name = m.navn || m.name || '';
+    memberOptions += `<option value="${escapeHtml(String(m.id))}" data-name="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+  });
+
+  const dayLabel = mfWpDayLabels[mfWpDayKeys.indexOf(dayKey)];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfWpAssignAllSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfWpCloseAssignAll"></div>
+    <div class="mf-sheet-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Tildel teammedlem &mdash; ${escapeHtml(dayLabel)}</h3>
+      <p style="color:var(--text-secondary);margin:0 0 16px;">Tilordner alle ${stops.length} stopp til valgt teammedlem</p>
+
+      <label class="mf-sheet-label">Velg teammedlem</label>
+      <select id="mfWpAssignAllSelect" class="mf-sheet-select">
+        <option value="">Ikke tildelt</option>
+        ${memberOptions}
+      </select>
+
+      <button class="mf-btn mf-btn-primary mf-sheet-submit" data-action="mfWpConfirmAssignAll" data-args='["${escapeHtml(dayKey)}"]'>
+        <i class="fas fa-check" aria-hidden="true"></i> Tildel alle
+      </button>
+    </div>
+  `;
+
+  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+}
+
+function mfWpCloseAssignAll() {
+  const sheet = document.getElementById('mfWpAssignAllSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+}
+
+function mfWpConfirmAssignAll(dayKey) {
+  const select = document.getElementById('mfWpAssignAllSelect');
+  if (!select) return;
+
+  const newTechId = select.value ? parseInt(select.value) : null;
+  const selectedOption = select.options[select.selectedIndex];
+  const newTechName = selectedOption?.dataset?.name || '';
+
+  const stops = mfWeekplanState.days[dayKey]?.stops;
+  if (!stops) return;
+
+  stops.forEach(stop => {
+    stop.assignedTo = newTechName;
+    stop.assignedToId = newTechId;
+  });
+
+  mfWeekplanState.dirty = true; mfWeekplanState.dirtyGen++;
+  mfWpUpdateSaveBtn();
+  mfWpScheduleAutoSave();
+  mfWpRenderDays();
+  mfWpInitDragDrop();
+  mfWpCloseAssignAll();
+
+  const label = newTechName || 'Ikke tildelt';
+  mfShowBanner(`${stops.length} stopp tildelt ${label}`, 'success');
+}
+
+// ---- Add customer ----
+
+function mfWpAddCustomer(dayKey) {
+  // Show method picker: search vs area browser
+  if (typeof mfWpShowAddMethodPicker === 'function') {
+    mfWpShowAddMethodPicker(dayKey);
+    return;
+  }
+  // Fallback to direct search if area module not loaded
+  mfWpAddCustomerDirect(dayKey);
+}
+
+function mfWpAddCustomerDirect(dayKey) {
+  let searchTimer = null;
+
+  // Build team member dropdown
+  const members = mfWeekplanState.teamMembers || [];
+  let memberOptions = '<option value="">Ikke tildelt</option>';
+  members.forEach(m => {
+    memberOptions += `<option value="${m.id}" data-name="${escapeHtml(m.navn)}">${escapeHtml(m.navn)}</option>`;
+  });
+
+  // Pre-select the most recent team member used on this day
+  const dayStops = mfWeekplanState.days[dayKey]?.stops || [];
+  const lastAssigned = [...dayStops].reverse().find(s => s.assignedToId);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfWpAddSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfWpCloseAddSheet"></div>
+    <div class="mf-sheet-content mf-wp-add-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Legg til kunde — ${escapeHtml(mfWpDayLabels[mfWpDayKeys.indexOf(dayKey)])}</h3>
+
+      <label class="mf-sheet-label">Teammedlem</label>
+      <select id="mfWpAddMemberSelect" class="mf-sheet-select">${memberOptions}</select>
+
+      <label class="mf-sheet-label">Søk etter kunde</label>
+      <input type="text" id="mfWpAddSearch" class="mf-search-input" placeholder="Søk navn, adresse..." autocomplete="off">
+
+      <div id="mfWpAddResults" class="mf-assign-results"></div>
+    </div>
+  `;
+
+  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  requestAnimationFrame(() => {
+    overlay.classList.add('open');
+    // Pre-select last used team member on this day
+    const memberSelect = document.getElementById('mfWpAddMemberSelect');
+    if (memberSelect && lastAssigned?.assignedToId) {
+      memberSelect.value = String(lastAssigned.assignedToId);
+    }
+    document.getElementById('mfWpAddSearch')?.focus();
+  });
+
+  // Setup search handler
+  const searchInput = document.getElementById('mfWpAddSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value.trim();
+      if (searchTimer) clearTimeout(searchTimer);
+      if (query.length < 2) {
+        document.getElementById('mfWpAddResults').innerHTML = '';
+        return;
+      }
+      searchTimer = setTimeout(() => mfWpDoCustomerSearch(query, dayKey), 300);
+    });
+  }
+}
+
+async function mfWpDoCustomerSearch(query, dayKey) {
+  const resultsDiv = document.getElementById('mfWpAddResults');
+  if (!resultsDiv) return;
+
+  try {
+    const resp = await fetch(`/api/kunder?search=${encodeURIComponent(query)}&limit=10`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    // Paginated response: json.data is { data: [...], total, pagination }
+    const rawData = json.success ? json.data : json;
+    const kunder = Array.isArray(rawData) ? rawData : (rawData?.data || []);
+
+    if (kunder.length === 0) {
+      resultsDiv.innerHTML = '<p class="mf-assign-empty">Ingen treff</p>';
+      return;
+    }
+
+    // Filter out already-added customers
+    const existingIds = new Set(mfWeekplanState.days[dayKey].stops.map(s => s.kundeId));
+
+    let html = '';
+    kunder.forEach(k => {
+      const address = [k.adresse, k.poststed].filter(Boolean).join(', ');
+      const alreadyAdded = existingIds.has(k.id);
+
+      html += `
+        <div class="mf-assign-row ${alreadyAdded ? 'mf-assign-disabled' : ''}" ${alreadyAdded ? '' : `data-action="mfWpSelectCustomerToAdd" data-args='[${k.id}, "${escapeHtml(dayKey)}"]'`}>
+          <div class="mf-assign-row-info">
+            <strong>${escapeHtml(k.navn)}</strong>
+            ${address ? `<span>${escapeHtml(address)}</span>` : ''}
+          </div>
+          ${alreadyAdded ? '<span class="mf-wp-already-badge">Allerede lagt til</span>' : '<i class="fas fa-plus" aria-hidden="true"></i>'}
+        </div>
+      `;
+    });
+    resultsDiv.innerHTML = html;
+  } catch {
+    resultsDiv.innerHTML = '<p class="mf-assign-empty">Feil ved søk</p>';
+  }
+}
+
+function mfWpSelectCustomerToAdd(kundeId, dayKey) {
+  // Close the sheet
+  mfWpCloseAddSheet();
+
+  // Add the customer to the day
+  // We need customer data — fetch it
+  mfWpAddCustomerToDay(kundeId, dayKey);
+}
+
+async function mfWpAddCustomerToDay(kundeId, dayKey) {
+  try {
+    const resp = await fetch(`/api/kunder/${kundeId}`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    const kunde = json.success ? json.data : json;
+
+    if (!kunde) {
+      mfShowBanner('Kunne ikke finne kunden', 'error');
+      return;
+    }
+
+    const stops = mfWeekplanState.days[dayKey].stops;
+
+    // Use selected team member from add-customer sheet (if open), else inherit from day
+    let assignedTo = '';
+    let assignedToId = null;
+    const memberSelect = document.getElementById('mfWpAddMemberSelect');
+    if (memberSelect && memberSelect.value) {
+      assignedToId = parseInt(memberSelect.value);
+      const selectedOption = memberSelect.options[memberSelect.selectedIndex];
+      assignedTo = selectedOption?.dataset?.name || '';
+    } else {
+      // Fallback: inherit from existing stops
+      const existingAssigned = stops.find(s => s.assignedToId);
+      if (existingAssigned) {
+        assignedTo = existingAssigned.assignedTo || '';
+        assignedToId = existingAssigned.assignedToId || null;
+      }
+    }
+
+    stops.push({
+      ruteId: null, // Will be created on save
+      kundeId: kunde.id,
+      kundeNavn: kunde.navn || 'Ukjent',
+      adresse: [kunde.adresse, kunde.poststed].filter(Boolean).join(', '),
+      assignedTo,
+      assignedToId,
+      estimertTid: kunde.estimert_tid || 30,
+      rekkefolge: stops.length
+    });
+
+    mfWeekplanState.dirty = true; mfWeekplanState.dirtyGen++;
+    mfWpUpdateSaveBtn();
+    mfWpRenderDays();
+    mfWpRenderDots();
+    mfWpInitDragDrop();
+
+    mfShowBanner(`${escapeHtml(kunde.navn)} lagt til`, 'success');
+  } catch {
+    mfShowBanner('Feil ved å legge til kunde', 'error');
+  }
+}
+
+function mfWpCloseAddSheet() {
+  const sheet = document.getElementById('mfWpAddSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+}
+
+// ---- Save single day ----
+
+async function mfWpSaveDay(dayKey, csrfToken) {
+  let errors = 0;
+  const dayData = mfWeekplanState.days[dayKey];
+  if (!dayData) return 0;
+  const stops = dayData.stops;
+  const knownRouteIds = dayData.knownRouteIds || new Set();
+  const dayLabel = mfWpDayLabels[mfWpDayKeys.indexOf(dayKey)];
+  const weekNum = mfWpGetWeekNumber(mfWeekplanState.weekStart);
+
+  // Group ALL stops by their CURRENT assignedToId (not by ruteId).
+  // This ensures reassigned stops end up in the correct route.
+  const byMember = new Map(); // techKey → { techId, techName, stops: [] }
+  stops.forEach((stop, idx) => {
+    const techKey = stop.assignedToId ? String(stop.assignedToId) : 'none';
+    if (!byMember.has(techKey)) {
+      byMember.set(techKey, {
+        techId: stop.assignedToId || null,
+        techName: stop.assignedTo || '',
+        stops: []
+      });
+    }
+    byMember.get(techKey).stops.push({ ...stop, newOrder: idx });
+  });
+
+  // For each member group, find an existing route to reuse (or create new)
+  const usedRouteIds = new Set();
+
+  await Promise.all([...byMember.entries()].map(async ([techKey, group]) => {
+    if (group.stops.length === 0) return;
+    const kundeIds = group.stops.sort((a, b) => a.newOrder - b.newOrder).map(s => s.kundeId);
+    const techId = group.techId;
+    const techName = group.techName;
+
+    // Try to reuse an existing route that belonged to this member
+    let ruteId = null;
+    for (const stop of group.stops) {
+      if (stop.ruteId && knownRouteIds.has(stop.ruteId) && !usedRouteIds.has(stop.ruteId)) {
+        ruteId = stop.ruteId;
+        break;
+      }
+    }
+
+    if (ruteId) {
+      // Update existing route
+      usedRouteIds.add(ruteId);
+      try {
+        const resp = await fetch(`/api/ruter/${ruteId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+          credentials: 'include',
+          body: JSON.stringify({ kunde_ids: kundeIds, planlagt_dato: dayData.date })
+        });
+        if (!resp.ok) { errors++; } else {
+          await mfWpAssignRoute(ruteId, techId, techName, dayData.date, csrfToken);
+          // Update stops with ruteId
+          for (const s of group.stops) {
+            const found = dayData.stops.find(ds => ds.kundeId === s.kundeId);
+            if (found) found.ruteId = ruteId;
+          }
+        }
+      } catch { errors++; }
+    } else {
+      // Create new route
+      const suffix = techName ? ` (${techName})` : '';
+      try {
+        const createResp = await fetch('/api/ruter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+          credentials: 'include',
+          body: JSON.stringify({ navn: `Uke ${weekNum} - ${dayLabel}${suffix}`, planlagt_dato: dayData.date, kunde_ids: kundeIds })
+        });
+        if (!createResp.ok) { errors++; } else {
+          const createJson = await createResp.json();
+          if (!createJson.success) { errors++; }
+          else if (createJson.data?.id) {
+            const newRouteId = createJson.data.id;
+            usedRouteIds.add(newRouteId);
+            for (const s of group.stops) {
+              const found = dayData.stops.find(ds => ds.kundeId === s.kundeId);
+              if (found) found.ruteId = newRouteId;
+            }
+            if (!dayData.knownRouteIds) dayData.knownRouteIds = new Set();
+            dayData.knownRouteIds.add(newRouteId);
+            await mfWpAssignRoute(newRouteId, techId, techName, dayData.date, csrfToken);
+          }
+        }
+      } catch { errors++; }
+    }
+  }));
+
+  // Delete routes that lost all stops (no longer used by any member group)
+  const routesToDelete = [...knownRouteIds].filter(id => !usedRouteIds.has(id));
+  await Promise.all(routesToDelete.map(async ruteId => {
+    try {
+      const resp = await fetch(`/api/ruter/${ruteId}`, { method: 'DELETE', headers: { 'X-CSRF-Token': csrfToken }, credentials: 'include' });
+      if (!resp.ok) { errors++; } else { knownRouteIds.delete(ruteId); }
+    } catch { errors++; }
+  }));
+
+  return errors;
+}
+
+// ---- Save changes ----
+
+async function mfWpSave() {
+  if (!mfWeekplanState.dirty || mfWpSaving) return;
+  mfWpSaving = true;
+  const saveGen = mfWeekplanState.dirtyGen; // snapshot — detect concurrent edits
+
+  const csrfToken = getCsrfToken();
+  let errors = 0;
+
+  try {
+    // Save all days in parallel for speed
+    const dayResults = await Promise.all(mfWpDayKeys.map(dayKey => mfWpSaveDay(dayKey, csrfToken)));
+    errors = dayResults.reduce((sum, e) => sum + e, 0);
+
+    if (errors > 0) {
+      mfShowBanner(`Lagret med ${errors} feil`, 'warning');
+      if (typeof showToast === 'function') showToast(`Lagret med ${errors} feil`, 'warning');
+    } else {
+      mfShowBanner('Lagret', 'success');
+      if (typeof showToast === 'function') showToast('Ukeplan lagret', 'success');
+    }
+
+    // Only clear dirty if no new changes happened during save AND no errors
+    if (mfWeekplanState.dirtyGen === saveGen && errors === 0) {
+      mfWeekplanState.dirty = false;
+    }
+
+    // Clear sidebar weekplan planned arrays to avoid showing duplicates
+    // (customers are now saved as routes/avtaler in the database)
+    if (typeof weekPlanState !== 'undefined' && weekPlanState.days) {
+      for (const key of Object.keys(weekPlanState.days)) {
+        if (weekPlanState.days[key]?.planned) {
+          weekPlanState.days[key].planned = [];
+        }
+      }
+    }
+
+    // Reload avtaler + week matrix so all views reflect changes
+    // MUST await so closing the editor doesn't show stale data
+    if (typeof loadAvtaler === 'function') {
+      await loadAvtaler();
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof renderCalendar === 'function') renderCalendar();
+      if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+    }
+    if (typeof raoLoadWeekData === 'function') raoLoadWeekData();
+    // Refresh mobile calendar
+    if (typeof mfLoadCalendarData === 'function') {
+      try { await mfLoadCalendarData(); } catch (e) { /* ignore */ }
+    }
+  } catch (err) {
+    console.error('Mobile weekplan: Save error:', err);
+    mfShowBanner('Feil ved lagring: ' + err.message, 'error');
+  }
+
+  mfWpSaving = false;
+
+  // Re-schedule auto-save if there are still unsaved changes
+  // (new edits during save, or errors that prevented clearing dirty)
+  if (mfWeekplanState.dirty) {
+    mfWpScheduleAutoSave();
+  }
+}
+
+// ---- Route assignment helper ----
+
+async function mfWpAssignRoute(ruteId, techId, techName, date, csrfToken) {
+  try {
+    const resp = await fetch(`/api/ruter/${ruteId}/assign`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        assigned_to: techId || null,
+        planned_date: date,
+        technician_name: techName || ''
+      })
+    });
+    if (!resp.ok) {
+      console.error('Mobile weekplan: assign route failed:', resp.status);
+    }
+  } catch (e) {
+    console.error('Mobile weekplan: assign route error:', e);
+  }
+}
+
+// ---- UI helpers ----
+
+function mfWpUpdateSaveBtn() {
+  // No-op: auto-save handles everything
+}
+
+// ---- Estimated time editing in weekplan ----
+
+function mfWpSetEstimertTidHandler(kundeId, dayKey, el) {
+  const val = Math.max(5, parseInt(el.value) || 30);
+  el.value = val;
+
+  // Update local state
+  const stops = mfWeekplanState.days[dayKey]?.stops;
+  if (stops) {
+    const stop = stops.find(s => s.kundeId === kundeId);
+    if (stop) {
+      stop.estimertTid = val;
+      mfWeekplanState.dirty = true; mfWeekplanState.dirtyGen++;
+      mfWpScheduleAutoSave();
+    }
+  }
+
+  // Also save to customer record so admin sees the update
+  mfWpSaveEstimertTidToKunde(kundeId, val);
+}
+
+let mfWpEstSaveTimer = null;
+
+function mfWpSaveEstimertTidToKunde(kundeId, minutes) {
+  if (mfWpEstSaveTimer) clearTimeout(mfWpEstSaveTimer);
+  mfWpEstSaveTimer = setTimeout(async () => {
+    try {
+      const csrfToken = getCsrfToken();
+      await fetch(`/api/kunder/${kundeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        credentials: 'include',
+        body: JSON.stringify({ estimert_tid: minutes })
+      });
+    } catch (err) {
+      console.warn('Mobile weekplan: Could not save estimated time:', err);
+    }
+  }, 1000);
+}
+
+// ---- WebSocket sync: reload weekplan if another user changed routes ----
+
+function handleMobileWeekplanRealtimeUpdate(message) {
+  const overlay = document.getElementById('mfWeekplanOverlay');
+  if (!overlay) return; // Editor not open
+
+  const { type } = message;
+  if (type === 'rute_created' || type === 'rute_updated' || type === 'rute_deleted') {
+    // If we have unsaved changes, show a warning banner instead of auto-reloading
+    if (mfWeekplanState.dirty) {
+      mfShowBanner('En annen bruker endret ukeplanen. Lagre og \u00e5pne p\u00e5 nytt for \u00e5 se endringene.', 'warning');
+    } else {
+      // Safe to auto-reload
+      mfWpInitDays();
+    }
+  }
+}
+
+// ---- Inline weekplan (rendered as tab, not overlay) ----
+
+let mfWeekplanInlineInitialized = false;
+
+function mfShowWeekplanInline() {
+  const container = document.getElementById('mfWeekplanInline');
+  if (!container || mfWeekplanInlineInitialized) return;
+  mfWeekplanInlineInitialized = true;
+
+  // Initialize state
+  mfWeekplanState.weekStart = mfWpGetMonday(new Date());
+  mfWeekplanState.dirty = false;
+  mfWeekplanState.activeDay = 0;
+  mfWpInitDays();
+
+  const weekNum = mfWpGetWeekNumber(mfWeekplanState.weekStart);
+
+  container.innerHTML = `
+    <div class="mf-weekplan-header" style="position:sticky;top:0;z-index:10;">
+      <div class="mf-weekplan-title-group">
+        <button class="mf-weekplan-nav" data-action="mfWpNavigateWeek" data-args='[-1]' aria-label="Forrige uke">
+          <i class="fas fa-chevron-left" aria-hidden="true"></i>
+        </button>
+        <h3 id="mfWpTitle">Uke ${weekNum}</h3>
+        <button class="mf-weekplan-nav" data-action="mfWpNavigateWeek" data-args='[1]' aria-label="Neste uke">
+          <i class="fas fa-chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="mf-weekplan-day-dots" id="mfWpDayDots"></div>
+
+    <div class="mf-weekplan-days" id="mfWpDaysContainer"></div>
+
+    <div class="mf-weekplan-loading" id="mfWpLoading">
+      <div class="mf-spinner"></div>
+      <p>Laster ukeplan...</p>
+    </div>
+  `;
+
+  // Load data
+  mfWpLoadWeek();
+}
+
+// ---- Expose globally ----
+
+window.mfShowWeekplanInline = mfShowWeekplanInline;
+window.mfShowWeekplanEditor = mfShowWeekplanEditor;
+window.handleMobileWeekplanRealtimeUpdate = handleMobileWeekplanRealtimeUpdate;
+window.mfWpSetEstimertTidHandler = mfWpSetEstimertTidHandler;
+window.mfCloseWeekplanEditor = mfCloseWeekplanEditor;
+window.mfWpNavigateWeek = mfWpNavigateWeek;
+window.mfWpScrollToDay = mfWpScrollToDay;
+window.mfWpSave = mfWpSave;
+window.mfWpShowReassign = mfWpShowReassign;
+window.mfWpCloseReassign = mfWpCloseReassign;
+window.mfWpConfirmReassign = mfWpConfirmReassign;
+window.mfWpShowAssignAll = mfWpShowAssignAll;
+window.mfWpCloseAssignAll = mfWpCloseAssignAll;
+window.mfWpConfirmAssignAll = mfWpConfirmAssignAll;
+window.mfWpAddCustomer = mfWpAddCustomer;
+window.mfWpAddCustomerDirect = mfWpAddCustomerDirect;
+window.mfWpCloseAddSheet = mfWpCloseAddSheet;
+window.mfWpSelectCustomerToAdd = mfWpSelectCustomerToAdd;
+window.mfWpRemoveStop = mfWpRemoveStop;
+
+
+// ============================================
+// MOBILE WEEKPLAN AREAS — Geographic area browser for weekly planning
+// Bottom sheet overlay that lets users browse overdue/upcoming areas
+// and batch-add customers from an area to a specific day.
+// Fetches customers via API since global customers[] may be empty on mobile.
+// ============================================
+
+let mfWpAreaState = {
+  dayKey: null,
+  activeTab: 'overdue',   // 'overdue' | 'upcoming' | 'search'
+  selectedIds: new Set(),
+  expandedArea: null,
+  cachedCustomers: null,   // fetched from API, cached per session
+  loading: false
+};
+
+// ---- Fetch customers (needed on mobile where global customers[] is empty) ----
+
+async function mfWpEnsureCustomers() {
+  // Use global customers if available and non-empty
+  if (Array.isArray(customers) && customers.length > 0) {
+    mfWpAreaState.cachedCustomers = customers;
+    return;
+  }
+  // Use cache if already fetched
+  if (mfWpAreaState.cachedCustomers && mfWpAreaState.cachedCustomers.length > 0) return;
+
+  // Fetch from API
+  try {
+    const resp = await fetch('/api/kunder?limit=5000', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    const rawData = json.success ? json.data : json;
+    mfWpAreaState.cachedCustomers = Array.isArray(rawData) ? rawData : (rawData?.data || []);
+  } catch {
+    mfWpAreaState.cachedCustomers = [];
+  }
+}
+
+function mfWpGetCustomersList() {
+  return mfWpAreaState.cachedCustomers || [];
+}
+
+// ---- Area data helpers ----
+
+function mfWpGetOverdueCustomers() {
+  const allCustomers = mfWpGetCustomersList();
+  if (allCustomers.length === 0) return [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentMonthValue = today.getFullYear() * 12 + today.getMonth();
+
+  return allCustomers.filter(c => {
+    const nextDate = getNextControlDate(c);
+    if (!nextDate) return false;
+    const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+    return controlMonthValue < currentMonthValue;
+  }).map(c => {
+    const nextDate = getNextControlDate(c);
+    const daysOverdue = Math.ceil((today - nextDate) / (1000 * 60 * 60 * 24));
+    return { ...c, daysOverdue, _controlDate: nextDate };
+  });
+}
+
+function mfWpGetUpcomingCustomers() {
+  const allCustomers = mfWpGetCustomersList();
+  if (allCustomers.length === 0) return [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentMonthValue = today.getFullYear() * 12 + today.getMonth();
+  const futureDate = new Date(today);
+  futureDate.setDate(futureDate.getDate() + 60);
+
+  return allCustomers.filter(c => {
+    const nextDate = getNextControlDate(c);
+    if (!nextDate) return false;
+    const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+    return controlMonthValue >= currentMonthValue && nextDate <= futureDate;
+  }).map(c => {
+    const nextDate = getNextControlDate(c);
+    const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
+    return { ...c, daysUntil, _controlDate: nextDate };
+  });
+}
+
+function mfWpGroupByArea(customerList) {
+  const byArea = {};
+  customerList.forEach(c => {
+    const area = c.poststed || 'Ukjent';
+    if (!byArea[area]) byArea[area] = { name: area, customers: [] };
+    byArea[area].customers.push(c);
+  });
+  return Object.values(byArea).sort((a, b) => b.customers.length - a.customers.length);
+}
+
+function mfWpGetPlannedIds() {
+  const ids = new Set();
+  if (!mfWeekplanState || !mfWeekplanState.days) return ids;
+  for (const dayKey of mfWpDayKeys) {
+    const dayData = mfWeekplanState.days[dayKey];
+    if (dayData && dayData.stops) {
+      dayData.stops.forEach(s => ids.add(s.kundeId));
+    }
+  }
+  return ids;
+}
+
+// ---- Open / Close ----
+
+async function mfWpShowAreaBrowser(dayKey) {
+  mfWpAreaState.dayKey = dayKey;
+  mfWpAreaState.selectedIds = new Set();
+  mfWpAreaState.expandedArea = null;
+  mfWpAreaState.activeTab = 'overdue';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfWpAreaSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfWpCloseAreaSheet"></div>
+    <div class="mf-sheet-content mf-area-sheet-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Velg fra omr&aring;de &mdash; ${escapeHtml(mfWpDayLabels[mfWpDayKeys.indexOf(dayKey)])}</h3>
+
+      <div class="mf-area-tabs">
+        <button class="mf-area-tab active" data-action="mfWpSwitchAreaTab" data-args='["overdue"]'>
+          <i class="fas fa-exclamation-circle" aria-hidden="true"></i> Forfalte
+        </button>
+        <button class="mf-area-tab" data-action="mfWpSwitchAreaTab" data-args='["upcoming"]'>
+          <i class="fas fa-clock" aria-hidden="true"></i> Kommende
+        </button>
+        <button class="mf-area-tab" data-action="mfWpSwitchAreaTab" data-args='["search"]'>
+          <i class="fas fa-search" aria-hidden="true"></i> S&oslash;k
+        </button>
+      </div>
+
+      <div id="mfWpAreaSearchWrap" class="mf-area-search-wrap" style="display:none;">
+        <input type="text" id="mfWpAreaSearchInput" class="mf-search-input" placeholder="S&oslash;k omr&aring;de (poststed)..." autocomplete="off">
+      </div>
+
+      <div id="mfWpAreaList" class="mf-area-list">
+        <div class="mf-area-loading"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Laster kunder...</div>
+      </div>
+
+      <div id="mfWpAreaActionBar" class="mf-area-action-bar" style="display:none;">
+        <button class="mf-area-add-btn" data-action="mfWpAddSelectedToDay">
+          <i class="fas fa-plus" aria-hidden="true"></i>
+          <span id="mfWpAreaAddCount">Legg til 0 kunder</span>
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  requestAnimationFrame(() => {
+    overlay.classList.add('open');
+  });
+
+  // Fetch customers then render
+  await mfWpEnsureCustomers();
+
+  // Determine default tab based on data
+  const overdueList = mfWpGetOverdueCustomers();
+  if (overdueList.length === 0) {
+    mfWpAreaState.activeTab = 'upcoming';
+    // Update tab buttons
+    document.querySelectorAll('.mf-area-tab').forEach(btn => btn.classList.remove('active'));
+    const tabs = document.querySelectorAll('.mf-area-tab');
+    if (tabs[1]) tabs[1].classList.add('active');
+  }
+
+  mfWpRenderAreaTab();
+
+  // Setup search handler
+  const searchInput = document.getElementById('mfWpAreaSearchInput');
+  if (searchInput) {
+    let searchTimer = null;
+    searchInput.addEventListener('input', () => {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => mfWpRenderAreaTab(), 200);
+    });
+  }
+}
+
+function mfWpCloseAreaSheet() {
+  const sheet = document.getElementById('mfWpAreaSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+  mfWpAreaState.selectedIds = new Set();
+  mfWpAreaState.expandedArea = null;
+}
+
+// ---- Tab switching ----
+
+function mfWpSwitchAreaTab(tab) {
+  mfWpAreaState.activeTab = tab;
+  mfWpAreaState.expandedArea = null;
+  mfWpAreaState.selectedIds = new Set();
+  mfWpUpdateAreaActionBar();
+
+  // Update tab buttons
+  document.querySelectorAll('.mf-area-tab').forEach(btn => btn.classList.remove('active'));
+  const tabs = document.querySelectorAll('.mf-area-tab');
+  const tabMap = { overdue: 0, upcoming: 1, search: 2 };
+  if (tabs[tabMap[tab]]) tabs[tabMap[tab]].classList.add('active');
+
+  // Show/hide search input
+  const searchWrap = document.getElementById('mfWpAreaSearchWrap');
+  if (searchWrap) {
+    searchWrap.style.display = tab === 'search' ? 'block' : 'none';
+    if (tab === 'search') {
+      setTimeout(() => document.getElementById('mfWpAreaSearchInput')?.focus(), 100);
+    }
+  }
+
+  mfWpRenderAreaTab();
+}
+
+// ---- Render ----
+
+function mfWpRenderAreaTab() {
+  const listEl = document.getElementById('mfWpAreaList');
+  if (!listEl) return;
+
+  const allCustomers = mfWpGetCustomersList();
+  let customerList = [];
+  let emptyMsg = '';
+  let isOverdueTab = false;
+
+  if (mfWpAreaState.activeTab === 'overdue') {
+    customerList = mfWpGetOverdueCustomers();
+    emptyMsg = 'Ingen forfalte kontroller';
+    isOverdueTab = true;
+  } else if (mfWpAreaState.activeTab === 'upcoming') {
+    customerList = mfWpGetUpcomingCustomers();
+    emptyMsg = 'Ingen kommende kontroller';
+  } else {
+    // Search: group all customers, filter by search query
+    const query = (document.getElementById('mfWpAreaSearchInput')?.value || '').trim().toLowerCase();
+    if (query.length < 2) {
+      listEl.innerHTML = '<p class="mf-area-hint">Skriv minst 2 tegn for &aring; s&oslash;ke</p>';
+      return;
+    }
+    customerList = allCustomers.filter(c => {
+      const poststed = (c.poststed || '').toLowerCase();
+      const postnr = (c.postnummer || '').toLowerCase();
+      return poststed.includes(query) || postnr.includes(query);
+    });
+    emptyMsg = 'Ingen kunder funnet i dette omr&aring;det';
+  }
+
+  if (customerList.length === 0) {
+    listEl.innerHTML = `<div class="mf-area-empty"><i class="fas fa-check-circle" aria-hidden="true"></i><p>${emptyMsg}</p></div>`;
+    return;
+  }
+
+  const groups = mfWpGroupByArea(customerList);
+  const plannedIds = mfWpGetPlannedIds();
+
+  let html = '';
+  groups.forEach(group => {
+    const isExpanded = mfWpAreaState.expandedArea === group.name;
+    const availableCount = group.customers.filter(c => !plannedIds.has(c.id)).length;
+
+    // Severity breakdown for overdue tab
+    let severityHtml = '';
+    if (isOverdueTab) {
+      const critical = group.customers.filter(c => c.daysOverdue > 60).length;
+      const warning = group.customers.filter(c => c.daysOverdue > 30 && c.daysOverdue <= 60).length;
+      const mild = group.customers.filter(c => c.daysOverdue <= 30).length;
+      if (critical > 0) severityHtml += `<span class="mf-area-sev critical">${critical} kritisk</span>`;
+      if (warning > 0) severityHtml += `<span class="mf-area-sev warning">${warning} advarsel</span>`;
+      if (mild > 0) severityHtml += `<span class="mf-area-sev mild">${mild} ny</span>`;
+    }
+
+    // Upcoming: show how soon
+    if (mfWpAreaState.activeTab === 'upcoming') {
+      const soon = group.customers.filter(c => c.daysUntil <= 14).length;
+      const later = group.customers.filter(c => c.daysUntil > 14).length;
+      if (soon > 0) severityHtml += `<span class="mf-area-sev warning">${soon} innen 2 uker</span>`;
+      if (later > 0) severityHtml += `<span class="mf-area-sev mild">${later} senere</span>`;
+    }
+
+    html += `
+      <div class="mf-area-card ${isExpanded ? 'expanded' : ''}">
+        <div class="mf-area-card-header" data-action="mfWpExpandArea" data-args='["${escapeHtml(group.name)}"]'>
+          <div class="mf-area-card-left">
+            <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+            <div class="mf-area-card-info">
+              <strong>${escapeHtml(group.name)}</strong>
+              <span>${group.customers.length} kunder${availableCount < group.customers.length ? ` (${availableCount} tilgjengelig)` : ''}</span>
+            </div>
+          </div>
+          <div class="mf-area-card-right">
+            <div class="mf-area-sev-wrap">${severityHtml}</div>
+            <i class="fas fa-chevron-${isExpanded ? 'up' : 'down'} mf-area-chevron" aria-hidden="true"></i>
+          </div>
+        </div>
+        ${isExpanded ? mfWpRenderAreaCustomers(group) : ''}
+      </div>
+    `;
+  });
+
+  listEl.innerHTML = html;
+}
+
+function mfWpRenderAreaCustomers(group) {
+  const plannedIds = mfWpGetPlannedIds();
+  const dayKey = mfWpAreaState.dayKey;
+  const dayPlannedIds = new Set();
+  if (mfWeekplanState.days[dayKey]?.stops) {
+    mfWeekplanState.days[dayKey].stops.forEach(s => dayPlannedIds.add(s.kundeId));
+  }
+
+  const available = group.customers.filter(c => !dayPlannedIds.has(c.id));
+  const alreadyPlanned = group.customers.filter(c => dayPlannedIds.has(c.id));
+
+  // Check if all available are selected
+  const allSelected = available.length > 0 && available.every(c => mfWpAreaState.selectedIds.has(c.id));
+
+  let html = `<div class="mf-area-customers">`;
+
+  // Select all header
+  if (available.length > 0) {
+    html += `
+      <div class="mf-area-select-all" data-action="mfWpSelectAllInArea" data-args='["${escapeHtml(group.name)}"]'>
+        <div class="mf-area-checkbox ${allSelected ? 'checked' : ''}">
+          ${allSelected ? '<i class="fas fa-check" aria-hidden="true"></i>' : ''}
+        </div>
+        <span>Velg alle (${available.length})</span>
+      </div>
+    `;
+  }
+
+  // Render available customers
+  available.forEach(c => {
+    const isSelected = mfWpAreaState.selectedIds.has(c.id);
+    const inOtherDay = plannedIds.has(c.id) && !dayPlannedIds.has(c.id);
+
+    let badgeHtml = '';
+    if (c.daysOverdue != null) {
+      const sevClass = c.daysOverdue > 60 ? 'critical' : c.daysOverdue > 30 ? 'warning' : 'mild';
+      badgeHtml = `<span class="mf-area-badge ${sevClass}">${c.daysOverdue}d</span>`;
+    } else if (c.daysUntil != null) {
+      const sevClass = c.daysUntil <= 14 ? 'warning' : 'mild';
+      badgeHtml = `<span class="mf-area-badge ${sevClass}">${c.daysUntil}d</span>`;
+    }
+
+    html += `
+      <div class="mf-area-customer ${isSelected ? 'selected' : ''}" data-action="mfWpToggleCustomerSelect" data-args='[${c.id}]'>
+        <div class="mf-area-checkbox ${isSelected ? 'checked' : ''}">
+          ${isSelected ? '<i class="fas fa-check" aria-hidden="true"></i>' : ''}
+        </div>
+        <div class="mf-area-customer-info">
+          <strong>${escapeHtml(c.navn)}</strong>
+          <span>${escapeHtml(c.adresse || '')}</span>
+        </div>
+        ${badgeHtml}
+        ${inOtherDay ? '<span class="mf-area-other-day">I annen dag</span>' : ''}
+      </div>
+    `;
+  });
+
+  // Render already planned customers (dimmed)
+  alreadyPlanned.forEach(c => {
+    html += `
+      <div class="mf-area-customer disabled">
+        <div class="mf-area-checkbox disabled"></div>
+        <div class="mf-area-customer-info">
+          <strong>${escapeHtml(c.navn)}</strong>
+          <span>${escapeHtml(c.adresse || '')}</span>
+        </div>
+        <span class="mf-area-already">Allerede planlagt</span>
+      </div>
+    `;
+  });
+
+  html += '</div>';
+  return html;
+}
+
+// ---- Selection ----
+
+function mfWpExpandArea(areaName) {
+  if (mfWpAreaState.expandedArea === areaName) {
+    mfWpAreaState.expandedArea = null;
+  } else {
+    mfWpAreaState.expandedArea = areaName;
+  }
+  mfWpRenderAreaTab();
+}
+
+function mfWpToggleCustomerSelect(kundeId) {
+  if (mfWpAreaState.selectedIds.has(kundeId)) {
+    mfWpAreaState.selectedIds.delete(kundeId);
+  } else {
+    mfWpAreaState.selectedIds.add(kundeId);
+  }
+  mfWpRenderAreaTab();
+  mfWpUpdateAreaActionBar();
+}
+
+function mfWpSelectAllInArea(areaName) {
+  let customerList;
+  if (mfWpAreaState.activeTab === 'overdue') {
+    customerList = mfWpGetOverdueCustomers();
+  } else if (mfWpAreaState.activeTab === 'upcoming') {
+    customerList = mfWpGetUpcomingCustomers();
+  } else {
+    const query = (document.getElementById('mfWpAreaSearchInput')?.value || '').trim().toLowerCase();
+    const allCustomers = mfWpGetCustomersList();
+    customerList = allCustomers.filter(c => {
+      const poststed = (c.poststed || '').toLowerCase();
+      const postnr = (c.postnummer || '').toLowerCase();
+      return poststed.includes(query) || postnr.includes(query);
+    });
+  }
+
+  const group = mfWpGroupByArea(customerList).find(g => g.name === areaName);
+  if (!group) return;
+
+  const dayPlannedIds = new Set();
+  if (mfWeekplanState.days[mfWpAreaState.dayKey]?.stops) {
+    mfWeekplanState.days[mfWpAreaState.dayKey].stops.forEach(s => dayPlannedIds.add(s.kundeId));
+  }
+
+  const available = group.customers.filter(c => !dayPlannedIds.has(c.id));
+  const allSelected = available.every(c => mfWpAreaState.selectedIds.has(c.id));
+
+  if (allSelected) {
+    available.forEach(c => mfWpAreaState.selectedIds.delete(c.id));
+  } else {
+    available.forEach(c => mfWpAreaState.selectedIds.add(c.id));
+  }
+
+  mfWpRenderAreaTab();
+  mfWpUpdateAreaActionBar();
+}
+
+// ---- Action bar ----
+
+function mfWpUpdateAreaActionBar() {
+  const bar = document.getElementById('mfWpAreaActionBar');
+  const countEl = document.getElementById('mfWpAreaAddCount');
+  if (!bar || !countEl) return;
+
+  const count = mfWpAreaState.selectedIds.size;
+  if (count > 0) {
+    bar.style.display = 'flex';
+    countEl.textContent = `Legg til ${count} kunde${count !== 1 ? 'r' : ''}`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+// ---- Batch add ----
+
+function mfWpAddSelectedToDay() {
+  const dayKey = mfWpAreaState.dayKey;
+  if (!dayKey || mfWpAreaState.selectedIds.size === 0) return;
+
+  const stops = mfWeekplanState.days[dayKey].stops;
+  const existingIds = new Set(stops.map(s => s.kundeId));
+  const allCustomers = mfWpGetCustomersList();
+  let addedCount = 0;
+
+  mfWpAreaState.selectedIds.forEach(kundeId => {
+    if (existingIds.has(kundeId)) return;
+
+    const kunde = allCustomers.find(c => c.id === kundeId);
+    if (!kunde) return;
+
+    stops.push({
+      ruteId: null,
+      kundeId: kunde.id,
+      kundeNavn: kunde.navn || 'Ukjent',
+      adresse: [kunde.adresse, kunde.poststed].filter(Boolean).join(', '),
+      assignedTo: '',
+      assignedToId: null,
+      estimertTid: kunde.estimert_tid || 30,
+      rekkefolge: stops.length
+    });
+    addedCount++;
+  });
+
+  if (addedCount > 0) {
+    mfWeekplanState.dirty = true;
+    mfWpUpdateSaveBtn();
+    mfWpScheduleAutoSave();
+    mfWpRenderDays();
+    mfWpRenderDots();
+    mfWpInitDragDrop();
+    mfShowBanner(`${addedCount} kunde${addedCount !== 1 ? 'r' : ''} lagt til`, 'success');
+  }
+
+  mfWpCloseAreaSheet();
+}
+
+// ---- Method picker (choice between name search and area browser) ----
+
+function mfWpShowAddMethodPicker(dayKey) {
+  const overlay = document.createElement('div');
+  overlay.className = 'mf-bottom-sheet';
+  overlay.id = 'mfWpMethodSheet';
+  overlay.innerHTML = `
+    <div class="mf-sheet-backdrop" data-action="mfWpCloseMethodSheet"></div>
+    <div class="mf-sheet-content mf-method-content">
+      <div class="mf-visit-handle"></div>
+      <h3>Legg til kunder &mdash; ${escapeHtml(mfWpDayLabels[mfWpDayKeys.indexOf(dayKey)])}</h3>
+      <div class="mf-method-options">
+        <button class="mf-method-option" data-action="mfWpMethodSearch" data-args='["${escapeHtml(dayKey)}"]'>
+          <div class="mf-method-icon"><i class="fas fa-search" aria-hidden="true"></i></div>
+          <div class="mf-method-text">
+            <strong>S&oslash;k etter kunde</strong>
+            <span>Finn en bestemt kunde</span>
+          </div>
+          <i class="fas fa-chevron-right" aria-hidden="true"></i>
+        </button>
+        <button class="mf-method-option" data-action="mfWpMethodArea" data-args='["${escapeHtml(dayKey)}"]'>
+          <div class="mf-method-icon area"><i class="fas fa-map-marker-alt" aria-hidden="true"></i></div>
+          <div class="mf-method-text">
+            <strong>Velg fra omr&aring;de</strong>
+            <span>Forfalte og kommende omr&aring;der</span>
+          </div>
+          <i class="fas fa-chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+}
+
+function mfWpCloseMethodSheet() {
+  const sheet = document.getElementById('mfWpMethodSheet');
+  if (sheet) {
+    sheet.classList.remove('open');
+    setTimeout(() => sheet.remove(), 300);
+  }
+}
+
+// ---- Compound action wrappers (for data-action delegation) ----
+
+function mfWpMethodSearch(dayKey) {
+  mfWpCloseMethodSheet();
+  mfWpAddCustomerDirect(dayKey);
+}
+
+function mfWpMethodArea(dayKey) {
+  mfWpCloseMethodSheet();
+  mfWpShowAreaBrowser(dayKey);
+}
+
+// ---- Expose globally ----
+
+window.mfWpShowAreaBrowser = mfWpShowAreaBrowser;
+window.mfWpCloseAreaSheet = mfWpCloseAreaSheet;
+window.mfWpSwitchAreaTab = mfWpSwitchAreaTab;
+window.mfWpExpandArea = mfWpExpandArea;
+window.mfWpToggleCustomerSelect = mfWpToggleCustomerSelect;
+window.mfWpSelectAllInArea = mfWpSelectAllInArea;
+window.mfWpAddSelectedToDay = mfWpAddSelectedToDay;
+window.mfWpShowAddMethodPicker = mfWpShowAddMethodPicker;
+window.mfWpCloseMethodSheet = mfWpCloseMethodSheet;
+window.mfWpMethodSearch = mfWpMethodSearch;
+window.mfWpMethodArea = mfWpMethodArea;
+
+
+// ============================================
+// ARBEID TAB - Sub-navigation controller
+// Manages switching between Oversikt/Ukeplan/Kalender/Planlegger sub-views
+// ============================================
+
+let currentArbeidView = 'idag';
+let arbeidViewRendered = { idag: false, uke: false, maaned: false, planlegger: false };
+
+function initArbeidNav() {
+  // Use event delegation on the sub-nav container for reliability
+  const nav = document.querySelector('.arbeid-sub-nav');
+  if (!nav) return;
+  nav.addEventListener('click', (e) => {
+    const pill = e.target.closest('.arbeid-pill');
+    if (!pill) return;
+    const view = pill.dataset.arbeidView;
+    if (view && view !== currentArbeidView) {
+      switchArbeidView(view);
+    }
+  });
+}
+
+function switchArbeidView(view) {
+  // Cleanup previous view
+  cleanupArbeidView(currentArbeidView);
+
+  // Update pill active state
+  document.querySelectorAll('.arbeid-pill').forEach(p => {
+    p.classList.toggle('active', p.dataset.arbeidView === view);
+  });
+
+  // Hide all views, show target
+  document.querySelectorAll('.arbeid-view').forEach(v => {
+    v.style.display = 'none';
+    v.classList.remove('active');
+  });
+  const targetView = document.getElementById(`arbeid-${view}`);
+  if (targetView) {
+    targetView.style.display = '';
+    targetView.classList.add('active');
+  }
+
+  currentArbeidView = view;
+
+  // Render content for the view
+  renderArbeidView(view);
+}
+
+function renderArbeidView(view) {
+  switch (view) {
+    case 'idag':
+      if (typeof loadTeamOverview === 'function') loadTeamOverview();
+      if (typeof loadTodaysWork === 'function' && hasFeature('todays_work')) {
+        const dateNav = document.getElementById('twDateNav');
+        if (dateNav) dateNav.style.display = '';
+        loadTodaysWork();
+      }
+      break;
+    case 'uke':
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      break;
+    case 'maaned':
+      if (typeof renderCalendar === 'function') renderCalendar();
+      if (typeof openCalendarSplitView === 'function') openCalendarSplitView();
+      break;
+    case 'planlegger':
+      if (typeof renderPlanner === 'function') renderPlanner();
+      break;
+  }
+  arbeidViewRendered[view] = true;
+}
+
+function cleanupArbeidView(view) {
+  switch (view) {
+    case 'idag':
+      if (typeof unloadTeamOverview === 'function') unloadTeamOverview();
+      break;
+    case 'uke':
+      if (typeof weekPlanState !== 'undefined' && weekPlanState.activeDay) {
+        weekPlanState.activeDay = null;
+        if (typeof areaSelectMode !== 'undefined' && areaSelectMode && typeof toggleAreaSelect === 'function') {
+          toggleAreaSelect();
+        }
+      }
+      if (typeof wpFocusedTeamMember !== 'undefined' && wpFocusedTeamMember) {
+        wpFocusedTeamMember = null;
+        wpFocusedMemberIds = null;
+        if (typeof applyTeamFocusToMarkers === 'function') applyTeamFocusToMarkers();
+        if (typeof refreshClusters === 'function') refreshClusters();
+      }
+      if (typeof closeWpRouteSummary === 'function') closeWpRouteSummary();
+      break;
+    case 'maaned':
+      if (typeof clearCalendarFocus === 'function') clearCalendarFocus();
+      break;
+    case 'planlegger':
+      // Planner cleanup handled by tab cleanup registry
+      break;
+  }
+}
+
+function loadArbeidTab() {
+  renderArbeidView(currentArbeidView);
+}
+
+function unloadArbeidTab() {
+  cleanupArbeidView(currentArbeidView);
+  arbeidViewRendered = { idag: false, uke: false, maaned: false, planlegger: false };
+}
+
+
+/**
+ * Route Assignment Overview — Week matrix view
+ * Shows who has which route assigned across the week (Mon-Fri).
+ * Integrates into the Oversikt tab via a Dag/Uke toggle.
+ */
+
+// ---- State ----
+let raoWeekStart = null;
+let raoWeekData = null;
+let raoExpandedRouteId = null;
+let raoAbortController = null;
+let raoTeamMapActive = false;
+let raoFocusedMember = null;
+let raoMemberCustomerMap = null; // Map<memberName, Set<kundeId>>
+
+// ---- Utilities ----
+
+function raoGetWeekStart(dateStr) {
+  const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  // getDay: 0=Sun,1=Mon..6=Sat → shift so Monday=0
+  const shift = (day + 6) % 7; // Mon=0, Tue=1, ..., Sun=6
+  d.setDate(d.getDate() - shift);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function raoGetWeekNumber(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+}
+
+function raoFormatShortDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const days = ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør'];
+  return `${days[d.getDay()]} ${d.getDate()}.`;
+}
+
+function raoFormatMonthRange(weekStart) {
+  const start = new Date(weekStart + 'T00:00:00');
+  const end = new Date(start);
+  end.setDate(start.getDate() + 4);
+  const months = ['jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des'];
+  if (start.getMonth() === end.getMonth()) {
+    return `${start.getDate()}. - ${end.getDate()}. ${months[end.getMonth()]} ${end.getFullYear()}`;
+  }
+  return `${start.getDate()}. ${months[start.getMonth()]} - ${end.getDate()}. ${months[end.getMonth()]} ${end.getFullYear()}`;
+}
+
+function raoGetInitials(name) {
+  if (!name) return '?';
+  return name.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
+}
+
+// ---- Data ----
+
+async function raoLoadWeekData() {
+  const container = document.getElementById('raoWeekView');
+  if (!container) return;
+
+  // Cancel any in-flight request to prevent race conditions
+  if (raoAbortController) raoAbortController.abort();
+  raoAbortController = new AbortController();
+
+  try {
+    const resp = await fetch(`/api/todays-work/team-overview-week?week_start=${raoWeekStart}`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+      signal: raoAbortController.signal
+    });
+
+    if (!resp.ok) {
+      container.innerHTML = '<div class="to-empty"><i class="fas fa-exclamation-triangle"></i><p>Kunne ikke laste ukeoversikt.</p></div>';
+      return;
+    }
+
+    const json = await resp.json();
+    if (json.success && json.data) {
+      raoWeekData = json.data;
+    } else {
+      raoWeekData = null;
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return; // Silently ignore cancelled requests
+    console.error('RAO: Failed to load week data', e);
+    raoWeekData = null;
+  }
+
+  raoRenderWeekGrid();
+  // Activate team map coloring after data loads
+  raoActivateTeamMap();
+}
+
+// ---- Navigation ----
+
+function raoFormatLocalDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function raoPrevWeek() {
+  const d = new Date(raoWeekStart + 'T00:00:00');
+  d.setDate(d.getDate() - 7);
+  raoWeekStart = raoFormatLocalDate(d);
+  raoExpandedRouteId = null;
+  raoLoadWeekData();
+}
+
+function raoNextWeek() {
+  const d = new Date(raoWeekStart + 'T00:00:00');
+  d.setDate(d.getDate() + 7);
+  raoWeekStart = raoFormatLocalDate(d);
+  raoExpandedRouteId = null;
+  raoLoadWeekData();
+}
+
+function raoThisWeek() {
+  raoWeekStart = raoGetWeekStart();
+  raoExpandedRouteId = null;
+  raoLoadWeekData();
+}
+
+// ---- Expand route ----
+
+function raoExpandRoute(routeId) {
+  raoExpandedRouteId = raoExpandedRouteId === routeId ? null : routeId;
+  raoRenderWeekGrid();
+}
+
+// ---- Navigate to weekplan ----
+
+function raoOpenWeekplan() {
+  // Open the same full-screen weekplan editor as the day view uses
+  if (typeof mfShowWeekplanEditor === 'function') {
+    mfShowWeekplanEditor();
+    // Override to the week shown in the matrix (mfShowWeekplanEditor defaults to current week)
+    if (raoWeekStart && typeof mfWpGetMonday === 'function' && typeof mfWpLoadWeek === 'function') {
+      const targetMonday = mfWpGetMonday(new Date(raoWeekStart + 'T00:00:00'));
+      const currentMonday = mfWpGetMonday(new Date());
+      if (targetMonday.getTime() !== currentMonday.getTime()) {
+        mfWeekplanState.weekStart = targetMonday;
+        mfWeekplanState.activeDay = 0;
+        mfWpLoadWeek();
+      }
+    }
+  } else if (typeof switchArbeidView === 'function') {
+    if (typeof initWeekPlanState === 'function' && raoWeekStart) {
+      initWeekPlanState(new Date(raoWeekStart + 'T00:00:00'));
+    }
+    switchArbeidView('uke');
+  }
+}
+
+// ---- Render ----
+
+function raoRenderWeekGrid() {
+  const container = document.getElementById('raoWeekView');
+  if (!container) return;
+
+  if (!raoWeekData) {
+    container.innerHTML = '<div class="to-empty"><i class="fas fa-calendar-week"></i><p>Ingen data tilgjengelig.</p></div>';
+    return;
+  }
+
+  const { dates, members, unassigned, summary } = raoWeekData;
+  const weekNum = raoGetWeekNumber(raoWeekStart);
+  const isThisWeek = raoWeekStart === raoGetWeekStart();
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isSoloAdmin = members.length <= 1;
+
+  let html = '';
+
+  // Week navigation
+  html += `
+    <div class="to-date-nav">
+      <button class="btn btn-icon btn-small" data-action="raoPrevWeek" title="Forrige uke">
+        <i class="fas fa-chevron-left"></i>
+      </button>
+      <span class="to-date-label" data-action="raoThisWeek" title="Ga til denne uken" style="cursor:pointer;">
+        Uke ${weekNum}: ${escapeHtml(raoFormatMonthRange(raoWeekStart))}${isThisWeek ? ' <span class="to-today-badge">denne uken</span>' : ''}
+      </span>
+      <button class="btn btn-icon btn-small" data-action="raoNextWeek" title="Neste uke">
+        <i class="fas fa-chevron-right"></i>
+      </button>
+    </div>
+  `;
+
+  // Summary cards — simplified for solo admin
+  if (isSoloAdmin) {
+    html += `
+      <div class="to-summary-row">
+        <div class="to-summary-card">
+          <div class="to-summary-num">${summary.total_routes}</div>
+          <div class="to-summary-label">Ruter</div>
+        </div>
+        <div class="to-summary-card to-card-done">
+          <div class="to-summary-num">${summary.total_customers}</div>
+          <div class="to-summary-label">Kunder</div>
+        </div>
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="to-summary-row">
+        <div class="to-summary-card">
+          <div class="to-summary-num">${summary.total_routes}</div>
+          <div class="to-summary-label">Ruter</div>
+        </div>
+        <div class="to-summary-card to-card-active">
+          <div class="to-summary-num">${summary.assigned}</div>
+          <div class="to-summary-label">Tildelte</div>
+        </div>
+        <div class="to-summary-card to-card-idle">
+          <div class="to-summary-num">${summary.unassigned}</div>
+          <div class="to-summary-label">Utildelte</div>
+        </div>
+        <div class="to-summary-card to-card-done">
+          <div class="to-summary-num">${summary.total_customers}</div>
+          <div class="to-summary-label">Kunder</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Action buttons — solo admin gets simplified set, multi-member gets full set
+  if (isSoloAdmin) {
+    html += `
+      <div class="to-actions">
+        <button class="btn btn-primary btn-small" data-action="raoOpenWeekplan">
+          <i class="fas fa-calendar-week"></i> Rediger ukeplan
+        </button>
+        <button class="btn btn-secondary btn-small" data-action="toShowCustomerLookup">
+          <i class="fas fa-address-book"></i> Kundeoppslag
+        </button>
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="to-actions">
+        <button class="btn btn-primary btn-small" data-action="toShowPushRoute">
+          <i class="fas fa-paper-plane"></i> Send rute
+        </button>
+        <button class="btn btn-secondary btn-small" data-action="toShowQuickAssign">
+          <i class="fas fa-plus-circle"></i> Legg til kunde
+        </button>
+        <button class="btn btn-secondary btn-small" data-action="toShowCustomerLookup">
+          <i class="fas fa-address-book"></i> Kundeoppslag
+        </button>
+        <button class="btn btn-secondary btn-small" data-action="raoOpenWeekplan">
+          <i class="fas fa-calendar-week"></i> Rediger ukeplan
+        </button>
+      </div>
+    `;
+  }
+
+  // Week grid
+  html += '<div class="rao-grid">';
+
+  // Header row
+  html += '<div class="rao-header-cell rao-member-col"></div>';
+  for (const date of dates) {
+    const isToday = date === todayStr;
+    html += `<div class="rao-header-cell${isToday ? ' rao-today' : ''}">${escapeHtml(raoFormatShortDate(date))}</div>`;
+  }
+
+  // Team member rows
+  const TEAM_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#ca8a04'];
+
+  // Calculate workload per member per day for heatmap
+  function raoGetDayMinutes(routes) {
+    return routes.reduce((sum, r) => sum + (r.total_count || 0) * 30, 0);
+  }
+  function raoWorkloadClass(minutes) {
+    if (minutes === 0) return '';
+    if (minutes <= 360) return 'rao-load-green';
+    if (minutes <= 480) return 'rao-load-yellow';
+    return 'rao-load-red';
+  }
+
+  // Track column totals for summary row
+  const dayTotals = {};
+  for (const date of dates) dayTotals[date] = { minutes: 0, stops: 0 };
+
+  members.forEach((member, mIdx) => {
+    const color = TEAM_COLORS[mIdx % TEAM_COLORS.length];
+    const initials = raoGetInitials(member.navn);
+    const hasAnyRoutes = dates.some(d => member.days[d] && member.days[d].length > 0);
+
+    const isMemberFocused = raoFocusedMember === member.navn;
+    html += `<div class="rao-member-cell ${isMemberFocused ? 'rao-member-focused' : ''}" style="--member-color: ${color}" data-action="raoFocusMember" data-args='["${escapeHtml(member.navn)}"]' role="button" tabindex="0" title="Vis på kartet">
+      <span class="rao-avatar" style="background: ${color}">${escapeHtml(initials)}</span>
+      <span class="rao-member-name">${escapeHtml(member.navn)}</span>
+    </div>`;
+
+    for (const date of dates) {
+      const routes = member.days[date] || [];
+      const isToday = date === todayStr;
+      const dayMinutes = raoGetDayMinutes(routes);
+      const loadClass = raoWorkloadClass(dayMinutes);
+      const dayStops = routes.reduce((s, r) => s + (r.total_count || 0), 0);
+      dayTotals[date].minutes += dayMinutes;
+      dayTotals[date].stops += dayStops;
+      const loadTooltip = dayMinutes > 0 ? `~${Math.floor(dayMinutes / 60)}t ${dayMinutes % 60}m / 8t (${Math.round(dayMinutes / 480 * 100)}%)` : '';
+      html += `<div class="rao-day-cell${isToday ? ' rao-today' : ''}${routes.length === 0 ? ' rao-empty-cell' : ''} ${loadClass}" ${loadTooltip ? `title="${loadTooltip}"` : ''}>`;
+
+      if (routes.length === 0) {
+        html += '<span class="rao-no-route">&mdash;</span>';
+      } else {
+        for (const route of routes) {
+          const statusClass = route.execution_ended_at ? 'rao-route-cell--done'
+            : route.execution_started_at ? 'rao-route-cell--active'
+            : 'rao-route-cell--idle';
+          const isExpanded = raoExpandedRouteId === route.id;
+
+          const isActive = route.execution_started_at && !route.execution_ended_at;
+          html += `<div class="rao-route-cell ${statusClass}${isExpanded ? ' rao-expanded' : ''}${isActive ? ' rao-pulse' : ''}" data-action="raoExpandRoute" data-args="[${route.id}]">
+            <div class="rao-route-name">${escapeHtml(route.navn || 'Rute')}</div>
+            <div class="rao-route-meta">${isActive ? `${route.completed_count || 0}/${route.total_count} fullført` : `${route.total_count} stopp`}</div>`;
+
+          if (isActive && route.total_count > 0) {
+            const pct = Math.round(((route.completed_count || 0) / route.total_count) * 100);
+            html += `<div class="rao-progress"><div class="rao-progress-fill" style="width:${pct}%"></div></div>`;
+          }
+          if (route.execution_ended_at) {
+            html += `<div class="rao-route-meta" style="color:var(--color-success, #16a34a)"><i class="fas fa-check" style="font-size:8px;margin-right:2px"></i>Fullført</div>`;
+          }
+
+          if (isExpanded && route.kunder && route.kunder.length > 0) {
+            html += '<div class="rao-stop-list">';
+            route.kunder.forEach((k, ki) => {
+              html += `<div class="rao-stop-item">
+                <span class="rao-stop-num">${ki + 1}</span>
+                <span class="rao-stop-name">${escapeHtml(k.navn || 'Ukjent')}</span>
+              </div>`;
+            });
+            html += '</div>';
+          }
+
+          html += '</div>';
+        }
+      }
+
+      html += '</div>';
+    }
+  });
+
+  // Unassigned row
+  const hasUnassigned = dates.some(d => unassigned[d] && unassigned[d].length > 0);
+  if (hasUnassigned) {
+    html += `<div class="rao-member-cell rao-unassigned-row">
+      <span class="rao-avatar rao-avatar-warn"><i class="fas fa-exclamation"></i></span>
+      <span class="rao-member-name">Utildelt</span>
+    </div>`;
+
+    for (const date of dates) {
+      const routes = unassigned[date] || [];
+      const isToday = date === todayStr;
+      html += `<div class="rao-day-cell rao-unassigned-row${isToday ? ' rao-today' : ''}${routes.length === 0 ? ' rao-empty-cell' : ''}">`;
+
+      if (routes.length === 0) {
+        html += '<span class="rao-no-route">&mdash;</span>';
+      } else {
+        for (const route of routes) {
+          const isExpanded = raoExpandedRouteId === route.id;
+          html += `<div class="rao-route-cell rao-route-cell--unassigned${isExpanded ? ' rao-expanded' : ''}" data-action="raoExpandRoute" data-args="[${route.id}]">
+            <div class="rao-route-name">${escapeHtml(route.navn || 'Rute')}</div>
+            <div class="rao-route-meta">${route.total_count} stopp</div>`;
+
+          if (isExpanded && route.kunder && route.kunder.length > 0) {
+            html += '<div class="rao-stop-list">';
+            route.kunder.forEach((k, ki) => {
+              html += `<div class="rao-stop-item">
+                <span class="rao-stop-num">${ki + 1}</span>
+                <span class="rao-stop-name">${escapeHtml(k.navn || 'Ukjent')}</span>
+              </div>`;
+            });
+            html += '</div>';
+          }
+
+          html += '</div>';
+        }
+      }
+
+      html += '</div>';
+    }
+  }
+
+  // Workload summary row
+  if (members.length > 0) {
+    html += `<div class="rao-member-cell rao-summary-row">
+      <span class="rao-member-name"><i class="fas fa-chart-bar" style="margin-right:4px;opacity:0.6"></i>Totalt</span>
+    </div>`;
+    for (const date of dates) {
+      const t = dayTotals[date];
+      const isToday = date === todayStr;
+      html += `<div class="rao-day-cell rao-summary-row${isToday ? ' rao-today' : ''}">
+        <span class="rao-summary-stops">${t.stops} stopp</span>
+        <span class="rao-summary-time">~${Math.floor(t.minutes / 60)}t ${t.minutes % 60}m</span>
+      </div>`;
+    }
+  }
+
+  html += '</div>'; // close .rao-grid
+
+  // Empty state
+  if (members.length === 0 && !hasUnassigned) {
+    html += '<div class="to-empty"><i class="fas fa-route"></i><p>Ingen ruter planlagt denne uken.</p></div>';
+  }
+
+  // Solo admin CTA — encourage adding team members
+  if (isSoloAdmin) {
+    html += `
+      <div class="rao-solo-cta">
+        <div class="rao-solo-cta-icon"><i class="fas fa-users"></i></div>
+        <div class="rao-solo-cta-text">
+          <strong>Legg til ansatte</strong>
+          <p>Fordel arbeid og ruter mellom teammedlemmer for bedre oversikt og planlegging.</p>
+        </div>
+        <button class="btn btn-secondary btn-small" data-action="raoOpenTeamSettings">
+          <i class="fas fa-user-plus"></i> Legg til
+        </button>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+}
+
+// ---- Solo admin: open team settings ----
+
+function raoOpenTeamSettings() {
+  // Switch to Innstillinger tab and open team member section
+  const adminTabBtn = document.querySelector('.tab-item[data-tab="admin"]');
+  if (adminTabBtn) {
+    adminTabBtn.click();
+    setTimeout(() => {
+      if (typeof loadTeamMembers === 'function') loadTeamMembers();
+    }, 200);
+  }
+}
+
+// ---- Team Map: color-code markers by team member ----
+
+function raoActivateTeamMap() {
+  if (!raoWeekData || !raoWeekData.members || raoWeekData.members.length === 0) return;
+  if (typeof markers === 'undefined' || typeof customers === 'undefined') return;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  raoMemberCustomerMap = new Map();
+
+  raoWeekData.members.forEach((member, mIdx) => {
+    const kundeIds = new Set();
+    const todayRoutes = member.days[todayStr] || [];
+    for (const route of todayRoutes) {
+      if (!route.kunder) continue;
+      for (const k of route.kunder) {
+        const full = customers.find(c => c.id === k.id);
+        if (full && full.lat && full.lng) kundeIds.add(full.id);
+      }
+    }
+    if (kundeIds.size > 0) {
+      raoMemberCustomerMap.set(member.navn, { kundeIds, color: TEAM_COLORS[mIdx % TEAM_COLORS.length], initials: raoGetInitials(member.navn) });
+    }
+  });
+
+  for (const kundeId of Object.keys(markers)) {
+    const marker = markers[kundeId];
+    if (!marker?._element && !marker?.getElement) continue;
+    const el = marker._element || marker.getElement();
+    if (!el) continue;
+    const numId = Number(kundeId);
+    let memberColor = null;
+    for (const [, data] of raoMemberCustomerMap) {
+      if (data.kundeIds.has(numId)) { memberColor = data.color; break; }
+    }
+    if (memberColor) {
+      el.style.boxShadow = `inset 0 0 0 3px ${memberColor}`;
+    }
+  }
+
+  raoTeamMapActive = true;
+  raoShowTeamLegend();
+}
+
+function raoFocusMember(memberName) {
+  if (raoFocusedMember === memberName) {
+    raoFocusedMember = null;
+    wpFocusedTeamMember = null;
+    wpFocusedMemberIds = null;
+    wpShowAllMarkers = false;
+    if (typeof applyTeamFocusToMarkers === 'function') applyTeamFocusToMarkers();
+    if (typeof refreshClusters === 'function') refreshClusters();
+    raoRenderWeekGrid();
+    raoShowTeamLegend();
+    return;
+  }
+
+  const memberData = raoMemberCustomerMap?.get(memberName);
+  if (!memberData) return;
+
+  raoFocusedMember = memberName;
+  wpFocusedTeamMember = memberName;
+  wpFocusedMemberIds = new Set([...memberData.kundeIds].map(id => Number(id)));
+  wpShowAllMarkers = false;
+
+  if (typeof applyTeamFocusToMarkers === 'function') applyTeamFocusToMarkers();
+  if (typeof refreshClusters === 'function') refreshClusters();
+
+  const boundsPoints = [];
+  for (const kundeId of memberData.kundeIds) {
+    const m = markers[kundeId];
+    if (m && m.getLngLat) {
+      const ll = m.getLngLat();
+      boundsPoints.push([ll.lat, ll.lng]);
+    }
+  }
+  if (boundsPoints.length > 0 && typeof boundsFromLatLngArray === 'function' && typeof map !== 'undefined' && map) {
+    const bounds = boundsFromLatLngArray(boundsPoints);
+    map.fitBounds(bounds, { padding: 50, maxZoom: 13 });
+  }
+
+  raoRenderWeekGrid();
+  raoShowTeamLegend();
+}
+
+function raoCleanupTeamMap() {
+  if (!raoTeamMapActive) return;
+  if (typeof markers !== 'undefined') {
+    for (const kundeId of Object.keys(markers)) {
+      const marker = markers[kundeId];
+      if (!marker?._element && !marker?.getElement) continue;
+      const el = marker._element || marker.getElement();
+      if (el) el.style.boxShadow = '';
+    }
+  }
+  if (raoFocusedMember) {
+    raoFocusedMember = null;
+    wpFocusedTeamMember = null;
+    wpFocusedMemberIds = null;
+    wpShowAllMarkers = false;
+    if (typeof applyTeamFocusToMarkers === 'function') applyTeamFocusToMarkers();
+    if (typeof refreshClusters === 'function') refreshClusters();
+  }
+  raoTeamMapActive = false;
+  raoMemberCustomerMap = null;
+  raoHideTeamLegend();
+}
+
+function raoShowTeamLegend() {
+  raoHideTeamLegend();
+  if (!raoMemberCustomerMap || raoMemberCustomerMap.size === 0) return;
+  const legend = document.createElement('div');
+  legend.id = 'raoTeamLegend';
+  let html = '<div class="rao-legend-title">Team i dag</div>';
+  for (const [name, data] of raoMemberCustomerMap) {
+    const isFocused = raoFocusedMember === name;
+    html += `<div class="rao-legend-item ${isFocused ? 'rao-legend-focused' : ''}" data-action="raoFocusMember" data-args='["${escapeHtml(name)}"]'>
+      <span class="rao-legend-dot" style="background:${data.color}"></span>
+      <span>${escapeHtml(data.initials)}</span>
+      <span class="rao-legend-count">${data.kundeIds.size}</span>
+    </div>`;
+  }
+  legend.innerHTML = html;
+  const mapContainer = document.getElementById('map');
+  if (mapContainer) mapContainer.parentElement.appendChild(legend);
+}
+
+function raoHideTeamLegend() {
+  const el = document.getElementById('raoTeamLegend');
+  if (el) el.remove();
+}
+
+
+/**
+ * Team Overview — Desktop sidebar tab
+ * Shows team status, routes, progress for admin users on desktop.
+ * Actions: Push route, Quick-assign customer, Open weekplan.
+ * Reuses /api/todays-work/team-overview endpoint.
+ */
+
+// ---- State ----
+let teamOverviewDate = new Date().toISOString().split('T')[0];
+let teamOverviewData = null;
+let teamOverviewSummary = null;
+let teamOverviewExpandedId = null;
+let teamOverviewPollingTimer = null;
+let toSearchTimer = null;
+let toSearchResults = [];
+let toSearchAbort = null;
+
+// ---- Public API ----
+
+function loadTeamOverview() {
+  const container = document.getElementById('teamOverviewContent');
+  if (!container) return;
+
+  // Render week view container if not already present
+  if (!document.getElementById('raoWeekView')) {
+    container.innerHTML = '<div id="raoWeekView"></div>';
+  }
+
+  // Load week data
+  if (typeof raoLoadWeekData === 'function') {
+    if (!raoWeekStart) raoWeekStart = raoGetWeekStart();
+    raoLoadWeekData();
+  }
+}
+
+function unloadTeamOverview() {
+  if (typeof raoCleanupTeamMap === 'function') raoCleanupTeamMap();
+}
+
+// ---- Date navigation ----
+
+function teamOverviewPrevDay() {
+  const d = new Date(teamOverviewDate);
+  d.setDate(d.getDate() - 1);
+  teamOverviewDate = d.toISOString().split('T')[0];
+  teamOverviewFetchData();
+}
+
+function teamOverviewNextDay() {
+  const d = new Date(teamOverviewDate);
+  d.setDate(d.getDate() + 1);
+  teamOverviewDate = d.toISOString().split('T')[0];
+  teamOverviewFetchData();
+}
+
+function teamOverviewToday() {
+  teamOverviewDate = new Date().toISOString().split('T')[0];
+  teamOverviewFetchData();
+}
+
+// ---- Fetch data ----
+
+async function teamOverviewFetchData() {
+  // Reload week view data (day view removed)
+  if (typeof raoLoadWeekData === 'function') {
+    if (!raoWeekStart) raoWeekStart = raoGetWeekStart();
+    raoLoadWeekData();
+  }
+}
+
+// ============================================================
+// PUSH ROUTE — Assign route to technician with date
+// ============================================================
+
+async function toShowPushRoute() {
+  const [members, routesResp] = await Promise.all([
+    toLoadTeamMembers(),
+    fetch('/api/ruter', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    }).then(r => r.json()).catch(() => {
+      showToast('Kunne ikke laste ruter', 'error');
+      return { success: false, data: [] };
+    })
+  ]);
+
+  const routes = (routesResp.success ? routesResp.data : []) || [];
+  const teamMembers = members || [];
+
+  let routeOptions = '<option value="">Velg rute...</option>';
+  routes.forEach(r => {
+    routeOptions += `<option value="${r.id}">${escapeHtml(r.navn || 'Rute #' + r.id)}</option>`;
+  });
+
+  let memberOptions = '<option value="">Velg teammedlem...</option>';
+  teamMembers.forEach(m => {
+    memberOptions += `<option value="${m.id}">${escapeHtml(m.navn || '')}</option>`;
+  });
+
+  const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'to-modal-overlay';
+  overlay.id = 'toPushRouteModal';
+  overlay.innerHTML = `
+    <div class="to-modal-backdrop" data-action="toClosePushRoute"></div>
+    <div class="to-modal">
+      <div class="to-modal-header">
+        <h3>Send rute til teammedlem</h3>
+        <button class="btn btn-icon btn-small" data-action="toClosePushRoute"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="to-modal-body">
+        <label class="to-label">Rute</label>
+        <select id="toPushRouteSelect" class="to-select">${routeOptions}</select>
+
+        <label class="to-label">Teammedlem</label>
+        <select id="toPushMemberSelect" class="to-select">${memberOptions}</select>
+
+        <label class="to-label">Dato</label>
+        <div class="to-date-chips">
+          <button class="to-chip active" data-action="toSetPushDate" data-args='["${today}"]' data-date="${today}">I dag</button>
+          <button class="to-chip" data-action="toSetPushDate" data-args='["${tomorrow}"]' data-date="${tomorrow}">I morgen</button>
+          <input type="date" id="toPushDateInput" class="to-date-input" value="${today}" data-on-change="toSetPushDateCustom">
+        </div>
+      </div>
+      <div class="to-modal-footer">
+        <button class="btn btn-secondary" data-action="toClosePushRoute">Avbryt</button>
+        <button class="btn btn-primary" data-action="toSubmitPushRoute">
+          <i class="fas fa-paper-plane"></i> Send rute
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+}
+
+function toSetPushDate(date) {
+  document.querySelectorAll('#toPushRouteModal .to-chip').forEach(b => b.classList.remove('active'));
+  const chip = document.querySelector(`#toPushRouteModal .to-chip[data-date="${date}"]`);
+  if (chip) chip.classList.add('active');
+  document.getElementById('toPushDateInput').value = date;
+}
+
+function toSetPushDateCustom(el) {
+  const date = typeof el === 'string' ? el : el.value;
+  document.querySelectorAll('#toPushRouteModal .to-chip').forEach(b => b.classList.remove('active'));
+  document.getElementById('toPushDateInput').value = date;
+}
+
+function toClosePushRoute() {
+  const modal = document.getElementById('toPushRouteModal');
+  if (modal) {
+    modal.classList.remove('open');
+    setTimeout(() => modal.remove(), 200);
+  }
+}
+
+async function toSubmitPushRoute() {
+  const routeSelect = document.getElementById('toPushRouteSelect');
+  const memberSelect = document.getElementById('toPushMemberSelect');
+  const routeId = routeSelect?.value;
+  const memberId = memberSelect?.value;
+  const date = document.getElementById('toPushDateInput')?.value;
+
+  if (!routeId || !memberId) {
+    toShowNotice('Velg rute og teammedlem', 'warning');
+    return;
+  }
+
+  // Capture names before closing modal
+  const routeName = routeSelect?.selectedOptions[0]?.textContent || 'Rute';
+  const memberName = memberSelect?.selectedOptions[0]?.textContent || 'Teammedlem';
+
+  try {
+    const resp = await fetch(`/api/ruter/${routeId}/assign`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+      body: JSON.stringify({ assigned_to: parseInt(memberId, 10), planned_date: date })
+    });
+
+    const json = await resp.json();
+    if (json.success) {
+      toClosePushRoute();
+      await teamOverviewFetchData();
+      showToast(`Rute tildelt ${memberName}`, 'success');
+    } else {
+      toShowNotice(json.error || 'Kunne ikke sende ruten', 'error');
+    }
+  } catch (e) {
+    toShowNotice('Feil ved sending av rute', 'error');
+  }
+}
+
+
+// ============================================================
+// QUICK-ASSIGN — Add customer to existing route
+// ============================================================
+
+async function toShowQuickAssign() {
+  const overlay = document.createElement('div');
+  overlay.className = 'to-modal-overlay';
+  overlay.id = 'toQuickAssignModal';
+  overlay.innerHTML = `
+    <div class="to-modal-backdrop" data-action="toCloseQuickAssign"></div>
+    <div class="to-modal">
+      <div class="to-modal-header">
+        <h3>Legg til kunde i rute</h3>
+        <button class="btn btn-icon btn-small" data-action="toCloseQuickAssign"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="to-modal-body">
+        <label class="to-label">Søk etter kunde</label>
+        <input type="text" id="toQuickAssignSearch" class="to-input" placeholder="Søk navn, adresse..." data-on-input="toQuickAssignSearchHandler" autocomplete="off">
+        <div id="toQuickAssignResults" class="to-search-results"></div>
+
+        <div id="toQuickAssignForm" style="display:none;">
+          <div id="toQuickAssignSelected" class="to-selected-card"></div>
+
+          <label class="to-label">Rute</label>
+          <select id="toQuickAssignRoute" class="to-select">
+            <option value="">Velg rute...</option>
+          </select>
+        </div>
+      </div>
+      <div class="to-modal-footer">
+        <button class="btn btn-secondary" data-action="toCloseQuickAssign">Avbryt</button>
+        <button class="btn btn-primary" id="toQuickAssignSubmitBtn" data-action="toSubmitQuickAssign" disabled>
+          <i class="fas fa-plus-circle"></i> Legg til
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+
+  // Load routes dropdown
+  try {
+    const resp = await fetch('/api/ruter', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    const routes = (json.success ? json.data : []) || [];
+    const select = document.getElementById('toQuickAssignRoute');
+    if (select) {
+      routes.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        opt.textContent = r.navn || `Rute #${r.id}`;
+        select.appendChild(opt);
+      });
+    }
+  } catch (e) { /* ignore */ }
+
+  document.getElementById('toQuickAssignSearch')?.focus();
+}
+
+function toQuickAssignSearchHandler(query) {
+  if (toSearchTimer) clearTimeout(toSearchTimer);
+  if (!query || query.length < 2) {
+    const resultsDiv = document.getElementById('toQuickAssignResults');
+    if (resultsDiv) resultsDiv.innerHTML = '';
+    return;
+  }
+  toSearchTimer = setTimeout(() => toQuickAssignDoSearch(query), 300);
+}
+
+async function toQuickAssignDoSearch(query) {
+  const resultsDiv = document.getElementById('toQuickAssignResults');
+  if (!resultsDiv) return;
+
+  if (toSearchAbort) toSearchAbort.abort();
+  toSearchAbort = new AbortController();
+
+  try {
+    const resp = await fetch(`/api/kunder?search=${encodeURIComponent(query)}&limit=10`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+      signal: toSearchAbort.signal
+    });
+    const json = await resp.json();
+    const rawData = json.success ? json.data : json;
+    toSearchResults = Array.isArray(rawData) ? rawData : (rawData?.data || []);
+
+    if (toSearchResults.length === 0) {
+      resultsDiv.innerHTML = '<div class="to-search-empty">Ingen treff</div>';
+      return;
+    }
+
+    let html = '';
+    toSearchResults.forEach(k => {
+      const address = [k.adresse, k.poststed].filter(Boolean).join(', ');
+      html += `
+        <div class="to-search-row" data-action="toSelectQuickAssignKunde" data-args='[${k.id}]'>
+          <div>
+            <strong>${escapeHtml(k.navn)}</strong>
+            ${address ? `<br><span class="to-search-addr">${escapeHtml(address)}</span>` : ''}
+          </div>
+          <i class="fas fa-chevron-right"></i>
+        </div>
+      `;
+    });
+    resultsDiv.innerHTML = html;
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    resultsDiv.innerHTML = '<div class="to-search-empty">Feil ved søk</div>';
+  }
+}
+
+function toSelectQuickAssignKunde(kundeId) {
+  const kunde = toSearchResults.find(k => k.id === kundeId);
+  if (!kunde) return;
+
+  const selectedDiv = document.getElementById('toQuickAssignSelected');
+  if (selectedDiv) {
+    selectedDiv.innerHTML = `
+      <span>${escapeHtml(kunde.navn)}</span>
+      <button class="btn btn-icon btn-small" data-action="toClearQuickAssignSelection" title="Fjern">
+        <i class="fas fa-times"></i>
+      </button>
+    `;
+    selectedDiv.dataset.kundeId = kundeId;
+  }
+
+  const form = document.getElementById('toQuickAssignForm');
+  if (form) form.style.display = 'block';
+  const btn = document.getElementById('toQuickAssignSubmitBtn');
+  if (btn) btn.disabled = false;
+  const results = document.getElementById('toQuickAssignResults');
+  if (results) results.innerHTML = '';
+  const search = document.getElementById('toQuickAssignSearch');
+  if (search) search.value = '';
+}
+
+function toClearQuickAssignSelection() {
+  const selectedDiv = document.getElementById('toQuickAssignSelected');
+  if (selectedDiv) { selectedDiv.innerHTML = ''; selectedDiv.dataset.kundeId = ''; }
+  const form = document.getElementById('toQuickAssignForm');
+  if (form) form.style.display = 'none';
+  const btn = document.getElementById('toQuickAssignSubmitBtn');
+  if (btn) btn.disabled = true;
+}
+
+function toCloseQuickAssign() {
+  const modal = document.getElementById('toQuickAssignModal');
+  if (modal) {
+    modal.classList.remove('open');
+    setTimeout(() => modal.remove(), 200);
+  }
+}
+
+async function toSubmitQuickAssign() {
+  const kundeId = document.getElementById('toQuickAssignSelected')?.dataset?.kundeId;
+  const routeId = document.getElementById('toQuickAssignRoute')?.value;
+
+  if (!kundeId || !routeId) {
+    toShowNotice('Velg kunde og rute', 'warning');
+    return;
+  }
+
+  try {
+    const resp = await fetch(`/api/ruter/${routeId}/add-customer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+      body: JSON.stringify({ kunde_id: parseInt(kundeId, 10) })
+    });
+
+    const json = await resp.json();
+    if (json.success) {
+      toShowNotice('Kunde lagt til i ruten!', 'success');
+      toCloseQuickAssign();
+      teamOverviewFetchData();
+    } else {
+      toShowNotice(json.error || 'Kunne ikke legge til kunde', 'error');
+    }
+  } catch (e) {
+    toShowNotice('Feil ved tilordning', 'error');
+  }
+}
+
+// ============================================================
+// CUSTOMER LOOKUP — Quick customer search + history/details
+// ============================================================
+
+function toShowCustomerLookup() {
+  const overlay = document.createElement('div');
+  overlay.className = 'to-modal-overlay';
+  overlay.id = 'toCustomerLookupModal';
+  overlay.innerHTML = `
+    <div class="to-modal-backdrop" data-action="toCloseCustomerLookup"></div>
+    <div class="to-modal to-modal-wide">
+      <div class="to-modal-header">
+        <h3>Kundeoppslag</h3>
+        <button class="btn btn-icon btn-small" data-action="toCloseCustomerLookup"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="to-modal-body">
+        <input type="text" id="toCustomerLookupSearch" class="to-input" placeholder="Søk etter kunde (navn, adresse)..." data-on-input="toCustomerLookupSearchHandler" autocomplete="off">
+        <div id="toCustomerLookupResults" class="to-search-results">
+          <div class="to-search-empty"><i class="fas fa-address-book"></i><br>Søk etter en kunde for å se detaljer og historikk.</div>
+        </div>
+        <div id="toCustomerLookupDetail" style="display:none;"></div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('open'));
+  document.getElementById('toCustomerLookupSearch')?.focus();
+}
+
+function toCloseCustomerLookup() {
+  const modal = document.getElementById('toCustomerLookupModal');
+  if (modal) {
+    modal.classList.remove('open');
+    setTimeout(() => modal.remove(), 200);
+  }
+}
+
+let toCustomerSearchTimer = null;
+
+function toCustomerLookupSearchHandler(query) {
+  if (toCustomerSearchTimer) clearTimeout(toCustomerSearchTimer);
+  // Hide detail, show results
+  const detail = document.getElementById('toCustomerLookupDetail');
+  if (detail) detail.style.display = 'none';
+  const results = document.getElementById('toCustomerLookupResults');
+  if (results) results.style.display = '';
+
+  if (!query || query.length < 2) {
+    if (results) results.innerHTML = '<div class="to-search-empty"><i class="fas fa-address-book"></i><br>Søk etter en kunde for å se detaljer og historikk.</div>';
+    return;
+  }
+  toCustomerSearchTimer = setTimeout(() => toCustomerLookupDoSearch(query), 300);
+}
+
+async function toCustomerLookupDoSearch(query) {
+  const resultsDiv = document.getElementById('toCustomerLookupResults');
+  if (!resultsDiv) return;
+
+  resultsDiv.innerHTML = '<div class="to-search-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+
+  try {
+    const resp = await fetch(`/api/kunder?search=${encodeURIComponent(query)}&limit=20`, {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    const rawData = json.success ? json.data : json;
+    const kunder = Array.isArray(rawData) ? rawData : (rawData?.data || []);
+
+    if (kunder.length === 0) {
+      resultsDiv.innerHTML = '<div class="to-search-empty">Ingen kunder funnet.</div>';
+      return;
+    }
+
+    let html = '';
+    kunder.forEach(k => {
+      const address = [k.adresse, k.poststed].filter(Boolean).join(', ');
+      html += `
+        <div class="to-search-row to-customer-row" data-action="toShowCustomerDetail" data-args='[${k.id}]'>
+          <div>
+            <strong>${escapeHtml(k.navn)}</strong>
+            ${address ? `<br><span class="to-search-addr">${escapeHtml(address)}</span>` : ''}
+          </div>
+          <div class="to-customer-row-actions">
+            ${k.telefon ? `<a href="tel:${escapeHtml(k.telefon)}" class="to-action-icon" data-action="none" data-stop-propagation="true" title="Ring"><i class="fas fa-phone"></i></a>` : ''}
+            <i class="fas fa-chevron-right" style="opacity:0.4;"></i>
+          </div>
+        </div>
+      `;
+    });
+    resultsDiv.innerHTML = html;
+  } catch (e) {
+    resultsDiv.innerHTML = '<div class="to-search-empty">Feil ved søk. Prøv igjen.</div>';
+  }
+}
+
+async function toShowCustomerDetail(kundeId) {
+  const resultsDiv = document.getElementById('toCustomerLookupResults');
+  const detailDiv = document.getElementById('toCustomerLookupDetail');
+  if (!detailDiv) return;
+
+  // Hide search results, show detail
+  if (resultsDiv) resultsDiv.style.display = 'none';
+  detailDiv.style.display = 'block';
+  detailDiv.innerHTML = '<div class="to-search-empty"><i class="fas fa-spinner fa-spin"></i></div>';
+
+  try {
+    const csrfToken = getCsrfToken();
+    const [kundeResp, logResp] = await Promise.all([
+      fetch(`/api/kunder/${kundeId}`, {
+        headers: { 'X-CSRF-Token': csrfToken },
+        credentials: 'include'
+      }).then(r => r.json()),
+      fetch(`/api/kontaktlogg/${kundeId}`, {
+        headers: { 'X-CSRF-Token': csrfToken },
+        credentials: 'include'
+      }).then(r => r.json()).catch(() => ({ success: false, data: [] }))
+    ]);
+
+    const kunde = kundeResp.success ? kundeResp.data : kundeResp;
+    const logs = (logResp.success ? logResp.data : []) || [];
+
+    if (!kunde) {
+      detailDiv.innerHTML = '<div class="to-search-empty">Kunne ikke laste kundeinfo.</div>';
+      return;
+    }
+
+    const address = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', ');
+
+    let html = '';
+
+    // Back button
+    html += `<button class="to-back-btn" data-action="toBackToCustomerSearch"><i class="fas fa-arrow-left"></i> Tilbake til søk</button>`;
+
+    // Customer header
+    html += `<div class="to-customer-header"><h3>${escapeHtml(kunde.navn)}</h3></div>`;
+
+    // Info rows
+    html += '<div class="to-detail-section">';
+    if (address) html += `<div class="to-info-row"><i class="fas fa-map-marker-alt"></i><span>${escapeHtml(address)}</span></div>`;
+    if (kunde.telefon) html += `<div class="to-info-row"><i class="fas fa-phone"></i><a href="tel:${escapeHtml(kunde.telefon)}">${escapeHtml(kunde.telefon)}</a></div>`;
+    if (kunde.epost) html += `<div class="to-info-row"><i class="fas fa-envelope"></i><a href="mailto:${escapeHtml(kunde.epost)}">${escapeHtml(kunde.epost)}</a></div>`;
+    if (kunde.kontaktperson) html += `<div class="to-info-row"><i class="fas fa-user"></i><span>${escapeHtml(kunde.kontaktperson)}</span></div>`;
+    if (kunde.siste_kontroll) html += `<div class="to-info-row"><i class="fas fa-calendar-check"></i><span>Siste kontroll: ${escapeHtml(new Date(kunde.siste_kontroll).toLocaleDateString('nb-NO'))}</span></div>`;
+    if (kunde.neste_kontroll) html += `<div class="to-info-row"><i class="fas fa-calendar-alt"></i><span>Neste kontroll: ${escapeHtml(new Date(kunde.neste_kontroll).toLocaleDateString('nb-NO'))}</span></div>`;
+    if (kunde.notater) html += `<div class="to-info-row"><i class="fas fa-sticky-note"></i><span>${escapeHtml(kunde.notater)}</span></div>`;
+    html += '</div>';
+
+    // Contact log
+    html += '<div class="to-detail-section">';
+    html += '<h4>Kontaktlogg</h4>';
+    if (logs.length === 0) {
+      html += '<p class="to-detail-muted">Ingen kontaktlogg registrert.</p>';
+    } else {
+      logs.forEach(log => {
+        const dateStr = log.opprettet_dato
+          ? new Date(log.opprettet_dato).toLocaleDateString('nb-NO', { day: 'numeric', month: 'short', year: 'numeric' })
+          : '';
+        const typeIcon = log.type === 'telefon' ? 'fa-phone' : log.type === 'epost' ? 'fa-envelope' : log.type === 'besok' ? 'fa-walking' : 'fa-comment';
+        html += `
+          <div class="to-log-entry">
+            <div class="to-log-icon"><i class="fas ${typeIcon}"></i></div>
+            <div class="to-log-content">
+              <div class="to-log-date">${escapeHtml(dateStr)}</div>
+              <div class="to-log-text">${escapeHtml(log.notat || log.beskrivelse || '')}</div>
+              ${log.utfort_av ? `<div class="to-log-by">${escapeHtml(log.utfort_av)}</div>` : ''}
+            </div>
+          </div>
+        `;
+      });
+    }
+    html += '</div>';
+
+    detailDiv.innerHTML = html;
+  } catch (e) {
+    console.error('Team overview: Error loading customer detail:', e);
+    detailDiv.innerHTML = '<div class="to-search-empty">Feil ved lasting av kundeinfo.</div>';
+  }
+}
+
+function toBackToCustomerSearch() {
+  const resultsDiv = document.getElementById('toCustomerLookupResults');
+  const detailDiv = document.getElementById('toCustomerLookupDetail');
+  if (resultsDiv) resultsDiv.style.display = '';
+  if (detailDiv) detailDiv.style.display = 'none';
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+async function toLoadTeamMembers() {
+  try {
+    const resp = await fetch('/api/team-members', {
+      headers: { 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include'
+    });
+    const json = await resp.json();
+    if (json.success && json.data) {
+      const members = Array.isArray(json.data) ? json.data : (json.data.members || []);
+      return members.filter(m => m.aktiv !== false);
+    }
+  } catch (e) {
+    console.error('Team overview: Could not load team members:', e);
+  }
+  return [];
+}
+
+function teamOverviewToggle(routeId) {
+  // Legacy day view toggle — no-op, week view uses raoExpandRoute
+}
+
+function teamOverviewGetInitials(name) {
+  if (!name) return '??';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.substring(0, 2).toUpperCase();
+}
+
+function teamOverviewFormatDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const days = ['søndag', 'mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag'];
+  const months = ['jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des'];
+  return `${days[d.getDay()]} ${d.getDate()}. ${months[d.getMonth()]}`;
+}
+
+function toOpenWeekplanEditor() {
+  if (typeof mfShowWeekplanEditor === 'function') {
+    mfShowWeekplanEditor();
+  } else if (typeof switchArbeidView === 'function') {
+    switchArbeidView('uke');
+  }
+}
+
+function toShowNotice(message, type) {
+  // Reuse mfShowBanner if available (mobile), otherwise create a temp notice
+  if (typeof mfShowBanner === 'function') {
+    mfShowBanner(message, type);
+    return;
+  }
+  const notice = document.createElement('div');
+  notice.className = `to-notice to-notice-${type}`;
+  notice.textContent = message;
+  document.body.appendChild(notice);
+  requestAnimationFrame(() => notice.classList.add('visible'));
+  setTimeout(() => {
+    notice.classList.remove('visible');
+    setTimeout(() => notice.remove(), 300);
+  }, 3000);
+}
+
+// ============================================================
+// SHOW ROUTE ON MAP — Load saved route onto map with focus mode
+// ============================================================
+
+async function toShowRouteOnMap(routeId) {
+  const route = (teamOverviewData || []).find(r => r.id === routeId);
+  if (!route || !route.kunder || route.kunder.length === 0) {
+    toShowNotice('Ingen kunder i ruten', 'info');
+    return;
+  }
+
+  // Build stops from route customers (match with loaded customer data for coordinates)
+  const stops = [];
+  for (const kunde of route.kunder) {
+    // Try to find in loaded customers array for full data (lat/lng)
+    const full = (typeof customers !== 'undefined' ? customers : []).find(c => c.id === kunde.id);
+    if (full && full.lat && full.lng) {
+      stops.push({
+        id: full.id,
+        navn: full.navn,
+        adresse: full.adresse || '',
+        lat: full.lat,
+        lng: full.lng,
+        estimertTid: kunde.estimert_tid || 30
+      });
+    } else if (kunde.lat && kunde.lng) {
+      stops.push({
+        id: kunde.id,
+        navn: kunde.navn,
+        adresse: kunde.adresse || '',
+        lat: kunde.lat,
+        lng: kunde.lng,
+        estimertTid: kunde.estimert_tid || 30
+      });
+    }
+  }
+
+  if (stops.length === 0) {
+    toShowNotice('Ingen kunder med koordinater i ruten', 'info');
+    return;
+  }
+
+  // Get route start (company address)
+  const routeStart = (typeof appConfig !== 'undefined' && appConfig.routeStartLat && appConfig.routeStartLng)
+    ? { lat: appConfig.routeStartLat, lng: appConfig.routeStartLng }
+    : null;
+
+  if (!routeStart) {
+    toShowNotice('Sett firmaadresse i admin for å tegne rute', 'warning');
+    return;
+  }
+
+  // Activate route focus — hide non-route markers
+  wpRouteActive = true;
+  wpRouteStopIds = new Set(stops.map(s => Number(s.id)));
+  wpShowAllMarkers = false;
+  applyTeamFocusToMarkers();
+  if (typeof refreshClusters === 'function') refreshClusters();
+
+  const loadingToast = typeof showToast === 'function' ? showToast('Beregner rute...', 'info', 0) : null;
+
+  try {
+    // Build fallback ETA from cumulative estimertTid (no VROOM data available)
+    let cumulativeMin = 0;
+    const etaData = stops.map(s => {
+      const arrivalMin = 480 + cumulativeMin;
+      cumulativeMin += (s.estimertTid || 30);
+      const h = Math.floor(arrivalMin / 60);
+      const m = arrivalMin % 60;
+      return { eta: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, arrivalMin };
+    });
+    const routeResult = await renderRouteOnMap(stops, routeStart, { etaData });
+    if (loadingToast) loadingToast.remove();
+
+    // Store for export
+    currentRouteData = { customers: stops, duration: routeResult.drivingSeconds, distance: routeResult.distanceMeters };
+
+    // Show summary panel (reuse weekplan's panel)
+    toShowRouteSummaryPanel(route.navn || 'Rute', stops, routeResult.drivingSeconds, routeResult.distanceMeters);
+  } catch (err) {
+    if (loadingToast) loadingToast.remove();
+    console.error('Route rendering failed:', err);
+    toShowNotice('Feil ved ruteberegning', 'error');
+    wpRouteActive = false;
+    wpRouteStopIds = null;
+    applyTeamFocusToMarkers();
+    if (typeof refreshClusters === 'function') refreshClusters();
+  }
+}
+
+function toShowRouteSummaryPanel(routeName, stops, drivingSeconds, distanceMeters) {
+  const oldPanel = document.getElementById('wpRouteSummary');
+  if (oldPanel) oldPanel.remove();
+
+  const drivingMin = Math.round(drivingSeconds / 60);
+  const customerMin = stops.reduce((sum, s) => sum + (s.estimertTid || 30), 0);
+  const totalMin = drivingMin + customerMin;
+  const km = (distanceMeters / 1000).toFixed(1);
+
+  const panel = document.createElement('div');
+  panel.id = 'wpRouteSummary';
+  panel.className = 'wp-route-summary';
+  panel.innerHTML = `
+    <div class="wp-route-header">
+      <strong>${escapeHtml(routeName)} — ${stops.length} stopp</strong>
+      <button class="wp-route-close" data-action="closeWpRoute" aria-label="Fjern">&times;</button>
+    </div>
+    <div class="wp-route-stats">
+      <div class="wp-route-stat">
+        <i aria-hidden="true" class="fas fa-car"></i>
+        <span>Kjøretid: ~${typeof formatMinutes === 'function' ? formatMinutes(drivingMin) : drivingMin + ' min'}</span>
+      </div>
+      <div class="wp-route-stat">
+        <i aria-hidden="true" class="fas fa-user-clock"></i>
+        <span>Hos kunder: ~${typeof formatMinutes === 'function' ? formatMinutes(customerMin) : customerMin + ' min'}</span>
+      </div>
+      <div class="wp-route-stat total">
+        <i aria-hidden="true" class="fas fa-clock"></i>
+        <span>Totalt: ~${typeof formatMinutes === 'function' ? formatMinutes(totalMin) : totalMin + ' min'}</span>
+      </div>
+      <div class="wp-route-stat">
+        <i aria-hidden="true" class="fas fa-road"></i>
+        <span>${km} km</span>
+      </div>
+    </div>
+    <div class="wp-route-actions">
+      <button class="btn btn-small btn-primary" data-action="wpExportMaps">
+        <i aria-hidden="true" class="fas fa-external-link-alt"></i> Åpne i Maps
+      </button>
+      <button class="btn btn-small btn-ghost" data-action="toggleRouteMarkers">
+        <i aria-hidden="true" class="fas fa-eye"></i> Vis alle
+      </button>
+      <button class="btn btn-small btn-secondary" data-action="closeWpRoute">
+        <i aria-hidden="true" class="fas fa-eye-slash"></i> Skjul rute
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+}
+
+// Expose globals
+window.loadTeamOverview = loadTeamOverview;
+window.unloadTeamOverview = unloadTeamOverview;
+window.teamOverviewPrevDay = teamOverviewPrevDay;
+window.teamOverviewNextDay = teamOverviewNextDay;
+window.teamOverviewToday = teamOverviewToday;
+window.teamOverviewToggle = teamOverviewToggle;
+window.toShowPushRoute = toShowPushRoute;
+window.toClosePushRoute = toClosePushRoute;
+window.toSetPushDate = toSetPushDate;
+window.toSetPushDateCustom = toSetPushDateCustom;
+window.toSubmitPushRoute = toSubmitPushRoute;
+window.toShowQuickAssign = toShowQuickAssign;
+window.toCloseQuickAssign = toCloseQuickAssign;
+window.toQuickAssignSearchHandler = toQuickAssignSearchHandler;
+window.toSelectQuickAssignKunde = toSelectQuickAssignKunde;
+window.toClearQuickAssignSelection = toClearQuickAssignSelection;
+window.toSubmitQuickAssign = toSubmitQuickAssign;
+window.toShowCustomerLookup = toShowCustomerLookup;
+window.toCloseCustomerLookup = toCloseCustomerLookup;
+window.toCustomerLookupSearchHandler = toCustomerLookupSearchHandler;
+window.toShowCustomerDetail = toShowCustomerDetail;
+window.toBackToCustomerSearch = toBackToCustomerSearch;
+window.toOpenWeekplanEditor = toOpenWeekplanEditor;
+window.toShowRouteOnMap = toShowRouteOnMap;
+
+
+// ========================================
+// ONBOARDING ATTENTION SYSTEM
+// Highlights fields and sections that need
+// user attention. No overlays — works directly
+// with the real UI elements.
+// ========================================
+
+// Active attention highlights (so we can clear them)
+let activeAttentionElements = [];
+let attentionCleanupTimer = null;
+
+// Highlight a DOM element with a glowing attention effect
+// Automatically clears after duration (default 6s), or when user interacts
+function highlightElement(el, options = {}) {
+  if (!el) return;
+  const { duration = 6000, scrollIntoView = true, focusInput = true } = options;
+
+  el.classList.add('onboard-attention');
+  activeAttentionElements.push(el);
+
+  if (scrollIntoView) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Focus the first input/textarea inside if present
+  if (focusInput) {
+    const input = el.querySelector('input:not([type="hidden"]):not([type="checkbox"]), textarea');
+    if (input) {
+      setTimeout(() => input.focus(), 400);
+    }
+  }
+
+  // Auto-clear after duration
+  setTimeout(() => removeHighlight(el), duration);
+
+  // Clear on any interaction inside the element
+  const onInteract = () => {
+    removeHighlight(el);
+    el.removeEventListener('input', onInteract);
+    el.removeEventListener('click', onInteract);
+  };
+  el.addEventListener('input', onInteract, { once: true });
+  el.addEventListener('click', onInteract, { once: true });
+}
+
+// Remove highlight from a single element
+function removeHighlight(el) {
+  if (!el) return;
+  el.classList.remove('onboard-attention');
+  activeAttentionElements = activeAttentionElements.filter(e => e !== el);
+}
+
+// Clear all active highlights
+function clearAllHighlights() {
+  activeAttentionElements.forEach(el => el.classList.remove('onboard-attention'));
+  activeAttentionElements = [];
+}
+
+// ========================================
+// ATTENTION BADGES — small dots on fields
+// that haven't been filled yet
+// ========================================
+
+// Check which fields need attention and show/hide badges
+function refreshAttentionBadges() {
+  if (!isGuidanceEnabled()) return;
+
+  // Address section in admin tab
+  const addressSection = document.getElementById('companyAddressSection');
+  if (addressSection) {
+    const hasAddress = !!(appConfig.routeStartLat && appConfig.routeStartLng);
+    toggleAttentionBadge(addressSection, !hasAddress, 'Firmaadresse mangler');
+  }
+
+  // Admin tab itself (show dot if address is missing)
+  const adminTab = document.getElementById('adminTab');
+  if (adminTab) {
+    const hasAddress = !!(appConfig.routeStartLat && appConfig.routeStartLng);
+    const adminBadge = document.getElementById('adminAddressBadge');
+    if (adminBadge) adminBadge.style.display = hasAddress ? 'none' : 'inline-flex';
+  }
+
+  // Customers area — show badge on add-customer button if no customers
+  const addCustBtn = document.getElementById('addCustomerBtnTab');
+  if (addCustBtn) {
+    const hasCustomers = typeof customers !== 'undefined' && customers.length > 0;
+    toggleAttentionBadge(addCustBtn, !hasCustomers, 'Legg til din første kunde');
+  }
+}
+
+// Toggle a small attention dot on an element
+function toggleAttentionBadge(el, show, tooltip) {
+  if (!el) return;
+  let badge = el.querySelector('.onboard-badge');
+
+  if (show && !badge) {
+    badge = document.createElement('span');
+    badge.className = 'onboard-badge';
+    if (tooltip) badge.title = tooltip;
+    el.style.position = el.style.position || 'relative';
+    el.appendChild(badge);
+  } else if (!show && badge) {
+    badge.remove();
+  }
+}
+
+// ========================================
+// NAVIGATE & HIGHLIGHT — used by checklist
+// Navigate to the right tab/section and
+// highlight the fields that need filling
+// ========================================
+
+// Navigate to admin address section and highlight it
+function navigateAndHighlightAddress() {
+  clearAllHighlights();
+  const adminTab = document.querySelector('[data-tab="admin"]');
+  if (adminTab) adminTab.click();
+
+  setTimeout(() => {
+    const section = document.getElementById('companyAddressSection');
+    if (section) {
+      highlightElement(section, { duration: 8000 });
+    }
+  }, 300);
+}
+
+// Navigate to admin team section and highlight it
+function navigateAndHighlightTeam() {
+  clearAllHighlights();
+  const adminTab = document.querySelector('[data-tab="admin"]');
+  if (adminTab) adminTab.click();
+
+  setTimeout(() => {
+    const section = document.getElementById('teamMembersSection');
+    if (section) {
+      highlightElement(section, { duration: 8000 });
+      // Focus the add-button instead of an input
+      const addBtn = document.getElementById('addTeamMemberBtn') || document.getElementById('addFirstMemberBtn');
+      if (addBtn) {
+        addBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, 300);
+}
+
+// Navigate to weekplan tab and highlight the search
+function navigateAndHighlightWeekplan() {
+  clearAllHighlights();
+  // Switch to arbeid tab, then ukeplan sub-view
+  const arbeidTab = document.querySelector('[data-tab="arbeid"]');
+  if (arbeidTab) arbeidTab.click();
+
+  setTimeout(() => {
+    // Click ukeplan pill if available
+    const ukePill = document.querySelector('.arbeid-pill[data-view="uke"]');
+    if (ukePill) ukePill.click();
+
+    setTimeout(() => {
+      const search = document.getElementById('wpCustomerSearch');
+      if (search) {
+        highlightElement(search.closest('.wp-search-container') || search.parentElement, { duration: 8000 });
+      }
+      // Also highlight day selector
+      const firstDay = document.querySelector('.wp-day');
+      if (firstDay) {
+        highlightElement(firstDay.parentElement, { duration: 8000, focusInput: false, scrollIntoView: false });
+      }
+    }, 300);
+  }, 300);
+}
+
+// ========================================
+// INITIAL ONBOARDING SCAN
+// Show attention on fields that need it
+// when a new user first enters the app
+// ========================================
+
+function showInlineAddressSetup() {
+  // This function is called from spa-auth after login
+  // Instead of showing an overlay, we highlight fields that need attention
+  refreshAttentionBadges();
+
+  // For users without address: open admin tab and highlight address section
+  if (!appConfig.routeStartLat && !appConfig.routeStartLng) {
+    // Show panels first so user can see the admin tab
+    if (typeof showAppPanels === 'function') showAppPanels();
+
+    // Brief delay, then navigate to admin and highlight address
+    setTimeout(() => {
+      navigateAndHighlightAddress();
+    }, 800);
+  }
+}
+
+// Stub for backward compat (called on logout)
+function removeInlineAddressCard() {
+  clearAllHighlights();
+}
 
 
 // ========================================
@@ -5308,6 +13250,7 @@ async function updateOnboardingStep(step, data = {}) {
       credentials: 'include',
       body: JSON.stringify({ step, data })
     });
+    if (!response.ok) return { success: false };
     return await response.json();
   } catch (error) {
     console.error('Error updating onboarding step:', error);
@@ -5329,6 +13272,7 @@ async function skipOnboarding() {
       headers: skipHeaders,
       credentials: 'include'
     });
+    if (!response.ok) return { success: false };
     return await response.json();
   } catch (error) {
     console.error('Error skipping onboarding:', error);
@@ -5342,6 +13286,7 @@ async function getOnboardingStatus() {
     const response = await fetch('/api/onboarding/status', {
       credentials: 'include'
     });
+    if (!response.ok) return { success: false };
     return await response.json();
   } catch (error) {
     console.error('Error getting onboarding status:', error);
@@ -5350,318 +13295,27 @@ async function getOnboardingStatus() {
 }
 
 // ========================================
-// ONBOARDING WIZARD - Multi-step
+// ONBOARDING WIZARD - Removed (replaced by inline address setup)
+// Stubs kept for backward compatibility
 // ========================================
 
 const onboardingWizard = {
   currentStep: 0,
-  // Note: Industry selection has been moved to the website registration/settings
-  steps: [
-    { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
-    { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
-    { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
-  ],
-  data: {
-    industry: null,
-    company: {},
-    map: {}
-  },
+  steps: [],
+  data: { industry: null, company: {}, map: {} },
   overlay: null,
   resolve: null
 };
 
-// Show onboarding wizard
+// Wizard removed — resolves immediately
 async function showOnboardingWizard() {
-  return new Promise(async (resolve) => {
-    onboardingWizard.resolve = resolve;
-    onboardingWizard.currentStep = 0;
-
-    // Industry selection is now handled on the website dashboard, not in the app
-    // Build wizard steps (without industry selection)
-    onboardingWizard.steps = [
-      { id: 'welcome', title: 'Velkommen', icon: 'fa-hand-sparkles' },
-      { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
-      { id: 'import', title: 'Importer kunder', icon: 'fa-file-excel' },
-      { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
-      { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
-    ];
-
-    // Pre-fill wizard data from existing config (for re-runs)
-    if (appConfig.routeStartAddress) {
-      onboardingWizard.data.company.address = appConfig.routeStartAddress;
-      onboardingWizard.data.company.route_start_lat = appConfig.routeStartLat;
-      onboardingWizard.data.company.route_start_lng = appConfig.routeStartLng;
-    }
-
-    // Create overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'onboardingWizardOverlay';
-    overlay.className = 'onboarding-overlay';
-    onboardingWizard.overlay = overlay;
-
-    document.body.appendChild(overlay);
-
-    // Render initial step
-    await renderWizardStep();
-
-    // Animate in
-    requestAnimationFrame(() => {
-      overlay.classList.add('visible');
-    });
-  });
+  return Promise.resolve();
 }
 
-// Render current wizard step
-async function renderWizardStep() {
-  const overlay = onboardingWizard.overlay;
-  const step = onboardingWizard.steps[onboardingWizard.currentStep];
-
-  // Animate out existing content before switching
-  const existingContent = overlay.querySelector('.wizard-content');
-  if (existingContent) {
-    existingContent.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
-    existingContent.style.opacity = '0';
-    existingContent.style.transform = 'translateX(-20px)';
-    await new Promise(r => setTimeout(r, 200));
-  }
-
-  let stepContent = '';
-
-  switch (step.id) {
-    case 'welcome':
-      stepContent = renderWelcomeStep();
-      break;
-    case 'company':
-      stepContent = renderCompanyStep();
-      break;
-    case 'import':
-      stepContent = renderWizardImportStep();
-      break;
-    case 'map':
-      stepContent = renderMapStep();
-      break;
-    case 'complete':
-      stepContent = renderCompleteStep();
-      break;
-  }
-
-  overlay.innerHTML = `
-    <div class="onboarding-container wizard-container">
-      ${renderWizardProgress()}
-      <div class="wizard-content" data-step="${step.id}">
-        ${stepContent}
-      </div>
-    </div>
-  `;
-
-  // Attach step-specific event listeners
-  attachStepListeners(step.id);
-}
-
-// Render progress indicator
-function renderWizardProgress() {
-  const steps = onboardingWizard.steps;
-  const current = onboardingWizard.currentStep;
-
-  return `
-    <div class="wizard-progress">
-      <div class="wizard-progress-bar">
-        <div class="wizard-progress-fill" style="width: ${(current / (steps.length - 1)) * 100}%"></div>
-      </div>
-      <div class="wizard-steps">
-        ${steps.map((step, index) => `
-          <div class="wizard-step ${index < current ? 'completed' : ''} ${index === current ? 'active' : ''} ${index > current ? 'upcoming' : ''}">
-            <div class="wizard-step-icon">
-              ${index < current ? '<i aria-hidden="true" class="fas fa-check"></i>' : `<span>${index + 1}</span>`}
-            </div>
-            <div class="wizard-step-label">${step.title}</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
-
-// Render welcome/intro step
-function renderWelcomeStep() {
-  const userName = localStorage.getItem('userName') || '';
-  const greeting = userName ? `, ${escapeHtml(userName)}` : '';
-
-  return `
-    <div class="wizard-step-header wizard-welcome">
-      <div class="wizard-welcome-icon">
-        <i aria-hidden="true" class="fas fa-hand-sparkles"></i>
-      </div>
-      <h1>Velkommen til Sky Planner${greeting}!</h1>
-      <p>Vi hjelper deg å komme i gang på under 2 minutter. Du kan når som helst hoppe over og fullføre senere.</p>
-    </div>
-
-    <div class="wizard-welcome-features">
-      <div class="wizard-feature-card">
-        <div class="wizard-feature-card-icon">
-          <i aria-hidden="true" class="fas fa-map-marked-alt"></i>
-        </div>
-        <h3>Kundekart</h3>
-        <p>Se alle kunder som markører på kartet. Klikk for detaljer, filtrer på kategorier og tags.</p>
-      </div>
-      <div class="wizard-feature-card">
-        <div class="wizard-feature-card-icon">
-          <i aria-hidden="true" class="fas fa-route"></i>
-        </div>
-        <h3>Ukeplan og ruter</h3>
-        <p>Planlegg ukens stopp dag for dag. Optimaliser kjøreruten automatisk med ett klikk.</p>
-      </div>
-      <div class="wizard-feature-card">
-        <div class="wizard-feature-card-icon">
-          <i aria-hidden="true" class="fas fa-calendar-alt"></i>
-        </div>
-        <h3>Kalender</h3>
-        <p>Opprett avtaler, sett påminnelser og hold oversikt over fremtidige oppdrag.</p>
-      </div>
-    </div>
-
-    <div class="wizard-footer wizard-footer-center">
-      <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="nextWizardStep()">
-        La oss komme i gang <i aria-hidden="true" class="fas fa-arrow-right"></i>
-      </button>
-      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
-        Hopp over
-      </button>
-    </div>
-  `;
-}
-
-// Render company info step
-function renderCompanyStep() {
-  const data = onboardingWizard.data.company;
-
-  return `
-    <div class="wizard-step-header">
-      <h1><i aria-hidden="true" class="fas fa-building"></i> Firmainformasjon</h1>
-      <p>Oppgi firmaets adresse. Dette brukes som utgangspunkt for ruteplanlegging.</p>
-    </div>
-
-    <div class="wizard-form">
-      <div class="wizard-form-group">
-        <label for="companyAddress"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Firmaadresse</label>
-        <div class="wizard-address-wrapper">
-          <input type="text" id="companyAddress" placeholder="Begynn å skrive adresse..." value="${escapeHtml(data.address || '')}" autocomplete="off">
-          <div class="wizard-address-suggestions" id="wizardAddressSuggestions"></div>
-        </div>
-      </div>
-
-      <div class="wizard-form-row">
-        <div class="wizard-form-group">
-          <label for="companyPostnummer"><i aria-hidden="true" class="fas fa-hashtag"></i> Postnummer</label>
-          <div class="wizard-postnummer-wrapper">
-            <input type="text" id="companyPostnummer" placeholder="0000" maxlength="4" value="${escapeHtml(data.postnummer || '')}" autocomplete="off">
-            <span class="wizard-postnummer-status" id="wizardPostnummerStatus"></span>
-          </div>
-        </div>
-        <div class="wizard-form-group">
-          <label for="companyPoststed"><i aria-hidden="true" class="fas fa-city"></i> Poststed</label>
-          <input type="text" id="companyPoststed" placeholder="Fylles automatisk" value="${escapeHtml(data.poststed || '')}">
-        </div>
-      </div>
-
-      <div class="wizard-form-group">
-        <label><i aria-hidden="true" class="fas fa-route"></i> Rute-startpunkt</label>
-        <p class="wizard-form-hint">Klikk på kartet for å velge startpunkt for ruter, eller bruk firmaadresse.</p>
-        <div id="wizardRouteMap" class="wizard-mini-map"></div>
-        <div class="wizard-coordinates" id="routeCoordinates">
-          ${data.route_start_lat ? `<span>Valgt: ${data.route_start_lat.toFixed(5)}, ${data.route_start_lng.toFixed(5)}</span>` : '<span class="not-set">Ikke valgt - klikk på kartet</span>'}
-        </div>
-        <button class="wizard-btn wizard-btn-secondary" onclick="useAddressAsRouteStart()">
-          <i aria-hidden="true" class="fas fa-home"></i> Bruk firmaadresse
-        </button>
-      </div>
-    </div>
-
-    <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
-        <i aria-hidden="true" class="fas fa-forward"></i> Hopp over oppsett
-      </button>
-      <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Neste <i aria-hidden="true" class="fas fa-arrow-right"></i>
-      </button>
-    </div>
-  `;
-}
-
-// Render map settings step
-function renderMapStep() {
-  const data = onboardingWizard.data.map;
-
-  return `
-    <div class="wizard-step-header">
-      <h1><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Kartinnstillinger</h1>
-      <p>Velg standard kartvisning. Dra og zoom kartet til ønsket område.</p>
-    </div>
-
-    <div class="wizard-form">
-      <div class="wizard-form-group">
-        <label><i aria-hidden="true" class="fas fa-map"></i> Standard kartsentrum</label>
-        <p class="wizard-form-hint">Panorer og zoom kartet til det området du vanligvis jobber i.</p>
-        <div id="wizardMainMap" class="wizard-map"></div>
-      </div>
-
-      <div class="wizard-form-group">
-        <label for="defaultZoom"><i aria-hidden="true" class="fas fa-search-plus"></i> Standard zoom-nivå</label>
-        <div class="wizard-slider-container">
-          <input type="range" id="defaultZoom" min="5" max="18" value="${data.zoom || 10}">
-          <span class="wizard-slider-value" id="zoomValue">${data.zoom || 10}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
-      </button>
-      <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Fullfør oppsett <i aria-hidden="true" class="fas fa-check"></i>
-      </button>
-    </div>
-  `;
-}
-
-// Render completion step
-function renderCompleteStep() {
-  // Use industry from appConfig (set during registration on website)
-  const industryName = appConfig?.industry?.name || onboardingWizard.data.industry?.name || 'din virksomhet';
-
-  return `
-    <div class="wizard-step-header wizard-complete">
-      <div class="wizard-celebration">
-        <div class="wizard-confetti" aria-hidden="true"></div>
-        <div class="wizard-complete-icon wizard-complete-animated">
-          <svg viewBox="0 0 52 52" class="wizard-checkmark-svg">
-            <circle cx="26" cy="26" r="25" fill="none" class="wizard-checkmark-circle"/>
-            <path fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" class="wizard-checkmark-check"/>
-          </svg>
-        </div>
-      </div>
-      <h1 class="wizard-complete-title">Oppsettet er fullført!</h1>
-      <p class="wizard-complete-subtitle">Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
-    </div>
-
-    <div class="wizard-complete-summary">
-      <h3>Hva skjer nå?</h3>
-      <ul class="wizard-tips-list">
-        <li><i aria-hidden="true" class="fas fa-users"></i> Legg til dine første kunder</li>
-        <li><i aria-hidden="true" class="fas fa-route"></i> Planlegg effektive ruter</li>
-        <li><i aria-hidden="true" class="fas fa-calendar-alt"></i> Bruk kalenderen for å holde oversikt</li>
-        <li><i aria-hidden="true" class="fas fa-cog"></i> Tilpass ytterligere i innstillinger</li>
-      </ul>
-    </div>
-
-    <div class="wizard-footer wizard-footer-center">
-      <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="completeOnboardingWizard()">
-        <i aria-hidden="true" class="fas fa-rocket"></i> Start å bruke Sky Planner
-      </button>
-    </div>
-  `;
-}
+// Wizard rendering stubs (wizard removed — replaced by inline onboarding)
+async function renderWizardStep() {}
+function renderWizardProgress() { return ''; }
+function renderWelcomeStep() { return ''; }
 
 // ========================================
 // WIZARD IMPORT STEP - Excel/CSV Import
@@ -5900,7 +13554,7 @@ function renderWizardImportMethodChoice() {
     </div>
 
     <div class="wizard-import-method-choice">
-      <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodIntegration()">
+      <div class="wizard-method-card" role="button" tabindex="0" data-action="selectImportMethodIntegration">
         <div class="wizard-method-icon">
           <i aria-hidden="true" class="fas fa-plug"></i>
         </div>
@@ -5909,7 +13563,7 @@ function renderWizardImportMethodChoice() {
         <span class="wizard-method-action">Koble til <i aria-hidden="true" class="fas fa-external-link-alt"></i></span>
       </div>
 
-      <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodFile()">
+      <div class="wizard-method-card" role="button" tabindex="0" data-action="selectImportMethodFile">
         <div class="wizard-method-icon">
           <i aria-hidden="true" class="fas fa-file-excel"></i>
         </div>
@@ -5920,10 +13574,10 @@ function renderWizardImportMethodChoice() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="prevWizardStep">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
-      <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
+      <button class="wizard-btn wizard-btn-skip" data-action="skipWizardImport">
         Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
@@ -6052,7 +13706,7 @@ function renderWizardImportSubStep(step) {
       <div class="wizard-import-error">
         <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
         <p>${escapeHtml(wizardImportState.error)}</p>
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportRetry()">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardImportRetry">
           <i aria-hidden="true" class="fas fa-redo"></i> Prøv igjen
         </button>
       </div>
@@ -6094,10 +13748,10 @@ function renderWizardImportCleaning() {
           </div>
         </div>
         <div class="wizard-import-actions">
-          <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
+          <button class="wizard-btn wizard-btn-secondary" data-action="wizardCleaningBack">
             <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
           </button>
-          <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
+          <button class="wizard-btn wizard-btn-primary" data-action="wizardCleaningApprove">
             Gå videre <i aria-hidden="true" class="fas fa-arrow-right"></i>
           </button>
         </div>
@@ -6134,7 +13788,7 @@ function renderWizardImportCleaning() {
           ${report.rules.filter(r => r.affectedCount > 0).map(rule => `
             <label class="wizard-cleaning-rule-toggle">
               <input type="checkbox" ${enabledRules[rule.ruleId] ? 'checked' : ''}
-                onchange="wizardToggleCleaningRule('${rule.ruleId}', this.checked)">
+                data-on-change="wizardToggleCleaningRule" data-args='["${escapeHtml(rule.ruleId)}"]'>
               <span class="wizard-cleaning-rule-info">
                 <span class="wizard-cleaning-rule-name">${escapeHtml(rule.name)}</span>
                 <span class="wizard-cleaning-rule-desc">${escapeHtml(rule.description)}</span>
@@ -6198,13 +13852,13 @@ function renderWizardImportCleaning() {
 
       <!-- Actions -->
       <div class="wizard-import-actions">
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardCleaningBack">
           <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
         </button>
-        <button class="wizard-btn wizard-btn-ghost" onclick="wizardCleaningSkip()">
+        <button class="wizard-btn wizard-btn-ghost" data-action="wizardCleaningSkip">
           Hopp over rensing
         </button>
-        <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
+        <button class="wizard-btn wizard-btn-primary" data-action="wizardCleaningApprove">
           <i aria-hidden="true" class="fas fa-check"></i> Godkjenn rensing <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       </div>
@@ -6317,12 +13971,12 @@ function renderCleaningFullTable() {
       ${totalPages > 1 ? `
         <div class="wizard-cleaning-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardCleaningTablePage(${validPage - 1})" ${validPage === 0 ? 'disabled' : ''}>
+            data-action="wizardCleaningTablePage" data-args='[${validPage - 1}]' ${validPage === 0 ? 'disabled' : ''}>
             <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPage + 1} av ${totalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardCleaningTablePage(${validPage + 1})" ${validPage >= totalPages - 1 ? 'disabled' : ''}>
+            data-action="wizardCleaningTablePage" data-args='[${validPage + 1}]' ${validPage >= totalPages - 1 ? 'disabled' : ''}>
             Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
@@ -6445,10 +14099,10 @@ function renderWizardImportUpload() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="prevWizardStep">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
-      <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
+      <button class="wizard-btn wizard-btn-skip" data-action="skipWizardImport">
         Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
@@ -6468,7 +14122,7 @@ function renderAIQuestions() {
       <div class="wizard-ai-questions-header">
         <i aria-hidden="true" class="fas fa-question-circle"></i>
         <span>AI trenger din hjelp med ${questions.length} ${questions.length === 1 ? 'kolonne' : 'kolonner'}</span>
-        <button class="wizard-btn-link" onclick="skipAIQuestions()">Bruk AI-anbefalinger</button>
+        <button class="wizard-btn-link" data-action="skipAIQuestions">Bruk AI-anbefalinger</button>
       </div>
       <div class="wizard-ai-questions-list">
         ${questions.map((q, index) => `
@@ -6482,19 +14136,19 @@ function renderAIQuestions() {
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === q.targetField ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="${q.targetField || ''}"
                   ${wizardImportState.questionAnswers[q.header] === q.targetField || (!wizardImportState.questionAnswers[q.header] && q.targetField) ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '${escapeJsString(q.targetField || '')}')">
+                  data-on-change="handleAIQuestionAnswer" data-args='["${escapeHtml(q.header)}", "${escapeHtml(q.targetField || '')}"]'>
                 <span>${escapeHtml(q.targetField || 'Egendefinert felt')} <span class="recommended">(Anbefalt av AI)</span></span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_custom"
                   ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_custom')">
+                  data-on-change="handleAIQuestionAnswer" data-args='["${escapeHtml(q.header)}", "_custom"]'>
                 <span>Behold som egendefinert felt</span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_skip"
                   ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_skip')">
+                  data-on-change="handleAIQuestionAnswer" data-args='["${escapeHtml(q.header)}", "_skip"]'>
                 <span>Ignorer denne kolonnen</span>
               </label>
             </div>
@@ -6574,7 +14228,7 @@ function renderRequiredFieldSelectors(data) {
             <i aria-hidden="true" class="fas fa-user"></i>
             Kundenavn
           </label>
-          <select id="navnColumnSelect" onchange="updateRequiredMapping('navn', this.value)" class="wizard-required-select">
+          <select id="navnColumnSelect" data-on-change="updateRequiredMapping" data-args='["navn"]' class="wizard-required-select">
             <option value="">-- Velg kolonne --</option>
             ${allColumns.map(col => `
               <option value="${escapeHtml(col)}" ${currentMappings.navn === col ? 'selected' : ''}>
@@ -6589,7 +14243,7 @@ function renderRequiredFieldSelectors(data) {
             <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
             Adresse
           </label>
-          <select id="adresseColumnSelect" onchange="updateRequiredMapping('adresse', this.value)" class="wizard-required-select">
+          <select id="adresseColumnSelect" data-on-change="updateRequiredMapping" data-args='["adresse"]' class="wizard-required-select">
             <option value="">-- Velg kolonne --</option>
             ${allColumns.map(col => `
               <option value="${escapeHtml(col)}" ${currentMappings.adresse === col ? 'selected' : ''}>
@@ -6747,11 +14401,11 @@ function renderWizardImportMapping() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="wizardImportBack">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-primary"
-        onclick="wizardImportNext()"
+        data-action="wizardImportNext"
         ${!areRequiredFieldsMapped() ? 'disabled title="Velg kolonner for kundenavn og adresse først"' : ''}>
         Forhåndsvis <i aria-hidden="true" class="fas fa-arrow-right"></i>
       </button>
@@ -6808,7 +14462,7 @@ function renderUnmappedColumnsSection(data, headers, mapping, targetFields) {
                 <span class="wizard-unmapped-sample">Eksempel: ${escapeHtml(col.sampleValue || '-')}</span>
               </div>
               <div class="wizard-unmapped-action">
-                <select onchange="handleUnmappedColumn('${escapeJsString(col.header)}', this.value)">
+                <select data-on-change="handleUnmappedColumn" data-args='["${escapeHtml(col.header)}"]'>
                   <option value="ignore" ${currentAction === 'ignore' ? 'selected' : ''}>
                     Ignorer
                   </option>
@@ -6890,7 +14544,7 @@ function renderWizardImportPreview() {
               </div>
               <div class="wizard-category-arrow"><i aria-hidden="true" class="fas fa-arrow-right"></i></div>
               <div class="wizard-category-select">
-                <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeJsString(match.original)}', this.value)">
+                <select data-original="${escapeHtml(match.original)}" data-on-change="updateWizardCategoryMapping" data-args='["${escapeHtml(match.original)}"]'>
                   ${match.suggested ? `
                     <option value="${escapeHtml(match.suggested.id)}" selected>
                       ${escapeHtml(match.suggested.name)} (anbefalt)
@@ -7017,14 +14671,14 @@ function renderWizardImportPreview() {
           <div class="wizard-preview-controls">
             <label class="wizard-toggle-label">
               <input type="checkbox" ${showBeforeAfter ? 'checked' : ''}
-                onchange="wizardToggleBeforeAfter(this.checked)">
+                data-on-change="wizardToggleBeforeAfter">
               <span>Vis transformasjoner</span>
             </label>
             <div class="wizard-selection-actions">
-              <button class="wizard-btn wizard-btn-small" onclick="wizardSelectAllRows()">
+              <button class="wizard-btn wizard-btn-small" data-action="wizardSelectAllRows">
                 <i aria-hidden="true" class="fas fa-check-square"></i> Velg alle
               </button>
-              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectAllRows()">
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDeselectAllRows">
                 <i aria-hidden="true" class="fas fa-square"></i> Velg ingen
               </button>
               <span class="wizard-selection-count" id="wizardSelectionCount">
@@ -7038,7 +14692,7 @@ function renderWizardImportPreview() {
           <thead>
             <tr>
               <th class="col-checkbox">
-                <input type="checkbox" id="wizardSelectAllCheckbox" onchange="wizardToggleAllRows(this.checked)" ${areAllRowsSelected(previewRows) ? 'checked' : ''}>
+                <input type="checkbox" id="wizardSelectAllCheckbox" data-on-change="wizardToggleAllRows" ${areAllRowsSelected(previewRows) ? 'checked' : ''}>
               </th>
               <th class="col-rownum">#</th>
               ${displayColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
@@ -7055,7 +14709,7 @@ function renderWizardImportPreview() {
               return `
               <tr class="${rowClass}" data-row-index="${globalIdx}">
                 <td class="col-checkbox">
-                  <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="wizardToggleRow(${globalIdx}, this.checked)">
+                  <input type="checkbox" ${isSelected ? 'checked' : ''} data-on-change="wizardToggleRow" data-args='[${globalIdx}]'>
                 </td>
                 <td class="col-rownum">${globalIdx + 1}</td>
                 ${displayColumns.map(col => {
@@ -7100,12 +14754,12 @@ function renderWizardImportPreview() {
       ${previewTotalPages > 1 ? `
         <div class="wizard-preview-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardPreviewTablePage(${validPreviewPage - 1})" ${validPreviewPage === 0 ? 'disabled' : ''}>
+            data-action="wizardPreviewTablePage" data-args='[${validPreviewPage - 1}]' ${validPreviewPage === 0 ? 'disabled' : ''}>
             <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPreviewPage + 1} av ${previewTotalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardPreviewTablePage(${validPreviewPage + 1})" ${validPreviewPage >= previewTotalPages - 1 ? 'disabled' : ''}>
+            data-action="wizardPreviewTablePage" data-args='[${validPreviewPage + 1}]' ${validPreviewPage >= previewTotalPages - 1 ? 'disabled' : ''}>
             Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
@@ -7124,16 +14778,16 @@ function renderWizardImportPreview() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="wizardImportBack">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <div class="wizard-footer-right">
         ${wizardImportState.batchId ? `
-          <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport som CSV">
+          <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDownloadErrorReport" title="Last ned feilrapport som CSV">
             <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
           </button>
         ` : ''}
-        <button class="wizard-btn wizard-btn-primary" onclick="wizardStartImport()" ${getSelectedValidRowCount() === 0 ? 'disabled' : ''}>
+        <button class="wizard-btn wizard-btn-primary" data-action="wizardStartImport" ${getSelectedValidRowCount() === 0 ? 'disabled' : ''}>
           <i aria-hidden="true" class="fas fa-file-import"></i> Importer ${getSelectedValidRowCount()} kunder
         </button>
       </div>
@@ -7218,26 +14872,26 @@ function renderWizardImportResults() {
 
     <div class="wizard-footer wizard-footer-center">
       ${results.batchId ? `
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardRollbackImport()" title="Angre hele importen">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardRollbackImport" title="Angre hele importen">
           <i aria-hidden="true" class="fas fa-undo"></i> Angre import
         </button>
       ` : ''}
       ${results.errorCount > 0 ? `
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardReimportFailed()" title="Prøv å importere feilede rader på nytt">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardReimportFailed" title="Prøv å importere feilede rader på nytt">
           <i aria-hidden="true" class="fas fa-redo"></i> Reimporter feilede (${results.errorCount})
         </button>
       ` : ''}
       ${results.batchId ? `
-        <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport">
+        <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDownloadErrorReport" title="Last ned feilrapport">
           <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
         </button>
       ` : ''}
       ${standaloneImportMode ? `
-        <button class="wizard-btn wizard-btn-primary" onclick="closeImportModal()">
+        <button class="wizard-btn wizard-btn-primary" data-action="closeImportModal">
           <i aria-hidden="true" class="fas fa-check"></i> Ferdig
         </button>
       ` : `
-        <button class="wizard-btn wizard-btn-primary" onclick="wizardImportComplete()">
+        <button class="wizard-btn wizard-btn-primary" data-action="wizardImportComplete">
           Fortsett til neste steg <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       `}
@@ -8356,11 +16010,11 @@ function renderErrorGrouping(preview) {
               <span class="error-group-count">${group.count} rader</span>
             </div>
             ${group.field === 'epost' && group.message.includes('skrivefeil') ? `
-              <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
+              <button class="wizard-btn wizard-btn-small" data-action="wizardFixAllSimilar" data-args='["${escapeHtml(group.field)}", "${escapeHtml(group.message)}"]'>
                 <i aria-hidden="true" class="fas fa-magic"></i> Fiks alle
               </button>
             ` : `
-              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDeselectErrorRows" data-args='["${escapeHtml(group.field)}", "${escapeHtml(group.message)}"]'>
                 <i aria-hidden="true" class="fas fa-minus-circle"></i> Fjern fra import
               </button>
             `}
@@ -8476,53 +16130,50 @@ async function wizardReimportFailed() {
 }
 
 // Attach event listeners for current step
+// Wizard step listeners — only import is still used (via standalone modal)
 function attachStepListeners(stepId) {
-  switch (stepId) {
-    case 'company':
-      attachCompanyListeners();
-      break;
-    case 'import':
-      attachWizardImportListeners();
-      break;
-    case 'map':
-      attachMapListeners();
-      break;
-  }
+  if (stepId === 'import') attachWizardImportListeners();
 }
 
-// Company step listeners
+// Wizard step listeners removed — replaced by inline onboarding
 let wizardRouteMap = null;
 let wizardRouteMarker = null;
+let wizardMainMap = null;
 
 function attachCompanyListeners() {
-  // Initialize mini map for route start
+  // Initialize mini map for route start selection
   setTimeout(() => {
-    const mapContainer = document.getElementById('wizardRouteMap');
-    if (mapContainer && !wizardRouteMap) {
-      const data = onboardingWizard.data.company;
-      const lat = data.route_start_lat || 59.9139;
-      const lng = data.route_start_lng || 10.7522;
+    if (typeof mapboxgl !== 'undefined' && document.getElementById('wizardRouteMap')) {
+      try {
+        const data = onboardingWizard.data.company;
+        const lat = data.route_start_lat || 59.9139;
+        const lng = data.route_start_lng || 10.7522;
 
-      wizardRouteMap = new mapboxgl.Map({
-        container: 'wizardRouteMap',
-        style: 'mapbox://styles/mapbox/streets-v12',
-        center: [lng, lat],
-        zoom: 10,
-        accessToken: mapboxgl.accessToken
-      });
+        wizardRouteMap = new mapboxgl.Map({
+          container: 'wizardRouteMap',
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: [lng, lat],
+          zoom: 10,
+          accessToken: mapboxgl.accessToken
+        });
 
-      if (data.route_start_lat) {
-        wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
+        if (data.route_start_lat) {
+          wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
+        }
+
+        wizardRouteMap.on('click', (e) => {
+          if (wizardRouteMarker) wizardRouteMarker.remove();
+          wizardRouteMarker = new mapboxgl.Marker().setLngLat(e.lngLat).addTo(wizardRouteMap);
+          onboardingWizard.data.company.route_start_lat = e.lngLat.lat;
+          onboardingWizard.data.company.route_start_lng = e.lngLat.lng;
+          const coordsEl = document.getElementById('routeCoordinates');
+          if (coordsEl) {
+            coordsEl.innerHTML = `<span>Valgt: ${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}</span>`;
+          }
+        });
+      } catch (error) {
+        console.error('Failed to initialize wizard route map:', error);
       }
-
-      wizardRouteMap.on('click', (e) => {
-        if (wizardRouteMarker) wizardRouteMarker.remove();
-        wizardRouteMarker = new mapboxgl.Marker().setLngLat(e.lngLat).addTo(wizardRouteMap);
-        onboardingWizard.data.company.route_start_lat = e.lngLat.lat;
-        onboardingWizard.data.company.route_start_lng = e.lngLat.lng;
-        document.getElementById('routeCoordinates').innerHTML =
-          `<span>Valgt: ${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}</span>`;
-      });
     }
   }, 100);
 
@@ -8741,35 +16392,39 @@ function updateWizardPostnummerStatus(status) {
   }
 }
 
-// Map step listeners
-let wizardMainMap = null;
-
+// Map step listeners (wizard removed — dead code)
 function attachMapListeners() {
   setTimeout(() => {
     const mapContainer = document.getElementById('wizardMainMap');
     if (mapContainer && !wizardMainMap) {
-      const data = onboardingWizard.data.map;
-      const company = onboardingWizard.data.company;
-      const lat = data.center_lat || company.route_start_lat || 59.9139;
-      const lng = data.center_lng || company.route_start_lng || 10.7522;
-      const zoom = data.zoom || 10;
+      try {
+        const data = onboardingWizard.data.map;
+        const company = onboardingWizard.data.company;
+        const lat = data.center_lat || company.route_start_lat || 59.9139;
+        const lng = data.center_lng || company.route_start_lng || 10.7522;
+        const zoom = data.zoom || 10;
 
-      wizardMainMap = new mapboxgl.Map({
-        container: 'wizardMainMap',
-        style: 'mapbox://styles/mapbox/streets-v12',
-        center: [lng, lat],
-        zoom: zoom,
-        accessToken: mapboxgl.accessToken
-      });
+        wizardMainMap = new mapboxgl.Map({
+          container: 'wizardMainMap',
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: [lng, lat],
+          zoom: zoom,
+          accessToken: mapboxgl.accessToken
+        });
 
-      wizardMainMap.on('moveend', () => {
-        const center = wizardMainMap.getCenter();
-        onboardingWizard.data.map.center_lat = center.lat;
-        onboardingWizard.data.map.center_lng = center.lng;
-        onboardingWizard.data.map.zoom = wizardMainMap.getZoom();
-        document.getElementById('defaultZoom').value = wizardMainMap.getZoom();
-        document.getElementById('zoomValue').textContent = wizardMainMap.getZoom();
-      });
+        wizardMainMap.on('moveend', () => {
+          const center = wizardMainMap.getCenter();
+          onboardingWizard.data.map.center_lat = center.lat;
+          onboardingWizard.data.map.center_lng = center.lng;
+          onboardingWizard.data.map.zoom = wizardMainMap.getZoom();
+          const zoomInput = document.getElementById('defaultZoom');
+          const zoomLabel = document.getElementById('zoomValue');
+          if (zoomInput) zoomInput.value = wizardMainMap.getZoom();
+          if (zoomLabel) zoomLabel.textContent = wizardMainMap.getZoom();
+        });
+      } catch (error) {
+        console.error('Failed to initialize wizard main map:', error);
+      }
     }
   }, 100);
 
@@ -8777,7 +16432,8 @@ function attachMapListeners() {
   if (zoomSlider) {
     zoomSlider.addEventListener('input', (e) => {
       const zoom = parseInt(e.target.value);
-      document.getElementById('zoomValue').textContent = zoom;
+      const zoomLabel = document.getElementById('zoomValue');
+      if (zoomLabel) zoomLabel.textContent = zoom;
       onboardingWizard.data.map.zoom = zoom;
       if (wizardMainMap) {
         wizardMainMap.setZoom(zoom);
@@ -8816,8 +16472,10 @@ async function useAddressAsRouteStart() {
         wizardRouteMap.flyTo({ center: [lng, lat], zoom: 14 });
       }
 
-      document.getElementById('routeCoordinates').innerHTML =
-        `<span>Valgt: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+      const coordsEl = document.getElementById('routeCoordinates');
+      if (coordsEl) {
+        coordsEl.innerHTML = `<span>Valgt: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+      }
     } else {
       showMessage('Kunne ikke finne adressen. Prøv å klikke på kartet manuelt.', 'warning');
     }
@@ -8827,128 +16485,24 @@ async function useAddressAsRouteStart() {
   }
 }
 
-// Navigate to next step
-async function nextWizardStep() {
-  try {
-    console.log('nextWizardStep called, current step:', onboardingWizard.currentStep);
-    const currentStepId = onboardingWizard.steps[onboardingWizard.currentStep].id;
-    console.log('Current step ID:', currentStepId);
-
-    // Save current step data to server
-    if (currentStepId === 'company') {
-      const data = onboardingWizard.data.company;
-      console.log('Saving company data:', data);
-      const result = await updateOnboardingStep('company_info', {
-        company_address: data.address,
-        company_postnummer: data.postnummer,
-        company_poststed: data.poststed,
-        route_start_lat: data.route_start_lat,
-        route_start_lng: data.route_start_lng
-      });
-      console.log('Company step save result:', result);
-    } else if (currentStepId === 'map') {
-      const data = onboardingWizard.data.map;
-      console.log('Saving map data:', data);
-      const result = await updateOnboardingStep('map_settings', {
-        map_center_lat: data.center_lat,
-        map_center_lng: data.center_lng,
-        map_zoom: data.zoom
-      });
-      console.log('Map step save result:', result);
-    }
-
-    // Cleanup maps before step change
-    cleanupWizardMaps();
-
-    onboardingWizard.currentStep++;
-    console.log('Moving to step:', onboardingWizard.currentStep);
-    await renderWizardStep();
-  } catch (error) {
-    console.error('Error in nextWizardStep:', error);
-    showMessage('Det oppstod en feil. Prøv igjen.', 'error');
-  }
-}
-
-// Navigate to previous step
-async function prevWizardStep() {
-  if (onboardingWizard.currentStep > 0) {
-    cleanupWizardMaps();
-    onboardingWizard.currentStep--;
-    await renderWizardStep();
-  }
-}
-
-// Cleanup wizard maps
+// Navigate to next step — wizard removed, stub
+async function nextWizardStep() { return; }
+async function prevWizardStep() { return; }
 function cleanupWizardMaps() {
-  if (wizardRouteMap) {
-    wizardRouteMap.remove();
-    wizardRouteMap = null;
-    wizardRouteMarker = null;
-  }
-  if (wizardMainMap) {
-    wizardMainMap.remove();
-    wizardMainMap = null;
-  }
+  if (wizardRouteMap) { try { wizardRouteMap.remove(); } catch(e) {} wizardRouteMap = null; wizardRouteMarker = null; }
+  if (wizardMainMap) { try { wizardMainMap.remove(); } catch(e) {} wizardMainMap = null; }
 }
+async function completeOnboardingWizard() { return; }
+async function handleSkipOnboarding() { return; }
 
-// Complete onboarding wizard
-async function completeOnboardingWizard() {
-  await updateOnboardingStep('completed', {});
+// (Old wizard navigation code removed — nextWizardStep, prevWizardStep,
+// cleanupWizardMaps, completeOnboardingWizard, handleSkipOnboarding
+// are all stubbed above)
 
-  cleanupWizardMaps();
-
-  const overlay = onboardingWizard.overlay;
-  overlay.classList.remove('visible');
-
-  setTimeout(() => {
-    overlay.remove();
-    onboardingWizard.overlay = null;
-
-    // Show first-time tips
-    showContextTips();
-
-    // Initialize onboarding checklist for continued guidance
-    if (typeof initOnboardingChecklist === 'function') {
-      setTimeout(() => initOnboardingChecklist(), 1500);
-    }
-
-    if (onboardingWizard.resolve) {
-      onboardingWizard.resolve();
-    }
-  }, 400);
-}
-
-// Skip onboarding
-async function handleSkipOnboarding() {
-  const confirmed = await showConfirm('Er du sikker på at du vil hoppe over oppsettet? Du kan alltid endre innstillinger senere.', 'Hopp over oppsett');
-  if (confirmed) {
-    await skipOnboarding();
-    cleanupWizardMaps();
-
-    const overlay = onboardingWizard.overlay;
-    overlay.classList.remove('visible');
-
-    setTimeout(() => {
-      overlay.remove();
-      onboardingWizard.overlay = null;
-
-      // Show checklist since user skipped setup — especially useful here
-      if (typeof initOnboardingChecklist === 'function') {
-        setTimeout(() => initOnboardingChecklist(), 1500);
-      }
-
-      if (onboardingWizard.resolve) {
-        onboardingWizard.resolve();
-      }
-    }, 400);
-  }
-}
-
-// Export wizard functions for onclick handlers
+// Export wizard functions for onclick handlers (stubs)
 window.nextWizardStep = nextWizardStep;
 window.prevWizardStep = prevWizardStep;
 window.handleSkipOnboarding = handleSkipOnboarding;
-window.useAddressAsRouteStart = useAddressAsRouteStart;
 window.completeOnboardingWizard = completeOnboardingWizard;
 
 // Pagination for preview table
@@ -9026,10 +16580,10 @@ function renderAdminFields() {
         </span>
       </div>
       <div class="item-actions">
-        <button class="btn-icon" onclick="openFieldModal(${field.id})" title="Rediger">
+        <button class="btn-icon" data-action="openFieldModal" data-args='[${field.id}]' title="Rediger">
           <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
-        <button class="btn-icon danger" onclick="confirmDeleteField(${field.id})" title="Slett">
+        <button class="btn-icon danger" data-action="confirmDeleteField" data-args='[${field.id}]' title="Slett">
           <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
@@ -9093,7 +16647,7 @@ function renderFieldOptions(options) {
     <div class="option-item" data-index="${index}" data-id="${opt.id || ''}">
       <input type="text" class="option-value" value="${escapeHtml(opt.value || '')}" placeholder="Verdi">
       <input type="text" class="option-display" value="${escapeHtml(opt.display_name || '')}" placeholder="Visningsnavn">
-      <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
+      <button type="button" class="btn-icon danger" data-action="removeAncestor" data-ancestor=".option-item" title="Fjern">
         <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
@@ -9110,7 +16664,7 @@ function addFieldOption() {
     <div class="option-item" data-index="${index}" data-id="">
       <input type="text" class="option-value" placeholder="Verdi">
       <input type="text" class="option-display" placeholder="Visningsnavn">
-      <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
+      <button type="button" class="btn-icon danger" data-action="removeAncestor" data-ancestor=".option-item" title="Fjern">
         <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
@@ -9282,15 +16836,20 @@ function renderCategoryListItems() {
         <span class="category-list-meta">${cat.default_interval_months || 12} mnd</span>
       </div>
       <div class="category-list-actions">
-        <button class="btn-icon" onclick="document.getElementById('categoryListModal').classList.add('hidden'); openCategoryModal(${cat.id});" title="Rediger">
+        <button class="btn-icon" data-action="editCategoryFromList" data-args='[${cat.id}]' title="Rediger">
           <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
-        <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
+        <button class="btn-icon danger" data-action="confirmDeleteCategory" data-args='[${cat.id}]' title="Slett">
           <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
   `).join('');
+}
+
+function editCategoryFromList(catId) {
+  document.getElementById('categoryListModal').classList.add('hidden');
+  openCategoryModal(catId);
 }
 
 function renderAdminCategories() {
@@ -9323,10 +16882,10 @@ function renderAdminCategories() {
         </span>
       </div>
       <div class="item-actions">
-        <button class="btn-icon" onclick="openCategoryModal(${cat.id})" title="Rediger">
+        <button class="btn-icon" data-action="openCategoryModal" data-args='[${cat.id}]' title="Rediger">
           <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
-        <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
+        <button class="btn-icon danger" data-action="confirmDeleteCategory" data-args='[${cat.id}]' title="Slett">
           <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
@@ -9353,15 +16912,16 @@ function renderCategoryIconPicker(selectedIcon) {
   container.innerHTML = CATEGORY_ICONS.map(icon => `
     <button type="button" class="icon-btn ${icon === selectedIcon ? 'selected' : ''}"
             data-icon="${escapeHtml(icon)}" title="${escapeHtml(icon.replace('fa-', ''))}"
-            onclick="selectCategoryIcon(this, '${escapeJsString(icon)}')">
+            data-action="selectCategoryIcon" data-args='["${escapeHtml(icon)}"]'>
       <i aria-hidden="true" class="fas ${escapeHtml(icon)}"></i>
     </button>
   `).join('');
 }
 
-function selectCategoryIcon(btn, icon) {
+function selectCategoryIcon(icon) {
   document.querySelectorAll('#categoryIconPicker .icon-btn').forEach(b => b.classList.remove('selected'));
-  btn.classList.add('selected');
+  const selected = document.querySelector(`#categoryIconPicker .icon-btn[data-icon="${icon}"]`);
+  if (selected) selected.classList.add('selected');
   document.getElementById('categoryIcon').value = icon;
   console.log('[Category] Icon selected:', icon);
 }
@@ -9369,6 +16929,16 @@ function selectCategoryIcon(btn, icon) {
 function updateCategoryColorPreview(color) {
   const preview = document.getElementById('categoryColorPreview');
   if (preview) preview.style.background = color;
+}
+
+function openCategoryModalFromList() {
+  document.getElementById('categoryListModal').classList.add('hidden');
+  openCategoryModal();
+}
+
+function deleteCategoryFromBtn() {
+  const id = document.getElementById('categoryId').value;
+  if (id) confirmDeleteCategory(parseInt(id));
 }
 
 function openCategoryModal(categoryId = null) {
@@ -9550,10 +17120,10 @@ async function renderAdminSubcategories() {
         <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
         <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
         <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
-        <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Gi nytt navn">
+        <button class="btn-icon" style="padding: 2px 4px;" data-action="editSubcatGroup" data-args='[${group.id}, "${escapeHtml(group.navn)}"]' title="Gi nytt navn">
           <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
         </button>
-        <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Slett gruppe">
+        <button class="btn-icon danger" style="padding: 2px 4px;" data-action="deleteSubcatGroup" data-args='[${group.id}, "${escapeHtml(group.navn)}"]' title="Slett gruppe">
           <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
         </button>
       </div>
@@ -9562,10 +17132,10 @@ async function renderAdminSubcategories() {
         <div style="display: flex; align-items: center; gap: 6px; margin-left: 16px; padding: 2px 0;">
           <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
           <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
-          <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Gi nytt navn">
+          <button class="btn-icon subcat-hover-btn" style="padding: 2px 4px;" data-action="editSubcatItem" data-args='[${sub.id}, "${escapeHtml(sub.navn)}"]' title="Gi nytt navn">
             <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
           </button>
-          <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Slett">
+          <button class="btn-icon danger subcat-hover-btn" style="padding: 2px 4px;" data-action="deleteSubcatItem" data-args='[${sub.id}, "${escapeHtml(sub.navn)}"]' title="Slett">
             <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
           </button>
         </div>
@@ -9575,8 +17145,8 @@ async function renderAdminSubcategories() {
         <input type="text" class="form-control" placeholder="Ny underkategori..." maxlength="100"
           style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
           data-add-subcat-for-group="${group.id}"
-          onkeydown="if(event.key==='Enter'){addSubcatItem(${group.id}, this); event.preventDefault();}">
-        <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatItem(${group.id}, this.previousElementSibling)">
+          data-on-keydown="addSubcatItemFromInput" data-key="Enter" data-args='[${group.id}]'>
+        <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" data-action="addSubcatItemBtn" data-args='[${group.id}]'>
           <i aria-hidden="true" class="fas fa-plus"></i>
         </button>
       </div>
@@ -9586,12 +17156,32 @@ async function renderAdminSubcategories() {
       <input type="text" class="form-control" placeholder="Ny gruppe..." maxlength="100"
         style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
         id="adminAddGroupInput"
-        onkeydown="if(event.key==='Enter'){addSubcatGroup(this); event.preventDefault();}">
-      <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatGroup(document.getElementById('adminAddGroupInput'))">
+        data-on-keydown="addSubcatGroupFromInput" data-key="Enter">
+      <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" data-action="addSubcatGroupBtn">
         <i aria-hidden="true" class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
       </button>
     </div>
   `;
+}
+
+function addSubcatItemFromInput(groupId) {
+  const input = document.querySelector(`[data-add-subcat-for-group="${groupId}"]`);
+  if (input) addSubcatItem(groupId, input);
+}
+
+function addSubcatItemBtn(groupId) {
+  const input = document.querySelector(`[data-add-subcat-for-group="${groupId}"]`);
+  if (input) addSubcatItem(groupId, input);
+}
+
+function addSubcatGroupFromInput() {
+  const input = document.getElementById('adminAddGroupInput');
+  if (input) addSubcatGroup(input);
+}
+
+function addSubcatGroupBtn() {
+  const input = document.getElementById('adminAddGroupInput');
+  if (input) addSubcatGroup(input);
 }
 
 async function addSubcatGroup(inputEl) {
@@ -9907,7 +17497,7 @@ async function loadTeamMembers() {
               <div class="team-member-name">${escapeHtml(member.navn)}</div>
               <div class="team-member-email">${escapeHtml(member.epost)}</div>
               <div class="team-member-meta">
-                <span class="team-member-role">${escapeHtml(member.rolle || 'medlem')}</span>
+                <span class="team-member-role">${escapeHtml({ admin: 'Administrator', teammedlem: 'Teammedlem', kontor: 'Kontor', leser: 'Leser' }[member.rolle] || member.rolle || 'Leser')}</span>
                 <span class="team-member-last-login">Sist: ${lastLogin}</span>
               </div>
             </div>
@@ -9947,15 +17537,19 @@ function openTeamMemberModal(member = null) {
     document.getElementById('memberNavn').value = member.navn || '';
     document.getElementById('memberEpost').value = member.epost || '';
     document.getElementById('memberTelefon').value = member.telefon || '';
-    document.getElementById('memberRolle').value = member.rolle || 'medlem';
+    document.getElementById('memberRolle').value = member.rolle || 'leser';
     passwordInput.required = false;
     passwordInput.placeholder = 'La stå tom for å beholde';
+    const hint = document.getElementById('memberPassordHint');
+    if (hint) hint.textContent = 'La stå tom for å beholde eksisterende passord.';
     deleteBtn.style.display = 'inline-flex';
   } else {
     // Create mode
     title.textContent = 'Nytt teammedlem';
     passwordInput.required = true;
-    passwordInput.placeholder = 'Minst 8 tegn';
+    passwordInput.placeholder = 'Min. 10 tegn, stor/liten, tall, spesialtegn';
+    const hint = document.getElementById('memberPassordHint');
+    if (hint) hint.textContent = 'Min. 10 tegn, stor og liten bokstav, tall og spesialtegn (!@#$%&...).';
     deleteBtn.style.display = 'none';
   }
 
@@ -10531,7 +18125,7 @@ function renderAdminAddressSuggestions(results) {
 
   container.innerHTML = results.map((r, i) => `
     <div class="admin-address-suggestion${i === adminSelectedIndex ? ' selected' : ''}"
-         onclick="selectAdminAddressSuggestion(adminAddressSuggestions[${i}])">
+         data-action="selectAdminAddressSuggestionByIndex" data-args='[${i}]'>
       <i class="fas fa-map-marker-alt"></i>
       <span>${escapeHtml(r.adresse)} &mdash; ${escapeHtml(r.postnummer)} ${escapeHtml(r.poststed)}</span>
     </div>
@@ -10544,6 +18138,10 @@ function highlightAdminSuggestion() {
   items.forEach((item, i) => {
     item.classList.toggle('selected', i === adminSelectedIndex);
   });
+}
+
+function selectAdminAddressSuggestionByIndex(index) {
+  selectAdminAddressSuggestion(adminAddressSuggestions[index]);
 }
 
 function selectAdminAddressSuggestion(suggestion) {
@@ -10752,21 +18350,6 @@ function initOnboardingSettingsUI() {
     if (!btn) return;
     const action = btn.dataset.action;
 
-    if (action === 'rerun-wizard') {
-      btn.disabled = true;
-      btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Tilbakestiller...';
-      try {
-        await apiFetch('/api/onboarding/reset', { method: 'POST' });
-        if (typeof showOnboardingWizard === 'function') {
-          await showOnboardingWizard();
-        }
-      } catch (err) {
-        showToast('Kunne ikke starte veiviseren', 'error');
-      }
-      btn.disabled = false;
-      btn.innerHTML = '<i aria-hidden="true" class="fas fa-redo"></i> Kjør veiviseren på nytt';
-    }
-
     if (action === 'show-checklist') {
       if (typeof showOnboardingChecklist === 'function') {
         showOnboardingChecklist();
@@ -10774,10 +18357,13 @@ function initOnboardingSettingsUI() {
       }
     }
 
-    if (action === 'reset-tips') {
-      if (typeof resetContextTips === 'function') resetContextTips();
-      if (typeof resetFeatureTours === 'function') resetFeatureTours();
-      showToast('Tips tilbakestilt — de vises ved neste besøk', 'success');
+    if (action === 'test-onboarding') {
+      // Simulate incomplete onboarding for testing highlights
+      localStorage.removeItem('skyplanner_firstRoutePlanned');
+      localStorage.removeItem('skyplanner_teamInviteSent');
+      if (typeof showOnboardingChecklist === 'function') showOnboardingChecklist();
+      if (typeof refreshAttentionBadges === 'function') refreshAttentionBadges();
+      showToast('Onboarding tilbakestilt for testing', 'info');
     }
   });
 
@@ -10791,13 +18377,6 @@ function initOnboardingSettingsUI() {
 
       if (!enabled) {
         if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
-        if (typeof contextTips !== 'undefined' && contextTips.tipOverlay) {
-          contextTips.tipOverlay.remove();
-          contextTips.tipOverlay = null;
-        }
-        document.querySelectorAll('.context-tip-highlight').forEach(el => {
-          el.classList.remove('context-tip-highlight');
-        });
       } else {
         if (typeof initOnboardingChecklist === 'function') {
           if (localStorage.getItem('skyplanner_checklistDismissed') !== 'true') {
@@ -10819,18 +18398,8 @@ function renderOnboardingSettings() {
   container.innerHTML = `
     <div class="onboarding-setting-card">
       <div class="setting-info">
-        <h4><i aria-hidden="true" class="fas fa-magic"></i> Oppstartsveiviser</h4>
-        <p>Kjør gjennom oppsettet på nytt for å oppdatere firmainformasjon og kartinnstillinger.</p>
-      </div>
-      <button class="btn btn-secondary" data-action="rerun-wizard">
-        <i aria-hidden="true" class="fas fa-redo"></i> Kjør på nytt
-      </button>
-    </div>
-
-    <div class="onboarding-setting-card">
-      <div class="setting-info">
-        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Veiledningstips</h4>
-        <p>Vis hjelpetips, sjekkliste og veiledning for nye funksjoner.</p>
+        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Veiledning</h4>
+        <p>Vis sjekkliste og veiledning for oppstartsoppgaver.</p>
       </div>
       <label class="guidance-toggle-switch">
         <input type="checkbox" ${guidanceEnabled ? 'checked' : ''} data-action="toggle-guidance">
@@ -10850,11 +18419,11 @@ function renderOnboardingSettings() {
 
     <div class="onboarding-setting-card">
       <div class="setting-info">
-        <h4><i aria-hidden="true" class="fas fa-info-circle"></i> Tips tilbakestill</h4>
-        <p>Tilbakestill alle veiledningstips slik at de vises på nytt.</p>
+        <h4><i aria-hidden="true" class="fas fa-flask"></i> Test onboarding</h4>
+        <p>Tilbakestill oppgaver og vis sjekkliste med highlighting.</p>
       </div>
-      <button class="btn btn-secondary" data-action="reset-tips">
-        <i aria-hidden="true" class="fas fa-undo"></i> Tilbakestill
+      <button class="btn btn-secondary" data-action="test-onboarding">
+        <i aria-hidden="true" class="fas fa-redo"></i> Test
       </button>
     </div>
   `;
@@ -11669,15 +19238,17 @@ function hidePatchNotesBadge() {
 function initBottomTabBar() {
   if (document.getElementById('bottomTabBar')) return;
 
+  // Don't show tab bar on login screen
+  const loginOverlay = document.getElementById('loginOverlay');
+  if (loginOverlay && !loginOverlay.classList.contains('hidden')) return;
+
   document.body.classList.add('has-bottom-tab-bar');
 
   const hasTodaysWork = hasFeature('todays_work');
 
   const tabs = [
     { id: 'map', icon: 'fa-map-marker-alt', label: 'Kart', action: 'showMap' },
-    { id: 'work', icon: 'fa-briefcase', label: 'Arbeid',
-      action: hasTodaysWork ? 'todays-work' : 'weekly-plan' },
-    { id: 'calendar', icon: 'fa-calendar-alt', label: 'Kalender', action: 'calendar' },
+    { id: 'work', icon: 'fa-hard-hat', label: 'Arbeid', action: 'arbeid' },
     { id: 'more', icon: 'fa-ellipsis-h', label: 'Mer', action: 'showMore' }
   ];
 
@@ -11764,6 +19335,37 @@ function handleBottomTabClick(tab) {
     closeMoreMenu();
     hideMobileFilterSheet();
     if (searchFab) searchFab.classList.remove('hidden');
+    // Fly to overview when tapping Kart
+    console.log('[Mobile] Kart tapped, map:', !!map, 'zoom:', map?.getZoom());
+    if (map) {
+      // Zoom out to show all of Norway, then swoop to customers
+      const hasOffice = appConfig?.routeStartLat && appConfig?.routeStartLng;
+      const target = hasOffice
+        ? [appConfig.routeStartLng, appConfig.routeStartLat]
+        : [10.0, 62.0];
+      const currentZoom = map.getZoom();
+      if (currentZoom > 4) {
+        // Already zoomed in — zoom out first, then back down
+        map.jumpTo({ center: target, zoom: 2.5 });
+        setTimeout(() => {
+          map.flyTo({
+            center: target,
+            zoom: hasOffice ? 6 : 5,
+            duration: 2000,
+            essential: true,
+            curve: 1.42
+          });
+        }, 50);
+      } else {
+        map.flyTo({
+          center: target,
+          zoom: hasOffice ? 6 : 5,
+          duration: 2000,
+          essential: true,
+          curve: 1.42
+        });
+      }
+    }
   } else if (tab.action === 'showMore') {
     closeContentPanelMobile();
     hideMobileFilterSheet();
@@ -11807,24 +19409,11 @@ function createMoreMenuOverlay() {
   const items = [
     { tab: 'dashboard', icon: 'fa-th-large', label: 'Dashboard' },
     { tab: 'customers', icon: 'fa-users', label: 'Kunder' },
-    { tab: 'overdue', icon: 'fa-exclamation-triangle', label: 'Forfalte', badgeId: 'overdueBadge' },
-    { tab: 'warnings', icon: 'fa-bell', label: 'Kommende', badgeId: 'upcomingBadge' },
-    { tab: 'planner', icon: 'fa-route', label: 'Planlegger' },
-    { tab: 'statistikk', icon: 'fa-chart-line', label: 'Statistikk' },
-    { tab: 'missingdata', icon: 'fa-exclamation-circle', label: 'Mangler data', badgeId: 'missingDataBadge' },
+    { tab: 'chat', icon: 'fa-comments', label: 'Meldinger' },
   ];
 
   if (isAdmin) {
     items.push({ tab: 'admin', icon: 'fa-shield-alt', label: 'Admin' });
-  }
-
-  // Add Today's Work to More menu if it's not the primary work tab
-  const hasTodaysWork = hasFeature('todays_work');
-  if (!hasTodaysWork) {
-    const todaysWorkTab = document.getElementById('todaysWorkTab');
-    if (todaysWorkTab && todaysWorkTab.style.display !== 'none') {
-      items.splice(2, 0, { tab: 'todays-work', icon: 'fa-briefcase', label: 'Dagens arbeid', badgeId: 'todaysWorkBadge' });
-    }
   }
 
   overlay.innerHTML = `
@@ -12042,13 +19631,13 @@ function createMobileSelectionFab() {
   fab.className = 'mobile-selection-fab';
   fab.innerHTML = '<i aria-hidden="true" class="fas fa-check-circle"></i> <span id="mobileSelectionCount">0</span> valgt';
   fab.addEventListener('click', () => {
-    // Open planner tab to show selected customers
+    // Open arbeid tab (planlegger sub-view) to show selected customers
     switchToTab('planner');
     if (document.getElementById('bottomTabBar')) {
       document.querySelectorAll('.bottom-tab-item').forEach(b =>
-        b.classList.toggle('active', b.dataset.bottomTab === 'planner')
+        b.classList.toggle('active', b.dataset.bottomTab === 'work')
       );
-      activeBottomTab = 'planner';
+      activeBottomTab = 'work';
     }
   });
   document.body.appendChild(fab);
@@ -12308,6 +19897,119 @@ function setViewportHeight() {
 setViewportHeight();
 window.addEventListener('resize', setViewportHeight);
 
+// ============================================
+// PULL-TO-REFRESH (Mobile)
+// ============================================
+
+let prState = 'idle'; // 'idle' | 'pulling' | 'refreshing' | 'done'
+let prStartY = 0;
+let prLocked = false;
+
+function initPullToRefresh() {
+  const scrollContainer = document.querySelector('.tab-content');
+  if (!scrollContainer || !isMobile) return;
+
+  // Create indicator SVG
+  const indicator = document.createElement('div');
+  indicator.className = 'pull-refresh-indicator';
+  indicator.innerHTML = `<svg viewBox="0 0 36 36"><circle class="pr-circle" cx="18" cy="18" r="15"/><polyline class="pr-check" points="11,18 16,23 25,14"/></svg>`;
+  scrollContainer.style.position = 'relative';
+  scrollContainer.prepend(indicator);
+
+  scrollContainer.addEventListener('touchstart', (e) => {
+    if (prLocked || prState !== 'idle') return;
+    if (scrollContainer.scrollTop > 0) return;
+    prStartY = e.touches[0].clientY;
+    prState = 'pulling';
+  }, { passive: true });
+
+  scrollContainer.addEventListener('touchmove', (e) => {
+    if (prState !== 'pulling') return;
+    const delta = e.touches[0].clientY - prStartY;
+    if (delta <= 0) { prState = 'idle'; return; }
+
+    const pull = Math.min(delta * 0.4, 80);
+    scrollContainer.style.transform = `translateY(${pull}px)`;
+
+    indicator.classList.add('visible');
+    indicator.style.top = `${pull - 45}px`;
+
+    // Update circle progress
+    const circle = indicator.querySelector('.pr-circle');
+    if (circle) {
+      const progress = Math.min(delta / 150, 1);
+      circle.style.strokeDashoffset = 95 - (progress * 70);
+    }
+  }, { passive: true });
+
+  scrollContainer.addEventListener('touchend', () => {
+    if (prState !== 'pulling') return;
+
+    const currentTransform = parseFloat(scrollContainer.style.transform.replace(/[^0-9.-]/g, '')) || 0;
+
+    if (currentTransform > 24) {
+      // Trigger refresh
+      prState = 'refreshing';
+      indicator.classList.add('spinning');
+      scrollContainer.classList.add('pull-refreshing');
+      scrollContainer.style.transform = 'translateY(45px)';
+
+      refreshCurrentTabData().then(() => {
+        indicator.classList.remove('spinning');
+        indicator.classList.add('done');
+        prState = 'done';
+
+        setTimeout(() => {
+          scrollContainer.classList.add('pull-refreshing');
+          scrollContainer.style.transform = '';
+          indicator.classList.remove('visible', 'done');
+          indicator.style.top = '-50px';
+          const circle = indicator.querySelector('.pr-circle');
+          if (circle) circle.style.strokeDashoffset = 95;
+
+          prState = 'idle';
+          prLocked = true;
+          setTimeout(() => { prLocked = false; }, 2000);
+        }, 600);
+      });
+    } else {
+      // Bounce back
+      scrollContainer.classList.add('pull-refreshing');
+      scrollContainer.style.transform = '';
+      indicator.classList.remove('visible');
+      indicator.style.top = '-50px';
+      prState = 'idle';
+
+      setTimeout(() => {
+        scrollContainer.classList.remove('pull-refreshing');
+      }, 400);
+    }
+  }, { passive: true });
+}
+
+// Refresh data for active tab
+async function refreshCurrentTabData() {
+  const activeTab = document.querySelector('.tab-item.active')?.dataset?.tab;
+  try {
+    if (activeTab === 'dashboard') {
+      if (typeof renderDashboardSections === 'function') renderDashboardSections();
+    } else if (activeTab === 'customers' && typeof loadCustomers === 'function') {
+      await loadCustomers();
+    } else if (activeTab === 'arbeid') {
+      if (typeof loadArbeidTab === 'function') loadArbeidTab();
+    } else if (activeTab === 'chat') {
+      if (typeof loadConversations === 'function') loadConversations();
+    }
+  } catch (e) {
+    console.warn('Pull-to-refresh: reload failed', e);
+  }
+}
+
+// Init after DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(initPullToRefresh, 500);
+});
+
 // Export mobile functions
 window.toggleMobileSidebar = toggleMobileSidebar;
 window.closeMobileSidebar = closeMobileSidebar;
@@ -12316,7 +20018,7 @@ window.closeMoreMenu = closeMoreMenu;
 window.syncBottomBarBadges = syncBottomBarBadges;
 
 
-// CONTEXT TIPS - First-time user guidance
+// CONTEXT TIPS - Simplified (guidance toggle only)
 // ========================================
 
 // Check if guidance is enabled (global helper used by multiple modules)
@@ -12324,490 +20026,25 @@ function isGuidanceEnabled() {
   return localStorage.getItem('skyplanner_guidanceEnabled') !== 'false';
 }
 
-const contextTips = {
-  tips: [
-    {
-      id: 'map-intro',
-      target: '#map',
-      title: 'Interaktivt kart',
-      message: 'Kartet viser alle kundene dine som markører. Klikk på en markør for å se kundedetaljer, og bruk musehjulet for å zoome inn/ut. Markører grupperes automatisk i klynger når du zoomer ut.',
-      position: 'top',
-      icon: 'fa-map-marked-alt'
-    },
-    {
-      id: 'sidebar-nav',
-      target: '#sidebar',
-      title: 'Navigasjon',
-      message: 'Sidemenyen gir tilgang til alle funksjonene: Kundeoversikt, Kalender, Ukeplan, Oversiktstavle og Innstillinger. Klikk på en fane for å bytte visning.',
-      position: 'right',
-      icon: 'fa-bars'
-    },
-    {
-      id: 'add-customer',
-      target: '#addCustomerBtn, #addCustomerBtnTab',
-      title: 'Legg til kunde',
-      message: 'Klikk her for å registrere en ny kunde. Fyll ut navn, adresse og kontaktinfo. Adressen blir automatisk plassert på kartet.',
-      position: 'bottom',
-      icon: 'fa-user-plus'
-    },
-    {
-      id: 'import-customers',
-      target: '#importCustomersBtn',
-      title: 'Importer kunder',
-      message: 'Importer kundelisten din fra Excel eller CSV. Veiviseren hjelper deg med å koble kolonnene til riktige felt og renser dataene automatisk.',
-      position: 'bottom',
-      icon: 'fa-file-import'
-    },
-    {
-      id: 'filter-panel',
-      target: '#filterPanelToggle',
-      title: 'Filtrer og søk',
-      message: 'Åpne filterpanelet for å søke etter kunder, filtrere på kategorier og tags, eller velge kunder for ruteplanlegging. Markerte kunder vises direkte på kartet.',
-      position: 'left',
-      icon: 'fa-filter'
-    },
-    {
-      id: 'weekly-plan-intro',
-      target: '[data-tab="weekly-plan"]',
-      title: 'Ukeplan',
-      message: 'Planlegg ukens ruter dag for dag. Søk opp kunder, legg dem til som nummererte stopp, og optimaliser rekkefølgen for korteste kjørerute.',
-      position: 'bottom',
-      icon: 'fa-calendar-week'
-    },
-    {
-      id: 'calendar-intro',
-      target: '[data-tab="calendar"]',
-      title: 'Kalender',
-      message: 'Opprett og administrer avtaler. Klikk på en dato for å legge til en avtale, og dra for å flytte den. Bytt mellom måned- og ukevisning.',
-      position: 'bottom',
-      icon: 'fa-calendar-alt'
-    },
-    {
-      id: 'plan-route-btn',
-      target: '#planRouteBtn',
-      title: 'Planlegg rute',
-      message: 'Velg kunder i filterpanelet og klikk her for å beregne optimal kjørerute mellom dem. Ruten vises på kartet med avstand og estimert tid.',
-      position: 'bottom',
-      icon: 'fa-route'
-    },
-    {
-      id: 'admin-settings',
-      target: '#adminTab',
-      title: 'Innstillinger',
-      message: 'Sett firmaadresse (startpunkt for ruter), administrer kategorier og egendefinerte felt, inviter teammedlemmer og tilpass appen.',
-      position: 'bottom',
-      icon: 'fa-cog'
-    }
-  ],
-  shownTips: [],
-  currentTipIndex: 0,
-  tipOverlay: null
-};
+// Stubs — kept for backward compatibility with callers
+const contextTips = { tips: [], shownTips: [], currentTipIndex: 0, tipOverlay: null };
+function initContextTips() {}
+function showContextTips() {}
+function showTip() {}
+function dismissCurrentTip() {}
+function showNextTip() {}
+function skipAllTips() {}
+function resetContextTips() {}
+function markTipAsShown() {}
 
-// Feature-specific mini-tours (shown when entering a feature tab for the first time)
-const featureTours = {
-  'weekly-plan': {
-    id: 'tour-weekplan',
-    storageKey: 'skyplanner_tour_weekplan',
-    tips: [
-      {
-        target: '.wp-day',
-        title: 'Velg dag',
-        message: 'Klikk på en ukedag for å planlegge stopp. Hver dag viser antall stopp og estimert tid. Aktiv dag er markert med blå farge.',
-        position: 'bottom',
-        icon: 'fa-calendar-day'
-      },
-      {
-        target: '#wpCustomerSearch',
-        title: 'Søk og legg til stopp',
-        message: 'Skriv kundenavn eller adresse for å søke. Klikk på en kunde i resultatlisten for å legge den til som stopp i dagens rute.',
-        position: 'bottom',
-        icon: 'fa-search'
-      },
-      {
-        target: '[data-action="wpOptimizeOrder"]',
-        title: 'Optimaliser rekkefølge',
-        message: 'Beregner den korteste kjøreruten mellom alle stoppene for valgt dag. Bruker firmaadresse som start- og sluttpunkt.',
-        position: 'bottom',
-        icon: 'fa-sort-amount-down'
-      }
-    ]
-  },
-  'calendar': {
-    id: 'tour-calendar',
-    storageKey: 'skyplanner_tour_calendar',
-    tips: [
-      {
-        target: '#calendarContainer',
-        title: 'Opprett avtale',
-        message: 'Klikk på en dato i kalenderen for å opprette en ny avtale. Du kan velge kunde, sette tidspunkt og legge til beskrivelse.',
-        position: 'top',
-        icon: 'fa-calendar-plus'
-      },
-      {
-        target: '.fc-toolbar',
-        title: 'Navigasjon og visning',
-        message: 'Bruk pilene for å bla mellom måneder/uker. Knappene til høyre bytter mellom måneds- og ukevisning.',
-        position: 'bottom',
-        icon: 'fa-exchange-alt'
-      }
-    ]
-  },
-  'customers': {
-    id: 'tour-customers',
-    storageKey: 'skyplanner_tour_customers',
-    tips: [
-      {
-        target: '#searchInput',
-        title: 'Søk etter kunder',
-        message: 'Skriv inn kundenavn, adresse eller telefonnummer for å finne kunder raskt. Resultatlisten oppdateres mens du skriver.',
-        position: 'bottom',
-        icon: 'fa-search'
-      },
-      {
-        target: '#categoryFilterButtons',
-        title: 'Filtrer på kategori',
-        message: 'Klikk på en kategori for å vise kun kunder i den kategorien. Du kan kombinere flere kategorier.',
-        position: 'bottom',
-        icon: 'fa-tags'
-      }
-    ]
-  }
-};
-
-// Initialize context tips
-function initContextTips() {
-  const stored = localStorage.getItem('shownContextTips');
-  if (stored) {
-    try {
-      contextTips.shownTips = JSON.parse(stored);
-    } catch (e) {
-      contextTips.shownTips = [];
-    }
-  }
-}
-
-// Show context tips for first-time users
-function showContextTips() {
-  if (!isGuidanceEnabled()) return;
-
-  initContextTips();
-
-  // Filter tips that haven't been shown
-  const unshownTips = contextTips.tips.filter(tip => !contextTips.shownTips.includes(tip.id));
-
-  if (unshownTips.length === 0) return;
-
-  // Show first unshown tip after a delay
-  setTimeout(() => {
-    showTip(unshownTips[0]);
-  }, 1000);
-}
-
-// Show a single tip
-function showTip(tip) {
-  if (!isGuidanceEnabled()) return;
-
-  const target = document.querySelector(tip.target);
-  if (!target) {
-    // Target not found, mark as shown and try next
-    markTipAsShown(tip.id);
-    showNextTip();
-    return;
-  }
-
-  // Create tip overlay
-  const overlay = document.createElement('div');
-  overlay.className = 'context-tip-overlay';
-  overlay.innerHTML = `
-    <div class="context-tip-backdrop" onclick="dismissCurrentTip()"></div>
-    <div class="context-tip" id="contextTip-${tip.id}">
-      <div class="context-tip-arrow"></div>
-      <div class="context-tip-icon">
-        <i aria-hidden="true" class="fas ${tip.icon}"></i>
-      </div>
-      <div class="context-tip-content">
-        <h4>${escapeHtml(tip.title)}</h4>
-        <p>${escapeHtml(tip.message)}</p>
-      </div>
-      <div class="context-tip-actions">
-        <button class="context-tip-btn context-tip-btn-skip" onclick="skipAllTips()">
-          Hopp over alle
-        </button>
-        <button class="context-tip-btn context-tip-btn-next" onclick="dismissCurrentTip()">
-          Forstått <i aria-hidden="true" class="fas fa-check"></i>
-        </button>
-      </div>
-      <div class="context-tip-progress">
-        ${contextTips.currentTipIndex + 1} av ${contextTips.tips.length - contextTips.shownTips.length}
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-  contextTips.tipOverlay = overlay;
-
-  // Position the tip near the target
-  positionTip(overlay.querySelector('.context-tip'), target, tip.position);
-
-  // Highlight target
-  target.classList.add('context-tip-highlight');
-
-  // Animate in
-  requestAnimationFrame(() => {
-    overlay.classList.add('visible');
-  });
-}
-
-// Position tip relative to target
-function positionTip(tipElement, target, position) {
-  const targetRect = target.getBoundingClientRect();
-  const tipRect = tipElement.getBoundingClientRect();
-
-  let top, left;
-  const margin = 12;
-
-  switch (position) {
-    case 'top':
-      top = targetRect.top - tipRect.height - margin;
-      left = targetRect.left + (targetRect.width / 2) - (tipRect.width / 2);
-      tipElement.classList.add('position-top');
-      break;
-    case 'bottom':
-      top = targetRect.bottom + margin;
-      left = targetRect.left + (targetRect.width / 2) - (tipRect.width / 2);
-      tipElement.classList.add('position-bottom');
-      break;
-    case 'left':
-      top = targetRect.top + (targetRect.height / 2) - (tipRect.height / 2);
-      left = targetRect.left - tipRect.width - margin;
-      tipElement.classList.add('position-left');
-      break;
-    case 'right':
-      top = targetRect.top + (targetRect.height / 2) - (tipRect.height / 2);
-      left = targetRect.right + margin;
-      tipElement.classList.add('position-right');
-      break;
-    default:
-      top = targetRect.bottom + margin;
-      left = targetRect.left;
-  }
-
-  // Keep within viewport
-  left = Math.max(16, Math.min(left, window.innerWidth - tipRect.width - 16));
-  top = Math.max(16, Math.min(top, window.innerHeight - tipRect.height - 16));
-
-  tipElement.style.position = 'fixed';
-  tipElement.style.top = `${top}px`;
-  tipElement.style.left = `${left}px`;
-}
-
-// Mark tip as shown
-function markTipAsShown(tipId) {
-  if (!contextTips.shownTips.includes(tipId)) {
-    contextTips.shownTips.push(tipId);
-    localStorage.setItem('shownContextTips', JSON.stringify(contextTips.shownTips));
-  }
-}
-
-// Dismiss current tip and show next
-function dismissCurrentTip() {
-  const unshownTips = contextTips.tips.filter(tip => !contextTips.shownTips.includes(tip.id));
-
-  if (unshownTips.length > 0) {
-    markTipAsShown(unshownTips[0].id);
-  }
-
-  // Remove highlight from all elements
-  document.querySelectorAll('.context-tip-highlight').forEach(el => {
-    el.classList.remove('context-tip-highlight');
-  });
-
-  // Remove overlay
-  if (contextTips.tipOverlay) {
-    contextTips.tipOverlay.classList.remove('visible');
-    setTimeout(() => {
-      contextTips.tipOverlay.remove();
-      contextTips.tipOverlay = null;
-      showNextTip();
-    }, 300);
-  }
-}
-
-// Show next tip
-function showNextTip() {
-  contextTips.currentTipIndex++;
-  const unshownTips = contextTips.tips.filter(tip => !contextTips.shownTips.includes(tip.id));
-
-  if (unshownTips.length > 0) {
-    setTimeout(() => showTip(unshownTips[0]), 500);
-  }
-}
-
-// Skip all tips
-function skipAllTips() {
-  contextTips.tips.forEach(tip => {
-    markTipAsShown(tip.id);
-  });
-
-  // Remove highlight from all elements
-  document.querySelectorAll('.context-tip-highlight').forEach(el => {
-    el.classList.remove('context-tip-highlight');
-  });
-
-  if (contextTips.tipOverlay) {
-    contextTips.tipOverlay.classList.remove('visible');
-    setTimeout(() => {
-      contextTips.tipOverlay.remove();
-      contextTips.tipOverlay = null;
-    }, 300);
-  }
-}
-
-// Reset context tips (for testing)
-function resetContextTips() {
-  contextTips.shownTips = [];
-  contextTips.currentTipIndex = 0;
-  localStorage.removeItem('shownContextTips');
-}
-
-// ========================================
-// FEATURE-SPECIFIC MINI-TOURS
-// ========================================
-
-// Active mini-tour state
-let activeMiniTour = null;
-let miniTourTipIndex = 0;
-
-// Show feature tour when entering a tab for the first time
-function showFeatureTourIfNeeded(tabName) {
-  if (!isGuidanceEnabled()) return;
-
-  const tour = featureTours[tabName];
-  if (!tour) return;
-
-  // Already shown this tour
-  if (localStorage.getItem(tour.storageKey) === 'true') return;
-
-  // Delay to let tab content render
-  setTimeout(() => {
-    showMiniTour(tour);
-  }, 600);
-}
-
-// Show a mini-tour (sequence of tips for a specific feature)
-function showMiniTour(tour) {
-  if (!isGuidanceEnabled()) return;
-
-  activeMiniTour = tour;
-  miniTourTipIndex = 0;
-  showMiniTourTip();
-}
-
-// Show current mini-tour tip
-function showMiniTourTip() {
-  if (!activeMiniTour || miniTourTipIndex >= activeMiniTour.tips.length) {
-    completeMiniTour();
-    return;
-  }
-
-  const tip = activeMiniTour.tips[miniTourTipIndex];
-  const target = document.querySelector(tip.target);
-
-  if (!target) {
-    // Skip this tip, try next
-    miniTourTipIndex++;
-    showMiniTourTip();
-    return;
-  }
-
-  const overlay = document.createElement('div');
-  overlay.className = 'context-tip-overlay mini-tour-overlay';
-  overlay.innerHTML = `
-    <div class="context-tip-backdrop" onclick="dismissMiniTourTip()"></div>
-    <div class="context-tip mini-tour-tip" id="miniTourTip-${miniTourTipIndex}">
-      <div class="context-tip-arrow"></div>
-      <div class="context-tip-icon">
-        <i aria-hidden="true" class="fas ${tip.icon}"></i>
-      </div>
-      <div class="context-tip-content">
-        <h4>${escapeHtml(tip.title)}</h4>
-        <p>${escapeHtml(tip.message)}</p>
-      </div>
-      <div class="context-tip-actions">
-        <button class="context-tip-btn context-tip-btn-skip" onclick="skipMiniTour()">
-          Hopp over
-        </button>
-        <button class="context-tip-btn context-tip-btn-next" onclick="dismissMiniTourTip()">
-          ${miniTourTipIndex < activeMiniTour.tips.length - 1 ? 'Neste <i aria-hidden="true" class="fas fa-arrow-right"></i>' : 'Forstått <i aria-hidden="true" class="fas fa-check"></i>'}
-        </button>
-      </div>
-      <div class="context-tip-progress">
-        ${miniTourTipIndex + 1} av ${activeMiniTour.tips.length}
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-  contextTips.tipOverlay = overlay;
-
-  positionTip(overlay.querySelector('.context-tip'), target, tip.position);
-  target.classList.add('context-tip-highlight');
-
-  requestAnimationFrame(() => {
-    overlay.classList.add('visible');
-  });
-}
-
-// Dismiss current mini-tour tip and show next
-function dismissMiniTourTip() {
-  document.querySelectorAll('.context-tip-highlight').forEach(el => {
-    el.classList.remove('context-tip-highlight');
-  });
-
-  if (contextTips.tipOverlay) {
-    contextTips.tipOverlay.classList.remove('visible');
-    setTimeout(() => {
-      contextTips.tipOverlay.remove();
-      contextTips.tipOverlay = null;
-      miniTourTipIndex++;
-      showMiniTourTip();
-    }, 300);
-  }
-}
-
-// Skip entire mini-tour
-function skipMiniTour() {
-  document.querySelectorAll('.context-tip-highlight').forEach(el => {
-    el.classList.remove('context-tip-highlight');
-  });
-
-  if (contextTips.tipOverlay) {
-    contextTips.tipOverlay.classList.remove('visible');
-    setTimeout(() => {
-      contextTips.tipOverlay.remove();
-      contextTips.tipOverlay = null;
-    }, 300);
-  }
-
-  completeMiniTour();
-}
-
-// Mark mini-tour as completed
-function completeMiniTour() {
-  if (activeMiniTour) {
-    localStorage.setItem(activeMiniTour.storageKey, 'true');
-    activeMiniTour = null;
-    miniTourTipIndex = 0;
-  }
-}
-
-// Reset all feature tours (for testing / re-run)
-function resetFeatureTours() {
-  Object.values(featureTours).forEach(tour => {
-    localStorage.removeItem(tour.storageKey);
-  });
-}
+// Feature tours — stubbed out
+function showFeatureTourIfNeeded() {}
+function showMiniTour() {}
+function showMiniTourTip() {}
+function dismissMiniTourTip() {}
+function skipMiniTour() {}
+function completeMiniTour() {}
+function resetFeatureTours() {}
 
 
 // ========================================
@@ -12819,63 +20056,47 @@ const onboardingChecklist = {
     {
       id: 'set-address',
       label: 'Sett firmaadresse',
-      description: 'Startpunkt for alle ruter og avstandsberegninger',
+      description: 'Startpunkt for ruter og avstandsberegninger',
       icon: 'fa-map-marker-alt',
       check: () => !!(appConfig.routeStartLat && appConfig.routeStartLng),
       action: () => {
-        const adminTab = document.querySelector('[data-tab="admin"]');
-        if (adminTab) adminTab.click();
-        setTimeout(() => {
-          const section = document.getElementById('companyAddressSection');
-          if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 300);
+        if (typeof navigateAndHighlightAddress === 'function') {
+          navigateAndHighlightAddress();
+        }
       }
     },
     {
       id: 'add-customer',
-      label: 'Legg til din første kunde',
-      description: 'Opprett manuelt eller importer fra Excel/CSV',
+      label: 'Legg til kunder',
+      description: 'Importer fra fil, koble regnskap eller opprett manuelt',
       icon: 'fa-user-plus',
       check: () => typeof customers !== 'undefined' && customers.length > 0,
       action: () => {
-        if (typeof addCustomer === 'function') addCustomer();
+        showAddCustomerOptions();
       }
     },
     {
       id: 'plan-route',
       label: 'Planlegg en rute',
-      description: 'Bruk ukeplanen til å legge inn stopp og optimaliser rekkefølgen',
+      description: 'Legg inn stopp i ukeplanen og optimaliser rekkefølgen',
       icon: 'fa-route',
       check: () => localStorage.getItem('skyplanner_firstRoutePlanned') === 'true',
       action: () => {
-        const wpTab = document.querySelector('[data-tab="weekly-plan"]');
-        if (wpTab) wpTab.click();
-      }
-    },
-    {
-      id: 'calendar-event',
-      label: 'Opprett en avtale',
-      description: 'Klikk på en dato i kalenderen for å opprette en avtale',
-      icon: 'fa-calendar-plus',
-      check: () => localStorage.getItem('skyplanner_firstEventCreated') === 'true',
-      action: () => {
-        const calTab = document.querySelector('[data-tab="calendar"]');
-        if (calTab) calTab.click();
+        if (typeof navigateAndHighlightWeekplan === 'function') {
+          navigateAndHighlightWeekplan();
+        }
       }
     },
     {
       id: 'invite-team',
-      label: 'Inviter et teammedlem',
+      label: 'Inviter teammedlem',
       description: 'Del tilgang med kollegaer for samarbeid',
       icon: 'fa-user-friends',
       check: () => localStorage.getItem('skyplanner_teamInviteSent') === 'true',
       action: () => {
-        const adminTab = document.querySelector('[data-tab="admin"]');
-        if (adminTab) adminTab.click();
-        setTimeout(() => {
-          const section = document.getElementById('teamMembersSection');
-          if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 300);
+        if (typeof navigateAndHighlightTeam === 'function') {
+          navigateAndHighlightTeam();
+        }
       }
     }
   ],
@@ -12883,6 +20104,65 @@ const onboardingChecklist = {
   minimized: false,
   dismissed: false
 };
+
+// Show popover with add-customer options (import, manual, accounting)
+function showAddCustomerOptions() {
+  // Remove existing popover
+  const existing = document.getElementById('addCustomerPopover');
+  if (existing) { existing.remove(); return; }
+
+  const webUrl = appConfig.webUrl || '';
+
+  const popover = document.createElement('div');
+  popover.id = 'addCustomerPopover';
+  popover.className = 'add-customer-popover';
+  popover.innerHTML = `
+    <div class="add-customer-popover-backdrop"></div>
+    <div class="add-customer-popover-content">
+      <div class="popover-option" data-action="popover-import">
+        <i class="fas fa-file-import" aria-hidden="true"></i>
+        <div>
+          <strong>Importer fra fil</strong>
+          <span>Excel eller CSV</span>
+        </div>
+      </div>
+      <div class="popover-option" data-action="popover-manual">
+        <i class="fas fa-plus-circle" aria-hidden="true"></i>
+        <div>
+          <strong>Legg til manuelt</strong>
+          <span>Opprett en og en</span>
+        </div>
+      </div>
+      <div class="popover-option" data-action="popover-accounting">
+        <i class="fas fa-plug" aria-hidden="true"></i>
+        <div>
+          <strong>Koble regnskapssystem</strong>
+          <span>Tripletex, Fiken, PowerOffice</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(popover);
+  requestAnimationFrame(() => popover.classList.add('visible'));
+
+  popover.addEventListener('click', (e) => {
+    const option = e.target.closest('[data-action]');
+    const action = option ? option.dataset.action : null;
+
+    if (action === 'popover-import') {
+      if (typeof showImportModal === 'function') showImportModal();
+    } else if (action === 'popover-manual') {
+      if (typeof addCustomer === 'function') addCustomer();
+    } else if (action === 'popover-accounting') {
+      if (webUrl) window.open(webUrl + '/dashboard/innstillinger/integrasjoner', '_blank');
+    }
+
+    // Close popover
+    popover.classList.remove('visible');
+    setTimeout(() => popover.remove(), 200);
+  });
+}
 
 // Calculate right offset based on filter panel state
 function getChecklistRightOffset() {
@@ -12964,7 +20244,7 @@ function renderChecklist() {
 
   const completedCount = onboardingChecklist.completedTasks.length;
   const totalCount = onboardingChecklist.tasks.length;
-  const progressPercent = Math.round((completedCount / totalCount) * 100);
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   if (onboardingChecklist.minimized) {
     renderChecklistFab(completedCount, totalCount, progressPercent);
@@ -13034,10 +20314,10 @@ function renderChecklistExpanded(completedCount, totalCount, progressPercent) {
       <div class="checklist-header-top">
         <h3><i aria-hidden="true" class="fas fa-clipboard-check"></i> Kom i gang</h3>
         <div class="checklist-header-actions">
-          <button class="checklist-header-btn" onclick="minimizeChecklist()" title="Minimer">
+          <button class="checklist-header-btn" data-action="minimizeChecklist" title="Minimer">
             <i aria-hidden="true" class="fas fa-minus"></i>
           </button>
-          <button class="checklist-header-btn" onclick="dismissChecklist()" title="Lukk">
+          <button class="checklist-header-btn" data-action="dismissChecklist" title="Lukk">
             <i aria-hidden="true" class="fas fa-times"></i>
           </button>
         </div>
@@ -13261,9 +20541,10 @@ function renderMarkers(customerData) {
 
       // Hover tooltip (PC only)
       if (hasFeature('hover_tooltip')) {
-        el.addEventListener('mouseenter', (ev) => {
-          if (window.innerWidth > 768 && !currentPopup) {
-            showMarkerTooltip(customer, el, ev);
+        const markerIcon = el.querySelector('.marker-icon');
+        el.addEventListener('mouseenter', () => {
+          if (window.innerWidth > 768 && marker._addedToMap) {
+            showMarkerTooltip(customer, markerIcon || el);
           }
         });
         el.addEventListener('mouseleave', () => {
@@ -13791,6 +21072,7 @@ async function lookupPostnummer(postnummer) {
   try {
     const url = `https://api.bring.com/shippingguide/api/postalCode.json?clientUrl=elkontroll&country=NO&pnr=${postnummer}`;
     const response = await fetch(url);
+    if (!response.ok) return null;
     const data = await response.json();
 
     if (data.valid) {
@@ -14086,8 +21368,130 @@ function updateSelectedSuggestion(items) {
 }
 
 
+// ========================================
+// ROUTE RENDERING
+// Shared map rendering for route visualization
+// Depends on: map-compat.js (clearRoute, createMarkerElement, drawRouteGeoJSON, boundsFromLatLngArray)
+// Depends on: route-service.js (RouteService)
+// ========================================
+
+/**
+ * Render a route on the map: directions line + numbered markers + fitBounds
+ * Fetches road-following geometry from ORS, falls back to straight lines.
+ *
+ * @param {Array} stops - Ordered [{lng, lat, navn?, adresse?, estimertTid?}]
+ * @param {{lng, lat}} routeStart - Company address
+ * @param {object} [options]
+ * @param {boolean} [options.skipDirections] - Skip ORS call, use straight lines
+ * @param {string} [options.color] - Route line color (default '#2563eb')
+ * @param {number} [options.width] - Route line width (default 5)
+ * @param {number} [options.opacity] - Route line opacity (default 0.85)
+ * @param {string} [options.startLabel] - Label for start marker popup
+ * @returns {{drivingSeconds: number, distanceMeters: number, feature: object|null}}
+ */
+async function renderRouteOnMap(stops, routeStart, options = {}) {
+  clearRoute();
+
+  const startLngLat = [routeStart.lng, routeStart.lat];
+  const lineOpts = {
+    color: options.color || '#2563eb',
+    width: options.width || 5,
+    opacity: options.opacity || 0.85
+  };
+
+  let feature = null;
+  let drivingSeconds = 0;
+  let distanceMeters = 0;
+
+  // Try road-following geometry from ORS
+  if (!options.skipDirections) {
+    try {
+      const coords = RouteService.buildDirectionsCoords(stops, routeStart);
+      feature = await RouteService.directions(coords);
+    } catch (err) {
+      console.warn('[renderRouteOnMap] Directions failed:', err);
+    }
+  }
+
+  // Draw route line
+  if (feature?.geometry?.coordinates?.length > 2) {
+    try {
+      const geomType = feature.geometry.type;
+      let routeCoords;
+      if (geomType === 'MultiLineString') {
+        routeCoords = feature.geometry.coordinates.flat();
+      } else {
+        routeCoords = feature.geometry.coordinates;
+      }
+      if (routeCoords.length > 2 && !isNaN(routeCoords[0][0])) {
+        drawRouteGeoJSON(routeCoords, lineOpts);
+      } else {
+        drawStraightFallback(stops, startLngLat, lineOpts);
+      }
+    } catch (e) {
+      console.warn('[renderRouteOnMap] GeoJSON draw failed:', e);
+      drawStraightFallback(stops, startLngLat, lineOpts);
+    }
+
+    // Extract summary
+    const summary = RouteService.extractSummary(feature);
+    drivingSeconds = summary.drivingSeconds;
+    distanceMeters = summary.distanceMeters;
+  } else {
+    drawStraightFallback(stops, startLngLat, lineOpts);
+  }
+
+  // Add start marker (company location)
+  const startEl = createMarkerElement('route-marker route-start', '<i aria-hidden="true" class="fas fa-home"></i>', [30, 30]);
+  const startLabel = options.startLabel || appConfig.routeStartAddress || 'Kontor';
+  const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
+    .setLngLat(startLngLat)
+    .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(startLabel)}`))
+    .addTo(map);
+  routeMarkers.push(startMarker);
+
+  // Add numbered markers for each stop (with optional ETA labels)
+  stops.forEach((stop, index) => {
+    const eta = options.etaData?.[index]?.eta || '';
+    const label = eta
+      ? `<span class="route-num">${index + 1}</span><span class="route-eta">${eta}</span>`
+      : `${index + 1}`;
+    const size = eta ? [30, 42] : [30, 30];
+    const el = createMarkerElement('route-marker' + (eta ? ' has-eta' : ''), label, size);
+    const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([stop.lng, stop.lat])
+      .addTo(map);
+    routeMarkers.push(marker);
+  });
+
+  // Fit map to route bounds
+  const allPoints = [[routeStart.lat, routeStart.lng], ...stops.map(s => [s.lat, s.lng])];
+  const bounds = boundsFromLatLngArray(allPoints);
+  map.fitBounds(bounds, { padding: 50 });
+
+  return { drivingSeconds, distanceMeters, feature };
+}
+
+/**
+ * Draw straight dashed lines as fallback when ORS directions unavailable
+ */
+function drawStraightFallback(stops, startLngLat, lineOpts) {
+  const lineCoords = [
+    startLngLat,
+    ...stops.map(s => [s.lng, s.lat]),
+    startLngLat
+  ];
+  drawRouteGeoJSON(lineCoords, { ...lineOpts, opacity: 0.7, dasharray: [10, 8] });
+}
+
+
+// ========================================
+// ROUTE PLANNING
+// Ad-hoc route planning from customer selection
+// Depends on: route-service.js (RouteService), route-rendering.js (renderRouteOnMap)
+// ========================================
+
 async function planRoute() {
-  // Check if route planning is configured on server (uses server-side proxy)
   if (!appConfig.orsApiKeyConfigured) {
     showMessage('Ruteplanlegging er ikke konfigurert. Kontakt administrator.', 'warning');
     return;
@@ -14109,242 +21513,50 @@ async function planRoute() {
   planRouteBtn.classList.add('loading');
   planRouteBtn.disabled = true;
 
-  // Get start location from config (company address)
-  const startLocation = [routeStart.lng, routeStart.lat];
-
   try {
-    const optimizeHeaders = { 'Content-Type': 'application/json' };
-    const csrfToken = getCsrfToken();
-    if (csrfToken) optimizeHeaders['X-CSRF-Token'] = csrfToken;
+    // Try VROOM optimization first
+    const vroomRoute = await RouteService.optimize(selectedCustomerData, routeStart);
 
-    const response = await fetch('/api/routes/optimize', {
-      method: 'POST',
-      headers: optimizeHeaders,
-      credentials: 'include',
-      body: JSON.stringify({
-        jobs: selectedCustomerData.map((c, i) => ({
-          id: i + 1,
-          location: [c.lng, c.lat],
-          service: 1800
-        })),
-        vehicles: [{
-          id: 1,
-          profile: 'driving-car',
-          start: startLocation,
-          end: startLocation
-        }]
-      })
-    });
+    if (vroomRoute) {
+      const orderedCustomers = RouteService.reorderByVroom(selectedCustomerData, vroomRoute);
+      await renderRouteOnMap(orderedCustomers, routeStart);
 
-    if (!response.ok) {
-      showMessage('Ruteoptimering ikke tilgjengelig, bruker enkel rute', 'info');
-      await planSimpleRoute(selectedCustomerData);
-      return;
-    }
-
-    const data = await response.json();
-
-    if (data.routes && data.routes.length > 0) {
-      const route = data.routes[0];
-      const orderedCustomers = route.steps
-        .filter(s => s.type === 'job')
-        .map(s => selectedCustomerData[s.job - 1]);
-
-      await drawRoute(orderedCustomers);
-
-      const hours = Math.floor(route.duration / 3600);
-      const minutes = Math.floor((route.duration % 3600) / 60);
-      const km = (route.distance / 1000).toFixed(1);
-      const timeStr = hours > 0 ? `${hours}t ${minutes}min` : `${minutes} min`;
+      const timeStr = RouteService.formatDuration(vroomRoute.duration);
+      const km = RouteService.formatKm(vroomRoute.distance);
       showNotification(`Rute beregnet: ${orderedCustomers.length} stopp, ${km} km, ~${timeStr}`);
+    } else {
+      // Fallback: simple directions without optimization
+      await planSimpleRoute(selectedCustomerData, routeStart);
     }
   } catch (error) {
     console.error('Ruteplanlegging feil:', error);
-    await planSimpleRoute(customers.filter(c => selectedCustomers.has(c.id) && c.lat && c.lng));
+    await planSimpleRoute(selectedCustomerData, routeStart);
   } finally {
     planRouteBtn.classList.remove('loading');
     planRouteBtn.disabled = false;
   }
 }
 
-// Simple route without optimization
-async function planSimpleRoute(customerData) {
-  try {
-    const routeStart = getRouteStartLocation();
+// Simple route without optimization (fallback)
+async function planSimpleRoute(customerData, routeStart) {
+  if (!routeStart) {
+    routeStart = getRouteStartLocation();
     if (!routeStart) {
       showMessage('Sett firmaadresse i admin-innstillinger for å bruke ruteplanlegging.', 'warning');
       return;
     }
-    const startLocation = [routeStart.lng, routeStart.lat];
-    const startLngLat = [routeStart.lng, routeStart.lat];
+  }
 
-    const coordinates = [
-      startLocation,
-      ...customerData.map(c => [c.lng, c.lat]),
-      startLocation
-    ];
+  try {
+    const result = await renderRouteOnMap(customerData, routeStart);
 
-    const directionsHeaders = { 'Content-Type': 'application/json' };
-    const dirCsrfToken = getCsrfToken();
-    if (dirCsrfToken) directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
-
-    const response = await fetch('/api/routes/directions', {
-      method: 'POST',
-      headers: directionsHeaders,
-      credentials: 'include',
-      body: JSON.stringify({ coordinates })
-    });
-
-    const rawData = await response.json();
-
-    if (!response.ok) {
-      if (rawData.error && rawData.error.message) {
-        if (rawData.error.message.includes('Could not find routable point')) {
-          throw new Error('En eller flere kunder har koordinater som ikke er nær en vei.');
-        }
-        throw new Error(rawData.error.message);
-      }
-      throw new Error('Kunne ikke beregne rute');
-    }
-
-    const geoData = rawData.data || rawData;
-
-    if (geoData.features && geoData.features.length > 0) {
-      const feature = geoData.features[0];
-      drawRouteFromGeoJSON(feature);
-
-      // Add start marker (company location)
-      const startEl = createMarkerElement('route-marker route-start', '<i aria-hidden="true" class="fas fa-home"></i>', [30, 30]);
-      const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
-        .setLngLat(startLngLat)
-        .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
-        .addTo(map);
-      routeMarkers.push(startMarker);
-
-      // Add numbered markers for customers
-      customerData.forEach((customer, index) => {
-        const el = createMarkerElement('route-marker', `${index + 1}`, [30, 30]);
-        const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
-          .setLngLat([customer.lng, customer.lat])
-          .addTo(map);
-        routeMarkers.push(marker);
-      });
-
-      // Fit map to route
-      const bounds = new mapboxgl.LngLatBounds();
-      bounds.extend(startLngLat);
-      customerData.forEach(c => bounds.extend([c.lng, c.lat]));
-      map.fitBounds(bounds, { padding: 50 });
-
-      let duration = feature.properties?.summary?.duration || 0;
-      let distance = feature.properties?.summary?.distance || 0;
-      if (duration === 0 && feature.properties?.segments?.length > 0) {
-        for (const seg of feature.properties.segments) {
-          duration += seg.duration || 0;
-          distance += seg.distance || 0;
-        }
-      }
-
-      const hours = Math.floor(duration / 3600);
-      const minutes = Math.floor((duration % 3600) / 60);
-      const km = (distance / 1000).toFixed(1);
-      const timeStr = hours > 0 ? `${hours}t ${minutes}min` : `${minutes} min`;
-      showNotification(`Rute beregnet: ${customerData.length} stopp, ${km} km, ~${timeStr}`);
-    }
+    const timeStr = RouteService.formatDuration(result.drivingSeconds);
+    const km = RouteService.formatKm(result.distanceMeters);
+    showNotification(`Rute beregnet: ${customerData.length} stopp, ${km} km, ~${timeStr}`);
   } catch (error) {
     console.error('Enkel rute feil:', error);
     showMessage(error.message || 'Kunne ikke beregne rute.', 'error');
   }
-}
-
-// Draw route on map
-async function drawRoute(orderedCustomers) {
-  clearRoute();
-
-  const routeStart = getRouteStartLocation();
-  if (!routeStart) return;
-  const startLocation = [routeStart.lng, routeStart.lat];
-  const startLngLat = [routeStart.lng, routeStart.lat];
-
-  const coordinates = [
-    startLocation,
-    ...orderedCustomers.map(c => [c.lng, c.lat]),
-    startLocation
-  ];
-
-  try {
-    const directionsHeaders = { 'Content-Type': 'application/json' };
-    const dirCsrfToken = getCsrfToken();
-    if (dirCsrfToken) directionsHeaders['X-CSRF-Token'] = dirCsrfToken;
-
-    const response = await fetch('/api/routes/directions', {
-      method: 'POST',
-      headers: directionsHeaders,
-      credentials: 'include',
-      body: JSON.stringify({ coordinates })
-    });
-
-    const rawData = await response.json();
-    const geoData = rawData.data || rawData;
-
-    if (geoData.features && geoData.features.length > 0) {
-      drawRouteFromGeoJSON(geoData.features[0]);
-    }
-  } catch (error) {
-    console.error('Tegning av rute feil:', error);
-  }
-
-  // Add start marker
-  const startEl = createMarkerElement('route-marker route-start', '<i aria-hidden="true" class="fas fa-home"></i>', [30, 30]);
-  const startMarker = new mapboxgl.Marker({ element: startEl, anchor: 'center' })
-    .setLngLat(startLngLat)
-    .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(`<strong>Start:</strong><br>${escapeHtml(appConfig.routeStartAddress || 'Kontor')}`))
-    .addTo(map);
-  routeMarkers.push(startMarker);
-
-  // Add numbered markers for customers
-  orderedCustomers.forEach((customer, index) => {
-    const el = createMarkerElement('route-marker', `${index + 1}`, [30, 30]);
-    const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
-      .setLngLat([customer.lng, customer.lat])
-      .addTo(map);
-    routeMarkers.push(marker);
-  });
-
-  // Fit map to route
-  const bounds = new mapboxgl.LngLatBounds();
-  bounds.extend(startLngLat);
-  orderedCustomers.forEach(c => bounds.extend([c.lng, c.lat]));
-  map.fitBounds(bounds, { padding: 50 });
-}
-
-// Draw route from GeoJSON using Mapbox GL JS source + layer
-function drawRouteFromGeoJSON(feature) {
-  clearRoute();
-
-  if (feature?.geometry?.coordinates) {
-    // GeoJSON is already [lng, lat] — no conversion needed!
-    if (map.getSource('route-line')) {
-      map.getSource('route-line').setData(feature);
-    } else {
-      map.addSource('route-line', { type: 'geojson', data: feature });
-      map.addLayer({
-        id: 'route-line',
-        type: 'line',
-        source: 'route-line',
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#2563eb', 'line-width': 6, 'line-opacity': 0.9 }
-      });
-    }
-  }
-}
-
-// Clear route from map
-function clearRoute() {
-  if (map.getLayer('route-line')) map.removeLayer('route-line');
-  if (map.getSource('route-line')) map.removeSource('route-line');
-  routeMarkers.forEach(m => m.remove());
-  routeMarkers = [];
 }
 
 // Current route data for saving (used by weekplan)
@@ -14422,7 +21634,7 @@ function renderEmailDialog(customer) {
     <div class="email-dialog">
       <div class="email-dialog-header">
         <h3><i aria-hidden="true" class="fas fa-envelope"></i> Send e-post</h3>
-        <button class="email-dialog-close" onclick="closeEmailDialog()"><i aria-hidden="true" class="fas fa-times"></i></button>
+        <button class="email-dialog-close" data-action="closeEmailDialog"><i aria-hidden="true" class="fas fa-times"></i></button>
       </div>
       <div class="email-dialog-body">
         <div class="email-dialog-recipient">
@@ -14432,7 +21644,7 @@ function renderEmailDialog(customer) {
 
         <div class="email-dialog-field">
           <label for="emailTemplateSelect">Velg mal:</label>
-          <select id="emailTemplateSelect" class="email-dialog-select" onchange="onEmailTemplateChange()">
+          <select id="emailTemplateSelect" class="email-dialog-select" data-on-change="onEmailTemplateChange">
             ${templates.map(t => `<option value="${t.id}">${escapeHtml(t.name)} (${escapeHtml(t.category)})</option>`).join('')}
           </select>
         </div>
@@ -14449,7 +21661,7 @@ function renderEmailDialog(customer) {
         </div>
 
         <div class="email-dialog-preview-section">
-          <button class="email-dialog-preview-btn" onclick="previewEmail()">
+          <button class="email-dialog-preview-btn" data-action="previewEmail">
             <i aria-hidden="true" class="fas fa-eye"></i> Forhåndsvis
           </button>
           <div id="emailPreviewContainer" class="email-preview-container" style="display:none">
@@ -14459,8 +21671,8 @@ function renderEmailDialog(customer) {
         </div>
       </div>
       <div class="email-dialog-footer">
-        <button class="btn btn-secondary" onclick="closeEmailDialog()">Avbryt</button>
-        <button class="btn btn-primary email-send-btn" onclick="sendEmailFromDialog()">
+        <button class="btn btn-secondary" data-action="closeEmailDialog">Avbryt</button>
+        <button class="btn btn-primary email-send-btn" data-action="sendEmailFromDialog">
           <i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post
         </button>
       </div>
@@ -14646,14 +21858,22 @@ function renderOverdue() {
     // No pre-sort needed - clustering handles grouping
   }
 
-  // Update badge
+  // Update badges
   updateBadge('overdueBadge', overdueCustomers.length);
+  updateBadge('overdueTabBadge', overdueCustomers.length);
 
   // Update header count
   if (countHeader) {
     countHeader.textContent = overdueCustomers.length > 0
       ? `(${overdueCustomers.length} stk)`
       : '';
+  }
+
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashOverdueSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = overdueCustomers.length > 0 ? overdueCustomers.length : '';
+    sectionBadge.style.display = overdueCustomers.length > 0 ? '' : 'none';
   }
 
   // Render
@@ -14681,15 +21901,15 @@ function renderOverdue() {
             <span class="overdue-severity-dot ${severity}"></span>
             ${title} (${items.length})
           </div>
-          ${items.map(c => `
-            <div class="overdue-item" data-action="focusOnCustomer" data-customer-id="${c.id}">
+          ${items.map((c, idx) => `
+            <div class="overdue-item stagger-item" style="--stagger-index:${Math.min(idx, 15)}" data-action="focusOnCustomer" data-customer-id="${c.id}">
               <div class="overdue-customer-info">
                 <div class="overdue-customer-main">
                   <h4>${escapeHtml(c.navn)}</h4>
                   <span class="overdue-category">${escapeHtml(c.kategori || 'Ukjent')}</span>
                 </div>
                 <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
               </div>
               <div class="overdue-status">
                 <span class="overdue-days">${c.daysOverdue} dager</span>
@@ -14705,11 +21925,11 @@ function renderOverdue() {
     };
 
     const renderGroupedItems = (items) => {
-      return items.map(c => {
+      return items.map((c, idx) => {
         const kat = c.kategori || '';
         const katBadge = kat ? `<span class="overdue-kat-badge ${kat.includes('El') ? 'kat-el' : kat.includes('Brann') ? 'kat-brann' : 'kat-other'}">${escapeHtml(kat)}</span>` : '';
         return `
-        <div class="overdue-item" data-action="focusOnCustomer" data-customer-id="${c.id}">
+        <div class="overdue-item stagger-item" style="--stagger-index:${Math.min(idx, 15)}" data-action="focusOnCustomer" data-customer-id="${c.id}">
           <div class="overdue-customer-info">
             <div class="overdue-customer-main">
               <h4>${escapeHtml(c.navn)}</h4>
@@ -14717,7 +21937,7 @@ function renderOverdue() {
               <span class="overdue-days-inline ${c.daysOverdue > 60 ? 'critical' : c.daysOverdue > 30 ? 'warning' : 'mild'}">${c.daysOverdue}d forfalt</span>
             </div>
             <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
           </div>
           <div class="overdue-status">
             <span class="overdue-date">${formatDate(c._controlDate)}</span>
@@ -14906,6 +22126,10 @@ function renderOverdue() {
   }
 }
 
+function renderOverdueTab() {
+  renderOverdue();
+}
+
 // Update overdue badge count — same logic as renderOverdue()
 function updateOverdueBadge() {
   const today = new Date();
@@ -14920,6 +22144,14 @@ function updateOverdueBadge() {
   }).length;
 
   updateBadge('overdueBadge', overdueCount);
+  updateBadge('overdueTabBadge', overdueCount);
+
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashOverdueSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = overdueCount > 0 ? overdueCount : '';
+    sectionBadge.style.display = overdueCount > 0 ? '' : 'none';
+  }
 
   // Also update upcoming badge
   updateUpcomingBadge();
@@ -14941,6 +22173,14 @@ function updateUpcomingBadge() {
   }).length;
 
   updateBadge('upcomingBadge', upcomingCount);
+  updateBadge('upcomingTabBadge', upcomingCount);
+
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashWarningSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = upcomingCount > 0 ? upcomingCount : '';
+    sectionBadge.style.display = upcomingCount > 0 ? '' : 'none';
+  }
 }
 
 // Render warnings for upcoming controls
@@ -15102,6 +22342,10 @@ function renderWarnings() {
   }
 }
 
+function renderUpcomingTab() {
+  renderWarnings();
+}
+
 
 
 // === Calendar helper functions ===
@@ -15127,10 +22371,11 @@ function addDaysToDate(date, days) {
 
 function getCreatorDisplay(name, short = false) {
   if (!name || name === 'admin' || !name.trim()) return '';
-  const parts = name.trim().split(/\s+/);
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
   if (short) {
     // Initialer: "Sander Martinsen" → "SM"
-    return parts.map(p => p[0].toUpperCase()).join('');
+    return parts.map(p => p[0]?.toUpperCase() || '').join('');
   }
   // Kort: "Sander Martinsen" → "Sander M."
   if (parts.length > 1) {
@@ -15180,9 +22425,18 @@ function renderAreaBadges(dayAvtaler) {
 
 // === WEEKLY PLAN (Ukeplan - planlagte oppdrag) ===
 
-const weekDayKeys = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag'];
-const weekDayLabels = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag'];
+const weekDayKeys = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lordag', 'sondag'];
+const weekDayLabels = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
+const weekDayLabelsShort = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
 const monthNamesShort = ['jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des'];
+
+const NOTE_TYPES = [
+  { key: 'ring',       label: 'Ring',       icon: 'fa-phone',           color: '#2563eb' },
+  { key: 'besok',      label: 'Bes\u00f8k',      icon: 'fa-wrench',          color: '#16a34a' },
+  { key: 'bestill',    label: 'Bestill',     icon: 'fa-box',             color: '#ea580c' },
+  { key: 'oppfolging', label: 'Oppf\u00f8lging',  icon: 'fa-clipboard-check', color: '#9333ea' },
+  { key: 'notat',      label: 'Notat',       icon: 'fa-sticky-note',     color: '#64748b' },
+];
 
 function formatMinutes(totalMin) {
   if (!totalMin || totalMin <= 0) return '';
@@ -15205,26 +22459,62 @@ function getDayEstimatedTotal(dayKey) {
   return dayData.planned.reduce((sum, c) => sum + (c.estimertTid || 30), 0);
 }
 
+function wpGetDayCapacityByMember(dayKey) {
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return new Map();
+  const userName = localStorage.getItem('userName') || '';
+  const memberMap = new Map();
+  for (const c of dayData.planned) {
+    const name = c.addedBy || weekPlanState.globalAssignedTo || userName;
+    if (!name) continue;
+    if (!memberMap.has(name)) memberMap.set(name, { totalMin: 0, stopCount: 0 });
+    const entry = memberMap.get(name);
+    entry.totalMin += (c.estimertTid || 30);
+    entry.stopCount++;
+  }
+  return memberMap;
+}
+
+function wpRenderCapacityBars(dayKey, teamColorMap, currentUserColor) {
+  const memberCap = wpGetDayCapacityByMember(dayKey);
+  if (memberCap.size < 2) return '';
+  const maxMin = 480;
+  let html = '<div class="wp-capacity-section">';
+  for (const [name, data] of memberCap) {
+    const initials = getCreatorDisplay(name, true);
+    const color = teamColorMap.get(name) || currentUserColor;
+    const fillPct = Math.min(100, Math.round((data.totalMin / maxMin) * 100));
+    const level = data.totalMin > maxMin ? 'wp-cap-red' : data.totalMin >= maxMin * 0.8 ? 'wp-cap-yellow' : 'wp-cap-green';
+    html += `<div class="wp-capacity-member" title="${escapeHtml(name)}: ${data.stopCount} stopp">
+      <span class="wp-capacity-avatar" style="background:${color}">${escapeHtml(initials)}</span>
+      <span class="wp-capacity-time">${formatMinutes(data.totalMin)} / 8t</span>
+      <div class="wp-capacity-bar-bg"><div class="wp-capacity-bar ${level}" style="width:${fillPct}%"></div></div>
+    </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
 const TEAM_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#ca8a04'];
 let wpFocusedTeamMember = null; // currently highlighted team member name
 let wpFocusedMemberIds = null; // Set of customer IDs for focused member (used by cluster icons)
 let wpRouteActive = false; // true when navigating a route (dims markers)
 let wpRouteStopIds = null; // Set of customer IDs that are stops in the active route
+let wpShowAllMarkers = false; // toggle: true = show dimmed, false = hide completely
 
 function getWeekTeamMembers() {
   if (!weekPlanState.days) return [];
   const weekDates = new Set(weekDayKeys.map(k => weekPlanState.days[k]?.date).filter(Boolean));
   const teamMap = new Map(); // name → { initials, count, kundeIds: Set }
 
-  // Planned (unsaved) - use global assigned technician, or current user
+  // Planned (unsaved) - use per-customer addedBy, falling back to global assigned
   const userName = localStorage.getItem('userName') || '';
-  const globalAssigned = weekPlanState.globalAssignedTo || userName;
   for (const dayKey of weekDayKeys) {
     const dayData = weekPlanState.days[dayKey];
     if (!dayData || dayData.planned.length === 0) continue;
-    const assignedName = globalAssigned || userName;
-    if (!assignedName) continue;
     for (const c of dayData.planned) {
+      const assignedName = c.addedBy || weekPlanState.globalAssignedTo || userName;
+      if (!assignedName) continue;
       if (!teamMap.has(assignedName)) teamMap.set(assignedName, { initials: getCreatorDisplay(assignedName, true), count: 0, kundeIds: new Set() });
       const entry = teamMap.get(assignedName);
       entry.count++;
@@ -15235,7 +22525,7 @@ function getWeekTeamMembers() {
   // Existing avtaler this week
   for (const a of avtaler) {
     if (!weekDates.has(a.dato) || !a.kunde_id) continue;
-    const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+    const creator = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
     if (!creator) continue;
     if (!teamMap.has(creator)) teamMap.set(creator, { initials: getCreatorDisplay(creator, true), count: 0, kundeIds: new Set() });
     const entry = teamMap.get(creator);
@@ -15265,11 +22555,15 @@ function focusTeamMemberOnMap(memberName) {
     // Toggle off - remove focus
     wpFocusedTeamMember = null;
     wpFocusedMemberIds = null;
+    wpShowAllMarkers = false;
     applyTeamFocusToMarkers();
     if (typeof refreshClusters === 'function') refreshClusters();
     renderWeeklyPlan();
     return;
   }
+
+  // Clear calendar focus if active
+  if (typeof clearCalendarFocus === 'function' && calendarFocusedDay) clearCalendarFocus();
 
   wpFocusedTeamMember = memberName;
   const team = getWeekTeamMembers();
@@ -15331,34 +22625,42 @@ function applyTeamFocusToMarkers() {
     if (!el) continue;
     const id = Number(kundeId);
 
+    // Clear previous state
+    el.classList.remove('route-hidden', 'route-dimmed');
+    el.style.opacity = '';
+    el.style.filter = '';
+    el.style.pointerEvents = '';
+
     if (wpRouteActive) {
-      // Route active: highlight route stops, dim everything else
       if (wpRouteStopIds && wpRouteStopIds.has(id)) {
-        el.style.opacity = '1';
-        el.style.filter = '';
-        el.style.pointerEvents = '';
+        // Route stop: always visible
+      } else if (wpShowAllMarkers) {
+        el.classList.add('route-dimmed');
       } else {
-        el.style.opacity = '0.3';
-        el.style.filter = 'grayscale(0.8)';
-        el.style.pointerEvents = 'none';
+        el.classList.add('route-hidden');
       }
     } else if (wpFocusedMemberIds) {
-      // Team focus active
       if (wpFocusedMemberIds.has(id)) {
-        el.style.opacity = '1';
-        el.style.filter = '';
-        el.style.pointerEvents = '';
+        // Focused member's customer: visible
+      } else if (wpShowAllMarkers) {
+        el.classList.add('route-dimmed');
       } else {
-        el.style.opacity = '0.15';
-        el.style.filter = 'grayscale(1)';
-        el.style.pointerEvents = 'none';
+        el.classList.add('route-hidden');
       }
-    } else {
-      // Nothing active - reset
-      el.style.opacity = '';
-      el.style.filter = '';
-      el.style.pointerEvents = '';
     }
+    // Else: no classes = fully visible (reset)
+  }
+}
+
+function toggleRouteMarkerVisibility() {
+  wpShowAllMarkers = !wpShowAllMarkers;
+  applyTeamFocusToMarkers();
+  if (typeof refreshClusters === 'function') refreshClusters();
+  const btn = document.querySelector('[data-action="toggleRouteMarkers"]');
+  if (btn) {
+    btn.innerHTML = wpShowAllMarkers
+      ? '<i aria-hidden="true" class="fas fa-eye-slash"></i> Skjul andre'
+      : '<i aria-hidden="true" class="fas fa-eye"></i> Vis alle';
   }
 }
 
@@ -15366,7 +22668,10 @@ let weekPlanState = {
   weekStart: null,
   activeDay: null,
   days: {},
-  globalAssignedTo: ''
+  globalAssignedTo: '',
+  notater: [],
+  overforteNotater: [],
+  noteFilter: 'alle'
 };
 
 function initWeekPlanState(weekStart) {
@@ -15379,7 +22684,9 @@ function initWeekPlanState(weekStart) {
   }
   weekPlanState.weekStart = new Date(start);
   weekPlanState.days = {};
-  for (let i = 0; i < 5; i++) {
+  weekPlanState.notater = [];
+  weekPlanState.overforteNotater = [];
+  for (let i = 0; i < 7; i++) {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
     weekPlanState.days[weekDayKeys[i]] = {
@@ -15399,16 +22706,158 @@ function getWeekPlanTotalPlanned() {
 }
 
 let wpTeamMembers = null;
+let wpTeamMembersLoadedAt = 0;
 async function loadWpTeamMembers() {
-  if (wpTeamMembers) return wpTeamMembers;
+  // Cache for 5 minutes, then refresh
+  if (wpTeamMembers && (Date.now() - wpTeamMembersLoadedAt) < 5 * 60 * 1000) return wpTeamMembers;
   try {
     const resp = await apiFetch('/api/team-members');
     const json = await resp.json();
-    if (json.success && json.data) {
-      wpTeamMembers = json.data.filter(m => m.aktiv);
-    }
-  } catch (e) { /* silent */ }
+    const data = json.success && json.data;
+    const members = Array.isArray(data?.members) ? data.members : Array.isArray(data) ? data : [];
+    wpTeamMembers = members.filter(m => m.aktiv !== false);
+    wpTeamMembersLoadedAt = Date.now();
+  } catch (e) { console.warn('Failed to load team members:', e); }
   return wpTeamMembers || [];
+}
+
+// Build inline context (notes, overdue, huskeliste) for a planned customer
+function wpGetCustomerContext(kundeId, fullCust) {
+  const result = { html: '', icons: '' };
+  const today = new Date();
+  const todayStr = formatDateISO(today);
+  const iconParts = [];
+
+  // Overdue control check
+  if (fullCust?.neste_kontroll && fullCust.neste_kontroll < todayStr) {
+    iconParts.push(`<span class="wp-ctx-icon wp-overdue-badge" title="Forfalt kontroll: ${escapeHtml(fullCust.neste_kontroll)}"><i aria-hidden="true" class="fas fa-exclamation-triangle"></i></span>`);
+  }
+
+  // Huskeliste notes for this customer this week
+  const custNotes = (weekPlanState.notater || []).filter(n => n.kunde_id === kundeId && !n.fullfort);
+  for (const n of custNotes) {
+    const nt = NOTE_TYPES.find(t => t.key === n.type) || NOTE_TYPES[4];
+    iconParts.push(`<span class="wp-ctx-icon" style="color:${nt.color}" title="${escapeHtml(nt.label)}: ${escapeHtml(n.notat)}"><i aria-hidden="true" class="fas ${nt.icon}"></i></span>`);
+  }
+
+  if (iconParts.length > 0) {
+    result.icons = ` <span class="wp-ctx-icons">${iconParts.join('')}</span>`;
+  }
+
+  // Customer note preview
+  const contextParts = [];
+  if (fullCust?.notater) {
+    const truncated = fullCust.notater.length > 80 ? fullCust.notater.substring(0, 80) + '...' : fullCust.notater;
+    contextParts.push(`<span class="wp-ctx-note" title="${escapeHtml(fullCust.notater)}"><i aria-hidden="true" class="fas fa-sticky-note" style="font-size:8px;margin-right:3px;opacity:0.6"></i>${escapeHtml(truncated)}</span>`);
+  }
+
+  // Last visit date
+  if (fullCust?.last_visit_date || fullCust?.siste_kontroll) {
+    const lastDate = fullCust.last_visit_date || fullCust.siste_kontroll;
+    contextParts.push(`<span class="wp-ctx-lastvisit"><i aria-hidden="true" class="fas fa-history" style="font-size:8px;margin-right:3px;opacity:0.6"></i>Sist: ${escapeHtml(lastDate)}</span>`);
+  }
+
+  if (contextParts.length > 0) {
+    result.html = `<div class="wp-item-context">${contextParts.join('')}</div>`;
+  }
+
+  return result;
+}
+
+// Drag-and-drop: reorder within day or move between days
+function wpInitDragAndDrop(container) {
+  let draggedItem = null;
+  let draggedCustomerId = null;
+  let draggedFromDay = null;
+
+  container.addEventListener('dragstart', (e) => {
+    draggedItem = e.target.closest('.wp-item.new[draggable]');
+    if (!draggedItem) return;
+    draggedCustomerId = Number(draggedItem.dataset.customerId);
+    draggedFromDay = draggedItem.dataset.day;
+    draggedItem.classList.add('wp-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', draggedCustomerId);
+  });
+
+  container.addEventListener('dragend', (e) => {
+    if (draggedItem) draggedItem.classList.remove('wp-dragging');
+    container.querySelectorAll('.wp-drag-over').forEach(el => el.classList.remove('wp-drag-over'));
+    container.querySelectorAll('.wp-drop-indicator').forEach(el => el.remove());
+    draggedItem = null;
+    draggedCustomerId = null;
+    draggedFromDay = null;
+  });
+
+  container.addEventListener('dragover', (e) => {
+    if (!draggedItem) return;
+    const dayContent = e.target.closest('.wp-day-content');
+    const dayEl = e.target.closest('.wp-day[data-day]');
+    if (!dayEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    // Highlight target day
+    container.querySelectorAll('.wp-drag-over').forEach(el => el.classList.remove('wp-drag-over'));
+    if (dayContent) dayContent.classList.add('wp-drag-over');
+    else dayEl.classList.add('wp-drag-over');
+  });
+
+  container.addEventListener('dragleave', (e) => {
+    const dayContent = e.target.closest('.wp-day-content');
+    if (dayContent && !dayContent.contains(e.relatedTarget)) {
+      dayContent.classList.remove('wp-drag-over');
+    }
+  });
+
+  container.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (!draggedItem || !draggedFromDay || !draggedCustomerId) return;
+
+    const targetDayEl = e.target.closest('.wp-day[data-day]');
+    if (!targetDayEl) return;
+    const targetDay = targetDayEl.dataset.day;
+
+    const sourcePlanned = weekPlanState.days[draggedFromDay]?.planned;
+    const targetPlanned = weekPlanState.days[targetDay]?.planned;
+    if (!sourcePlanned || !targetPlanned) return;
+
+    const sourceIndex = sourcePlanned.findIndex(c => c.id === draggedCustomerId);
+    if (sourceIndex === -1) return;
+
+    // Find drop position within target day
+    const targetItems = targetDayEl.querySelectorAll('.wp-item.new[data-customer-id]');
+    let dropIndex = targetPlanned.length;
+    for (let i = 0; i < targetItems.length; i++) {
+      const rect = targetItems[i].getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) {
+        dropIndex = i;
+        break;
+      }
+    }
+
+    const [moved] = sourcePlanned.splice(sourceIndex, 1);
+
+    if (draggedFromDay === targetDay) {
+      // Reorder within same day — adjust index after removal
+      const adjustedIndex = dropIndex > sourceIndex ? dropIndex - 1 : dropIndex;
+      targetPlanned.splice(Math.max(0, adjustedIndex), 0, moved);
+    } else {
+      // Check duplicate in target day
+      if (targetPlanned.some(c => c.id === draggedCustomerId)) {
+        sourcePlanned.splice(sourceIndex, 0, moved); // put it back
+        showToast('Kunden er allerede i planen for denne dagen', 'info');
+        return;
+      }
+      targetPlanned.splice(dropIndex, 0, moved);
+      const fromLabel = weekDayLabels[weekDayKeys.indexOf(draggedFromDay)];
+      const toLabel = weekDayLabels[weekDayKeys.indexOf(targetDay)];
+      showToast(`${escapeHtml(moved.navn)} flyttet fra ${fromLabel} til ${toLabel}`, 'success');
+    }
+
+    refreshTeamFocus();
+    renderWeeklyPlan();
+  });
 }
 
 async function renderWeeklyPlan() {
@@ -15427,6 +22876,9 @@ async function renderWeeklyPlan() {
 
   // Load team members for technician assignment dropdown
   const allTeamMembers = await loadWpTeamMembers();
+  // Filter out current user — solo admins should not see a redundant dropdown
+  const currentEmail = (localStorage.getItem('userEmail') || '').toLowerCase();
+  const otherTeamMembers = allTeamMembers.filter(m => (m.epost || '').toLowerCase() !== currentEmail);
 
   const weekNum = getISOWeekNumber(weekPlanState.weekStart);
   const totalPlanned = getWeekPlanTotalPlanned();
@@ -15438,16 +22890,17 @@ async function renderWeeklyPlan() {
   html += `
     <div class="wp-header">
       <button class="btn btn-small btn-secondary" data-action="weekPlanPrev" aria-label="Forrige uke"><i aria-hidden="true" class="fas fa-chevron-left"></i></button>
-      <span class="wp-week-title">Uke ${weekNum}</span>
+      <span class="wp-week-title" data-action="weekPlanPickDate" style="cursor:pointer" title="Klikk for \u00e5 velge uke">Uke ${weekNum} <i aria-hidden="true" class="fas fa-calendar-alt" style="font-size:10px;opacity:0.6;margin-left:2px"></i></span>
+      <input type="date" id="wpDatePicker" value="${formatDateISO(weekPlanState.weekStart)}" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;">
       <button class="btn btn-small btn-secondary" data-action="weekPlanNext" aria-label="Neste uke"><i aria-hidden="true" class="fas fa-chevron-right"></i></button>
     </div>
   `;
 
   // Admin: technician assignment panel
   const wpIsAdmin = localStorage.getItem('userRole') === 'admin' || localStorage.getItem('userType') === 'bruker';
-  if (wpIsAdmin && allTeamMembers.length > 0) {
+  if (wpIsAdmin && otherTeamMembers.length > 0) {
     const globalAssigned = weekPlanState.globalAssignedTo || '';
-    const tmOpts = allTeamMembers.map(m =>
+    const tmOpts = otherTeamMembers.map(m =>
       `<option value="${escapeHtml(m.navn)}" ${globalAssigned === m.navn ? 'selected' : ''}>${escapeHtml(m.navn)}</option>`
     ).join('');
     html += `<div class="wp-dispatch-bar">
@@ -15469,6 +22922,21 @@ async function renderWeeklyPlan() {
     </div>
     <div class="wp-search-results" id="wpSearchResults"></div>
   </div>`;
+
+  // Action buttons row
+  html += `<div class="wp-action-row">`;
+  if (weekPlanState.activeDay) {
+    html += `<button class="btn btn-small btn-secondary wp-suggest-btn" data-action="wpSuggestStops" title="Foreslå kunder som trenger besøk i nærheten">
+      <i aria-hidden="true" class="fas fa-lightbulb"></i> Foreslå stopp
+    </button>`;
+  }
+  html += `<button class="btn btn-small btn-secondary" data-action="wpAutoFillWeek" title="Fordel kunder som trenger kontroll utover uken automatisk">
+    <i aria-hidden="true" class="fas fa-magic"></i> ${totalPlanned > 0 ? 'Fyll gjenværende' : 'Fyll uke automatisk'}
+  </button>`;
+  html += `</div>`;
+
+  // Suggestions container (filled by wpSuggestStops)
+  html += `<div id="wpSuggestions" class="wp-suggestions"></div>`;
 
   // Status bar when selecting
   if (weekPlanState.activeDay) {
@@ -15502,9 +22970,10 @@ async function renderWeeklyPlan() {
   // Day list
   html += `<div class="wp-days">`;
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 7; i++) {
     const dayKey = weekDayKeys[i];
     const dayData = weekPlanState.days[dayKey];
+    if (!dayData) continue;
     const dateStr = dayData.date;
     const dayDate = new Date(dateStr + 'T00:00:00');
     const isActive = weekPlanState.activeDay === dayKey;
@@ -15546,10 +23015,11 @@ async function renderWeeklyPlan() {
         const workdayMinutes = 480;
         const fillPct = Math.min(100, Math.round((estProgress / workdayMinutes) * 100));
         const overloaded = estProgress > workdayMinutes;
-        html += `<div class="wp-progress-container">
+        html += `<div class="wp-progress-container" ${overloaded ? `title="Overstiger 8 timer — vurder å flytte stopp til en annen dag"` : ''}>
           <div class="wp-progress-bar ${overloaded ? 'overloaded' : ''}" style="width:${fillPct}%"></div>
-          <span class="wp-progress-label">${formatMinutes(estProgress)} / 8t</span>
+          <span class="wp-progress-label">${formatMinutes(estProgress)} / 8t${overloaded ? ' ⚠' : ''}</span>
         </div>`;
+        html += wpRenderCapacityBars(dayKey, teamColorMap, currentUserColor);
       }
 
       // Cumulative time tracker for timeline
@@ -15566,16 +23036,23 @@ async function renderWeeklyPlan() {
         const custAssignedName = c.addedBy || currentUser;
         const custInitials = custAssignedName ? getCreatorDisplay(custAssignedName, true) : '';
         const custColor = teamColorMap.get(custAssignedName) || currentUserColor;
+
+        // Inline context: notes, overdue status, huskeliste
+        const fullCust = customers.find(fc => fc.id === c.id);
+        const custContext = wpGetCustomerContext(c.id, fullCust);
+
         html += `
-          <div class="wp-item new wp-timeline-item" data-customer-id="${c.id}" data-day="${dayKey}" style="border-left:3px solid ${custColor}">
+          <div class="wp-item new wp-timeline-item stagger-item" draggable="true" style="--stagger-index:${Math.min(stopIndex - 1, 15)};border-left:3px solid ${custColor}" data-customer-id="${c.id}" data-day="${dayKey}">
             <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${custColor}">${stopIndex}</span>${custInitials ? `<span class="wp-stop-initials" style="background:${custColor}">${escapeHtml(custInitials)}</span>` : ''}</span>
             <div class="wp-item-main">
-              <span class="wp-item-name">${escapeHtml(c.navn)}</span>
+              <span class="wp-item-name">${escapeHtml(c.navn)}${custContext.icons}</span>
               ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
               ${c.telefon ? `<span class="wp-item-phone"><i aria-hidden="true" class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
               <span class="wp-item-timerange"><i aria-hidden="true" class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
+              ${custContext.html}
             </div>
             <div class="wp-item-meta">
+              ${fullCust && fullCust.epost ? `<button class="wp-notify-btn" data-action="wpNotifyCustomer" data-args='[${c.id}]' title="Send «på vei»-varsel"><i class="fas fa-envelope" aria-hidden="true"></i></button>` : ''}
               <input type="number" class="wp-time-input" value="${c.estimertTid || 30}" min="5" step="5"
                 data-action="setEstimatedTime" data-day="${dayKey}" data-customer-id="${c.id}">
               <span>min</span>
@@ -15590,7 +23067,7 @@ async function renderWeeklyPlan() {
         const name = a.kunder?.navn || a.kunde_navn || 'Ukjent';
         const addr = [a.kunder?.adresse, a.kunder?.postnummer, a.kunder?.poststed].filter(Boolean).join(', ');
         const phone = a.kunder?.telefon || a.telefon || '';
-        const creatorName = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+        const creatorName = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
         const creatorColor = creatorName ? (teamColorMap.get(creatorName) || '#999') : '';
         const exStartTime = formatTimeOfDay(cumulativeMin);
         cumulativeMin += (a.varighet || 30);
@@ -15627,12 +23104,10 @@ async function renderWeeklyPlan() {
         html += `<span class="wp-day-summary">${totalCount} stopp${estTotal > 0 ? ` · ~${formatMinutes(estTotal)}` : ''}</span>`;
         html += `</div>`;
         html += `<div class="wp-day-actions">`;
-        if (hasCoords && totalCount >= 3) {
-          html += `<button class="btn btn-small btn-secondary wp-opt-btn" data-action="wpOptimizeOrder" data-day="${dayKey}" title="Optimaliser rekkefølge" aria-label="Optimaliser rekkefølge"><i aria-hidden="true" class="fas fa-sort-amount-down"></i></button>`;
+        if (hasCoords && totalCount >= 1) {
+          html += `<button class="btn btn-small btn-primary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i aria-hidden="true" class="fas fa-route"></i> Optimaliser rute</button>`;
         }
-        if (hasCoords) {
-          html += `<button class="btn btn-small btn-secondary wp-nav-btn" data-action="wpNavigateDay" data-day="${dayKey}"><i aria-hidden="true" class="fas fa-directions"></i> Naviger</button>`;
-        }
+        html += `<button class="btn btn-small btn-danger" data-action="clearDayAvtaler" data-args='["${dayKey}","${dateStr}"]'><i aria-hidden="true" class="fas fa-trash-alt"></i> Slett alle</button>`;
         html += `</div>`;
         html += `</div>`;
       }
@@ -15652,8 +23127,52 @@ async function renderWeeklyPlan() {
       </div>`;
   }
 
+  // ─── Huskeliste (weekly notes) ───
+  html += `<div class="wp-notes-section">
+    <div class="wp-notes-header">
+      <i aria-hidden="true" class="fas fa-clipboard-list"></i> Huskeliste
+      <span class="wp-notes-count" id="wpNotesCount"></span>
+    </div>
+    <div class="wp-notes-add">
+      <div class="wp-search-wrapper">
+        <i aria-hidden="true" class="fas fa-search wp-search-icon"></i>
+        <input type="text" class="wp-search-input" id="wpNoteCustomerSearch"
+          placeholder="S\u00f8k kunde for notat..." autocomplete="off">
+      </div>
+      <div class="wp-search-results" id="wpNoteSearchResults"></div>
+      <div class="wp-note-compose" id="wpNoteCompose" style="display:none;">
+        <div class="wp-note-compose-customer" id="wpNoteComposeCustomer"></div>
+        <div class="wp-note-type-pills" id="wpNoteTypePills">
+          ${NOTE_TYPES.map(t => `<button class="wp-note-type-pill${t.key === 'notat' ? ' active' : ''}" data-action="wpSelectNoteType" data-type="${t.key}" style="--pill-color:${t.color}"><i aria-hidden="true" class="fas ${t.icon}"></i> ${t.label}</button>`).join('')}
+        </div>
+        <textarea class="wp-note-input" id="wpNoteInput" placeholder="Skriv notat..." rows="2"></textarea>
+        <div class="wp-note-compose-extras">
+          <select class="wp-note-assign-select" id="wpNoteAssign">
+            <option value="">Ingen tilordning</option>
+          </select>
+          <div class="wp-note-maldag-pills" id="wpNoteMaldagPills">
+            ${weekDayKeys.map((dk, i) => `<button class="wp-note-maldag-pill" data-action="wpSetMaldag" data-maldag="${dk}">${weekDayLabelsShort[i]}</button>`).join('')}
+          </div>
+        </div>
+        <div class="wp-note-compose-actions">
+          <button class="btn btn-small btn-primary" data-action="wpSaveNote"><i aria-hidden="true" class="fas fa-plus"></i> Legg til</button>
+          <button class="btn btn-small btn-secondary" data-action="wpCancelNote"><i aria-hidden="true" class="fas fa-times"></i></button>
+        </div>
+      </div>
+    </div>
+    <div class="wp-notes-filter">
+      <button class="wp-notes-filter-btn${weekPlanState.noteFilter === 'alle' ? ' active' : ''}" data-action="wpFilterNotes" data-filter="alle">Alle</button>
+      <button class="wp-notes-filter-btn${weekPlanState.noteFilter === 'mine' ? ' active' : ''}" data-action="wpFilterNotes" data-filter="mine">Mine</button>
+    </div>
+    <div id="wpNotesListContainer"></div>
+  </div>`;
+  // close wp-notes-section
+
   html += `</div>`; // close wp-container
   container.innerHTML = html;
+
+  // Drag-and-drop for reordering and cross-day moves
+  wpInitDragAndDrop(container);
 
   // Customer search handler for active day
   const wpSearchInput = document.getElementById('wpCustomerSearch');
@@ -15735,12 +23254,237 @@ async function renderWeeklyPlan() {
     }
   });
 
+  // Note customer search handler
+  const wpNoteSearch = document.getElementById('wpNoteCustomerSearch');
+  if (wpNoteSearch) {
+    wpNoteSearch.addEventListener('input', debounce(function() {
+      const query = this.value.toLowerCase().trim();
+      const resultsDiv = document.getElementById('wpNoteSearchResults');
+      if (!resultsDiv) return;
+
+      if (query.length < 1) {
+        resultsDiv.innerHTML = '';
+        resultsDiv.style.display = 'none';
+        return;
+      }
+
+      const filtered = customers.filter(c =>
+        (c.navn && c.navn.toLowerCase().includes(query)) ||
+        (c.poststed && c.poststed.toLowerCase().includes(query)) ||
+        (c.adresse && c.adresse.toLowerCase().includes(query))
+      );
+      const matches = sortByNavn(filtered).slice(0, 6);
+
+      if (matches.length === 0) {
+        resultsDiv.innerHTML = '<div class="wp-search-item wp-search-no-results">Ingen kunder funnet</div>';
+        resultsDiv.style.display = 'block';
+        return;
+      }
+
+      resultsDiv.innerHTML = matches.map(c => {
+        const addrText = [c.adresse, c.poststed].filter(Boolean).join(', ');
+        return `<div class="wp-search-item" data-action="wpSelectNoteCustomer" data-customer-id="${c.id}" role="button" tabindex="0">
+          <span class="wp-search-name">${escapeHtml(c.navn)}</span>
+          <span class="wp-search-addr">${escapeHtml(addrText)}</span>
+          <i aria-hidden="true" class="fas fa-sticky-note" style="opacity:0.5;font-size:11px;"></i>
+        </div>`;
+      }).join('');
+      resultsDiv.style.display = 'block';
+    }, 200));
+  }
+
+  // Note event delegation on container
+  container.addEventListener('click', function(e) {
+    const actionEl = e.target.closest('[data-action]');
+    const action = actionEl?.dataset?.action;
+    if (!action) return;
+
+    if (action === 'wpSelectNoteCustomer') {
+      const el = e.target.closest('[data-customer-id]');
+      const customerId = Number(el.dataset.customerId);
+      const customer = customers.find(c => c.id === customerId);
+      if (!customer) return;
+
+      const compose = document.getElementById('wpNoteCompose');
+      const customerLabel = document.getElementById('wpNoteComposeCustomer');
+      const noteInput = document.getElementById('wpNoteInput');
+      const searchResults = document.getElementById('wpNoteSearchResults');
+      const searchInput = document.getElementById('wpNoteCustomerSearch');
+
+      if (compose) {
+        compose.style.display = 'block';
+        compose.dataset.customerId = customerId;
+        compose.dataset.noteType = 'notat';
+        compose.dataset.maldag = '';
+      }
+      if (customerLabel) customerLabel.innerHTML = `<i aria-hidden="true" class="fas fa-user"></i> ${escapeHtml(customer.navn)}`;
+      if (noteInput) { noteInput.value = ''; noteInput.focus(); }
+      if (searchResults) { searchResults.innerHTML = ''; searchResults.style.display = 'none'; }
+      if (searchInput) searchInput.value = '';
+      // Reset type pills
+      document.querySelectorAll('.wp-note-type-pill').forEach(p => p.classList.toggle('active', p.dataset.type === 'notat'));
+      // Reset maldag pills
+      document.querySelectorAll('.wp-note-maldag-pill').forEach(p => p.classList.remove('active'));
+      // Populate team assignment dropdown
+      wpPopulateAssignSelect();
+    }
+
+    if (action === 'wpSelectNoteType') {
+      const type = actionEl.dataset.type;
+      const compose = document.getElementById('wpNoteCompose');
+      if (compose) compose.dataset.noteType = type;
+      document.querySelectorAll('.wp-note-type-pill').forEach(p => p.classList.toggle('active', p.dataset.type === type));
+    }
+
+    if (action === 'wpSetMaldag') {
+      const maldag = actionEl.dataset.maldag;
+      const compose = document.getElementById('wpNoteCompose');
+      const isActive = actionEl.classList.contains('active');
+      document.querySelectorAll('.wp-note-maldag-pill').forEach(p => p.classList.remove('active'));
+      if (!isActive) {
+        actionEl.classList.add('active');
+        if (compose) compose.dataset.maldag = maldag;
+      } else {
+        if (compose) compose.dataset.maldag = '';
+      }
+    }
+
+    if (action === 'wpSaveNote') {
+      const compose = document.getElementById('wpNoteCompose');
+      const noteInput = document.getElementById('wpNoteInput');
+      const assignSelect = document.getElementById('wpNoteAssign');
+      if (!compose || !noteInput) return;
+      const customerId = Number(compose.dataset.customerId);
+      const notat = noteInput.value.trim();
+      if (!customerId || !notat) return;
+      const type = compose.dataset.noteType || 'notat';
+      const tilordnet = assignSelect?.value || '';
+      const maldag = compose.dataset.maldag || '';
+      wpAddNotat(customerId, notat, type, tilordnet, maldag);
+    }
+
+    if (action === 'wpCancelNote') {
+      const compose = document.getElementById('wpNoteCompose');
+      if (compose) compose.style.display = 'none';
+    }
+
+    if (action === 'wpToggleNote') {
+      const noteId = Number(e.target.closest('[data-note-id]').dataset.noteId);
+      wpToggleNotat(noteId);
+    }
+
+    if (action === 'wpDeleteNote') {
+      const noteId = Number(e.target.closest('[data-note-id]').dataset.noteId);
+      wpDeleteNotat(noteId);
+    }
+
+    if (action === 'wpToggleCompleted') {
+      const list = document.getElementById('wpCompletedNotes');
+      if (list) list.style.display = list.style.display === 'none' ? 'block' : 'none';
+    }
+
+    if (action === 'wpToggleOverforte') {
+      const list = document.getElementById('wpOverforteNotes');
+      if (list) list.style.display = list.style.display === 'none' ? 'block' : 'none';
+    }
+
+    if (action === 'wpTransferNote') {
+      const noteId = Number(e.target.closest('[data-note-id]').dataset.noteId);
+      wpTransferNote(noteId);
+    }
+
+    if (action === 'wpFilterNotes') {
+      const filter = actionEl.dataset.filter;
+      weekPlanState.noteFilter = filter;
+      document.querySelectorAll('.wp-notes-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === filter));
+      wpRenderNotater();
+    }
+
+    if (action === 'wpAddNoteToDay') {
+      e.stopPropagation();
+      const noteEl = e.target.closest('[data-note-id]');
+      const kundeId = Number(noteEl?.dataset?.kundeId);
+      const btn = e.target.closest('.wp-note-add-day');
+      if (!kundeId || !btn) return;
+      // Show day picker popup
+      const existing = document.getElementById('wpNoteDayPicker');
+      if (existing) existing.remove();
+      const rect = btn.getBoundingClientRect();
+      const picker = document.createElement('div');
+      picker.id = 'wpNoteDayPicker';
+      picker.className = 'wp-note-day-picker';
+      picker.style.top = (rect.bottom + 4) + 'px';
+      picker.style.left = rect.left + 'px';
+      picker.innerHTML = weekDayKeys.map((dk, i) => `<button class="wp-note-day-option" data-action="wpSelectNoteDay" data-day="${dk}" data-kunde-id="${kundeId}">${weekDayLabelsShort[i]}</button>`).join('');
+      document.body.appendChild(picker);
+      setTimeout(() => document.addEventListener('click', function closePicker(ev) {
+        if (!picker.contains(ev.target)) { picker.remove(); document.removeEventListener('click', closePicker); }
+      }), 0);
+    }
+
+    if (action === 'wpSelectNoteDay') {
+      const dayKey = actionEl.dataset.day;
+      const kundeId = Number(actionEl.dataset.kundeId);
+      document.getElementById('wpNoteDayPicker')?.remove();
+      wpAddNoteCustomerToDay(kundeId, dayKey);
+    }
+  });
+
+  // Handle checkbox change events for note toggling
+  container.addEventListener('change', function(e) {
+    if (e.target.closest('[data-action="wpToggleNote"]')) {
+      const noteId = Number(e.target.closest('[data-note-id]').dataset.noteId);
+      wpToggleNotat(noteId);
+    }
+  });
+
+  // Handle double-click for inline edit
+  container.addEventListener('dblclick', function(e) {
+    const textEl = e.target.closest('.wp-note-text');
+    if (!textEl || textEl.contentEditable === 'true') return;
+    const noteItem = textEl.closest('.wp-note-item');
+    if (!noteItem || noteItem.classList.contains('completed')) return;
+    const noteId = Number(noteItem.dataset.noteId);
+    textEl.contentEditable = 'true';
+    textEl.classList.add('editing');
+    textEl.focus();
+    // Select all text
+    const range = document.createRange();
+    range.selectNodeContents(textEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    function saveEdit() {
+      textEl.contentEditable = 'false';
+      textEl.classList.remove('editing');
+      const newText = textEl.textContent.trim();
+      if (newText && newText !== textEl.dataset.originalText) {
+        wpUpdateNotatField(noteId, 'notat', newText);
+      } else if (!newText) {
+        textEl.textContent = textEl.dataset.originalText;
+      }
+      textEl.removeEventListener('blur', saveEdit);
+      textEl.removeEventListener('keydown', handleKey);
+    }
+    function handleKey(ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); saveEdit(); }
+      if (ev.key === 'Escape') { textEl.textContent = textEl.dataset.originalText; saveEdit(); }
+    }
+    textEl.dataset.originalText = textEl.textContent;
+    textEl.addEventListener('blur', saveEdit);
+    textEl.addEventListener('keydown', handleKey);
+  });
+
+  // Load notes for current week
+  wpLoadNotater();
+
   // Update map markers with plan badges
   updateWeekPlanBadges();
 
   // Load travel times asynchronously for each day with content
   if (typeof MatrixService !== 'undefined') {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < weekDayKeys.length; i++) {
       const dayKey = weekDayKeys[i];
       const dayData = weekPlanState.days[dayKey];
       const dateStr = dayData.date;
@@ -15777,11 +23521,18 @@ async function wpLoadTravelTimes(dayKey) {
   }
 
   // Return to office
-  coords.push([startLng, startLat]);
+  coords.push([routeStart.lng, routeStart.lat]);
 
   if (coords.length < 3) return; // Need at least office + 1 stop + office
+  if (typeof MatrixService === 'undefined') return;
 
-  const times = await MatrixService.getSequentialTimes(coords);
+  let times;
+  try {
+    times = await MatrixService.getSequentialTimes(coords);
+  } catch (e) {
+    console.warn('Travel time calculation failed:', e);
+    return;
+  }
   if (!times || times.length === 0) return;
 
   // Verify we're still showing this day (user might have navigated away)
@@ -15882,17 +23633,394 @@ function showWeekPlanDayPicker(customerIdStr, anchorEl) {
   }, 0);
 
   // Close on Escape
-  const escHandler = (e) => {
-    if (e.key === 'Escape') {
-      closeWeekPlanDayPicker();
-      document.removeEventListener('keydown', escHandler);
-    }
+  if (wpDayPickerEscHandler) document.removeEventListener('keydown', wpDayPickerEscHandler);
+  wpDayPickerEscHandler = (e) => {
+    if (e.key === 'Escape') closeWeekPlanDayPicker();
   };
-  document.addEventListener('keydown', escHandler);
+  document.addEventListener('keydown', wpDayPickerEscHandler);
 }
+
+let wpDayPickerEscHandler = null;
 
 function closeWeekPlanDayPicker() {
   document.getElementById('wpDayPickerPopup')?.remove();
+  if (wpDayPickerEscHandler) {
+    document.removeEventListener('keydown', wpDayPickerEscHandler);
+    wpDayPickerEscHandler = null;
+  }
+}
+
+// ─── Huskeliste API functions ───
+
+async function wpLoadNotater() {
+  if (!weekPlanState.weekStart) return;
+  const ukeStart = formatDateISO(weekPlanState.weekStart);
+  try {
+    const [notaterResp, overforteResp] = await Promise.all([
+      apiFetch(`/api/ukeplan-notater?uke_start=${ukeStart}`),
+      apiFetch(`/api/ukeplan-notater/overforte?uke_start=${ukeStart}`)
+    ]);
+    const notaterJson = await notaterResp.json();
+    const overforteJson = await overforteResp.json();
+    if (notaterJson.success && notaterJson.data) weekPlanState.notater = notaterJson.data;
+    if (overforteJson.success && overforteJson.data) weekPlanState.overforteNotater = overforteJson.data;
+    wpRenderNotater();
+  } catch (e) { console.warn('Notatlasting feilet:', e); }
+}
+
+function wpGetNoteType(typeKey) {
+  return NOTE_TYPES.find(t => t.key === typeKey) || NOTE_TYPES[4]; // default to 'notat'
+}
+
+function wpGetWeekNumber(dateStr) {
+  const d = new Date(dateStr);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const yearStart = new Date(d.getFullYear(), 0, 4);
+  return Math.round(((d - yearStart) / 86400000 + ((yearStart.getDay() + 6) % 7)) / 7);
+}
+
+function wpRenderNoteItem(n, options = {}) {
+  const type = wpGetNoteType(n.type || 'notat');
+  const isCompleted = n.fullfort;
+  const isOverfort = options.overfort || false;
+  const currentUser = localStorage.getItem('userEmail') || '';
+
+  let assigneeBadge = '';
+  if (n.tilordnet) {
+    const initials = getCreatorDisplay(n.tilordnet, true);
+    if (initials) {
+      assigneeBadge = `<span class="wp-note-assignee" title="${escapeHtml(n.tilordnet)}">${escapeHtml(initials)}</span>`;
+    }
+  }
+
+  let maldagBadge = '';
+  if (n.maldag) {
+    const dayIdx = weekDayKeys.indexOf(n.maldag);
+    if (dayIdx >= 0) {
+      maldagBadge = `<span class="wp-note-maldag">${weekDayLabelsShort[dayIdx]}</span>`;
+    }
+  }
+
+  let weekBadge = '';
+  if (isOverfort && n.uke_start) {
+    weekBadge = `<span class="wp-note-week">Uke ${wpGetWeekNumber(n.uke_start)}</span>`;
+  }
+
+  let actions = '';
+  if (isOverfort) {
+    actions = `<button class="wp-note-transfer-btn" data-action="wpTransferNote" data-note-id="${n.id}" title="Overf\u00f8r til denne uken">Overf\u00f8r</button>
+      <button class="wp-note-complete-btn" data-action="wpToggleNote" data-note-id="${n.id}" title="Marker fullf\u00f8rt"><i aria-hidden="true" class="fas fa-check"></i></button>
+      <button class="wp-note-delete" data-action="wpDeleteNote" data-note-id="${n.id}" title="Slett" aria-label="Slett">&times;</button>`;
+  } else {
+    actions = `<button class="wp-note-add-day" data-action="wpAddNoteToDay" title="Legg i dagsplan"><i aria-hidden="true" class="fas fa-calendar-plus"></i></button>
+      <button class="wp-note-delete" data-action="wpDeleteNote" data-note-id="${n.id}" title="Slett" aria-label="Slett">&times;</button>`;
+  }
+
+  return `<div class="wp-note-item${isCompleted ? ' completed' : ''}${isOverfort ? ' overfort' : ''}" data-note-id="${n.id}" data-kunde-id="${n.kunde_id}">
+    ${!isOverfort ? `<label class="wp-note-check">
+      <input type="checkbox" ${isCompleted ? 'checked' : ''} data-action="wpToggleNote" data-note-id="${n.id}">
+      <span class="wp-note-checkmark"></span>
+    </label>` : ''}
+    <i aria-hidden="true" class="fas ${type.icon} wp-note-type-icon" style="color:${type.color}" title="${type.label}"></i>
+    <div class="wp-note-content">
+      <div class="wp-note-content-top">
+        <span class="wp-note-customer">${escapeHtml(n.kunde_navn || 'Ukjent')}</span>
+        ${maldagBadge}${weekBadge}${assigneeBadge}
+      </div>
+      <span class="wp-note-text">${escapeHtml(n.notat)}</span>
+    </div>
+    ${actions}
+  </div>`;
+}
+
+function wpRenderNotater() {
+  const container = document.getElementById('wpNotesListContainer');
+  const countEl = document.getElementById('wpNotesCount');
+  if (!container) return;
+
+  const notater = weekPlanState.notater || [];
+  const overforte = weekPlanState.overforteNotater || [];
+  const currentUser = localStorage.getItem('userEmail') || '';
+
+  // Apply filter
+  const filterFn = weekPlanState.noteFilter === 'mine'
+    ? n => (n.tilordnet || n.opprettet_av || '') === currentUser || n.opprettet_av === currentUser
+    : () => true;
+
+  const filteredNotater = notater.filter(filterFn);
+  const activeNotater = filteredNotater.filter(n => !n.fullfort);
+  const completedNotater = filteredNotater.filter(n => n.fullfort);
+  const filteredOverforte = overforte.filter(filterFn);
+
+  // Update count
+  const totalActive = activeNotater.length + filteredOverforte.length;
+  if (countEl) countEl.textContent = totalActive > 0 ? totalActive : '';
+
+  let html = '';
+
+  // Active notes — grouped by maldag
+  if (activeNotater.length > 0) {
+    const withMaldag = activeNotater.filter(n => n.maldag);
+    const withoutMaldag = activeNotater.filter(n => !n.maldag);
+
+    html += `<div class="wp-notes-list">`;
+
+    // Group by maldag
+    if (withMaldag.length > 0) {
+      const grouped = {};
+      for (const n of withMaldag) {
+        if (!grouped[n.maldag]) grouped[n.maldag] = [];
+        grouped[n.maldag].push(n);
+      }
+      for (let i = 0; i < weekDayKeys.length; i++) {
+        const dk = weekDayKeys[i];
+        if (!grouped[dk]) continue;
+        html += `<div class="wp-notes-day-group"><span class="wp-notes-day-label">${weekDayLabels[i]}</span></div>`;
+        for (const n of grouped[dk]) html += wpRenderNoteItem(n);
+      }
+    }
+    // Ungrouped
+    if (withoutMaldag.length > 0) {
+      if (withMaldag.length > 0) {
+        html += `<div class="wp-notes-day-group"><span class="wp-notes-day-label">Ikke planlagt</span></div>`;
+      }
+      for (const n of withoutMaldag) html += wpRenderNoteItem(n);
+    }
+
+    html += `</div>`;
+  }
+
+  // Overforte section
+  if (filteredOverforte.length > 0) {
+    html += `<div class="wp-notes-overforte">
+      <div class="wp-notes-overforte-header" data-action="wpToggleOverforte" role="button" tabindex="0">
+        <i aria-hidden="true" class="fas fa-history"></i> Ubehandlede fra tidligere uker (${filteredOverforte.length})
+      </div>
+      <div class="wp-notes-overforte-list" id="wpOverforteNotes" style="display:none;">`;
+    for (const n of filteredOverforte) html += wpRenderNoteItem(n, { overfort: true });
+    html += `</div></div>`;
+  }
+
+  // Completed
+  if (completedNotater.length > 0) {
+    html += `<div class="wp-notes-completed">
+      <div class="wp-notes-completed-header" data-action="wpToggleCompleted" role="button" tabindex="0">
+        <i aria-hidden="true" class="fas fa-check-circle"></i> Fullf\u00f8rt (${completedNotater.length})
+      </div>
+      <div class="wp-notes-completed-list" id="wpCompletedNotes" style="display:none;">`;
+    for (const n of completedNotater) html += wpRenderNoteItem(n);
+    html += `</div></div>`;
+  }
+
+  // Empty state
+  if (activeNotater.length === 0 && filteredOverforte.length === 0 && completedNotater.length === 0) {
+    html += `<div class="wp-notes-empty"><i aria-hidden="true" class="fas fa-sticky-note"></i> Ingen notater for denne uken</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function wpPopulateAssignSelect() {
+  const select = document.getElementById('wpNoteAssign');
+  if (!select) return;
+  const currentUser = localStorage.getItem('userName') || '';
+  const globalAssigned = weekPlanState.globalAssignedTo || '';
+
+  // Collect unique team names from week plan
+  const teamNames = new Set();
+  if (currentUser) teamNames.add(currentUser);
+  if (globalAssigned && globalAssigned !== currentUser) teamNames.add(globalAssigned);
+  for (const dk of weekDayKeys) {
+    const dayData = weekPlanState.days[dk];
+    if (!dayData) continue;
+    for (const c of dayData.planned) {
+      if (c.addedBy && c.addedBy !== 'admin') teamNames.add(c.addedBy);
+    }
+  }
+
+  select.innerHTML = '<option value="">Ingen tilordning</option>' +
+    Array.from(teamNames).map(name => `<option value="${escapeHtml(name)}" ${name === globalAssigned ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+}
+
+async function wpAddNotat(kundeId, notat, type, tilordnet, maldag) {
+  if (!weekPlanState.weekStart) return;
+  const ukeStart = formatDateISO(weekPlanState.weekStart);
+  const body = { kunde_id: kundeId, uke_start: ukeStart, notat, type: type || 'notat' };
+  if (tilordnet) body.tilordnet = tilordnet;
+  if (maldag) body.maldag = maldag;
+  try {
+    const resp = await apiFetch('/api/ukeplan-notater', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const json = await resp.json();
+    if (json.success && json.data) {
+      weekPlanState.notater.push(json.data);
+      wpRenderNotater();
+      const compose = document.getElementById('wpNoteCompose');
+      if (compose) compose.style.display = 'none';
+      showToast('Notat lagt til', 'success');
+    }
+  } catch (e) {
+    showToast('Kunne ikke lagre notat', 'error');
+  }
+}
+
+async function wpToggleNotat(noteId) {
+  // Check both current and overforte arrays
+  let note = weekPlanState.notater.find(n => n.id === noteId);
+  let isOverfort = false;
+  if (!note) {
+    note = weekPlanState.overforteNotater.find(n => n.id === noteId);
+    isOverfort = true;
+  }
+  if (!note) return;
+  const newStatus = !note.fullfort;
+  try {
+    const resp = await apiFetch(`/api/ukeplan-notater/${noteId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fullfort: newStatus })
+    });
+    const json = await resp.json();
+    if (json.success) {
+      if (isOverfort && newStatus) {
+        weekPlanState.overforteNotater = weekPlanState.overforteNotater.filter(n => n.id !== noteId);
+      } else {
+        note.fullfort = newStatus;
+      }
+      wpRenderNotater();
+    }
+  } catch (e) {
+    showToast('Kunne ikke oppdatere notat', 'error');
+  }
+}
+
+async function wpDeleteNotat(noteId) {
+  try {
+    const resp = await apiFetch(`/api/ukeplan-notater/${noteId}`, {
+      method: 'DELETE'
+    });
+    const json = await resp.json();
+    if (json.success) {
+      weekPlanState.notater = weekPlanState.notater.filter(n => n.id !== noteId);
+      weekPlanState.overforteNotater = weekPlanState.overforteNotater.filter(n => n.id !== noteId);
+      wpRenderNotater();
+      showToast('Notat slettet', 'success');
+    }
+  } catch (e) {
+    showToast('Kunne ikke slette notat', 'error');
+  }
+}
+
+async function wpTransferNote(noteId) {
+  const note = weekPlanState.overforteNotater.find(n => n.id === noteId);
+  if (!note || !weekPlanState.weekStart) return;
+  const ukeStart = formatDateISO(weekPlanState.weekStart);
+  try {
+    // Create copy in current week
+    const resp = await apiFetch('/api/ukeplan-notater', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kunde_id: note.kunde_id,
+        uke_start: ukeStart,
+        notat: note.notat,
+        type: note.type || 'notat',
+        tilordnet: note.tilordnet || '',
+        maldag: note.maldag || '',
+        overfort_fra: note.id
+      })
+    });
+    const json = await resp.json();
+    if (json.success && json.data) {
+      // Mark original as completed
+      await apiFetch(`/api/ukeplan-notater/${noteId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullfort: true })
+      });
+      weekPlanState.overforteNotater = weekPlanState.overforteNotater.filter(n => n.id !== noteId);
+      weekPlanState.notater.push(json.data);
+      wpRenderNotater();
+      showToast('Notat overf\u00f8rt til denne uken', 'success');
+    }
+  } catch (e) {
+    showToast('Kunne ikke overf\u00f8re notat', 'error');
+  }
+}
+
+async function wpUpdateNotatField(noteId, field, value) {
+  try {
+    const resp = await apiFetch(`/api/ukeplan-notater/${noteId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value })
+    });
+    const json = await resp.json();
+    if (json.success && json.data) {
+      const idx = weekPlanState.notater.findIndex(n => n.id === noteId);
+      if (idx >= 0) weekPlanState.notater[idx] = json.data;
+      wpRenderNotater();
+    }
+  } catch (e) {
+    showToast('Kunne ikke oppdatere notat', 'error');
+  }
+}
+
+// Check if customer is already planned on another day this week (cross-day conflict)
+function wpFindConflict(kundeId, excludeDayKey) {
+  for (const dk of weekDayKeys) {
+    if (dk === excludeDayKey) continue;
+    if (weekPlanState.days[dk]?.planned.some(c => c.id === kundeId)) {
+      return weekDayLabels[weekDayKeys.indexOf(dk)];
+    }
+  }
+  // Check existing avtaler for the week
+  for (const dk of weekDayKeys) {
+    if (dk === excludeDayKey) continue;
+    const dateStr = weekPlanState.days[dk]?.date;
+    if (dateStr && avtaler.some(a => a.kunde_id === kundeId && a.dato === dateStr)) {
+      return weekDayLabels[weekDayKeys.indexOf(dk)] + ' (avtale)';
+    }
+  }
+  return null;
+}
+
+async function wpAddNoteCustomerToDay(kundeId, dayKey) {
+  const customer = customers.find(c => c.id === kundeId);
+  if (!customer) return;
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return;
+  // Check if already in plan for this day
+  if (dayData.planned.some(c => c.id === kundeId)) {
+    showToast('Kunden er allerede i planen for denne dagen', 'info');
+    return;
+  }
+  // Cross-day conflict check
+  const conflict = wpFindConflict(kundeId, dayKey);
+  if (conflict) {
+    const ok = await showConfirm(`${customer.navn} er allerede planlagt for ${conflict}. Legg til likevel?`, 'Dobbeltbooking');
+    if (!ok) return;
+  }
+  const currentUser = weekPlanState.globalAssignedTo || localStorage.getItem('userName') || 'admin';
+  dayData.planned.push({
+    id: customer.id,
+    navn: customer.navn,
+    adresse: customer.adresse,
+    postnummer: customer.postnummer,
+    poststed: customer.poststed,
+    telefon: customer.telefon,
+    kategori: customer.kategori,
+    lat: customer.lat,
+    lng: customer.lng,
+    estimertTid: customer.estimert_tid || 30,
+    addedBy: currentUser
+  });
+  renderWeeklyPlan();
+  showToast(`${escapeHtml(customer.navn)} lagt til ${weekDayLabels[weekDayKeys.indexOf(dayKey)]}`, 'success');
 }
 
 function addCustomersToWeekPlan(customersList) {
@@ -15908,6 +24036,7 @@ function addCustomersToWeekPlan(customersList) {
   let added = 0;
   let skippedExisting = 0;
   let skippedDuplicate = 0;
+  let crossDayConflicts = 0;
 
   for (const customer of customersList) {
     // Skip if already has an avtale for this date
@@ -15920,6 +24049,11 @@ function addCustomersToWeekPlan(customersList) {
     if (dayData.planned.some(c => c.id === customer.id)) {
       skippedDuplicate++;
       continue;
+    }
+
+    // Track cross-day conflicts (still add, but warn)
+    if (wpFindConflict(customer.id, dayKey)) {
+      crossDayConflicts++;
     }
 
     dayData.planned.push({
@@ -15941,7 +24075,8 @@ function addCustomersToWeekPlan(customersList) {
   let msg = `${added} kunder lagt til ${weekDayLabels[weekDayKeys.indexOf(dayKey)]}`;
   if (skippedExisting > 0) msg += ` (${skippedExisting} har allerede avtale)`;
   if (skippedDuplicate > 0) msg += ` (${skippedDuplicate} allerede lagt til)`;
-  showToast(msg, added > 0 ? 'success' : 'info');
+  if (crossDayConflicts > 0) msg += ` — ${crossDayConflicts} finnes på en annen dag`;
+  showToast(msg, crossDayConflicts > 0 ? 'warning' : (added > 0 ? 'success' : 'info'));
 
   renderWeeklyPlan();
 }
@@ -15957,7 +24092,162 @@ function addToWeekPlanFromMap(customerId) {
   addCustomersToWeekPlan([customer]);
 }
 
+// Add customer to a specific weekplan day (from popup quick-actions)
+function popupAddToWeekDay(customerId, dayKey) {
+  if (!weekPlanState.weekStart) {
+    // Initialize weekplan for current week if not yet open
+    const now = new Date();
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((day + 6) % 7));
+    initWeekPlanState(monday);
+  }
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return;
+
+  // Check duplicates
+  if (dayData.planned.some(c => c.id === customer.id)) {
+    showToast(`${customer.navn} er allerede på ${weekDayLabels[weekDayKeys.indexOf(dayKey)]}`, 'info');
+    return;
+  }
+
+  // Check if a team member was selected in popup
+  const prevActiveDay = weekPlanState.activeDay;
+  const prevAssigned = weekPlanState.globalAssignedTo;
+  weekPlanState.activeDay = dayKey;
+  if (currentPopup) {
+    const popupEl = currentPopup.getElement();
+    if (popupEl && popupEl.dataset.assignedMember) {
+      weekPlanState.globalAssignedTo = popupEl.dataset.assignedMember;
+    }
+  }
+  addCustomersToWeekPlan([customer]);
+  weekPlanState.globalAssignedTo = prevAssigned;
+  weekPlanState.activeDay = prevActiveDay;
+
+  // Update the button in popup to show as planned
+  if (currentPopup) {
+    const popupEl = currentPopup.getElement();
+    if (popupEl) {
+      const btn = popupEl.querySelector(`[data-action="popupAddToWeekDay"][data-day-key="${dayKey}"]`);
+      if (btn) {
+        btn.classList.add('is-planned');
+        btn.disabled = true;
+        if (!btn.querySelector('.pwd-check')) {
+          btn.insertAdjacentHTML('beforeend', '<i aria-hidden="true" class="fas fa-check pwd-check"></i>');
+        }
+      }
+    }
+  }
+}
+
+// Get weekplan status for a customer (which days they're on this week)
+function getCustomerWeekPlanStatus(customerId) {
+  if (!weekPlanState.weekStart) return null;
+  const days = [];
+  for (let i = 0; i < 5; i++) {
+    const dayKey = weekDayKeys[i];
+    const dayData = weekPlanState.days[dayKey];
+    if (dayData && dayData.planned.some(c => c.id === customerId)) {
+      days.push({ dayKey, label: weekDayLabelsShort[i] });
+    }
+  }
+  // Also check saved avtaler for this week
+  if (weekPlanState.days.mandag?.date) {
+    const weekDates = weekDayKeys.slice(0, 5).map(k => weekPlanState.days[k]?.date).filter(Boolean);
+    for (const a of avtaler) {
+      if (a.kunde_id === customerId && weekDates.includes(a.dato)) {
+        const idx = weekDates.indexOf(a.dato);
+        if (idx >= 0 && !days.some(d => d.dayKey === weekDayKeys[idx])) {
+          days.push({ dayKey: weekDayKeys[idx], label: weekDayLabelsShort[idx], saved: true });
+        }
+      }
+    }
+  }
+  return days.length > 0 ? days : null;
+}
+
+// Build popup weekday picker HTML
+function buildPopupWeekDayPicker(customerId) {
+  const today = new Date();
+  const todayISO = formatDateISO(today);
+
+  // Ensure weekPlanState has a valid week
+  let weekStart = weekPlanState.weekStart;
+  if (!weekStart) {
+    const day = today.getDay();
+    weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - ((day + 6) % 7));
+  }
+
+  const status = getCustomerWeekPlanStatus(customerId);
+  const plannedDays = new Set(status ? status.map(d => d.dayKey) : []);
+
+  let html = '<div class="popup-weekday-picker">';
+  for (let i = 0; i < 5; i++) {
+    const dayKey = weekDayKeys[i];
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    const dateStr = formatDateISO(d);
+    const isToday = dateStr === todayISO;
+    const isPlanned = plannedDays.has(dayKey);
+    const classes = ['popup-weekday-btn', isToday ? 'is-today' : '', isPlanned ? 'is-planned' : ''].filter(Boolean).join(' ');
+
+    html += `<button class="${classes}" data-action="popupAddToWeekDay" data-customer-id="${customerId}" data-day-key="${dayKey}" ${isPlanned ? 'disabled' : ''} title="${weekDayLabels[i]} ${d.getDate()}.${d.getMonth() + 1}">
+      <span class="pwd-label">${weekDayLabelsShort[i]}</span>
+      <span class="pwd-date">${d.getDate()}.</span>
+      ${isPlanned ? '<i aria-hidden="true" class="fas fa-check pwd-check"></i>' : ''}
+    </button>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// Build popup team assign HTML
+function buildPopupTeamAssign(customerId) {
+  if (!teamMembersData || teamMembersData.length === 0) return '';
+  const activeMembers = teamMembersData.filter(m => m.aktiv);
+  if (activeMembers.length === 0) return '';
+
+  let html = '<div class="popup-team-assign">';
+  for (const m of activeMembers) {
+    const initials = getCreatorDisplay(m.navn, true);
+    const color = m.farge || 'var(--color-accent)';
+    html += `<button class="popup-team-btn" data-action="popupAssignTeam" data-customer-id="${customerId}" data-member-name="${escapeHtml(m.navn)}" title="${escapeHtml(m.navn)}" style="--team-color: ${escapeHtml(color)}">
+      ${escapeHtml(initials)}
+    </button>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// Set globalAssignedTo temporarily for popup team assign
+function popupAssignTeam(customerId, memberName) {
+  const prev = weekPlanState.globalAssignedTo;
+  weekPlanState.globalAssignedTo = memberName;
+  showToast(`${memberName} valgt — legg til dager under`, 'info');
+  weekPlanState.globalAssignedTo = prev;
+  // We don't actually add to a day here — just set the assignment context
+  // Instead, update the popup to reflect the selection
+  if (currentPopup) {
+    const el = currentPopup.getElement();
+    if (el) {
+      // Highlight selected team member
+      el.querySelectorAll('.popup-team-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.memberName === memberName);
+      });
+      // Store on popup element for weekday buttons to use
+      el.dataset.assignedMember = memberName;
+    }
+  }
+}
+
+let wpSaving = false;
+
 async function saveWeeklyPlan() {
+  if (wpSaving) return;
   const totalPlanned = getWeekPlanTotalPlanned();
   if (totalPlanned === 0) return;
 
@@ -15967,76 +24257,127 @@ async function saveWeeklyPlan() {
   );
   if (!confirmed) return;
 
+  wpSaving = true;
+
   let created = 0;
   let errors = 0;
   let lastError = '';
-  const userName = localStorage.getItem('userName') || 'admin';
 
-  // Collect all planned items with per-customer technician assignment
-  const allItems = [];
+  // Group planned customers by day AND team member
+  // Each (day + member) combination becomes a separate route
+  const routeGroups = [];
   for (const dayKey of weekDayKeys) {
     const dayData = weekPlanState.days[dayKey];
-    for (const customer of dayData.planned) {
-      const assignedName = customer.addedBy || weekPlanState.globalAssignedTo || userName;
-      allItems.push({ customer, date: dayData.date, opprettetAv: assignedName });
+    if (dayData.planned.length === 0) continue;
+
+    // Group customers by their addedBy (team member)
+    const byMember = new Map();
+    for (const c of dayData.planned) {
+      const memberKey = c.addedBy || weekPlanState.globalAssignedTo || '';
+      if (!byMember.has(memberKey)) byMember.set(memberKey, []);
+      byMember.get(memberKey).push(c);
+    }
+
+    for (const [memberName, customers] of byMember) {
+      routeGroups.push({ dayKey, date: dayData.date, memberName, customers });
     }
   }
 
-  // Show progress toast
-  const progressToast = showToast(`Oppretter avtaler... 0/${allItems.length}`, 'info', 0);
+  const groupCount = routeGroups.length;
+  const progressToast = showToast(`Oppretter ruter... 0/${groupCount}`, 'info', 0);
 
-  // Process in parallel batches of 5
-  const BATCH_SIZE = 5;
-  for (let i = 0; i < allItems.length; i += BATCH_SIZE) {
-    const batch = allItems.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async ({ customer, date, opprettetAv }) => {
-        const payload = {
-          kunde_id: customer.id,
-          dato: date,
-          beskrivelse: customer.kategori || 'Planlagt oppdrag',
-          opprettet_av: opprettetAv,
-          varighet: customer.estimertTid || 30
-        };
-        const response = await apiFetch('/api/avtaler', {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          const errMsg = errData.error?.message || errData.error || errData.message || response.statusText;
-          throw new Error(`${customer.navn}: ${errMsg}`);
+  // For each (day + member): create/update a route, assign member, let backend create avtaler
+  let daysDone = 0;
+  try {
+    for (const group of routeGroups) {
+      const dayLabel = weekDayLabels[weekDayKeys.indexOf(group.dayKey)];
+      const weekNum = getISOWeekNumber(weekPlanState.weekStart);
+      const kundeIds = group.customers.map(c => c.id);
+      const assignedName = group.memberName;
+
+      // Resolve team member ID from name
+      let techId = null;
+      if (assignedName && wpTeamMembers) {
+        const member = wpTeamMembers.find(m => m.navn === assignedName || m.name === assignedName);
+        if (member) techId = member.id;
+      }
+
+      // Include member name in route name so different members get separate routes
+      const memberSuffix = assignedName && assignedName !== '' ? ` (${assignedName})` : '';
+      const routeName = `Uke ${weekNum} - ${dayLabel}${memberSuffix}`;
+
+      try {
+        let ruteId = null;
+
+        // Check for existing route with same name+date (idempotent save)
+        try {
+          const findResp = await apiFetch(`/api/ruter/find-by-date?date=${group.date}&name=${encodeURIComponent(routeName)}`);
+          if (findResp.ok) {
+            const findJson = await findResp.json();
+            if (findJson.data?.id) {
+              ruteId = findJson.data.id;
+              // Update existing route's customers
+              await apiFetch(`/api/ruter/${ruteId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ kunde_ids: kundeIds })
+              });
+            }
+          }
+        } catch { /* If find fails, create new */ }
+
+        // Create new route if none found
+        if (!ruteId) {
+          const createResp = await apiFetch('/api/ruter', {
+            method: 'POST',
+            body: JSON.stringify({
+              navn: routeName,
+              planlagt_dato: group.date,
+              kunde_ids: kundeIds
+            })
+          });
+
+          if (!createResp.ok) {
+            const errData = await createResp.json().catch(() => ({}));
+            throw new Error(errData.error?.message || errData.error || 'Kunne ikke opprette rute');
+          }
+
+          const createJson = await createResp.json();
+          ruteId = createJson.data?.id;
         }
-        return customer.navn;
-      })
-    );
 
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        created++;
-      } else {
-        errors++;
-        lastError = r.reason?.message || 'Ukjent feil';
-        console.error('Avtale-feil:', r.reason);
+        if (ruteId) {
+          // Assign team member (triggers calendar sync in backend)
+          await apiFetch(`/api/ruter/${ruteId}/assign`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              assigned_to: techId,
+              planned_date: group.date
+            })
+          });
+          created += kundeIds.length;
+        }
+      } catch (err) {
+        errors += kundeIds.length;
+        lastError = err.message || 'Ukjent feil';
+        console.error('Rute-feil:', err);
+      }
+
+      daysDone++;
+      if (progressToast) {
+        const span = progressToast.querySelector('span');
+        if (span) span.textContent = `Oppretter ruter... ${daysDone}/${groupCount}`;
       }
     }
-
-    // Update progress
-    if (progressToast) {
-      const done = Math.min(i + BATCH_SIZE, allItems.length);
-      const span = progressToast.querySelector('span');
-      if (span) span.textContent = `Oppretter avtaler... ${done}/${allItems.length}`;
-    }
+  } finally {
+    if (progressToast) progressToast.remove();
+    wpSaving = false;
   }
-
-  // Remove progress toast
-  if (progressToast) progressToast.remove();
 
   if (created > 0) {
-    showToast(`${created} avtaler opprettet!`, 'success');
+    showToast(`${created} kunder planlagt i ${daysDone} ruter!`, 'success');
   }
   if (errors > 0) {
-    showToast(`${errors} avtaler feilet: ${lastError}`, 'error');
+    showToast(`${errors} feilet: ${lastError}`, 'error');
   }
 
   // Clear planned, reload
@@ -16058,7 +24399,7 @@ async function saveWeeklyPlan() {
 
 function clearWeekPlan() {
   for (const dayKey of weekDayKeys) {
-    weekPlanState.days[dayKey].planned = [];
+    if (weekPlanState.days[dayKey]) weekPlanState.days[dayKey].planned = [];
   }
   weekPlanState.activeDay = null;
   if (areaSelectMode) toggleAreaSelect();
@@ -16067,77 +24408,137 @@ function clearWeekPlan() {
   showToast('Plan tømt', 'info');
 }
 
-async function wpOptimizeOrder(dayKey) {
-  const dayData = weekPlanState.days[dayKey];
-  if (!dayData) return;
+async function clearDayAvtaler(dayKey, dateStr) {
+  // Called from button: data-action="clearDayAvtaler" data-args='["mandag","2026-03-23"]'
+  // Also from legacy switch case with (dayKey, dateStr) from dataset
+  if (!dayKey && !dateStr) return;
+  const dayAvtaler = avtaler.filter(a => a.dato === dateStr);
+  const dayPlanned = weekPlanState.days[dayKey]?.planned?.length || 0;
+  const totalToRemove = dayAvtaler.length + dayPlanned;
+  if (totalToRemove === 0) {
+    showToast('Ingen stopp å slette', 'info');
+    return;
+  }
 
-  const stops = dayData.planned.filter(c => c.lat && c.lng);
+  const dayLabel = weekDayLabels[weekDayKeys.indexOf(dayKey)] || dayKey;
+  const confirmClear = await showConfirm(
+    `Slett alle ${totalToRemove} stopp for ${dayLabel}?${dayAvtaler.length > 0 ? ` ${dayAvtaler.length} avtale${dayAvtaler.length !== 1 ? 'r' : ''} slettes permanent.` : ''}`,
+    'Slett alle'
+  );
+  if (!confirmClear) return;
+
+  try {
+    let errors = 0;
+    for (const a of dayAvtaler) {
+      const resp = await apiFetch(`/api/avtaler/${a.id}`, { method: 'DELETE' });
+      if (!resp.ok) errors++;
+    }
+    // Delete routes for this date (fixes mobile weekplan + calendar sync)
+    try {
+      const ruterResp = await apiFetch('/api/ruter');
+      if (ruterResp.ok) {
+        const ruterJson = await ruterResp.json();
+        const allRuter = ruterJson.data || [];
+        const dayRuter = allRuter.filter(r => (r.planlagt_dato || r.planned_date) === dateStr);
+        for (const r of dayRuter) {
+          const resp = await apiFetch(`/api/ruter/${r.id}`, { method: 'DELETE' });
+          if (!resp.ok) errors++;
+        }
+      }
+    } catch { /* route cleanup best-effort */ }
+    if (weekPlanState.days[dayKey]) {
+      weekPlanState.days[dayKey].planned = [];
+    }
+    if (errors > 0) {
+      showToast(`${errors} avtale(r) kunne ikke slettes`, 'warning');
+    } else {
+      showToast('Alle stopp slettet', 'success');
+    }
+    await loadAvtaler();
+    refreshTeamFocus();
+    renderWeeklyPlan();
+    if (typeof renderCalendar === 'function') renderCalendar();
+    if (typeof applyFilters === 'function') applyFilters();
+  } catch (err) {
+    showToast('Feil ved sletting', 'error');
+  }
+}
+
+// Helper: collect stops with coordinates for a weekplan day (planned + existing avtaler)
+function getWpDayStops(dayKey, includeAvtaler = false) {
+  const dayData = weekPlanState.days[dayKey];
+  if (!dayData) return null;
+
+  const stops = [];
+  for (const c of dayData.planned) {
+    if (c.lat && c.lng) {
+      stops.push({ id: c.id, lat: c.lat, lng: c.lng, navn: c.navn, adresse: c.adresse || '', estimertTid: c.estimertTid || 30 });
+    }
+  }
+
+  if (includeAvtaler) {
+    const dateStr = dayData.date;
+    const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+    for (const a of existingAvtaler) {
+      const kunde = customers.find(c => c.id === a.kunde_id);
+      if (kunde?.lat && kunde?.lng) {
+        if (!stops.some(s => s.id === kunde.id)) {
+          stops.push({ id: kunde.id, lat: kunde.lat, lng: kunde.lng, navn: kunde.navn, adresse: kunde.adresse || '', estimertTid: 30 });
+        }
+      }
+    }
+  }
+
+  const routeStart = getRouteStartLocation();
+  return { dayData, stops, routeStart };
+}
+
+// Helper: reorder dayData.planned based on VROOM optimized stops
+function reorderPlannedStops(dayData, optimizedStops) {
+  const plannedOptimized = [];
+  for (const s of optimizedStops) {
+    const p = dayData.planned.find(c => c.id === s.id);
+    if (p) plannedOptimized.push(p);
+  }
+  // Append any stops without coordinates (not optimized)
+  for (const p of dayData.planned) {
+    if (!plannedOptimized.some(o => o.id === p.id)) plannedOptimized.push(p);
+  }
+  dayData.planned = plannedOptimized;
+}
+
+async function wpOptimizeOrder(dayKey) {
+  const result = getWpDayStops(dayKey);
+  if (!result) return;
+  const { dayData, stops, routeStart } = result;
+
   if (stops.length < 3) {
     showToast('Trenger minst 3 stopp for optimalisering', 'info');
     return;
   }
-
-  const routeStart = getRouteStartLocation();
   if (!routeStart) {
     showToast('Sett firmaadresse i admin for å optimalisere rekkefølge', 'warning');
     return;
   }
+
   const loadingToast = showToast('Optimaliserer rekkefølge...', 'info', 0);
 
   try {
-    const optimizeBody = {
-      jobs: stops.map((s, idx) => ({
-        id: idx + 1,
-        location: [s.lng, s.lat],
-        service: (s.estimertTid || 30) * 60
-      })),
-      vehicles: [{
-        id: 1,
-        profile: 'driving-car',
-        start: [routeStart.lng, routeStart.lat],
-        end: [routeStart.lng, routeStart.lat]
-      }]
-    };
-
-    const headers = { 'Content-Type': 'application/json' };
-    const csrfToken = getCsrfToken();
-    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-
-    const response = await fetch('/api/routes/optimize', {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: JSON.stringify(optimizeBody)
-    });
-
+    const vroomRoute = await RouteService.optimize(stops, routeStart);
     if (loadingToast) loadingToast.remove();
 
-    if (!response.ok) {
+    if (!vroomRoute) {
       showToast('Kunne ikke optimalisere rute', 'error');
       return;
     }
 
-    const result = await response.json();
-    const optData = result.data || result;
-    if (optData.routes?.[0]?.steps) {
-      const jobSteps = optData.routes[0].steps.filter(s => s.type === 'job');
-      const optimizedStops = jobSteps.map(step => stops[step.job - 1]).filter(Boolean);
-      if (optimizedStops.length === stops.length) {
-        const plannedOptimized = [];
-        for (const s of optimizedStops) {
-          const p = dayData.planned.find(c => c.id === s.id);
-          if (p) plannedOptimized.push(p);
-        }
-        for (const p of dayData.planned) {
-          if (!plannedOptimized.some(o => o.id === p.id)) plannedOptimized.push(p);
-        }
-        dayData.planned = plannedOptimized;
-        renderWeeklyPlan();
-        showToast('Rekkefølge optimalisert', 'success');
-        // Track for onboarding checklist
-        localStorage.setItem('skyplanner_firstRoutePlanned', 'true');
-        if (typeof refreshChecklistState === 'function') refreshChecklistState();
-      }
+    const optimizedStops = RouteService.reorderByVroom(stops, vroomRoute);
+    if (optimizedStops !== stops) {
+      reorderPlannedStops(dayData, optimizedStops);
+      renderWeeklyPlan();
+      showToast('Rekkefølge optimalisert', 'success');
+      localStorage.setItem('skyplanner_firstRoutePlanned', 'true');
+      if (typeof refreshChecklistState === 'function') refreshChecklistState();
     }
   } catch (err) {
     if (loadingToast) loadingToast.remove();
@@ -16146,205 +24547,105 @@ async function wpOptimizeOrder(dayKey) {
   }
 }
 
-async function wpNavigateDay(dayKey) {
-  const dayData = weekPlanState.days[dayKey];
-  if (!dayData) return;
-  const dateStr = dayData.date;
+// ---- Notify customer ("på vei" email) from weekplan ----
 
-  // Collect all customers with coordinates + estimated time
-  const stops = [];
+async function wpNotifyCustomer(kundeId) {
+  const kunde = customers.find(c => c.id === kundeId);
+  if (!kunde) return;
 
-  // Planned customers
-  for (const c of dayData.planned) {
-    if (c.lat && c.lng) {
-      stops.push({ id: c.id, lat: c.lat, lng: c.lng, navn: c.navn, adresse: c.adresse || '', estimertTid: c.estimertTid || 30 });
-    }
+  if (!kunde.epost) {
+    showToast('Kunden har ikke registrert e-post', 'error');
+    return;
   }
 
-  // Existing avtaler - look up coordinates from customers array
-  const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
-  for (const a of existingAvtaler) {
-    const kunde = customers.find(c => c.id === a.kunde_id);
-    if (kunde?.lat && kunde?.lng) {
-      if (!stops.some(s => s.lat === kunde.lat && s.lng === kunde.lng)) {
-        stops.push({ id: kunde.id, lat: kunde.lat, lng: kunde.lng, navn: kunde.navn, adresse: kunde.adresse || '', estimertTid: 30 });
+  const estMin = kunde.estimert_tid || 10;
+  const contactName = kunde.kontaktperson || kunde.navn;
+
+  // Confirmation dialog
+  const confirmed = await showConfirm(
+    `Send «på vei»-varsel til ${contactName} (${kunde.epost})?`,
+    'Varsle kunde'
+  );
+  if (!confirmed) return;
+
+  try {
+    const resp = await apiFetch(`/api/todays-work/notify-customer/${kundeId}`, {
+      method: 'POST',
+      body: JSON.stringify({ estimert_tid: estMin }),
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      showToast(`Varsel sendt til ${kunde.epost}`, 'success');
+      // Mark button as sent
+      const btn = document.querySelector(`[data-action="wpNotifyCustomer"][data-args='[${kundeId}]']`);
+      if (btn) {
+        btn.classList.add('wp-notified');
+        btn.disabled = true;
+        btn.title = 'Varsel sendt';
       }
+    } else {
+      showToast(data.error || 'Kunne ikke sende varsel', 'error');
     }
+  } catch (err) {
+    showToast('Kunne ikke sende varsel', 'error');
   }
+}
+
+async function wpNavigateDay(dayKey) {
+  const result = getWpDayStops(dayKey, true);
+  if (!result) return;
+  const { dayData, stops, routeStart } = result;
 
   if (stops.length === 0) {
     showToast('Ingen kunder med koordinater for denne dagen', 'info');
     return;
   }
-
-  const routeStart = getRouteStartLocation();
   if (!routeStart) {
     showToast('Sett firmaadresse i admin for å tegne rute', 'warning');
     return;
   }
-  const startLatLng = [routeStart.lat, routeStart.lng];
 
-  // Loading toast
   const loadingToast = showToast('Optimaliserer rute...', 'info', 0);
 
-  // Step 1: Optimize stop order via VROOM (3+ stops)
-  if (stops.length >= 3) {
+  // Step 1: Optimize stop order via VROOM (2+ stops)
+  let etaData = null;
+  if (stops.length >= 2) {
     try {
-      const optimizeBody = {
-        jobs: stops.map((s, idx) => ({
-          id: idx + 1,
-          location: [s.lng, s.lat],
-          service: (s.estimertTid || 30) * 60
-        })),
-        vehicles: [{
-          id: 1,
-          profile: 'driving-car',
-          start: [routeStart.lng, routeStart.lat],
-          end: [routeStart.lng, routeStart.lat]
-        }]
-      };
-
-      const optHeaders = { 'Content-Type': 'application/json' };
-      const optCsrf = getCsrfToken();
-      if (optCsrf) optHeaders['X-CSRF-Token'] = optCsrf;
-
-      const optResp = await fetch('/api/routes/optimize', {
-        method: 'POST',
-        headers: optHeaders,
-        credentials: 'include',
-        body: JSON.stringify(optimizeBody)
-      });
-
-      if (optResp.ok) {
-        const optResult = await optResp.json();
-        const optData = optResult.data || optResult;
-        if (optData.routes?.[0]?.steps) {
-          const jobSteps = optData.routes[0].steps.filter(s => s.type === 'job');
-          const optimizedStops = jobSteps.map(step => stops[step.job - 1]).filter(Boolean);
-          if (optimizedStops.length === stops.length) {
-            // Reorder stops array
-            stops.length = 0;
-            stops.push(...optimizedStops);
-            // Reorder planned array in state to match
-            const plannedOptimized = [];
-            for (const s of optimizedStops) {
-              const p = dayData.planned.find(c => c.id === s.id);
-              if (p) plannedOptimized.push(p);
-            }
-            for (const p of dayData.planned) {
-              if (!plannedOptimized.some(o => o.id === p.id)) plannedOptimized.push(p);
-            }
-            dayData.planned = plannedOptimized;
-            renderWeeklyPlan();
-          }
+      const vroomRoute = await RouteService.optimize(stops, routeStart);
+      if (vroomRoute) {
+        const optimizedStops = RouteService.reorderByVroom(stops, vroomRoute);
+        if (optimizedStops !== stops) {
+          stops.length = 0;
+          stops.push(...optimizedStops);
+          reorderPlannedStops(dayData, optimizedStops);
+          renderWeeklyPlan();
         }
+        etaData = RouteService.calculateETAs(vroomRoute);
       }
     } catch (e) {
       console.warn('[wpNavigateDay] Optimization failed, using original order:', e);
     }
   }
 
-  // Step 2: Build coordinates and get directions
+  // Step 2: Render route on map
   if (loadingToast) loadingToast.textContent = 'Beregner rute...';
-  const coordinates = [
-    [routeStart.lng, routeStart.lat],
-    ...stops.map(s => [s.lng, s.lat]),
-    [routeStart.lng, routeStart.lat]
-  ];
 
   try {
-    const headers = { 'Content-Type': 'application/json' };
-    const csrfToken = getCsrfToken();
-    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-
-    const response = await fetch('/api/routes/directions', {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: JSON.stringify({ coordinates })
-    });
-
-    // Remove loading toast
-    if (loadingToast) loadingToast.remove();
-
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => ({}));
-      console.error('[wpNavigateDay] API error:', response.status, errBody);
-      showToast(`Kunne ikke beregne rute (${response.status})`, 'error');
-      return;
-    }
-
-    const rawData = await response.json();
-
-    // Handle wrapped ({ success, data: {...} }) or raw ORS response
-    const geoData = rawData.data || rawData;
-    const feature = geoData.features?.[0];
-
-    // Extract driving summary
-    let drivingSeconds = 0;
-    let distanceMeters = 0;
-    if (feature?.properties?.summary) {
-      drivingSeconds = feature.properties.summary.duration || 0;
-      distanceMeters = feature.properties.summary.distance || 0;
-    }
-    // Fallback: sum segments if no top-level summary
-    if (drivingSeconds === 0 && feature?.properties?.segments?.length > 0) {
-      for (const seg of feature.properties.segments) {
-        drivingSeconds += seg.duration || 0;
-        distanceMeters += seg.distance || 0;
-      }
-    }
-
-    // Clear any existing route
-    clearRoute();
-
     // Dim all markers/clusters via CSS class on map
     wpRouteActive = true;
     wpRouteStopIds = new Set(stops.map(s => Number(s.id)));
     applyTeamFocusToMarkers();
     if (typeof refreshClusters === 'function') refreshClusters();
 
-    // Build route line: start → stop1 → stop2 → ... → start
-    // Note: startLatLng is [lat, lng], convert to [lng, lat] for GeoJSON
-    const lineCoords = [
-      [startLatLng[1], startLatLng[0]],
-      ...stops.map(s => [s.lng, s.lat]),
-      [startLatLng[1], startLatLng[0]]
-    ];
-
-    // Try ORS road-following geometry, fall back to straight lines
-    let routeDrawn = false;
-    if (feature?.geometry?.coordinates?.length > 2) {
-      try {
-        const geomType = feature.geometry.type;
-        let routeCoords;
-        if (geomType === 'MultiLineString') {
-          routeCoords = feature.geometry.coordinates.flat();
-        } else {
-          routeCoords = feature.geometry.coordinates;
-        }
-        if (routeCoords.length > 2 && !isNaN(routeCoords[0][0]) && !isNaN(routeCoords[0][1])) {
-          drawRouteGeoJSON(routeCoords, { color: '#2563eb', width: 5, opacity: 0.85 });
-          routeDrawn = true;
-        }
-      } catch (e) {
-        console.warn('[wpNavigateDay] ORS geometry failed:', e);
-      }
-    }
-    // Fallback: straight dashed lines between stops
-    if (!routeDrawn) {
-      drawRouteGeoJSON(lineCoords, { color: '#2563eb', width: 4, opacity: 0.7, dasharray: [10, 8] });
-    }
-
-    // Fit map to route
-    const allBounds = boundsFromLatLngArray([startLatLng, ...stops.map(s => [s.lat, s.lng])]);
-    map.fitBounds(allBounds, { padding: 50 });
+    const routeResult = await renderRouteOnMap(stops, routeStart, { etaData });
+    if (loadingToast) loadingToast.remove();
 
     // Store for export to Maps
-    currentRouteData = { customers: stops, duration: drivingSeconds, distance: distanceMeters };
+    currentRouteData = { customers: stops, duration: routeResult.drivingSeconds, distance: routeResult.distanceMeters };
 
     // Show summary panel
-    showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters);
+    showWpRouteSummary(dayKey, stops, routeResult.drivingSeconds, routeResult.distanceMeters);
 
   } catch (err) {
     if (loadingToast) loadingToast.remove();
@@ -16399,8 +24700,11 @@ function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
       <button class="btn btn-small btn-primary" data-action="wpExportMaps" data-day="${dayKey}">
         <i aria-hidden="true" class="fas fa-external-link-alt"></i> Åpne i Maps
       </button>
+      <button class="btn btn-small btn-ghost" data-action="toggleRouteMarkers">
+        <i aria-hidden="true" class="fas fa-eye"></i> Vis alle
+      </button>
       <button class="btn btn-small btn-secondary" data-action="closeWpRoute">
-        <i aria-hidden="true" class="fas fa-times"></i> Lukk rute
+        <i aria-hidden="true" class="fas fa-eye-slash"></i> Skjul rute
       </button>
     </div>
   `;
@@ -16415,8 +24719,155 @@ function closeWpRouteSummary() {
   clearRoute();
   wpRouteActive = false;
   wpRouteStopIds = null;
+  wpShowAllMarkers = false;
   applyTeamFocusToMarkers();
   if (typeof refreshClusters === 'function') refreshClusters();
+  // Keep currentRouteData so "Optimaliser rute" can restore without re-calculating
+}
+
+// Suggest nearby stops from SmartRouteEngine clusters
+function wpSuggestStops() {
+  const container = document.getElementById('wpSuggestions');
+  if (!container) return;
+
+  // Toggle off if already showing
+  if (container.innerHTML) {
+    container.innerHTML = '';
+    return;
+  }
+
+  if (typeof SmartRouteEngine === 'undefined') {
+    showToast('Smarte ruter er ikke tilgjengelig', 'info');
+    return;
+  }
+
+  const dayKey = weekPlanState.activeDay;
+  if (!dayKey) {
+    showToast('Velg en dag først', 'info');
+    return;
+  }
+
+  const dayData = weekPlanState.days[dayKey];
+  const dateStr = dayData.date;
+
+  // Get existing IDs for this day (planned + avtaler) to exclude
+  const existingIds = new Set(dayData.planned.map(c => c.id));
+  avtaler.filter(a => a.dato === dateStr).forEach(a => existingIds.add(a.kunde_id));
+
+  // Get recommendations from SmartRouteEngine
+  const recommendations = SmartRouteEngine.generateRecommendations();
+
+  if (!recommendations || recommendations.length === 0) {
+    container.innerHTML = `<div class="wp-suggest-empty"><i aria-hidden="true" class="fas fa-check-circle"></i> Ingen kunder trenger besøk snart</div>`;
+    return;
+  }
+
+  // Flatten all recommended customers, exclude already planned, sort by distance to existing stops
+  const routeStart = getRouteStartLocation();
+  const existingStops = dayData.planned.filter(c => c.lat && c.lng);
+
+  // Calculate relevance: prefer customers near existing stops or company
+  let candidatesWithScore = [];
+  for (const rec of recommendations) {
+    for (const customer of rec.customers) {
+      if (existingIds.has(customer.id)) continue;
+      if (!customer.lat || !customer.lng) continue;
+
+      // Distance to nearest existing stop or company
+      let minDist = Infinity;
+      if (existingStops.length > 0) {
+        for (const stop of existingStops) {
+          const d = SmartRouteEngine.haversineDistance(customer.lat, customer.lng, stop.lat, stop.lng);
+          if (d < minDist) minDist = d;
+        }
+      } else if (routeStart) {
+        minDist = SmartRouteEngine.haversineDistance(customer.lat, customer.lng, routeStart.lat, routeStart.lng);
+      }
+
+      const nextDate = getNextControlDate(customer);
+      const isOverdue = nextDate && nextDate < new Date();
+
+      candidatesWithScore.push({
+        customer,
+        distance: minDist,
+        isOverdue,
+        cluster: rec.primaryArea,
+        efficiencyScore: rec.efficiencyScore
+      });
+    }
+  }
+
+  // Sort: overdue first, then by distance (nearest first)
+  candidatesWithScore.sort((a, b) => {
+    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
+    return a.distance - b.distance;
+  });
+
+  // Limit to top 8
+  candidatesWithScore = candidatesWithScore.slice(0, 8);
+
+  if (candidatesWithScore.length === 0) {
+    container.innerHTML = `<div class="wp-suggest-empty"><i aria-hidden="true" class="fas fa-check-circle"></i> Alle anbefalte kunder er allerede planlagt</div>`;
+    return;
+  }
+
+  let html = `<div class="wp-suggest-header">
+    <span><i aria-hidden="true" class="fas fa-lightbulb"></i> Foreslåtte stopp</span>
+    <button class="wp-suggest-close" data-action="wpCloseSuggestions" aria-label="Lukk">&times;</button>
+  </div>`;
+  html += `<div class="wp-suggest-list">`;
+
+  for (const item of candidatesWithScore) {
+    const c = item.customer;
+    const distLabel = item.distance < 1 ? `${Math.round(item.distance * 1000)}m` : `${item.distance.toFixed(1)}km`;
+    const overdueClass = item.isOverdue ? 'overdue' : '';
+
+    html += `<div class="wp-suggest-item ${overdueClass}" data-action="wpAddSuggested" data-customer-id="${c.id}" role="button" tabindex="0">
+      <div class="wp-suggest-info">
+        <span class="wp-suggest-name">${escapeHtml(c.navn)}</span>
+        <span class="wp-suggest-meta">${escapeHtml(c.poststed || c.adresse || '')} · ${distLabel}${item.isOverdue ? ' · Forfalt' : ''}</span>
+      </div>
+      <i aria-hidden="true" class="fas fa-plus wp-suggest-add"></i>
+    </div>`;
+  }
+
+  html += `</div>`;
+  html += `<button class="btn btn-small btn-primary wp-suggest-all-btn" data-action="wpAddAllSuggested">
+    <i aria-hidden="true" class="fas fa-plus-circle"></i> Legg til alle (${candidatesWithScore.length})
+  </button>`;
+
+  container.innerHTML = html;
+
+  // Store candidates for "add all" action
+  container._candidates = candidatesWithScore;
+}
+
+// Add a single suggested customer to weekplan
+function wpAddSuggested(customerId) {
+  const customer = customers.find(c => c.id === customerId);
+  if (!customer) return;
+  addCustomersToWeekPlan([customer]);
+
+  // Remove from suggestions UI
+  const item = document.querySelector(`[data-action="wpAddSuggested"][data-customer-id="${customerId}"]`);
+  if (item) {
+    item.style.opacity = '0.3';
+    item.style.pointerEvents = 'none';
+    item.querySelector('.wp-suggest-add').className = 'fas fa-check wp-suggest-add';
+  }
+}
+
+// Add all suggested customers to weekplan
+function wpAddAllSuggested() {
+  const container = document.getElementById('wpSuggestions');
+  if (!container?._candidates) return;
+
+  const customerIds = container._candidates.map(c => c.customer.id);
+  const customerObjects = customerIds.map(id => customers.find(c => c.id === id)).filter(Boolean);
+  addCustomersToWeekPlan(customerObjects);
+
+  // Close suggestions
+  container.innerHTML = '';
 }
 
 // Export weekly plan route to Google/Apple Maps
@@ -16440,6 +24891,133 @@ function wpExportToMaps() {
     let url = `https://www.google.com/maps/dir/?api=1&origin=${startCoord}&destination=${startCoord}`;
     url += `&waypoints=${encodeURIComponent(waypoints)}&travelmode=driving`;
     window.open(url, '_blank');
+  }
+}
+
+// === Auto-fill week from SmartRouteEngine ===
+
+function wpAutoFillWeek() {
+  // Get customers needing control
+  const needingControl = SmartRouteEngine.getCustomersNeedingControl();
+  if (needingControl.length === 0) {
+    showToast('Ingen kunder trenger kontroll de neste dagene', 'info');
+    return;
+  }
+
+  // Filter out customers already planned this week (any day)
+  const allPlannedIds = new Set();
+  for (const dk of weekDayKeys) {
+    for (const c of weekPlanState.days[dk].planned) allPlannedIds.add(c.id);
+  }
+  // Also exclude customers with existing avtaler this week
+  for (const dk of weekDayKeys) {
+    const dateStr = weekPlanState.days[dk].date;
+    for (const a of avtaler.filter(av => av.dato === dateStr)) {
+      if (a.kunde_id) allPlannedIds.add(a.kunde_id);
+    }
+  }
+  const available = needingControl.filter(c => !allPlannedIds.has(c.id));
+  if (available.length === 0) {
+    showToast('Alle kunder som trenger kontroll er allerede planlagt', 'info');
+    return;
+  }
+
+  // Cluster using DBSCAN
+  const clusters = SmartRouteEngine.dbscanClustering(
+    available,
+    SmartRouteEngine.params.clusterRadiusKm,
+    SmartRouteEngine.params.minClusterSize
+  );
+
+  // Collect unclustered customers (noise)
+  const clusteredIds = new Set(clusters.flat().map(c => c.id));
+  const noise = available.filter(c => !clusteredIds.has(c.id));
+
+  // Build workload items: clusters first, then individual noise customers
+  const workItems = [];
+  for (const cluster of clusters) {
+    workItems.push({ customers: cluster, minutes: cluster.length * 30 });
+  }
+  // Group noise by poststed for some locality
+  const noiseByArea = {};
+  for (const c of noise) {
+    const area = c.poststed || 'Ukjent';
+    if (!noiseByArea[area]) noiseByArea[area] = [];
+    noiseByArea[area].push(c);
+  }
+  for (const [, group] of Object.entries(noiseByArea)) {
+    workItems.push({ customers: group, minutes: group.length * 30 });
+  }
+
+  // Sort clusters largest first for better packing
+  workItems.sort((a, b) => b.minutes - a.minutes);
+
+  // Distribute across weekdays (Mon-Fri) with capacity limit
+  const workdayMinutes = 480;
+  const workdays = weekDayKeys.slice(0, 5); // Mon-Fri
+  const dayLoad = {};
+  for (const dk of workdays) {
+    // Account for already planned items
+    dayLoad[dk] = getDayEstimatedTotal(dk);
+  }
+
+  let totalAdded = 0;
+  const currentUser = weekPlanState.globalAssignedTo || localStorage.getItem('userName') || 'admin';
+
+  for (const item of workItems) {
+    // Find day with most remaining capacity
+    let bestDay = null;
+    let bestRemaining = -1;
+    for (const dk of workdays) {
+      const remaining = workdayMinutes - dayLoad[dk];
+      if (remaining >= item.minutes && remaining > bestRemaining) {
+        bestDay = dk;
+        bestRemaining = remaining;
+      }
+    }
+
+    // If no day has full capacity, find one with most room (allow slight overflow)
+    if (!bestDay) {
+      for (const dk of workdays) {
+        const remaining = workdayMinutes - dayLoad[dk];
+        if (remaining > bestRemaining) {
+          bestDay = dk;
+          bestRemaining = remaining;
+        }
+      }
+    }
+
+    if (!bestDay || bestRemaining <= 0) continue;
+
+    // Add customers to this day
+    const dayData = weekPlanState.days[bestDay];
+    for (const c of item.customers) {
+      if (dayData.planned.some(p => p.id === c.id)) continue;
+      dayData.planned.push({
+        id: c.id,
+        navn: c.navn,
+        adresse: c.adresse || '',
+        postnummer: c.postnummer || '',
+        poststed: c.poststed || '',
+        telefon: c.telefon || '',
+        kategori: c.kategori || null,
+        lat: c.lat || null,
+        lng: c.lng || null,
+        estimertTid: c.estimert_tid || 30,
+        addedBy: currentUser
+      });
+      totalAdded++;
+    }
+    dayLoad[bestDay] += item.minutes;
+  }
+
+  if (totalAdded > 0) {
+    const daysUsed = workdays.filter(dk => weekPlanState.days[dk].planned.length > 0).length;
+    showToast(`${totalAdded} kunder fordelt på ${daysUsed} dager basert på område og kapasitet`, 'success');
+    refreshTeamFocus();
+    renderWeeklyPlan();
+  } else {
+    showToast('Kunne ikke plassere kunder — alle dager er fulle', 'warning');
   }
 }
 
@@ -16546,6 +25124,75 @@ async function quickAddAvtaleForDate(customerId, customerName, date) {
 }
 
 
+// Calendar-map focus state
+let calendarFocusedDay = null;
+let calendarFocusedKundeIds = null;
+
+function focusCalendarDayOnMap(dateStr) {
+  if (calendarFocusedDay === dateStr) {
+    clearCalendarFocus();
+    renderCalendar();
+    return;
+  }
+  // Filter avtaler for this date, collect kunde_ids with coordinates
+  const dayAvtaler = avtaler.filter(a => a.dato === dateStr);
+  const kundeIds = new Set();
+  const boundsPoints = [];
+  for (const a of dayAvtaler) {
+    if (!a.kunde_id) continue;
+    const kunde = customers.find(c => c.id === a.kunde_id);
+    if (kunde && kunde.lat && kunde.lng) {
+      kundeIds.add(kunde.id);
+      boundsPoints.push([kunde.lat, kunde.lng]);
+    }
+  }
+  if (kundeIds.size === 0) {
+    if (typeof showToast === 'function') showToast('Ingen avtaler med koordinater denne dagen', 'info');
+    return;
+  }
+  // Clear any weekplan focus
+  if (typeof wpFocusedTeamMember !== 'undefined' && wpFocusedTeamMember) {
+    wpFocusedTeamMember = null;
+    wpFocusedMemberIds = null;
+  }
+  calendarFocusedDay = dateStr;
+  calendarFocusedKundeIds = kundeIds;
+  applyCalendarFocusToMarkers();
+  if (typeof refreshClusters === 'function') refreshClusters();
+  // Zoom to bounds
+  if (boundsPoints.length > 0 && typeof boundsFromLatLngArray === 'function' && typeof map !== 'undefined' && map) {
+    const bounds = boundsFromLatLngArray(boundsPoints);
+    map.fitBounds(bounds, { padding: 50, maxZoom: 14 });
+  }
+  renderCalendar();
+  const count = kundeIds.size;
+  if (typeof showToast === 'function') showToast(`${count} avtale${count > 1 ? 'r' : ''} vist på kartet`, 'success', 2000);
+}
+
+function applyCalendarFocusToMarkers() {
+  if (typeof markers === 'undefined') return;
+  for (const kundeId of Object.keys(markers)) {
+    const marker = markers[kundeId];
+    if (!marker?._element && !marker?.getElement) continue;
+    const el = marker._element || marker.getElement();
+    if (!el) continue;
+    if (!calendarFocusedKundeIds) {
+      el.classList.remove('cal-hidden');
+    } else if (calendarFocusedKundeIds.has(Number(kundeId))) {
+      el.classList.remove('cal-hidden');
+    } else {
+      el.classList.add('cal-hidden');
+    }
+  }
+}
+
+function clearCalendarFocus() {
+  calendarFocusedDay = null;
+  calendarFocusedKundeIds = null;
+  applyCalendarFocusToMarkers();
+  if (typeof refreshClusters === 'function') refreshClusters();
+}
+
 // Format minutes as "Xt Ym" for calendar display
 function formatEstTid(min) {
   if (!min || min <= 0) return '';
@@ -16614,7 +25261,17 @@ async function loadAvtaler() {
     const response = await apiFetch('/api/avtaler');
     if (response.ok) {
       const avtaleResult = await response.json();
-      avtaler = avtaleResult.data || avtaleResult;
+      const rawAvtaler = avtaleResult.data || avtaleResult;
+      // Deduplicate: same kunde_id + dato + klokkeslett = keep newest (highest id)
+      const seen = new Map();
+      for (const a of rawAvtaler) {
+        const key = `${a.kunde_id}_${a.dato}_${a.klokkeslett || ''}`;
+        const existing = seen.get(key);
+        if (!existing || (a.id && existing.id && a.id > existing.id)) {
+          seen.set(key, a);
+        }
+      }
+      avtaler = Array.from(seen.values());
       // Refresh plan badges on map if weekly plan is active
       if (weekPlanState.weekStart) {
         updateWeekPlanBadges();
@@ -16697,13 +25354,15 @@ async function renderCalendar() {
     const areaHint = dayAvtaler.length > 0 ? getAreaTooltip(dayAvtaler) : '';
     const areaCount = dayAvtaler.length > 0 ? getUniqueAreas(dayAvtaler).size : 0;
 
+    const isFocused = calendarFocusedDay === dateStr;
     html += `
-      <div class="calendar-day ${isToday ? 'today' : ''} ${isPast ? 'past' : ''} ${hasContent ? 'has-content' : ''}"
+      <div class="calendar-day ${isToday ? 'today' : ''} ${isPast ? 'past' : ''} ${hasContent ? 'has-content' : ''} ${isFocused ? 'calendar-day-focused' : ''}"
            data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
         <div class="day-top-row">
           <span class="day-number">${day}</span>
           ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} omr.</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
+          ${hasContent ? `<button class="cal-map-btn ${isFocused ? 'active' : ''}" data-action="focusCalendarDayOnMap" data-args='["${dateStr}"]' title="Vis på kartet"><i aria-hidden="true" class="fas fa-map-marker-alt"></i></button>` : ''}
+          ${dayAvtaler.length >= 2 && buildGoogleMapsUrl(dayAvtaler) ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         <div class="calendar-events">
           ${dayAvtaler.map(a => {
@@ -16718,7 +25377,7 @@ async function renderCalendar() {
                 ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
                 <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</span>
                 ${poststed ? `<span class="avtale-poststed">${escapeHtml(poststed)}</span>` : ''}
-                ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="avtale-creator" title="Opprettet av ${escapeHtml(a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.opprettet_av, true))}</span>` : ''}
+                ${(a.tildelt_tekniker || a.opprettet_av) && (a.tildelt_tekniker || a.opprettet_av) !== 'admin' ? `<span class="avtale-creator" title="Tildelt: ${escapeHtml(a.tildelt_tekniker || a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.tildelt_tekniker || a.opprettet_av, true))}</span>` : ''}
               </div>
               <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
             </div>
@@ -16781,7 +25440,7 @@ async function renderCalendar() {
             <span class="week-day-name">${weekDayNames[i].substring(0, 3)}</span>
             <span class="week-day-date">${dayDate.getDate()}</span>
             ${dayMinutes > 0 ? `<span class="week-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
-            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
+            ${dayAvtaler.length >= 2 && buildGoogleMapsUrl(dayAvtaler) ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
           </div>
           ${renderAreaBadges(dayAvtaler)}
           <div class="week-day-content">
@@ -16789,7 +25448,7 @@ async function renderCalendar() {
               const navn = a.kunder?.navn || a.kunde_navn || 'Ukjent';
               const addr = [a.kunder?.adresse || '', a.kunder?.postnummer || '', a.kunder?.poststed || ''].filter(Boolean).join(', ');
               const phone = a.kunder?.telefon || a.telefon || '';
-              const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+              const creator = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
               const initials = creator ? getCreatorDisplay(creator, true) : '';
               const serviceColor = getAvtaleServiceColor(a);
               const serviceIcon = getAvtaleServiceIcon(a);
@@ -16852,7 +25511,7 @@ async function renderCalendar() {
               <div class="upcoming-info">
                 <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i aria-hidden="true" class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
                 <span>${a.klokkeslett ? a.klokkeslett.substring(0, 5) : ''} ${a.type || ''}</span>
-                ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="upcoming-creator">Av: ${escapeHtml(getCreatorDisplay(a.opprettet_av))}</span>` : ''}
+                ${(a.tildelt_tekniker || a.opprettet_av) && (a.tildelt_tekniker || a.opprettet_av) !== 'admin' ? `<span class="upcoming-creator">${escapeHtml(getCreatorDisplay(a.tildelt_tekniker || a.opprettet_av))}</span>` : ''}
               </div>
             </div>
           `).join('')}
@@ -17019,6 +25678,9 @@ function openCalendarSplitView() {
           showToast('Avtale slettet', 'success');
           await loadAvtaler();
           renderCalendar();
+          if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+          if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+          if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
         } else {
           showToast('Kunne ikke slette avtalen', 'error');
         }
@@ -17067,7 +25729,7 @@ function openCalendarSplitView() {
 
   // Invalidate map size so tiles re-render in the visible area
   setTimeout(() => {
-    if (window.map) window.map.resize();
+    if (window.map && typeof window.map.resize === 'function') window.map.resize();
   }, 100);
 }
 
@@ -17093,7 +25755,7 @@ function closeCalendarSplitView() {
 
   // Invalidate map size
   setTimeout(() => {
-    if (window.map) window.map.resize();
+    if (window.map && typeof window.map.resize === 'function') window.map.resize();
   }, 100);
 }
 
@@ -17141,7 +25803,7 @@ function renderSplitWeekContent() {
           ${isActive ? '<i aria-hidden="true" class="fas fa-crosshairs split-active-icon"></i>' : ''}
           ${dayMinutes > 0 ? `<span class="split-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
           ${dayAvtaler.length > 0 ? `<span class="split-day-count">${dayAvtaler.length} avtale${dayAvtaler.length !== 1 ? 'r' : ''}</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
+          ${dayAvtaler.length >= 2 && buildGoogleMapsUrl(dayAvtaler) ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         ${dayAvtaler.length > 0 ? renderAreaBadges(dayAvtaler) : ''}
         <div class="split-day-content">
@@ -17155,7 +25817,7 @@ function renderSplitWeekContent() {
       const navn = a.kunder?.navn || a.kunde_navn || 'Ukjent';
       const addr = [a.kunder?.adresse || '', a.kunder?.postnummer || '', a.kunder?.poststed || ''].filter(Boolean).join(', ');
       const phone = a.kunder?.telefon || a.telefon || '';
-      const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+      const creator = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
       const initials = creator ? getCreatorDisplay(creator, true) : '';
       const serviceColor = getAvtaleServiceColor(a);
       const serviceIcon = getAvtaleServiceIcon(a);
@@ -17419,7 +26081,7 @@ function setupSplitDivider() {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     // Re-render map
-    setTimeout(() => { if (window.map) window.map.resize(); }, 50);
+    setTimeout(() => { if (window.map && typeof window.map.resize === 'function') window.map.resize(); }, 50);
   };
 
   divider.addEventListener('mousedown', onMouseDown);
@@ -17731,7 +26393,10 @@ async function deleteAvtale() {
     if (response.ok) {
       await loadAvtaler();
       renderCalendar();
-      applyFilters(); // Oppdater kart-markører
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+      if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
+      applyFilters();
       closeAvtaleModal();
     }
   } catch (error) {
@@ -17757,7 +26422,10 @@ async function deleteAvtaleSeries() {
       showMessage(`${result.data.deletedCount} avtaler slettet`, 'success');
       await loadAvtaler();
       renderCalendar();
-      applyFilters(); // Oppdater kart-markører
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+      if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
+      applyFilters();
       closeAvtaleModal();
     }
   } catch (error) {
@@ -17820,7 +26488,8 @@ async function selectCustomersNeedingControl() {
     const varselKunder = varselResult.data || varselResult;
 
     selectedCustomers.clear();
-    varselKunder.forEach(k => {
+    const kundeList = Array.isArray(varselKunder) ? varselKunder : [];
+    kundeList.forEach(k => {
       if (k.lat && k.lng) {
         selectedCustomers.add(k.id);
       }
@@ -17829,15 +26498,23 @@ async function selectCustomersNeedingControl() {
     updateSelectionUI();
 
     if (selectedCustomers.size > 0) {
+      // Switch to Kunder tab so user can see selection and plan route
+      switchToTab('customers');
+
       // Zoom to selected customers
       const selectedData = customers.filter(c => selectedCustomers.has(c.id) && c.lat && c.lng);
       if (selectedData.length > 0) {
         const bounds = boundsFromCustomers(selectedData);
         map.fitBounds(bounds, { padding: 50 });
       }
+
+      showToast(`${selectedCustomers.size} kunder valgt. Bruk «Planlegg rute» for å beregne rute.`, 'success');
+    } else {
+      showToast('Ingen kommende kontroller med koordinater funnet', 'info');
     }
   } catch (error) {
     console.error('Feil ved henting av varsler:', error);
+    showToast('Kunne ikke hente kontrollvarsler', 'error');
   }
 }
 
@@ -17935,6 +26612,9 @@ function logoutUser(logoutAllDevices = false) {
 
   // Stop inactivity tracking and dismiss any warning modal
   stopInactivityTracking();
+
+  // Cleanup Arbeid tab (stop polling, clear timers)
+  if (typeof unloadArbeidTab === 'function') unloadArbeidTab();
 
   // Show login screen (SPA - no redirect)
   showLoginView();
@@ -18930,6 +27610,13 @@ function renderMissingData() {
   const totalMissing = missingPhone.length + missingEmail.length + missingCoords.length + missingControl.length;
   updateBadge('missingDataBadge', totalMissing);
 
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashMissingSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = totalMissing > 0 ? totalMissing : '';
+    sectionBadge.style.display = totalMissing > 0 ? '' : 'none';
+  }
+
   // Render lists
   renderMissingList('missingPhoneList', missingPhone, 'telefon');
   renderMissingList('missingEmailList', missingEmail, 'e-post');
@@ -19052,7 +27739,45 @@ function showNotification(message, type = 'success') {
   }, 2500);
 }
 
+// ---- Notify customer "on my way" from popup/desktop ----
+
+async function notifyCustomerOnWay(kundeId) {
+  const kunde = customers.find(c => c.id === kundeId);
+  if (!kunde) return;
+
+  if (!kunde.epost) {
+    showToast('Kunden har ikke registrert e-post', 'error');
+    return;
+  }
+
+  const estMin = kunde.estimert_tid || 10;
+  const contactName = kunde.kontaktperson || kunde.navn;
+
+  const confirmed = await showConfirm(
+    `Send «på vei»-varsel til ${contactName} (${kunde.epost})?`,
+    'Varsle kunde'
+  );
+  if (!confirmed) return;
+
+  try {
+    const resp = await apiFetch(`/api/todays-work/notify-customer/${kundeId}`, {
+      method: 'POST',
+      body: JSON.stringify({ estimert_tid: estMin }),
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      showToast(`Varsel sendt til ${kunde.epost}`, 'success');
+    } else {
+      showToast(data.error || 'Kunne ikke sende varsel', 'error');
+    }
+  } catch (err) {
+    showToast('Kunne ikke sende varsel', 'error');
+  }
+}
+
 // Make functions available globally for onclick handlers
+window.notifyCustomerOnWay = notifyCustomerOnWay;
 window.editCustomer = editCustomer;
 window.toggleCustomerSelection = toggleCustomerSelection;
 window.focusOnCustomer = focusOnCustomer;
@@ -19983,6 +28708,162 @@ function attachDynamicFilterHandlers() {
 // ========================================
 
 /**
+ * Render all dashboard sections (called when dashboard tab is shown)
+ */
+function renderDashboardSections() {
+  renderMorningBrief();
+  if (typeof renderOverdue === 'function') renderOverdue();
+  if (typeof renderWarnings === 'function') renderWarnings();
+  if (typeof renderStatistikk === 'function') renderStatistikk();
+  if (typeof renderMissingData === 'function') renderMissingData();
+}
+
+/**
+ * Smart Morning Briefing Widget
+ */
+function renderMorningBrief() {
+  const container = document.getElementById('morningBriefContainer');
+  if (!container) return;
+
+  // Check if collapsed this session
+  if (sessionStorage.getItem('morningBriefCollapsed')) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Auto-collapse after 5 minutes
+  if (!window._morningBriefTimer) {
+    window._morningBriefTimer = setTimeout(() => {
+      sessionStorage.setItem('morningBriefCollapsed', '1');
+      const el = document.getElementById('morningBriefContainer');
+      if (el) el.innerHTML = '';
+    }, 5 * 60 * 1000);
+  }
+
+  const hour = new Date().getHours();
+  let greeting, icon;
+  if (hour < 12) { greeting = 'God morgen'; icon = 'fa-sun'; }
+  else if (hour < 17) { greeting = 'God ettermiddag'; icon = 'fa-cloud-sun'; }
+  else { greeting = 'God kveld'; icon = 'fa-moon'; }
+
+  // Calculate stats from already-loaded data
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentMonthValue = today.getFullYear() * 12 + today.getMonth();
+  let overdueCount = 0;
+  let upcomingCount = 0;
+
+  if (customers && customers.length > 0) {
+    customers.forEach(c => {
+      const nextDate = getNextControlDate(c);
+      if (!nextDate) return;
+      const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+      if (controlMonthValue < currentMonthValue) overdueCount++;
+      else {
+        const daysUntil = Math.ceil((nextDate - today) / (1000 * 60 * 60 * 24));
+        if (daysUntil <= 30) upcomingCount++;
+      }
+    });
+  }
+
+  // Get today's planned stops from weekplan if available
+  let todayStops = 0;
+  if (typeof weekPlanState !== 'undefined' && weekPlanState.days) {
+    const todayStr = today.toISOString().split('T')[0];
+    for (const dayKey of Object.keys(weekPlanState.days)) {
+      if (weekPlanState.days[dayKey].date === todayStr) {
+        todayStops = weekPlanState.days[dayKey].planned?.length || 0;
+        break;
+      }
+    }
+  }
+
+  // Get top overdue area
+  let topOverdueArea = '';
+  if (customers && customers.length > 0) {
+    const areaCounts = {};
+    customers.forEach(c => {
+      const nextDate = getNextControlDate(c);
+      if (!nextDate) return;
+      const controlMonthValue = nextDate.getFullYear() * 12 + nextDate.getMonth();
+      if (controlMonthValue < currentMonthValue && c.poststed) {
+        areaCounts[c.poststed] = (areaCounts[c.poststed] || 0) + 1;
+      }
+    });
+    const sorted = Object.entries(areaCounts).sort((a, b) => b[1] - a[1]);
+    if (sorted.length > 0) {
+      topOverdueArea = `${sorted[0][1]} i ${sorted[0][0]}`;
+    }
+  }
+
+  // Build message
+  let message = '';
+  if (todayStops > 0) {
+    message += `Du har <strong>${todayStops} stopp</strong> planlagt i dag. `;
+  }
+  if (overdueCount > 0) {
+    message += `<strong>${overdueCount}</strong> kunder trenger oppfølging`;
+    if (topOverdueArea) message += ` (${topOverdueArea})`;
+    message += '. ';
+  }
+  if (upcomingCount > 0) {
+    message += `${upcomingCount} kontroller innen 30 dager.`;
+  }
+  if (!message && customers && customers.length > 0) {
+    message = `Alt ser bra ut — ${customers.length} kunder i systemet.`;
+  }
+  if (!message) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="morning-brief">
+      <div class="morning-brief-header">
+        <span class="morning-brief-greeting"><i class="fas ${icon}" aria-hidden="true"></i>${greeting}!</span>
+        <button class="morning-brief-close" data-action="closeMorningBrief" title="Lukk" aria-label="Lukk briefing"><i class="fas fa-times" aria-hidden="true"></i></button>
+      </div>
+      <div class="morning-brief-stats">
+        <div class="morning-brief-stat"><span class="stat-num">${customers ? customers.length : 0}</span> kunder</div>
+        ${overdueCount > 0 ? `<div class="morning-brief-stat"><span class="stat-num" style="color:var(--color-status-overdue)">${overdueCount}</span> forfalte</div>` : ''}
+        ${todayStops > 0 ? `<div class="morning-brief-stat"><span class="stat-num" style="color:var(--color-accent)">${todayStops}</span> i dag</div>` : ''}
+      </div>
+      <div class="morning-brief-message">${message}</div>
+      <div class="morning-brief-actions">
+        ${overdueCount > 0 ? `<button class="btn btn-secondary btn-small" id="briefOverdueBtn"><i class="fas fa-exclamation-triangle" aria-hidden="true"></i> Se forfalte</button>` : ''}
+        <button class="btn btn-primary btn-small" id="briefWeekplanBtn"><i class="fas fa-clipboard-list" aria-hidden="true"></i> Åpne ukeplan</button>
+      </div>
+    </div>
+  `;
+
+  // Attach click handlers after rendering
+  const overdueBtn = document.getElementById('briefOverdueBtn');
+  if (overdueBtn) {
+    overdueBtn.addEventListener('click', () => {
+      const tab = document.getElementById('tab-btn-overdue');
+      if (tab) tab.click();
+    });
+  }
+  const weekplanBtn = document.getElementById('briefWeekplanBtn');
+  if (weekplanBtn) {
+    weekplanBtn.addEventListener('click', () => {
+      switchToTab('weekly-plan');
+    });
+  }
+}
+
+function closeMorningBrief() {
+  sessionStorage.setItem('morningBriefCollapsed', '1');
+  const el = document.getElementById('morningBriefContainer');
+  if (el) el.innerHTML = '';
+  if (window._morningBriefTimer) {
+    clearTimeout(window._morningBriefTimer);
+    window._morningBriefTimer = null;
+  }
+}
+window.closeMorningBrief = closeMorningBrief;
+
+/**
  * Update dashboard with current customer statistics
  */
 function updateDashboard() {
@@ -20016,17 +28897,24 @@ function updateDashboard() {
     categoryStats[cat] = (categoryStats[cat] || 0) + 1;
   });
 
-  // Update stat cards
+  // Update stat cards with animated counters
   const totalEl = document.getElementById('dashTotalKunder');
   const overdueEl = document.getElementById('dashForfalte');
   const upcomingEl = document.getElementById('dashKommende');
   const okEl = document.getElementById('dashFullfort');
   const overdueCountEl = document.getElementById('dashOverdueCount');
 
-  if (totalEl) totalEl.textContent = customers.length;
-  if (overdueEl) overdueEl.textContent = overdueCount;
-  if (upcomingEl) upcomingEl.textContent = upcomingCount;
-  if (okEl) okEl.textContent = okCount;
+  if (typeof animateCounter === 'function') {
+    animateCounter(totalEl, customers.length);
+    animateCounter(overdueEl, overdueCount);
+    animateCounter(upcomingEl, upcomingCount);
+    animateCounter(okEl, okCount);
+  } else {
+    if (totalEl) totalEl.textContent = customers.length;
+    if (overdueEl) overdueEl.textContent = overdueCount;
+    if (upcomingEl) upcomingEl.textContent = upcomingCount;
+    if (okEl) okEl.textContent = okCount;
+  }
   if (overdueCountEl) overdueCountEl.textContent = overdueCount;
 
   // Update sidebar quick stats
@@ -20058,10 +28946,11 @@ function renderDashboardCategories(categoryStats) {
   let html = '';
 
   // Use service types for display
+  let catIndex = 0;
   serviceTypes.forEach(st => {
     const count = categoryStats[st.name] || 0;
     html += `
-      <div class="category-stat">
+      <div class="category-stat stagger-item" style="--stagger-index:${catIndex++}">
         <i aria-hidden="true" class="fas ${st.icon}" style="color: ${st.color}"></i>
         <span class="cat-name">${st.name}</span>
         <span class="cat-count">${count}</span>
@@ -20106,9 +28995,9 @@ function renderDashboardAreas() {
     .slice(0, 10);
 
   let html = '';
-  sortedAreas.forEach(([area, count]) => {
+  sortedAreas.forEach(([area, count], index) => {
     html += `
-      <div class="area-chip" data-area="${escapeHtml(area)}">
+      <div class="area-chip stagger-item" style="--stagger-index:${Math.min(index, 15)}" data-area="${escapeHtml(area)}">
         ${escapeHtml(area)}
         <span class="area-count">${count}</span>
       </div>
@@ -20161,9 +29050,6 @@ function refreshMapTiles() {
   mapboxgl.accessToken = token;
 }
 
-// Map mode: 'satellite' or 'dark'
-let mapMode = 'satellite';
-
 // Track whether custom layers need re-adding after style change
 let _pendingStyleReload = false;
 
@@ -20182,52 +29068,6 @@ const TERRAIN_PITCH_STEP = 1;
 const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
 const TERRAIN_EXAG_LS_KEY = 'skyplanner_terrainExaggeration';
 const TERRAIN_PITCH_LS_KEY = 'skyplanner_terrainPitch';
-
-// Toggle between satellite and dark map style
-function toggleNightMode() {
-  if (!map) return;
-
-  const btn = document.getElementById('nightmodeBtn');
-  const icon = btn?.querySelector('i');
-  const mapContainer = document.getElementById('map');
-
-  // Disable button during transition
-  if (btn) btn.disabled = true;
-
-  // Fade out the map
-  mapContainer.style.transition = 'opacity 0.4s ease-out';
-  mapContainer.style.opacity = '0';
-
-  setTimeout(() => {
-    if (mapMode === 'dark') {
-      map.setStyle('mapbox://styles/mapbox/satellite-streets-v12');
-      mapMode = 'satellite';
-      btn?.classList.add('satellite-active');
-      if (icon) icon.className = 'fas fa-sun';
-      btn?.setAttribute('title', 'Bytt til mørkt kart');
-    } else {
-      map.setStyle('mapbox://styles/mapbox/navigation-night-v1');
-      mapMode = 'dark';
-      btn?.classList.remove('satellite-active');
-      if (icon) icon.className = 'fas fa-moon';
-      btn?.setAttribute('title', 'Bytt til satellittkart');
-    }
-
-    // Re-add custom layers after style loads
-    map.once('style.load', () => {
-      addNorwayBorder();
-      reapplyTerrain();
-      // Re-add cluster source/layers (native GL layers are lost on style change)
-      if (typeof readdClusterLayers === 'function') readdClusterLayers();
-    });
-
-    // Fade back in
-    setTimeout(() => {
-      mapContainer.style.opacity = '1';
-      if (btn) btn.disabled = false;
-    }, 300);
-  }, 400);
-}
 
 // ========================================
 // 3D TERRAIN TOGGLE
@@ -20443,6 +29283,7 @@ function initSharedMap(options = {}) {
       ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : NORWAY_CENTER)
       : NORWAY_CENTER;
     const initialZoom = skipGlobe ? (hasOfficeLocation ? 6 : NORWAY_ZOOM) : 3.0;
+    const initialPitch = skipGlobe ? 0 : 20; // Slight tilt for 3D depth on login globe
 
     // Create Mapbox GL JS map with globe projection
     map = new mapboxgl.Map({
@@ -20450,6 +29291,7 @@ function initSharedMap(options = {}) {
       style: 'mapbox://styles/mapbox/satellite-streets-v12',
       center: initialCenter,
       zoom: initialZoom,
+      pitch: initialPitch,
       minZoom: 1,
       maxZoom: 19,
       projection: 'globe',
@@ -20539,92 +29381,24 @@ function getRouteStartLocation() {
   return null;
 }
 
-// Show prominent prompt to set office address
+// Show address nudge for returning users without address (no blocking banner)
 function showAddressBannerIfNeeded() {
-  // Only show if no address is configured
   if (getRouteStartLocation()) return;
 
-  // Don't show if getting-started banner is or will be visible (avoid visual collision)
-  // Check both: banner already in DOM, OR banner will appear (no customers + not dismissed)
-  const gettingStartedWillShow = document.getElementById('gettingStartedBanner')
-    || (customers.length === 0 && localStorage.getItem('gettingStartedDismissed') !== 'true');
-  if (gettingStartedWillShow) {
-    // Address prompt will show after getting-started banner is dismissed
-    showPersistentAddressNudge();
-    const adminBadge = document.getElementById('adminAddressBadge');
-    if (adminBadge) adminBadge.style.display = 'inline-flex';
-    return;
-  }
-
-  // If already dismissed this session, show persistent nudge instead
-  if (sessionStorage.getItem('addressBannerDismissed')) {
-    showPersistentAddressNudge();
-    const adminBadge = document.getElementById('adminAddressBadge');
-    if (adminBadge) adminBadge.style.display = 'inline-flex';
-    return;
-  }
-
-  // Remove any existing prompt
-  const existing = document.getElementById('addressSetupBanner');
-  if (existing) existing.remove();
-
-  const prompt = document.createElement('div');
-  prompt.id = 'addressSetupBanner';
-  prompt.className = 'address-setup-prompt';
-  prompt.innerHTML = `
-    <div class="address-prompt-backdrop" onclick="dismissAddressBanner()"></div>
-    <div class="address-prompt-card">
-      <div class="address-prompt-step-indicator">Kom i gang</div>
-      <div class="address-prompt-icon address-prompt-icon-animated">
-        <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
-      </div>
-      <h2>Hvor holder dere til?</h2>
-      <p>Legg inn firmaadresse for å se kontoret ditt på kartet og bruke ruteplanlegging. Det tar bare et øyeblikk.</p>
-      <div class="address-prompt-actions">
-        <button class="address-prompt-btn-primary" onclick="openAdminAddressTab()">
-          <i class="fas fa-map-marker-alt" aria-hidden="true"></i> Legg inn adresse nå
-        </button>
-        <button class="address-prompt-btn-secondary" onclick="dismissAddressBanner()">
-          Jeg gjør det senere
-        </button>
-      </div>
-    </div>
-  `;
-
-  const mapContainer = document.getElementById('sharedMapContainer');
-  if (mapContainer) {
-    mapContainer.appendChild(prompt);
-    requestAnimationFrame(() => prompt.classList.add('visible'));
-  }
-
-  // Show action-needed badge on admin tab
+  // For returning users: show nudge pill + admin badge
+  showPersistentAddressNudge();
   const adminBadge = document.getElementById('adminAddressBadge');
   if (adminBadge) adminBadge.style.display = 'inline-flex';
 }
 
 function dismissAddressBanner() {
-  const prompt = document.getElementById('addressSetupBanner');
-  if (prompt) {
-    prompt.classList.remove('visible');
-    setTimeout(() => prompt.remove(), 300);
-  }
-  // Track dismissal for this login session (cleared on logout)
   sessionStorage.setItem('addressBannerDismissed', 'true');
-
-  // Show persistent nudge pill after banner is dismissed
-  setTimeout(() => showPersistentAddressNudge(), 400);
-
-  // Reveal sidebar/filter if hidden for new users
-  if (typeof showAppPanels === 'function') showAppPanels();
 }
 
 function openAdminAddressTab() {
-  dismissAddressBanner();
-  // Switch to admin tab
   const adminTab = document.getElementById('adminTab');
   if (adminTab) {
     adminTab.click();
-    // Scroll to address section after tab renders
     setTimeout(() => {
       const section = document.getElementById('companyAddressSection');
       if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -20883,6 +29657,9 @@ function initMap() {
     }
   }
 
+  // Initialize zoom-based panel opacity effect
+  if (typeof initPanelZoomOpacity === 'function') initPanelZoomOpacity();
+
   Logger.log('initMap() complete — Mapbox GL JS with Supercluster clustering');
 }
 
@@ -20912,7 +29689,7 @@ function updateMarkerLabelsVisibility() {
   const zoom = map.getZoom();
   const mapContainer = document.getElementById('map');
 
-  if (zoom < 10) {
+  if (zoom < 8) {
     mapContainer.classList.add('hide-marker-labels');
   } else {
     mapContainer.classList.remove('hide-marker-labels');
@@ -20924,7 +29701,7 @@ function addNorwayBorder() {
   if (!map) return;
 
   // Remove existing layers if present (needed after style change)
-  ['norway-border-line'].forEach(id => {
+  ['norway-glow', 'norway-border-line'].forEach(id => {
     if (map.getLayer(id)) map.removeLayer(id);
     if (map.getSource(id)) map.removeSource(id);
   });
@@ -20937,6 +29714,26 @@ function addNorwayBorder() {
     [12.10, 61.80], [12.15, 61.00], [11.80, 59.80], [11.45, 59.10],
     [11.15, 58.95]
   ];
+
+  // Subtle glow highlight on Norway (fades out when zoomed in past globe view)
+  map.addSource('norway-glow', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: NORWAY_CENTER }
+    }
+  });
+  map.addLayer({
+    id: 'norway-glow',
+    type: 'circle',
+    source: 'norway-glow',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 80, 4, 140, 6, 200, 8, 0],
+      'circle-color': 'rgba(94, 129, 172, 0.12)',
+      'circle-blur': 1,
+      'circle-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.8, 5, 0.6, 7, 0]
+    }
+  });
 
   // Border line
   map.addSource('norway-border-line', {
@@ -20996,19 +29793,6 @@ function generatePopupContent(customer) {
   // Generate custom organization fields from Excel import
   const customFieldsHtml = renderPopupCustomFields(customer);
 
-  // Show org.nr., kundenr, prosjektnr, estimert tid
-  let extraFieldsHtml = '';
-  const orgNr = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]);
-  if (orgNr) extraFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
-  if (customer.kundenummer) extraFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
-  if (customer.prosjektnummer) extraFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
-  if (customer.estimert_tid) {
-    const _h = Math.floor(customer.estimert_tid / 60);
-    const _m = customer.estimert_tid % 60;
-    const tidStr = _h > 0 ? (_m > 0 ? `${_h}t ${_m}m` : `${_h}t`) : `${_m}m`;
-    extraFieldsHtml += `<p><strong>Est. tid:</strong> ${tidStr}</p>`;
-  }
-
   // Show notater if present (strip internal tags for cleaner display)
   let notatHtml = '';
   if (customer.notater) {
@@ -21033,53 +29817,224 @@ function generatePopupContent(customer) {
   // Generate subcategory assignments display
   const subcatHtml = renderPopupSubcategories(customer);
 
+  // Determine accent color from control status
+  const accentClass = controlStatus === 'overdue' ? 'accent-overdue'
+    : controlStatus === 'soon' ? 'accent-soon'
+    : controlStatus === 'ok' ? 'accent-ok'
+    : controlStatus === 'good' ? 'accent-good' : '';
+
+  // Build subtitle from location
+  const subtitle = [customer.postnummer, customer.poststed].filter(Boolean).map(s => escapeHtml(s)).join(' ');
+
+  // Build info grid rows
+  let infoRows = '';
+  if (customer.adresse) {
+    infoRows += `<span class="popup-label">Adresse</span><span class="popup-value">${escapeHtml(customer.adresse)}</span>`;
+  }
+  if (subtitle) {
+    infoRows += `<span class="popup-label">Sted</span><span class="popup-value">${subtitle}</span>`;
+  }
+  if (customer.telefon) {
+    infoRows += `<span class="popup-label">Telefon</span><span class="popup-value">${escapeHtml(customer.telefon)}</span>`;
+  }
+  if (customer.epost) {
+    infoRows += `<span class="popup-label">E-post</span><span class="popup-value">${escapeHtml(customer.epost)}</span>`;
+  }
+  const orgNrVal = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]);
+  if (orgNrVal) {
+    infoRows += `<span class="popup-label">Org.nr</span><span class="popup-value">${escapeHtml(orgNrVal)}</span>`;
+  }
+  if (customer.kundenummer) {
+    infoRows += `<span class="popup-label">Kundenr</span><span class="popup-value">${escapeHtml(customer.kundenummer)}</span>`;
+  }
+  if (customer.prosjektnummer) {
+    infoRows += `<span class="popup-label">Prosjektnr</span><span class="popup-value">${escapeHtml(customer.prosjektnummer)}</span>`;
+  }
+  if (customer.estimert_tid) {
+    const _h = Math.floor(customer.estimert_tid / 60);
+    const _m = customer.estimert_tid % 60;
+    const tidStr = _h > 0 ? (_m > 0 ? `${_h}t ${_m}m` : `${_h}t`) : `${_m}m`;
+    infoRows += `<span class="popup-label">Est. tid</span><span class="popup-value">${tidStr}</span>`;
+  }
+
   return `
-    ${presenceBanner}
-    <h3>${escapeHtml(customer.navn)}</h3>
-    ${customer.kategori ? `<p><strong>Kategori:</strong> ${escapeHtml(customer.kategori)}</p>` : ''}
-    ${subcatHtml}
-    ${extraFieldsHtml}
-    ${customFieldsHtml}
-    <p>${escapeHtml(customer.adresse)}</p>
-    <p>${escapeHtml(customer.postnummer || '')} ${escapeHtml(customer.poststed || '')}</p>
-    ${customer.telefon ? `<p>Tlf: ${escapeHtml(customer.telefon)}</p>` : ''}
-    ${customer.epost ? `<p>E-post: ${escapeHtml(customer.epost)}</p>` : ''}
-    ${kontrollInfoHtml}
-    ${notatHtml}
+    <div class="popup-accent ${accentClass}"></div>
+    <div class="popup-inner">
+      ${presenceBanner}
+      <h3>${escapeHtml(customer.navn)}</h3>
+      <div class="popup-subtitle">${customer.kategori ? escapeHtml(customer.kategori) : ''}${customer.kategori && subtitle ? ' &middot; ' : ''}${!customer.kategori ? subtitle : ''}</div>
+      ${subcatHtml}
+      ${customFieldsHtml}
+      ${infoRows ? `<div class="popup-info-grid">${infoRows}</div>` : ''}
+      ${kontrollInfoHtml}
+      ${notatHtml}
+    </div>
+    ${buildPopupWeekDayPicker(customer.id)}
+    ${buildPopupTeamAssign(customer.id)}
     <div class="popup-actions">
       <button class="btn btn-small btn-navigate" data-action="navigateToCustomer" data-lat="${customer.lat}" data-lng="${customer.lng}" data-name="${escapeHtml(customer.navn)}">
         <i aria-hidden="true" class="fas fa-directions"></i> Naviger
       </button>
       <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
-        ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
+        <i aria-hidden="true" class="fas fa-route"></i> ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
       </button>
-      <div class="popup-btn-group">
-        <button class="btn btn-small btn-calendar" data-action="quickAddToday" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i aria-hidden="true" class="fas fa-calendar-plus"></i> I dag
-        </button>
-        <button class="btn btn-small btn-calendar" data-action="showCalendarQuickMenu" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i aria-hidden="true" class="fas fa-chevron-down" style="font-size:9px"></i>
-        </button>
-      </div>
-      ${splitViewOpen && splitViewState.activeDay ? `
-      <button class="btn btn-small btn-calendar" data-action="quickAddToSplitDay" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}" style="background:var(--color-primary);color:#fff;width:100%;">
-        <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
-      </button>
-      ` : ''}
       <button class="btn btn-small btn-success" data-action="quickMarkVisited" data-customer-id="${customer.id}">
-        <i aria-hidden="true" class="fas fa-check"></i> Marker besøkt
+        <i aria-hidden="true" class="fas fa-check"></i> Besøkt
       </button>
       <button class="btn btn-small btn-secondary" data-action="editCustomer" data-customer-id="${customer.id}">
-        Rediger
+        <i aria-hidden="true" class="fas fa-pen"></i> Rediger
       </button>
       <button class="btn btn-small ${hasEmail ? 'btn-email' : 'btn-disabled'}"
               data-action="sendEmail"
               data-customer-id="${customer.id}"
-              ${hasEmail ? '' : 'disabled'}>
+              ${hasEmail ? '' : 'disabled aria-disabled="true"'}
+              title="${hasEmail ? 'Send e-post til kunden' : 'Ingen e-postadresse registrert'}">
         <i aria-hidden="true" class="fas fa-envelope"></i> E-post
       </button>
+      ${hasEmail ? `<button class="btn btn-small btn-notify-customer"
+              data-action="notifyCustomerOnWay"
+              data-customer-id="${customer.id}"
+              title="Send «på vei»-varsel til kunden">
+        <i aria-hidden="true" class="fas fa-paper-plane"></i> På vei
+      </button>` : ''}
     </div>
   `;
+}
+
+
+// PANEL ZOOM OPACITY - Fade all panels when zooming into the map
+// ================================================================
+// When the map zooms in (any method: scroll wheel, flyTo, fitBounds),
+// sidebar, content panel and filter panel become progressively more
+// transparent so the map gets focus. Hovering a panel restores its
+// own opacity temporarily.
+//
+// Uses a CSS custom property + ::after overlay instead of element opacity
+// to avoid breaking stacking context / z-index / pointer-events.
+
+let _panelBaseZoom = null;
+const _hoveredPanels = new Set();
+const PANEL_OPACITY_MIN = 0.35;
+const PANEL_OPACITY_MAX_DELTA = 10;
+
+const PANEL_IDS = ['sidebar', 'contentPanel', 'filterPanel'];
+
+function _getVisiblePanels() {
+  const panels = [];
+  for (const id of PANEL_IDS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (el.classList.contains('closed') || el.classList.contains('slide-out') || el.classList.contains('collapsed')) continue;
+    panels.push(el);
+  }
+  return panels;
+}
+
+function _calcDim(zoomDelta) {
+  if (zoomDelta <= 0) return 0;
+  const t = Math.min(zoomDelta / PANEL_OPACITY_MAX_DELTA, 1);
+  return t * (1.0 - PANEL_OPACITY_MIN);
+}
+
+function _applyDim(panel, dim) {
+  if (dim <= 0) {
+    panel.classList.remove('zoom-dimmed');
+    panel.style.removeProperty('--zoom-dim');
+  } else {
+    panel.style.setProperty('--zoom-dim', dim);
+    panel.classList.add('zoom-dimmed');
+  }
+}
+
+function updatePanelZoomOpacity() {
+  if (_panelBaseZoom === null) return;
+
+  const currentZoom = map.getZoom();
+  const zoomDelta = currentZoom - _panelBaseZoom;
+
+  if (zoomDelta <= 0) {
+    _panelBaseZoom = currentZoom;
+    for (const panel of _getVisiblePanels()) {
+      _applyDim(panel, 0);
+    }
+    return;
+  }
+
+  const dim = _calcDim(zoomDelta);
+  for (const panel of _getVisiblePanels()) {
+    if (_hoveredPanels.has(panel.id)) continue;
+    _applyDim(panel, dim);
+  }
+}
+
+function resetPanelOpacity() {
+  for (const id of PANEL_IDS) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.remove('zoom-fading', 'zoom-dimmed');
+      el.style.removeProperty('--zoom-dim');
+    }
+  }
+  _panelBaseZoom = null;
+  _hoveredPanels.clear();
+}
+
+function initPanelZoomOpacity() {
+  if (!map) return;
+
+  _panelBaseZoom = map.getZoom();
+
+  // Wrap flyTo and fitBounds to add zoom-fading class for smooth CSS transitions
+  const originalFlyTo = map.flyTo.bind(map);
+  const originalFitBounds = map.fitBounds.bind(map);
+
+  map.flyTo = function(options, eventData) {
+    for (const panel of _getVisiblePanels()) {
+      panel.classList.add('zoom-fading');
+    }
+    return originalFlyTo(options, eventData);
+  };
+
+  map.fitBounds = function(bounds, options, eventData) {
+    for (const panel of _getVisiblePanels()) {
+      panel.classList.add('zoom-fading');
+    }
+    return originalFitBounds(bounds, options, eventData);
+  };
+
+  // Continuous opacity update during any zoom
+  map.on('zoom', updatePanelZoomOpacity);
+
+  // Remove transition class after programmatic zoom ends
+  map.on('zoomend', () => {
+    setTimeout(() => {
+      for (const id of PANEL_IDS) {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('zoom-fading');
+      }
+    }, 150);
+  });
+
+  // Restore on hover per panel
+  for (const id of PANEL_IDS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+
+    el.addEventListener('mouseenter', () => {
+      _hoveredPanels.add(id);
+      _applyDim(el, 0);
+    });
+
+    el.addEventListener('mouseleave', () => {
+      _hoveredPanels.delete(id);
+      if (_panelBaseZoom !== null && map) {
+        const zoomDelta = map.getZoom() - _panelBaseZoom;
+        if (zoomDelta > 0) {
+          _applyDim(el, _calcDim(zoomDelta));
+        }
+      }
+    });
+  }
 }
 
 
@@ -21181,6 +30136,7 @@ async function handleSpaLogin(e) {
           const verifyRes = await fetch('/api/klient/verify', {
             credentials: 'include'
           });
+          if (!verifyRes.ok) throw new Error('Verify failed');
           const verifyData = await verifyRes.json();
           if (verifyData.data?.user?.isSuperAdmin) {
             localStorage.setItem('isSuperAdmin', 'true');
@@ -21199,9 +30155,19 @@ async function handleSpaLogin(e) {
 
       // Start the transition to app view (with onboarding if needed)
       setTimeout(async () => {
+        // Mobile: show dedicated field view instead of full app
+        if (isMobileDevice()) {
+          const loginOverlay = document.getElementById('loginOverlay');
+          if (loginOverlay) loginOverlay.classList.add('hidden');
+          initWebSocket();
+          showMobileFieldView();
+          return;
+        }
+
+          // Skip blocking wizard — go straight to app with inline onboarding
         if (needsOnboarding) {
-          // Show onboarding wizard
-          await showOnboardingWizard();
+          // Mark onboarding as completed immediately (address setup is optional/inline)
+          try { await skipOnboarding(); } catch (e) { /* continue */ }
         }
         transitionToAppView({ isNewUser: needsOnboarding });
       }, 300);
@@ -21354,22 +30320,32 @@ function transitionToAppView(options = {}) {
       stopGlobeSpin();
       // Reload config to get office address (user just authenticated, config was loaded pre-login)
       try { await loadConfig(); } catch (e) { /* continue with existing config */ }
-      const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
-      map.flyTo({
-        center: hasOfficeLocation
-          ? [appConfig.routeStartLng, appConfig.routeStartLat]
-          : NORWAY_CENTER,
-        zoom: hasOfficeLocation ? 6 : NORWAY_ZOOM,
-        duration: 1600,
-        essential: true,
-        curve: 1.42
-      });
+      if (isMobile) {
+        // On mobile: set globe view silently, defer flyTo to first "Kart" tab click
+        map.jumpTo({ center: [15.0, 62.0], zoom: 2.5 });
+        window._mobileNeedsFlyIn = true;
+      } else {
+        const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
+        map.flyTo({
+          center: hasOfficeLocation
+            ? [appConfig.routeStartLng, appConfig.routeStartLat]
+            : NORWAY_CENTER,
+          zoom: hasOfficeLocation ? 6 : NORWAY_ZOOM,
+          duration: 1600,
+          essential: true,
+          curve: 1.42
+        });
+      }
     }
   }, 300);
 
   // PHASE 4: Hide login overlay completely (pointer-events already handled by CSS)
   setTimeout(() => {
     loginOverlay.classList.add('hidden');
+    // Initialize mobile tab bar now that login is hidden
+    if (isMobile && typeof initBottomTabBar === 'function') {
+      initBottomTabBar();
+    }
   }, 700);
 
   // PHASE 5: Enable map interactivity
@@ -21414,17 +30390,25 @@ function transitionToAppView(options = {}) {
       loadCustomers();
     }
 
-    // Initialize onboarding checklist after data is loaded
+    // Initialize onboarding checklist and attention badges after data is loaded
     setTimeout(() => {
       if (typeof initOnboardingChecklist === 'function') {
         initOnboardingChecklist();
+      }
+      // Always refresh attention badges (marks incomplete fields)
+      if (typeof refreshAttentionBadges === 'function') {
+        refreshAttentionBadges();
+      }
+      // For users without address: auto-navigate to admin and highlight
+      if (!appConfig.routeStartLat && typeof showInlineAddressSetup === 'function') {
+        showInlineAddressSetup();
       }
     }, 500);
   }, 1700);
 
   // PHASE 6: Slide in sidebar and show tab navigation
-  // For new users: keep panels hidden so address/getting-started banners aren't blocked
-  if (!isNewUser) {
+  // Always show panels — attention system highlights fields in the real UI
+  {
     setTimeout(() => {
       if (sidebar) {
         sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
@@ -21467,8 +30451,8 @@ function transitionToAppView(options = {}) {
 
   // PHASE 8: Clean up inline styles (after easeTo settles at ~2.6s)
   setTimeout(() => {
-    // Clean up sidebar/filter inline styles (only if they were animated in)
-    if (!isNewUser) {
+    // Clean up sidebar/filter inline styles
+    {
       if (sidebar) {
         sidebar.style.transition = '';
         sidebar.style.transform = '';
@@ -21878,7 +30862,7 @@ function showUnknownCategoryNotification(count) {
     <div class="notification-content">
       <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
       <span><strong>${count}</strong> kunde${count > 1 ? 'r' : ''} har kategorier fra tidligere bransje og m&aring; oppdateres.</span>
-      <button class="btn-close-notification" onclick="this.parentElement.parentElement.remove()">
+      <button class="btn-close-notification" data-action="removeAncestor" data-ancestor=".unknown-category-notification">
         <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
@@ -23053,15 +32037,18 @@ function updateWeekPlanBadges() {
 
   // Planned (unsaved) customers from weekly plan
   if (weekPlanState.days) {
+    const globalAssigned = weekPlanState.globalAssignedTo || userName;
     for (const dayKey of weekDayKeys) {
       const dayData = weekPlanState.days[dayKey];
       if (!dayData) continue;
       for (const c of dayData.planned) {
+        const assignedName = c.addedBy || globalAssigned;
+        const assignedInitials = getCreatorDisplay(assignedName, true);
         planMap.set(c.id, {
-          initials: userInitials,
+          initials: assignedInitials,
           day: weekDayLabels[weekDayKeys.indexOf(dayKey)].substring(0, 3),
-          color: colorByName.get(userName) || TEAM_COLORS[0],
-          creator: userName
+          color: colorByName.get(assignedName) || TEAM_COLORS[0],
+          creator: assignedName
         });
       }
     }
@@ -23073,7 +32060,7 @@ function updateWeekPlanBadges() {
     for (const a of avtaler) {
       if (!weekDates.has(a.dato) || !a.kunde_id) continue;
       if (planMap.has(a.kunde_id)) continue;
-      const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+      const creator = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
       if (!creator) continue;
       const initials = getCreatorDisplay(creator, true);
       const dayDate = new Date(a.dato + 'T00:00:00');
@@ -23275,7 +32262,7 @@ async function loadConfig() {
     appConfig = {
       appName: 'Sky Planner',
       companyName: '',
-      companySubtitle: 'Kontroll. Oversikt. Alltid.',
+      companySubtitle: 'Kundeadministrasjon og ruteplanlegging for servicebedrifter',
       logoUrl: '/skyplanner-logo.svg',
       contactAddress: '',
       contactPhone: '',
@@ -23328,8 +32315,9 @@ async function loadCustomers() {
       showAppPanels();
     }
 
-    // Update onboarding checklist progress
+    // Update onboarding checklist progress and attention badges
     if (typeof refreshChecklistState === 'function') refreshChecklistState();
+    if (typeof refreshAttentionBadges === 'function') refreshAttentionBadges();
 
     // Load avtaler and subcategory assignments in parallel
     if (!weekPlanState.weekStart) initWeekPlanState(new Date());
@@ -23342,111 +32330,9 @@ async function loadCustomers() {
   }
 }
 
-// Show or hide the getting started banner based on customer count
-function updateGettingStartedBanner() {
-  const existing = document.getElementById('gettingStartedBanner');
-
-  // Remove banner if customers exist
-  if (customers.length > 0) {
-    if (existing) existing.remove();
-    return;
-  }
-
-  // Don't show if user has dismissed it
-  if (localStorage.getItem('gettingStartedDismissed') === 'true') {
-    return;
-  }
-
-  // Don't show if banner already exists
-  if (existing) return;
-
-  // Create and insert banner
-  const banner = document.createElement('div');
-  banner.id = 'gettingStartedBanner';
-  banner.className = 'getting-started-banner';
-  banner.innerHTML = renderGettingStartedBanner();
-
-  const mapContainer = document.getElementById('sharedMapContainer');
-  if (mapContainer) {
-    mapContainer.appendChild(banner);
-  }
-
-  // Event delegation for banner actions (avoids inline onclick for CSP compliance)
-  banner.addEventListener('click', (e) => {
-    const target = e.target.closest('[data-action]');
-    if (!target) return;
-    const action = target.dataset.action;
-    if (action === 'dismiss-getting-started') {
-      dismissGettingStartedBanner();
-    } else if (action === 'open-integrations') {
-      window.open(target.dataset.url, '_blank');
-    } else if (action === 'open-import') {
-      dismissGettingStartedBanner();
-      showImportModal();
-    } else if (action === 'add-customer-manual') {
-      dismissGettingStartedBanner();
-      addCustomer();
-    }
-  });
-}
-
-// Render getting started banner HTML
-function renderGettingStartedBanner() {
-  const webUrl = appConfig.webUrl || '';
-
-  return `
-    <div class="getting-started-header">
-      <div>
-        <h2>Velkommen til Sky Planner!</h2>
-        <p>Legg til dine kunder for å komme i gang.</p>
-      </div>
-      <button class="getting-started-close" data-action="dismiss-getting-started" title="Lukk">
-        <i aria-hidden="true" class="fas fa-times"></i>
-      </button>
-    </div>
-    <div class="getting-started-cards">
-      <div class="getting-started-card" data-action="open-integrations" data-url="${escapeHtml(webUrl)}/dashboard/innstillinger/integrasjoner">
-        <div class="getting-started-card-icon">
-          <i aria-hidden="true" class="fas fa-plug"></i>
-        </div>
-        <h3>Koble til regnskapssystem</h3>
-        <p>Synkroniser kunder fra Tripletex, Fiken eller PowerOffice.</p>
-      </div>
-      <div class="getting-started-card" data-action="open-import">
-        <div class="getting-started-card-icon">
-          <i aria-hidden="true" class="fas fa-file-import"></i>
-        </div>
-        <h3>Importer fra fil</h3>
-        <p>Last opp kundedata fra Excel eller CSV-fil med vår importveiviser.</p>
-      </div>
-      <div class="getting-started-card" data-action="add-customer-manual">
-        <div class="getting-started-card-icon">
-          <i aria-hidden="true" class="fas fa-plus-circle"></i>
-        </div>
-        <h3>Legg til manuelt</h3>
-        <p>Opprett kunder en og en direkte i systemet.</p>
-      </div>
-    </div>
-  `;
-}
-
-// Dismiss getting started banner
-function dismissGettingStartedBanner() {
-  localStorage.setItem('gettingStartedDismissed', 'true');
-  const banner = document.getElementById('gettingStartedBanner');
-  if (banner) {
-    banner.style.opacity = '0';
-    banner.style.transform = 'translateY(-20px)';
-    setTimeout(() => banner.remove(), 300);
-  }
-  // Reveal sidebar/filter if hidden for new users
-  if (typeof showAppPanels === 'function') showAppPanels();
-
-  // Now that banner is gone, show address prompt if needed (was deferred to avoid collision)
-  setTimeout(() => {
-    if (typeof showAddressBannerIfNeeded === 'function') showAddressBannerIfNeeded();
-  }, 400);
-}
+// Getting started banner removed — onboarding now uses inline address card + checklist
+function updateGettingStartedBanner() {}
+function dismissGettingStartedBanner() {}
 
 // Load områder for filter
 async function loadOmrader() {
@@ -23898,7 +32784,7 @@ function renderCustomerList(customerData) {
     `;
   });
 
-  customerList.innerHTML = html;
+  if (customerList) customerList.innerHTML = html;
   // Event listeners are handled via event delegation in setupEventListeners()
   // Using data-action attributes on elements for CSP compliance and memory efficiency
 }
@@ -24202,6 +33088,8 @@ registerContextMenuAction('ctx-delete-avtale', async (data, ctx) => {
       if (typeof refreshTeamFocus === 'function') refreshTeamFocus();
       if (typeof renderCalendar === 'function') renderCalendar();
       if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+      if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
       if (typeof applyFilters === 'function') applyFilters();
     } else {
       const err = await resp.json().catch(() => ({}));
@@ -24453,7 +33341,7 @@ async function pushCustomerToTripletex(kundeId) {
 
 let activeTooltipEl = null;
 
-function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
+function showMarkerTooltip(customer, markerIconEl) {
   hideMarkerTooltip();
 
   const controlStatus = getControlStatus(customer);
@@ -24518,31 +33406,29 @@ function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
 
   document.body.appendChild(tooltip);
 
-  // Position: use mouse coordinates if available, fall back to marker icon position
+  // Position: anchor above marker icon, centered horizontally
   const tooltipRect = tooltip.getBoundingClientRect();
   let left, top;
 
-  if (mouseEvent) {
-    left = mouseEvent.clientX + 12;
-    top = mouseEvent.clientY - 10;
-  } else if (markerIconEl) {
+  if (markerIconEl) {
     const rect = markerIconEl.getBoundingClientRect();
-    left = rect.left + rect.width / 2 + 12;
-    top = rect.top - 4;
+    left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+    top = rect.top - tooltipRect.height - 8;
   } else {
     left = 100;
     top = 100;
   }
 
-  // Keep within viewport
-  if (left + tooltipRect.width > window.innerWidth) {
-    left = (mouseEvent ? mouseEvent.clientX : left) - tooltipRect.width - 12;
+  // If no room above, show below
+  if (top < 4) {
+    const rect = markerIconEl ? markerIconEl.getBoundingClientRect() : null;
+    top = rect ? rect.bottom + 8 : 4;
   }
-  if (top + tooltipRect.height > window.innerHeight) {
-    top = window.innerHeight - tooltipRect.height - 8;
+  // Keep within viewport horizontally
+  if (left + tooltipRect.width > window.innerWidth - 4) {
+    left = window.innerWidth - tooltipRect.width - 4;
   }
   if (left < 4) left = 4;
-  if (top < 4) top = 4;
 
   tooltip.style.left = `${left}px`;
   tooltip.style.top = `${top}px`;
@@ -26202,6 +35088,63 @@ function clusterCustomersByProximity(customerList) {
 
 
 // @ts-nocheck
+
+// ========================================
+// FRONTEND ERROR REPORTER
+// Captures JS errors and sends to backend for monitoring dashboard
+// ========================================
+(function() {
+  const errorBuffer = [];
+  let flushTimer = null;
+
+  function flushErrors() {
+    if (errorBuffer.length === 0) return;
+    const batch = errorBuffer.splice(0, 10);
+    try {
+      navigator.sendBeacon('/api/client-errors', JSON.stringify(batch));
+    } catch {
+      // Fallback to fetch
+      fetch('/api/client-errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(batch),
+        keepalive: true,
+      }).catch(function() {});
+    }
+  }
+
+  function queueError(err) {
+    errorBuffer.push(err);
+    if (errorBuffer.length >= 5) {
+      flushErrors();
+    } else if (!flushTimer) {
+      flushTimer = setTimeout(function() {
+        flushTimer = null;
+        flushErrors();
+      }, 5000);
+    }
+  }
+
+  window.addEventListener('error', function(event) {
+    queueError({
+      message: event.message || 'Unknown error',
+      source: event.filename,
+      line: event.lineno,
+      col: event.colno,
+      url: location.pathname,
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    var reason = event.reason;
+    queueError({
+      message: (reason && reason.message) ? reason.message : String(reason),
+      source: 'unhandledrejection',
+      url: location.pathname,
+    });
+  });
+})();
+
 // State
 let map;
 // Single map architecture - map is always visible behind login/app overlays
@@ -26246,6 +35189,48 @@ let subscriptionInfo = null; // { status, trialEndsAt, planType } - populated fr
 let accessTokenExpiresAt = null; // Token expiry timestamp - for proactive refresh
 
 // ========================================
+// WOW-FACTOR: Skeleton Loader Helper
+// ========================================
+function renderSkeletons(container, count, template) {
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    if (template === 'stat-card') {
+      html += `<div class="skeleton-stat-card"><div class="skeleton skeleton-circle"></div><div class="skeleton-content"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line xs"></div></div></div>`;
+    } else if (template === 'list-item') {
+      html += `<div class="skeleton-list-item"><div class="skeleton skeleton-circle"></div><div class="skeleton-content"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>`;
+    } else {
+      html += `<div class="skeleton skeleton-card"></div>`;
+    }
+  }
+  container.innerHTML = html;
+}
+
+// ========================================
+// WOW-FACTOR: Animated Number Counter
+// ========================================
+function animateCounter(element, targetValue, duration = 800) {
+  if (!element || typeof targetValue !== 'number') return;
+  const start = performance.now();
+  const startValue = parseInt(element.textContent) || 0;
+  if (startValue === targetValue) return;
+
+  function easeOutExpo(t) {
+    return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+  }
+
+  function update(now) {
+    const elapsed = now - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = easeOutExpo(progress);
+    const current = Math.round(startValue + (targetValue - startValue) * eased);
+    element.textContent = current;
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+// ========================================
 // ACCESSIBLE MODAL HELPERS
 // Wraps modal open/close with focus trap
 // ========================================
@@ -26271,13 +35256,10 @@ function closeModal(modalEl) {
 // Prevents memory leaks from accumulated event listeners
 // ========================================
 const tabCleanupFunctions = {
-  calendar: null,
-  overdue: null,
-  warnings: null,
-  planner: null,
+  dashboard: null,
   customers: null,
-  statistikk: null,
-  missingdata: null,
+  arbeid: null,
+  chat: null,
   admin: null
 };
 
@@ -26359,6 +35341,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    // Mobile: show dedicated field view instead of full app
+    if (isMobileDevice()) {
+      const loginOverlay = document.getElementById('loginOverlay');
+      if (loginOverlay) loginOverlay.classList.add('hidden');
+      initWebSocket();
+      showMobileFieldView();
+      return;
+    }
+
     // Already logged in - skip to app view directly (no animation)
     const loginOverlay = document.getElementById('loginOverlay');
     const appView = document.getElementById('appView');
@@ -26413,8 +35404,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Show user bar with name
     showUserBar();
 
+    // Ensure tab navigation is interactive (may have been disabled on logout)
+    const tabNavigation = document.querySelector('.tab-navigation');
+    if (tabNavigation) {
+      tabNavigation.style.opacity = '1';
+      tabNavigation.style.pointerEvents = 'auto';
+    }
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    if (sidebarToggle) {
+      sidebarToggle.style.opacity = '1';
+      sidebarToggle.style.pointerEvents = 'auto';
+    }
+
     // Setup event listeners
     setupEventListeners();
+
+    // Initialize misc event listeners (import, map legend)
+    initMiscEventListeners();
+
+    // Update map legend with current service types
+    updateMapLegend();
+
+    // Apply MVP mode UI changes based on organization settings
+    applyMvpModeUI();
+
+    // Initialize Today's Work feature
+    initTodaysWork();
+
+    // Initialize Arbeid tab sub-navigation
+    if (typeof initArbeidNav === 'function') initArbeidNav();
 
     // Initialize chat system
     initChat();
@@ -26514,6 +35532,9 @@ async function initializeApp() {
   // Initialize Today's Work feature
   initTodaysWork();
 
+  // Initialize Arbeid tab sub-navigation
+  if (typeof initArbeidNav === 'function') initArbeidNav();
+
   // Initialize chat system
   initChat();
   initChatEventListeners();
@@ -26547,9 +35568,6 @@ function setupEventListeners() {
   // Logout button - use SPA logout
   document.getElementById('logoutBtnMain')?.addEventListener('click', handleLogout);
 
-  // Nightmode toggle button (map tiles)
-  document.getElementById('nightmodeBtn')?.addEventListener('click', toggleNightMode);
-
   // Theme toggle button (UI light/dark mode)
   document.getElementById('themeToggleBtn')?.addEventListener('click', toggleTheme);
 
@@ -26557,12 +35575,15 @@ function setupEventListeners() {
   document.querySelectorAll('.dashboard-actions .action-card').forEach(card => {
     card.addEventListener('click', () => {
       const action = card.dataset.action;
-      if (action === 'showOverdueTab') {
-        switchToTab('overdue');
-      } else if (action === 'showRoutesTab') {
-        switchToTab('routes');
-      } else if (action === 'showCalendarTab') {
-        switchToTab('calendar');
+      if (action === 'showOverdueSection') {
+        const el = document.getElementById('dash-overdue');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else if (action === 'showArbeidUke') {
+        switchToTab('arbeid');
+        setTimeout(() => switchArbeidView('uke'), 50);
+      } else if (action === 'showArbeidMaaned') {
+        switchToTab('arbeid');
+        setTimeout(() => switchArbeidView('maaned'), 50);
       }
     });
   });
@@ -26631,6 +35652,9 @@ function setupEventListeners() {
           link.click();
           URL.revokeObjectURL(link.href);
           showNotification(`Eksportert ${format.toUpperCase()} med suksess`, 'success');
+          // Track for onboarding checklist
+          localStorage.setItem('skyplanner_firstExport', 'true');
+          if (typeof refreshChecklistState === 'function') refreshChecklistState();
         } catch (err) {
           showNotification('Eksport feilet: ' + err.message, 'error');
         }
@@ -26880,15 +35904,33 @@ function setupEventListeners() {
   const tabTitles = {
     'dashboard': 'Dashboard',
     'customers': 'Kunder',
-    'overdue': 'Forfalte',
-    'warnings': 'Kommende kontroller',
-    'calendar': 'Kalender',
-    'weekly-plan': 'Planlagte oppdrag',
-    'planner': 'Planlegger',
-    'statistikk': 'Statistikk',
-    'missingdata': 'Mangler data',
+    'overdue': 'Forfalte kontroller',
+    'upcoming': 'Kommende kontroller',
+    'arbeid': 'Arbeid',
     'chat': 'Meldinger',
     'admin': 'Admin'
+  };
+
+  // Map old tab names to new structure for backward compatibility
+  const tabMigrationMap = {
+    'overdue': 'dashboard',
+    'warnings': 'dashboard',
+    'statistikk': 'dashboard',
+    'missingdata': 'dashboard',
+    'team-overview': 'arbeid',
+    'todays-work': 'arbeid',
+    'calendar': 'arbeid',
+    'weekly-plan': 'arbeid',
+    'planner': 'arbeid'
+  };
+
+  // Map old tab names to arbeid sub-views
+  const arbeidSubViewMap = {
+    'team-overview': 'idag',
+    'todays-work': 'idag',
+    'calendar': 'maaned',
+    'weekly-plan': 'uke',
+    'planner': 'planlegger'
   };
 
   // Open content panel
@@ -26900,6 +35942,7 @@ function setupEventListeners() {
       contentPanel.style.transition = '';
       contentPanel.classList.remove('closed');
       contentPanel.classList.add('open');
+      if (typeof resetPanelOpacity === 'function') resetPanelOpacity();
       localStorage.setItem('contentPanelOpen', 'true');
 
       // On mobile, default to half-height mode
@@ -27075,37 +36118,53 @@ function setupEventListeners() {
         runTabCleanup(prevTab);
       }
 
-      // Deactivate weekly plan area-select mode when leaving that tab
-      if (prevTab === 'weekly-plan') {
-        if (weekPlanState.activeDay) {
-          weekPlanState.activeDay = null;
-          if (areaSelectMode) toggleAreaSelect();
-        }
-        // Reset team focus - restore all markers
-        if (wpFocusedTeamMember) {
-          wpFocusedTeamMember = null;
-          wpFocusedMemberIds = null;
-          applyTeamFocusToMarkers();
-          if (typeof refreshClusters === 'function') refreshClusters();
-        }
-        // Close route summary if open
-        closeWpRouteSummary();
+      // Cleanup arbeid sub-views when leaving arbeid tab
+      if (prevTab === 'arbeid') {
+        if (typeof unloadArbeidTab === 'function') unloadArbeidTab();
       }
 
-      // Remove active class from all tabs and panes
-      tabItems.forEach(t => {
-        t.classList.remove('active');
-        t.setAttribute('aria-selected', 'false');
-      });
-      tabPanes.forEach(p => p.classList.remove('active'));
+      // Stop team overview polling when switching away (safety net)
+      if (typeof unloadTeamOverview === 'function') unloadTeamOverview();
 
-      // Add active class to clicked tab and corresponding pane
-      tab.classList.add('active');
-      tab.setAttribute('aria-selected', 'true');
-      const tabPane = document.getElementById(`tab-${tabName}`);
+      // Find the currently active pane for exit animation
+      const prevPane = document.querySelector('.tab-pane.active');
+      const newPane = document.getElementById(`tab-${tabName}`);
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // Animate tab transition
+      const doSwitch = () => {
+        tabItems.forEach(t => {
+          t.classList.remove('active');
+          t.setAttribute('aria-selected', 'false');
+        });
+        tabPanes.forEach(p => { p.classList.remove('active'); p.classList.remove('tab-exit'); p.classList.remove('tab-enter'); });
+
+        tab.classList.add('active');
+        tab.setAttribute('aria-selected', 'true');
+        if (newPane) {
+          newPane.classList.add('active');
+          if (!reducedMotion) {
+            newPane.classList.add('tab-enter');
+            newPane.addEventListener('animationend', () => {
+              newPane.classList.remove('tab-enter');
+              newPane.style.willChange = '';
+            }, { once: true });
+          }
+        }
+      };
+
+      if (prevPane && prevPane !== newPane && !reducedMotion) {
+        prevPane.classList.add('tab-exit');
+        let switched = false;
+        const safeguard = () => { if (!switched) { switched = true; doSwitch(); } };
+        prevPane.addEventListener('animationend', safeguard, { once: true });
+        setTimeout(safeguard, 150); // Safety: ensure switch happens even if animationend misses
+      } else {
+        doSwitch();
+      }
+
+      const tabPane = newPane;
       if (tabPane) {
-        tabPane.classList.add('active');
-
         // Fjern compact-mode slik at alle faner kan scrolle
         contentPanel.classList.remove('compact-mode');
 
@@ -27122,6 +36181,14 @@ function setupEventListeners() {
 
         // Save active tab to localStorage
         localStorage.setItem('activeTab', tabName);
+        if (typeof onTabSwitch === 'function') onTabSwitch(tabName);
+
+        // Track dashboard view for onboarding checklist
+        if (tabName === 'dashboard') {
+          localStorage.setItem('skyplanner_dashboardViewed', 'true');
+          if (typeof refreshChecklistState === 'function') refreshChecklistState();
+          if (typeof renderDashboardSections === 'function') renderDashboardSections();
+        }
 
         // On mobile, close sidebar when opening content panel
         const isMobile = window.innerWidth <= 768;
@@ -27130,31 +36197,24 @@ function setupEventListeners() {
         }
 
         // Render content for the active tab
-        if (tabName === 'overdue') {
-          renderOverdue();
-        } else if (tabName === 'warnings') {
-          renderWarnings();
-        } else if (tabName === 'calendar') {
-          renderCalendar();
-          openCalendarSplitView();
-        } else if (tabName === 'weekly-plan') {
-          renderWeeklyPlan();
-        } else if (tabName === 'planner') {
-          renderPlanner();
-        } else if (tabName === 'email') {
-          loadEmailData();
-        } else if (tabName === 'statistikk') {
-          renderStatistikk();
-        } else if (tabName === 'missingdata') {
-          renderMissingData();
-        } else if (tabName === 'customers') {
+        if (tabName === 'customers') {
           renderCustomerAdmin();
+        } else if (tabName === 'arbeid') {
+          if (typeof loadArbeidTab === 'function') loadArbeidTab();
         } else if (tabName === 'admin') {
           loadAdminData();
-        } else if (tabName === 'todays-work') {
-          loadTodaysWork();
         } else if (tabName === 'chat') {
           onChatTabOpened();
+        } else if (tabName === 'email') {
+          loadEmailData();
+        } else if (tabName === 'calendar') {
+          renderCalendar();
+        } else if (tabName === 'weekly-plan') {
+          renderWeeklyPlan();
+        } else if (tabName === 'overdue') {
+          renderOverdueTab();
+        } else if (tabName === 'upcoming') {
+          renderUpcomingTab();
         }
 
         // Show feature tour if this is the user's first visit to this tab
@@ -27163,6 +36223,39 @@ function setupEventListeners() {
         }
       }
     });
+  });
+
+  // Explicit handlers for Forfalte/Kommende tabs (ensure they always work)
+  document.getElementById('tab-btn-overdue')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    tabItems.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    tabPanes.forEach(p => { p.classList.remove('active'); p.classList.remove('tab-exit'); p.classList.remove('tab-enter'); });
+    const btn = document.getElementById('tab-btn-overdue');
+    const pane = document.getElementById('tab-overdue');
+    if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
+    if (pane) pane.classList.add('active');
+    if (panelTitle) panelTitle.textContent = 'Forfalte kontroller';
+    openContentPanel();
+    localStorage.setItem('activeTab', 'overdue');
+    if (typeof onTabSwitch === 'function') onTabSwitch('overdue');
+    if (typeof renderOverdueTab === 'function') renderOverdueTab();
+  });
+
+  document.getElementById('tab-btn-upcoming')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    tabItems.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    tabPanes.forEach(p => { p.classList.remove('active'); p.classList.remove('tab-exit'); p.classList.remove('tab-enter'); });
+    const btn = document.getElementById('tab-btn-upcoming');
+    const pane = document.getElementById('tab-upcoming');
+    if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
+    if (pane) pane.classList.add('active');
+    if (panelTitle) panelTitle.textContent = 'Kommende kontroller';
+    openContentPanel();
+    localStorage.setItem('activeTab', 'upcoming');
+    if (typeof onTabSwitch === 'function') onTabSwitch('upcoming');
+    if (typeof renderUpcomingTab === 'function') renderUpcomingTab();
   });
 
   // Restore saved tab and content panel state
@@ -27178,10 +36271,17 @@ function setupEventListeners() {
   const hasMobileTabBar = window.innerWidth <= 768;
   if (!hasMobileTabBar) {
     if (savedTab) {
-      const savedTabBtn = document.querySelector(`.tab-item[data-tab="${savedTab}"]`);
+      // Migrate old tab names to new structure
+      const migratedTab = tabMigrationMap[savedTab] || savedTab;
+      const savedTabBtn = document.querySelector(`.tab-item[data-tab="${migratedTab}"]`);
       if (savedTabBtn) {
         setTimeout(() => {
           savedTabBtn.click();
+          // If migrated to arbeid, switch to the correct sub-view
+          const subView = arbeidSubViewMap[savedTab];
+          if (subView && typeof switchArbeidView === 'function') {
+            setTimeout(() => switchArbeidView(subView), 100);
+          }
         }, 100);
       }
     }
@@ -27418,10 +36518,13 @@ function setupEventListeners() {
     }
   });
 
-  // Technician dispatch handler for weekly plan (admin only)
+  // Team member dispatch handler for weekly plan (admin only)
   document.addEventListener('change', (e) => {
     if (e.target.classList.contains('wp-dispatch-select')) {
-      weekPlanState.globalAssignedTo = e.target.value;
+      const newAssignee = e.target.value;
+      // Only update globalAssignedTo — do NOT overwrite addedBy on existing customers.
+      // Each customer keeps its original addedBy so multiple members can share a day.
+      weekPlanState.globalAssignedTo = newAssignee;
       renderWeeklyPlan();
     }
   });
@@ -27449,6 +36552,21 @@ function setupEventListeners() {
     }
   });
 
+  // Weekplan date picker change handler
+  document.addEventListener('change', async (e) => {
+    if (e.target.id === 'wpDatePicker') {
+      const selectedDate = new Date(e.target.value + 'T00:00:00');
+      if (isNaN(selectedDate.getTime())) return;
+      if (getWeekPlanTotalPlanned() > 0) {
+        const confirmNav = await showConfirm('Du har ulagrede endringer. Vil du bytte uke?', 'Bytt uke');
+        if (!confirmNav) return;
+      }
+      closeWpRouteSummary();
+      initWeekPlanState(selectedDate);
+      renderWeeklyPlan();
+    }
+  });
+
   // Global event delegation for data-action buttons (CSP-compliant)
   document.addEventListener('click', async (e) => {
     const actionEl = e.target.closest('[data-action]');
@@ -27457,6 +36575,14 @@ function setupEventListeners() {
     const action = actionEl.dataset.action;
 
     switch (action) {
+      case 'briefShowOverdue':
+        e.stopPropagation();
+        document.getElementById('tab-btn-overdue')?.click();
+        break;
+      case 'briefShowWeekplan':
+        e.stopPropagation();
+        switchToTab('weekly-plan');
+        break;
       case 'focusOnCustomer':
         focusOnCustomer(Number.parseInt(actionEl.dataset.customerId));
         break;
@@ -27503,6 +36629,10 @@ function setupEventListeners() {
                 await loadAvtaler();
                 refreshTeamFocus();
                 renderWeeklyPlan();
+                renderCalendar();
+                if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+                if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
+                applyFilters();
               } else {
                 const delErr = await delResp.json().catch(() => ({}));
                 showToast(delErr.error?.message || 'Kunne ikke slette avtale', 'error');
@@ -27532,6 +36662,7 @@ function setupEventListeners() {
           }
         }
         break;
+      // clearDayAvtaler is now a global function in weekplan.js (called via delegation)
       case 'saveWeeklyPlan':
         e.stopPropagation();
         await saveWeeklyPlan();
@@ -27559,6 +36690,17 @@ function setupEventListeners() {
         closeWpRouteSummary();
         initWeekPlanState(addDaysToDate(weekPlanState.weekStart, 7));
         renderWeeklyPlan();
+        break;
+      case 'weekPlanPickDate':
+        e.stopPropagation();
+        {
+          const picker = document.getElementById('wpDatePicker');
+          if (picker) {
+            picker.style.pointerEvents = 'auto';
+            try { picker.showPicker(); } catch (_) { picker.click(); }
+            picker.style.pointerEvents = 'none';
+          }
+        }
         break;
       case 'setEstimatedTime':
         e.stopPropagation();
@@ -27592,9 +36734,37 @@ function setupEventListeners() {
         e.stopPropagation();
         closeWpRouteSummary();
         break;
+      case 'toggleRouteMarkers':
+        e.stopPropagation();
+        toggleRouteMarkerVisibility();
+        break;
       case 'wpExportMaps':
         e.stopPropagation();
         wpExportToMaps();
+        break;
+      case 'wpSuggestStops':
+        e.stopPropagation();
+        wpSuggestStops();
+        break;
+      case 'wpAutoFillWeek':
+        e.stopPropagation();
+        wpAutoFillWeek();
+        break;
+      case 'wpCloseSuggestions':
+        e.stopPropagation();
+        const suggestContainer = document.getElementById('wpSuggestions');
+        if (suggestContainer) {
+          suggestContainer._candidates = null;
+          suggestContainer.innerHTML = '';
+        }
+        break;
+      case 'wpAddSuggested':
+        e.stopPropagation();
+        wpAddSuggested(Number(actionEl.dataset.customerId));
+        break;
+      case 'wpAddAllSuggested':
+        e.stopPropagation();
+        wpAddAllSuggested();
         break;
       case 'focusTeamMember':
         e.stopPropagation();
@@ -27670,6 +36840,10 @@ function setupEventListeners() {
         e.stopPropagation();
         sendManualReminder(Number.parseInt(actionEl.dataset.customerId));
         break;
+      case 'notifyCustomerOnWay':
+        e.stopPropagation();
+        notifyCustomerOnWay(Number.parseInt(actionEl.dataset.customerId));
+        break;
       case 'createRouteFromGroup':
         e.stopPropagation();
         const groupIds = actionEl.dataset.customerIds.split(',').map(id => Number.parseInt(id));
@@ -27716,6 +36890,9 @@ function setupEventListeners() {
             showToast('Avtale slettet', 'success');
             await loadAvtaler();
             renderCalendar();
+            if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+            if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+            if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
           } else {
             showToast('Kunne ikke slette avtalen', 'error');
           }
@@ -27727,6 +36904,14 @@ function setupEventListeners() {
       case 'quickMarkVisited':
         e.stopPropagation();
         quickMarkVisited(Number.parseInt(actionEl.dataset.customerId));
+        break;
+      case 'popupAddToWeekDay':
+        e.stopPropagation();
+        popupAddToWeekDay(Number.parseInt(actionEl.dataset.customerId), actionEl.dataset.dayKey);
+        break;
+      case 'popupAssignTeam':
+        e.stopPropagation();
+        popupAssignTeam(Number.parseInt(actionEl.dataset.customerId), actionEl.dataset.memberName);
         break;
       case 'openDayDetail':
         const date = actionEl.dataset.date;

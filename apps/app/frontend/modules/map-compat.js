@@ -72,6 +72,15 @@ function rectangleGeoJSON(corner1, corner2) {
   };
 }
 
+// Clear route line and stop markers from the map
+function clearRoute() {
+  removeLayerAndSource('route-line');
+  if (typeof routeMarkers !== 'undefined') {
+    routeMarkers.forEach(m => m.remove());
+    routeMarkers.length = 0;
+  }
+}
+
 // Draw a route line from [lng, lat] coordinates array with custom styling
 // Uses the shared 'route-line' source/layer from clearRoute()
 function drawRouteGeoJSON(lngLatCoords, options = {}) {
@@ -101,6 +110,7 @@ function drawRouteGeoJSON(lngLatCoords, options = {}) {
 let currentPopup = null;
 
 function showMapPopup(lngLatCoord, html, options = {}) {
+  hideMarkerTooltip();
   if (currentPopup) currentPopup.remove();
   currentPopup = new mapboxgl.Popup({
     maxWidth: options.maxWidth || '350px',

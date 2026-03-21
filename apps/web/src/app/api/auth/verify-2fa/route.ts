@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       .split(';')
       .map((c) => c.trim())
       .find((c) => c.startsWith('__2fa_session='));
-    const sessionToken = sessionCookie?.split('=')[1] || body.sessionToken; // Fallback for backwards compat
+    const sessionToken = sessionCookie?.split('=')[1];
 
     if (!sessionToken || !code) {
       return new Response(
@@ -91,21 +91,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Rate limiting: max 5 attempts per session
+    // Uses true atomic SQL increment to prevent race conditions:
+    // UPDATE ... SET attempts = attempts + 1 WHERE attempts < MAX RETURNING attempts
     const MAX_ATTEMPTS = 5;
-    const currentAttempts = session.attempts ?? 0;
-    if (currentAttempts >= MAX_ATTEMPTS) {
+    const { data: rpcResult, error: rpcError } = await supabase.rpc(
+      'increment_totp_attempts',
+      { session_id: session.id, max_attempts: MAX_ATTEMPTS }
+    );
+
+    // rpc returns new attempt count, or null if already at max / not found
+    if (rpcError || rpcResult === null || rpcResult === undefined) {
+      // Session at max attempts or deleted — clean up
       await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
       return new Response(
         JSON.stringify({ success: false, error: { code: 'ERROR', message: 'For mange forsøk. Logg inn på nytt.' } }),
         { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '300' } }
       );
     }
-
-    // Increment attempt counter
-    await supabase
-      .from('totp_pending_sessions')
-      .update({ attempts: currentAttempts + 1 })
-      .eq('id', session.id);
 
     // Get user with TOTP data
     const tableName = session.user_type === 'klient' ? 'klient' : 'brukere';
@@ -117,8 +119,8 @@ export async function POST(request: NextRequest) {
 
     if (userError || !user || !user.totp_secret_encrypted) {
       return new Response(
-        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Verifisering feilet' } }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 

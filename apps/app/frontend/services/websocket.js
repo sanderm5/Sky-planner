@@ -23,6 +23,13 @@ function updateWsConnectionIndicator(connected) {
     indicator.className = connected ? 'ws-indicator ws-connected' : 'ws-indicator ws-disconnected';
     indicator.title = connected ? 'Sanntidsoppdateringer aktiv' : 'Frakoblet - prøver å koble til...';
   }
+
+  // Mobile field view: update status dot in Account tab
+  const mfStatusDot = document.querySelector('#mfAccountContent .mf-status-dot');
+  if (mfStatusDot) {
+    mfStatusDot.className = 'mf-status-dot ' + (connected ? 'online' : 'offline');
+    mfStatusDot.textContent = connected ? 'Online' : 'Frakoblet';
+  }
 }
 
 // Initialize WebSocket connection for real-time updates
@@ -89,137 +96,33 @@ function attemptReconnect() {
 function handleRealtimeUpdate(message) {
   const { type, data } = message;
 
-  switch (type) {
-    case 'connected':
-      Logger.log('Server:', data || message.message);
-      // Store own identity
-      if (data && data.userId) {
-        myUserId = data.userId;
-        myInitials = data.initials || '';
+  // Connection-level events stay here (not state-sync concerns)
+  if (type === 'connected') {
+    Logger.log('Server:', data || message.message);
+    if (data && data.userId) {
+      myUserId = data.userId;
+      myInitials = data.initials || '';
+    }
+    if (data && data.presence) {
+      presenceClaims.clear();
+      for (const [kundeId, claim] of Object.entries(data.presence)) {
+        presenceClaims.set(Number(kundeId), claim);
       }
-      // Load initial presence state
-      if (data && data.presence) {
-        presenceClaims.clear();
-        for (const [kundeId, claim] of Object.entries(data.presence)) {
-          presenceClaims.set(Number(kundeId), claim);
-        }
-        updatePresenceBadges();
-      }
-      break;
+      updatePresenceBadges();
+    }
+    return;
+  }
 
-    case 'kunde_created':
-      // Add new customer to list and re-render
-      customers.push(data);
-      applyFilters();
-      renderCustomerAdmin();
-      renderMissingData(); // Update missing data badge
-      updateOverdueBadge();
-      showNotification(`Ny kunde opprettet: ${data.navn}`);
-      break;
+  if (type === 'pong') return;
 
-    case 'kunde_updated':
-      // Update existing customer
-      const updateIndex = customers.findIndex(c => c.id === Number.parseInt(data.id));
-      if (updateIndex !== -1) {
-        customers[updateIndex] = { ...customers[updateIndex], ...data };
-        applyFilters();
-        renderCustomerAdmin();
-        renderMissingData(); // Update missing data badge
-        updateOverdueBadge();
-      }
-      break;
+  // Delegate all state/render events to centralized sync
+  if (typeof dispatchStateSync === 'function') {
+    dispatchStateSync(message);
+  }
 
-    case 'kunde_deleted':
-      // Remove customer from list
-      customers = customers.filter(c => c.id !== data.id);
-      selectedCustomers.delete(data.id);
-      applyFilters();
-      renderCustomerAdmin();
-      renderMissingData(); // Update missing data badge
-      updateOverdueBadge();
-      updateSelectionUI();
-      break;
-
-    case 'kunder_bulk_updated':
-      // Bulk update - reload all customers
-      Logger.log(`Bulk update: ${data.count} kunder oppdatert av annen bruker`);
-      loadCustomers();
-      break;
-
-    case 'avtale_created':
-    case 'avtale_updated':
-    case 'avtale_deleted':
-    case 'avtale_series_deleted':
-    case 'avtaler_bulk_created':
-      // Calendar changed - reload data and re-render
-      Logger.log(`Avtale ${type.replace('avtale_', '').replace('avtaler_', '')}`);
-      if (typeof loadAvtaler === 'function') {
-        loadAvtaler().then(() => {
-          if (typeof renderCalendar === 'function') renderCalendar();
-        });
-      }
-      break;
-
-    case 'rute_created':
-    case 'rute_updated':
-    case 'rute_deleted':
-      // Rute-endringer kan oppdatere kundedata (f.eks. kontrolldatoer ved rute-fullføring)
-      Logger.log(`Rute ${type.replace('rute_', '')}`);
-      if (typeof loadCustomers === 'function') {
-        loadCustomers();
-      }
-      break;
-
-    case 'customer_claimed':
-      // Someone started working on a customer
-      presenceClaims.set(data.kundeId, {
-        userId: data.userId,
-        userName: data.userName,
-        initials: data.initials,
-      });
-      updatePresenceBadgeForKunde(data.kundeId);
-      // Show notification if someone else claimed (not ourselves)
-      if (data.userId !== myUserId) {
-        Logger.log(`${data.userName} jobber med kunde #${data.kundeId}`);
-      }
-      break;
-
-    case 'customer_released':
-      // Someone stopped working on a customer
-      presenceClaims.delete(data.kundeId);
-      updatePresenceBadgeForKunde(data.kundeId);
-      break;
-
-    case 'user_offline':
-      // Another user went offline — remove all their claims
-      for (const [kundeId, claim] of presenceClaims) {
-        if (claim.userId === data.userId) {
-          presenceClaims.delete(kundeId);
-          updatePresenceBadgeForKunde(kundeId);
-        }
-      }
-      Logger.log(`Bruker frakoblet: ${data.userName}`);
-      break;
-
-    case 'time_update':
-      // Periodic time update - refresh day counters
-      updateDayCounters();
-      break;
-
-    case 'chat_message':
-      handleIncomingChatMessage(data);
-      break;
-
-    case 'chat_typing':
-      handleChatTyping(data);
-      break;
-
-    case 'chat_typing_stop':
-      handleChatTypingStop(data);
-      break;
-
-    case 'pong':
-      break;
+  // Dispatch to mobile field view handler (if active)
+  if (typeof handleMobileRealtimeUpdate === 'function') {
+    handleMobileRealtimeUpdate(message);
   }
 }
 

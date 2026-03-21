@@ -168,6 +168,7 @@ async function lookupPostnummer(postnummer) {
   try {
     const url = `https://api.bring.com/shippingguide/api/postalCode.json?clientUrl=elkontroll&country=NO&pnr=${postnummer}`;
     const response = await fetch(url);
+    if (!response.ok) return null;
     const data = await response.json();
 
     if (data.valid) {

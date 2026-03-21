@@ -99,23 +99,25 @@ export function hashBackupCode(code, hmacKey) {
  * Returns the index of the matched code, or -1 if not found.
  */
 export function verifyBackupCode(code, hashedCodes, hmacKey) {
-    // Try HMAC hash first (new format)
-    if (hmacKey) {
-        const hmacHash = hashBackupCode(code, hmacKey);
-        for (let i = 0; i < hashedCodes.length; i++) {
-            if (hashedCodes[i] && timingSafeCompare(hmacHash, hashedCodes[i])) {
-                return i;
-            }
-        }
-    }
-    // Fallback: try plain SHA-256 hash (legacy format)
+    let hmacMatch = -1;
+    let plainMatch = -1;
+    // Always compute BOTH hashes and iterate ALL codes for constant-time behavior.
+    // This prevents timing leaks about which hash format is used.
+    const hmacHash = hmacKey ? hashBackupCode(code, hmacKey) : '';
     const plainHash = hashBackupCode(code);
     for (let i = 0; i < hashedCodes.length; i++) {
-        if (hashedCodes[i] && timingSafeCompare(plainHash, hashedCodes[i])) {
-            return i;
+        if (!hashedCodes[i])
+            continue;
+        // Always run both comparisons regardless of prior matches
+        if (hmacHash && timingSafeCompare(hmacHash, hashedCodes[i])) {
+            hmacMatch = i;
+        }
+        if (timingSafeCompare(plainHash, hashedCodes[i])) {
+            plainMatch = i;
         }
     }
-    return -1;
+    // Prefer HMAC match (new format) over plain hash (legacy)
+    return hmacMatch >= 0 ? hmacMatch : plainMatch;
 }
 /**
  * Generate otpauth:// URI for QR code generation
@@ -126,36 +128,49 @@ export function generateTOTPUri(secret, accountName, issuer = 'Sky Planner') {
     return `otpauth://totp/${encodedIssuer}:${encodedAccount}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=${TOTP_DIGITS}&period=${TOTP_PERIOD}`;
 }
 /**
- * Encrypt TOTP secret for storage
+ * Encrypt TOTP secret for storage with per-user salt.
+ * New format (4 parts): perUserSalt:iv:authTag:encrypted
+ * Legacy format (3 parts): iv:authTag:encrypted (uses shared salt)
  */
 export function encryptTOTPSecret(secret, encryptionKey, salt) {
-    const key = crypto.scryptSync(encryptionKey, salt, 32);
+    // Generate unique per-user salt for key derivation
+    const perUserSalt = crypto.randomBytes(16).toString('hex');
+    const combinedSalt = `${salt}:${perUserSalt}`;
+    const key = crypto.scryptSync(encryptionKey, combinedSalt, 32);
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     let encrypted = cipher.update(secret, 'utf8', 'hex');
     encrypted += cipher.final('hex');
     const authTag = cipher.getAuthTag().toString('hex');
-    // Format: iv:authTag:encrypted
-    return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+    // New format: perUserSalt:iv:authTag:encrypted (4 parts)
+    return `${perUserSalt}:${iv.toString('hex')}:${authTag}:${encrypted}`;
 }
 /**
- * Decrypt TOTP secret from storage
- * Falls back to legacy salt 'totp-salt' for backward compatibility with existing secrets
+ * Decrypt TOTP secret from storage.
+ * Supports both new format (4 parts, per-user salt) and legacy format (3 parts, shared salt).
  */
 export function decryptTOTPSecret(encryptedData, encryptionKey, salt) {
-    const [ivHex, authTagHex, encrypted] = encryptedData.split(':');
-    if (!ivHex || !authTagHex || !encrypted) {
-        throw new Error('Invalid encrypted data format');
+    const parts = encryptedData.split(':');
+    // New format: perUserSalt:iv:authTag:encrypted (4 parts)
+    if (parts.length === 4) {
+        const [perUserSalt, ivHex, authTagHex, encrypted] = parts;
+        const combinedSalt = `${salt}:${perUserSalt}`;
+        return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, combinedSalt);
     }
-    // Try with provided salt first
-    try {
-        return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, salt);
+    // Legacy format: iv:authTag:encrypted (3 parts, shared salt)
+    if (parts.length === 3) {
+        const [ivHex, authTagHex, encrypted] = parts;
+        // Try with provided salt first
+        try {
+            return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, salt);
+        }
+        catch {
+            // Fall back to legacy default salt for secrets encrypted before salt was required
+            console.warn('TOTP: Decrypting with legacy fallback salt — secret should be re-encrypted with proper salt');
+            return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, 'totp-salt');
+        }
     }
-    catch {
-        // Fall back to legacy default salt for secrets encrypted before salt was required
-        console.warn('TOTP: Decrypting with legacy fallback salt — secret should be re-encrypted with proper salt');
-        return decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, 'totp-salt');
-    }
+    throw new Error('Invalid encrypted data format');
 }
 function decryptWithSalt(ivHex, authTagHex, encrypted, encryptionKey, salt) {
     const key = crypto.scryptSync(encryptionKey, salt, 32);

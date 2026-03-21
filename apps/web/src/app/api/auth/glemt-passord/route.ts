@@ -4,8 +4,12 @@ import { createHash, randomBytes } from 'crypto';
 import { initDb } from '@/lib/db';
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001';
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3001');
 const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@skyplanner.no';
+
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 // Rate limiting - in-memory store (use Redis in production)
 const resetAttempts = new Map<string, { count: number; lastAttempt: number }>();
@@ -43,12 +47,8 @@ function isRateLimited(ip: string): boolean {
  */
 async function sendPasswordResetEmail(email: string, resetUrl: string, userName: string): Promise<boolean> {
   if (!RESEND_API_KEY) {
-    // Development fallback - log to console
-    console.log('=== PASSWORD RESET EMAIL (Dev Mode) ===');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${userName}`);
-    console.log(`Reset URL: ${resetUrl}`);
-    console.log('=======================================');
+    // Development fallback - log without exposing token
+    console.log(`[Dev] Password reset email would be sent to: ${email}`);
     return true;
   }
 
@@ -75,7 +75,7 @@ async function sendPasswordResetEmail(email: string, resetUrl: string, userName:
               <h1 style="color: white; margin: 0; font-size: 24px;">Sky Planner</h1>
             </div>
             <div style="background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px;">
-              <h2 style="color: #1f2937; margin-top: 0;">Hei ${userName}!</h2>
+              <h2 style="color: #1f2937; margin-top: 0;">Hei ${escapeHtml(userName)}!</h2>
               <p>Vi mottok en forespørsel om å tilbakestille passordet ditt.</p>
               <p>Klikk på knappen nedenfor for å opprette et nytt passord:</p>
               <div style="text-align: center; margin: 30px 0;">
@@ -149,6 +149,14 @@ export async function POST(request: NextRequest) {
     const bruker = klient ? null : await db.getBrukerByEmail(epost.toLowerCase());
     const user = klient || bruker;
     const userType = klient ? 'klient' : 'bruker';
+
+    if (!BASE_URL) {
+      console.error('NEXT_PUBLIC_BASE_URL is not configured');
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Tjenesten er midlertidig utilgjengelig' } }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     if (user) {
       // Generate secure random token

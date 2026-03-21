@@ -11,13 +11,14 @@ import type { AuthenticatedRequest, ApiResponse, OnboardingStage } from '../type
 
 const router: Router = Router();
 
-// Valid onboarding stages in order
+// Valid onboarding stages in order (simplified — wizard removed)
+// Old stages (industry_selected, data_import, map_settings) still accepted for backward compat
 const ONBOARDING_STAGES: OnboardingStage[] = [
   'not_started',
   'industry_selected',
   'company_info',
-  'map_settings',
   'data_import',
+  'map_settings',
   'completed'
 ];
 
@@ -121,6 +122,14 @@ router.post(
       throw Errors.notFound('Organisasjon ikke funnet');
     }
 
+    // Validate stage order — can only advance forward (allow skipping steps)
+    const currentIndex = ONBOARDING_STAGES.indexOf(currentStatus.stage as OnboardingStage);
+    const requestedIndex = ONBOARDING_STAGES.indexOf(step);
+    if (requestedIndex < currentIndex) {
+      // Allow going back — just update the stage
+      apiLogger.info({ organizationId: req.organizationId, from: currentStatus.stage, to: step }, 'Onboarding stage going back');
+    }
+
     // Prepare update data based on step
     const updateData: Record<string, unknown> = {};
 
@@ -185,9 +194,9 @@ router.post(
       data: Object.keys(data || {}),
     });
 
-    const currentIndex = ONBOARDING_STAGES.indexOf(step);
-    const nextStage = currentIndex < ONBOARDING_STAGES.length - 1
-      ? ONBOARDING_STAGES[currentIndex + 1]
+    const completedIndex = ONBOARDING_STAGES.indexOf(step);
+    const nextStage = completedIndex < ONBOARDING_STAGES.length - 1
+      ? ONBOARDING_STAGES[completedIndex + 1]
       : null;
 
     const response: ApiResponse<{
@@ -244,9 +253,9 @@ router.post(
 router.post(
   '/reset',
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    // Only allow reset in development or for admins
-    if (process.env.NODE_ENV === 'production' && req.user?.type !== 'bruker') {
-      throw Errors.forbidden('Kun tilgjengelig for administratorer');
+    // Only allow reset in development or for the account owner (klient)
+    if (process.env.NODE_ENV === 'production' && req.user?.type !== 'klient') {
+      throw Errors.forbidden('Kun tilgjengelig for kontoeier');
     }
 
     const success = await dbService.updateOnboardingStage(

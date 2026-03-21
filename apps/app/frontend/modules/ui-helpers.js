@@ -77,7 +77,7 @@ async function loadConfig() {
     appConfig = {
       appName: 'Sky Planner',
       companyName: '',
-      companySubtitle: 'Kontroll. Oversikt. Alltid.',
+      companySubtitle: 'Kundeadministrasjon og ruteplanlegging for servicebedrifter',
       logoUrl: '/skyplanner-logo.svg',
       contactAddress: '',
       contactPhone: '',

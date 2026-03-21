@@ -1,4 +1,61 @@
 // @ts-nocheck
+
+// ========================================
+// FRONTEND ERROR REPORTER
+// Captures JS errors and sends to backend for monitoring dashboard
+// ========================================
+(function() {
+  const errorBuffer = [];
+  let flushTimer = null;
+
+  function flushErrors() {
+    if (errorBuffer.length === 0) return;
+    const batch = errorBuffer.splice(0, 10);
+    try {
+      navigator.sendBeacon('/api/client-errors', JSON.stringify(batch));
+    } catch {
+      // Fallback to fetch
+      fetch('/api/client-errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(batch),
+        keepalive: true,
+      }).catch(function() {});
+    }
+  }
+
+  function queueError(err) {
+    errorBuffer.push(err);
+    if (errorBuffer.length >= 5) {
+      flushErrors();
+    } else if (!flushTimer) {
+      flushTimer = setTimeout(function() {
+        flushTimer = null;
+        flushErrors();
+      }, 5000);
+    }
+  }
+
+  window.addEventListener('error', function(event) {
+    queueError({
+      message: event.message || 'Unknown error',
+      source: event.filename,
+      line: event.lineno,
+      col: event.colno,
+      url: location.pathname,
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    var reason = event.reason;
+    queueError({
+      message: (reason && reason.message) ? reason.message : String(reason),
+      source: 'unhandledrejection',
+      url: location.pathname,
+    });
+  });
+})();
+
 // State
 let map;
 // Single map architecture - map is always visible behind login/app overlays
@@ -43,6 +100,48 @@ let subscriptionInfo = null; // { status, trialEndsAt, planType } - populated fr
 let accessTokenExpiresAt = null; // Token expiry timestamp - for proactive refresh
 
 // ========================================
+// WOW-FACTOR: Skeleton Loader Helper
+// ========================================
+function renderSkeletons(container, count, template) {
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    if (template === 'stat-card') {
+      html += `<div class="skeleton-stat-card"><div class="skeleton skeleton-circle"></div><div class="skeleton-content"><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line xs"></div></div></div>`;
+    } else if (template === 'list-item') {
+      html += `<div class="skeleton-list-item"><div class="skeleton skeleton-circle"></div><div class="skeleton-content"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></div></div>`;
+    } else {
+      html += `<div class="skeleton skeleton-card"></div>`;
+    }
+  }
+  container.innerHTML = html;
+}
+
+// ========================================
+// WOW-FACTOR: Animated Number Counter
+// ========================================
+function animateCounter(element, targetValue, duration = 800) {
+  if (!element || typeof targetValue !== 'number') return;
+  const start = performance.now();
+  const startValue = parseInt(element.textContent) || 0;
+  if (startValue === targetValue) return;
+
+  function easeOutExpo(t) {
+    return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+  }
+
+  function update(now) {
+    const elapsed = now - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = easeOutExpo(progress);
+    const current = Math.round(startValue + (targetValue - startValue) * eased);
+    element.textContent = current;
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+// ========================================
 // ACCESSIBLE MODAL HELPERS
 // Wraps modal open/close with focus trap
 // ========================================
@@ -68,13 +167,10 @@ function closeModal(modalEl) {
 // Prevents memory leaks from accumulated event listeners
 // ========================================
 const tabCleanupFunctions = {
-  calendar: null,
-  overdue: null,
-  warnings: null,
-  planner: null,
+  dashboard: null,
   customers: null,
-  statistikk: null,
-  missingdata: null,
+  arbeid: null,
+  chat: null,
   admin: null
 };
 
@@ -156,6 +252,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    // Mobile: show dedicated field view instead of full app
+    if (isMobileDevice()) {
+      const loginOverlay = document.getElementById('loginOverlay');
+      if (loginOverlay) loginOverlay.classList.add('hidden');
+      initWebSocket();
+      showMobileFieldView();
+      return;
+    }
+
     // Already logged in - skip to app view directly (no animation)
     const loginOverlay = document.getElementById('loginOverlay');
     const appView = document.getElementById('appView');
@@ -210,8 +315,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Show user bar with name
     showUserBar();
 
+    // Ensure tab navigation is interactive (may have been disabled on logout)
+    const tabNavigation = document.querySelector('.tab-navigation');
+    if (tabNavigation) {
+      tabNavigation.style.opacity = '1';
+      tabNavigation.style.pointerEvents = 'auto';
+    }
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    if (sidebarToggle) {
+      sidebarToggle.style.opacity = '1';
+      sidebarToggle.style.pointerEvents = 'auto';
+    }
+
     // Setup event listeners
     setupEventListeners();
+
+    // Initialize misc event listeners (import, map legend)
+    initMiscEventListeners();
+
+    // Update map legend with current service types
+    updateMapLegend();
+
+    // Apply MVP mode UI changes based on organization settings
+    applyMvpModeUI();
+
+    // Initialize Today's Work feature
+    initTodaysWork();
+
+    // Initialize Arbeid tab sub-navigation
+    if (typeof initArbeidNav === 'function') initArbeidNav();
 
     // Initialize chat system
     initChat();
@@ -311,6 +443,9 @@ async function initializeApp() {
   // Initialize Today's Work feature
   initTodaysWork();
 
+  // Initialize Arbeid tab sub-navigation
+  if (typeof initArbeidNav === 'function') initArbeidNav();
+
   // Initialize chat system
   initChat();
   initChatEventListeners();
@@ -344,9 +479,6 @@ function setupEventListeners() {
   // Logout button - use SPA logout
   document.getElementById('logoutBtnMain')?.addEventListener('click', handleLogout);
 
-  // Nightmode toggle button (map tiles)
-  document.getElementById('nightmodeBtn')?.addEventListener('click', toggleNightMode);
-
   // Theme toggle button (UI light/dark mode)
   document.getElementById('themeToggleBtn')?.addEventListener('click', toggleTheme);
 
@@ -354,12 +486,15 @@ function setupEventListeners() {
   document.querySelectorAll('.dashboard-actions .action-card').forEach(card => {
     card.addEventListener('click', () => {
       const action = card.dataset.action;
-      if (action === 'showOverdueTab') {
-        switchToTab('overdue');
-      } else if (action === 'showRoutesTab') {
-        switchToTab('routes');
-      } else if (action === 'showCalendarTab') {
-        switchToTab('calendar');
+      if (action === 'showOverdueSection') {
+        const el = document.getElementById('dash-overdue');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else if (action === 'showArbeidUke') {
+        switchToTab('arbeid');
+        setTimeout(() => switchArbeidView('uke'), 50);
+      } else if (action === 'showArbeidMaaned') {
+        switchToTab('arbeid');
+        setTimeout(() => switchArbeidView('maaned'), 50);
       }
     });
   });
@@ -428,6 +563,9 @@ function setupEventListeners() {
           link.click();
           URL.revokeObjectURL(link.href);
           showNotification(`Eksportert ${format.toUpperCase()} med suksess`, 'success');
+          // Track for onboarding checklist
+          localStorage.setItem('skyplanner_firstExport', 'true');
+          if (typeof refreshChecklistState === 'function') refreshChecklistState();
         } catch (err) {
           showNotification('Eksport feilet: ' + err.message, 'error');
         }
@@ -677,15 +815,33 @@ function setupEventListeners() {
   const tabTitles = {
     'dashboard': 'Dashboard',
     'customers': 'Kunder',
-    'overdue': 'Forfalte',
-    'warnings': 'Kommende kontroller',
-    'calendar': 'Kalender',
-    'weekly-plan': 'Planlagte oppdrag',
-    'planner': 'Planlegger',
-    'statistikk': 'Statistikk',
-    'missingdata': 'Mangler data',
+    'overdue': 'Forfalte kontroller',
+    'upcoming': 'Kommende kontroller',
+    'arbeid': 'Arbeid',
     'chat': 'Meldinger',
     'admin': 'Admin'
+  };
+
+  // Map old tab names to new structure for backward compatibility
+  const tabMigrationMap = {
+    'overdue': 'dashboard',
+    'warnings': 'dashboard',
+    'statistikk': 'dashboard',
+    'missingdata': 'dashboard',
+    'team-overview': 'arbeid',
+    'todays-work': 'arbeid',
+    'calendar': 'arbeid',
+    'weekly-plan': 'arbeid',
+    'planner': 'arbeid'
+  };
+
+  // Map old tab names to arbeid sub-views
+  const arbeidSubViewMap = {
+    'team-overview': 'idag',
+    'todays-work': 'idag',
+    'calendar': 'maaned',
+    'weekly-plan': 'uke',
+    'planner': 'planlegger'
   };
 
   // Open content panel
@@ -697,6 +853,7 @@ function setupEventListeners() {
       contentPanel.style.transition = '';
       contentPanel.classList.remove('closed');
       contentPanel.classList.add('open');
+      if (typeof resetPanelOpacity === 'function') resetPanelOpacity();
       localStorage.setItem('contentPanelOpen', 'true');
 
       // On mobile, default to half-height mode
@@ -872,37 +1029,53 @@ function setupEventListeners() {
         runTabCleanup(prevTab);
       }
 
-      // Deactivate weekly plan area-select mode when leaving that tab
-      if (prevTab === 'weekly-plan') {
-        if (weekPlanState.activeDay) {
-          weekPlanState.activeDay = null;
-          if (areaSelectMode) toggleAreaSelect();
-        }
-        // Reset team focus - restore all markers
-        if (wpFocusedTeamMember) {
-          wpFocusedTeamMember = null;
-          wpFocusedMemberIds = null;
-          applyTeamFocusToMarkers();
-          if (typeof refreshClusters === 'function') refreshClusters();
-        }
-        // Close route summary if open
-        closeWpRouteSummary();
+      // Cleanup arbeid sub-views when leaving arbeid tab
+      if (prevTab === 'arbeid') {
+        if (typeof unloadArbeidTab === 'function') unloadArbeidTab();
       }
 
-      // Remove active class from all tabs and panes
-      tabItems.forEach(t => {
-        t.classList.remove('active');
-        t.setAttribute('aria-selected', 'false');
-      });
-      tabPanes.forEach(p => p.classList.remove('active'));
+      // Stop team overview polling when switching away (safety net)
+      if (typeof unloadTeamOverview === 'function') unloadTeamOverview();
 
-      // Add active class to clicked tab and corresponding pane
-      tab.classList.add('active');
-      tab.setAttribute('aria-selected', 'true');
-      const tabPane = document.getElementById(`tab-${tabName}`);
+      // Find the currently active pane for exit animation
+      const prevPane = document.querySelector('.tab-pane.active');
+      const newPane = document.getElementById(`tab-${tabName}`);
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // Animate tab transition
+      const doSwitch = () => {
+        tabItems.forEach(t => {
+          t.classList.remove('active');
+          t.setAttribute('aria-selected', 'false');
+        });
+        tabPanes.forEach(p => { p.classList.remove('active'); p.classList.remove('tab-exit'); p.classList.remove('tab-enter'); });
+
+        tab.classList.add('active');
+        tab.setAttribute('aria-selected', 'true');
+        if (newPane) {
+          newPane.classList.add('active');
+          if (!reducedMotion) {
+            newPane.classList.add('tab-enter');
+            newPane.addEventListener('animationend', () => {
+              newPane.classList.remove('tab-enter');
+              newPane.style.willChange = '';
+            }, { once: true });
+          }
+        }
+      };
+
+      if (prevPane && prevPane !== newPane && !reducedMotion) {
+        prevPane.classList.add('tab-exit');
+        let switched = false;
+        const safeguard = () => { if (!switched) { switched = true; doSwitch(); } };
+        prevPane.addEventListener('animationend', safeguard, { once: true });
+        setTimeout(safeguard, 150); // Safety: ensure switch happens even if animationend misses
+      } else {
+        doSwitch();
+      }
+
+      const tabPane = newPane;
       if (tabPane) {
-        tabPane.classList.add('active');
-
         // Fjern compact-mode slik at alle faner kan scrolle
         contentPanel.classList.remove('compact-mode');
 
@@ -919,6 +1092,14 @@ function setupEventListeners() {
 
         // Save active tab to localStorage
         localStorage.setItem('activeTab', tabName);
+        if (typeof onTabSwitch === 'function') onTabSwitch(tabName);
+
+        // Track dashboard view for onboarding checklist
+        if (tabName === 'dashboard') {
+          localStorage.setItem('skyplanner_dashboardViewed', 'true');
+          if (typeof refreshChecklistState === 'function') refreshChecklistState();
+          if (typeof renderDashboardSections === 'function') renderDashboardSections();
+        }
 
         // On mobile, close sidebar when opening content panel
         const isMobile = window.innerWidth <= 768;
@@ -927,31 +1108,24 @@ function setupEventListeners() {
         }
 
         // Render content for the active tab
-        if (tabName === 'overdue') {
-          renderOverdue();
-        } else if (tabName === 'warnings') {
-          renderWarnings();
-        } else if (tabName === 'calendar') {
-          renderCalendar();
-          openCalendarSplitView();
-        } else if (tabName === 'weekly-plan') {
-          renderWeeklyPlan();
-        } else if (tabName === 'planner') {
-          renderPlanner();
-        } else if (tabName === 'email') {
-          loadEmailData();
-        } else if (tabName === 'statistikk') {
-          renderStatistikk();
-        } else if (tabName === 'missingdata') {
-          renderMissingData();
-        } else if (tabName === 'customers') {
+        if (tabName === 'customers') {
           renderCustomerAdmin();
+        } else if (tabName === 'arbeid') {
+          if (typeof loadArbeidTab === 'function') loadArbeidTab();
         } else if (tabName === 'admin') {
           loadAdminData();
-        } else if (tabName === 'todays-work') {
-          loadTodaysWork();
         } else if (tabName === 'chat') {
           onChatTabOpened();
+        } else if (tabName === 'email') {
+          loadEmailData();
+        } else if (tabName === 'calendar') {
+          renderCalendar();
+        } else if (tabName === 'weekly-plan') {
+          renderWeeklyPlan();
+        } else if (tabName === 'overdue') {
+          renderOverdueTab();
+        } else if (tabName === 'upcoming') {
+          renderUpcomingTab();
         }
 
         // Show feature tour if this is the user's first visit to this tab
@@ -960,6 +1134,39 @@ function setupEventListeners() {
         }
       }
     });
+  });
+
+  // Explicit handlers for Forfalte/Kommende tabs (ensure they always work)
+  document.getElementById('tab-btn-overdue')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    tabItems.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    tabPanes.forEach(p => { p.classList.remove('active'); p.classList.remove('tab-exit'); p.classList.remove('tab-enter'); });
+    const btn = document.getElementById('tab-btn-overdue');
+    const pane = document.getElementById('tab-overdue');
+    if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
+    if (pane) pane.classList.add('active');
+    if (panelTitle) panelTitle.textContent = 'Forfalte kontroller';
+    openContentPanel();
+    localStorage.setItem('activeTab', 'overdue');
+    if (typeof onTabSwitch === 'function') onTabSwitch('overdue');
+    if (typeof renderOverdueTab === 'function') renderOverdueTab();
+  });
+
+  document.getElementById('tab-btn-upcoming')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    tabItems.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+    tabPanes.forEach(p => { p.classList.remove('active'); p.classList.remove('tab-exit'); p.classList.remove('tab-enter'); });
+    const btn = document.getElementById('tab-btn-upcoming');
+    const pane = document.getElementById('tab-upcoming');
+    if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
+    if (pane) pane.classList.add('active');
+    if (panelTitle) panelTitle.textContent = 'Kommende kontroller';
+    openContentPanel();
+    localStorage.setItem('activeTab', 'upcoming');
+    if (typeof onTabSwitch === 'function') onTabSwitch('upcoming');
+    if (typeof renderUpcomingTab === 'function') renderUpcomingTab();
   });
 
   // Restore saved tab and content panel state
@@ -975,10 +1182,17 @@ function setupEventListeners() {
   const hasMobileTabBar = window.innerWidth <= 768;
   if (!hasMobileTabBar) {
     if (savedTab) {
-      const savedTabBtn = document.querySelector(`.tab-item[data-tab="${savedTab}"]`);
+      // Migrate old tab names to new structure
+      const migratedTab = tabMigrationMap[savedTab] || savedTab;
+      const savedTabBtn = document.querySelector(`.tab-item[data-tab="${migratedTab}"]`);
       if (savedTabBtn) {
         setTimeout(() => {
           savedTabBtn.click();
+          // If migrated to arbeid, switch to the correct sub-view
+          const subView = arbeidSubViewMap[savedTab];
+          if (subView && typeof switchArbeidView === 'function') {
+            setTimeout(() => switchArbeidView(subView), 100);
+          }
         }, 100);
       }
     }
@@ -1215,10 +1429,13 @@ function setupEventListeners() {
     }
   });
 
-  // Technician dispatch handler for weekly plan (admin only)
+  // Team member dispatch handler for weekly plan (admin only)
   document.addEventListener('change', (e) => {
     if (e.target.classList.contains('wp-dispatch-select')) {
-      weekPlanState.globalAssignedTo = e.target.value;
+      const newAssignee = e.target.value;
+      // Only update globalAssignedTo — do NOT overwrite addedBy on existing customers.
+      // Each customer keeps its original addedBy so multiple members can share a day.
+      weekPlanState.globalAssignedTo = newAssignee;
       renderWeeklyPlan();
     }
   });
@@ -1246,6 +1463,21 @@ function setupEventListeners() {
     }
   });
 
+  // Weekplan date picker change handler
+  document.addEventListener('change', async (e) => {
+    if (e.target.id === 'wpDatePicker') {
+      const selectedDate = new Date(e.target.value + 'T00:00:00');
+      if (isNaN(selectedDate.getTime())) return;
+      if (getWeekPlanTotalPlanned() > 0) {
+        const confirmNav = await showConfirm('Du har ulagrede endringer. Vil du bytte uke?', 'Bytt uke');
+        if (!confirmNav) return;
+      }
+      closeWpRouteSummary();
+      initWeekPlanState(selectedDate);
+      renderWeeklyPlan();
+    }
+  });
+
   // Global event delegation for data-action buttons (CSP-compliant)
   document.addEventListener('click', async (e) => {
     const actionEl = e.target.closest('[data-action]');
@@ -1254,6 +1486,14 @@ function setupEventListeners() {
     const action = actionEl.dataset.action;
 
     switch (action) {
+      case 'briefShowOverdue':
+        e.stopPropagation();
+        document.getElementById('tab-btn-overdue')?.click();
+        break;
+      case 'briefShowWeekplan':
+        e.stopPropagation();
+        switchToTab('weekly-plan');
+        break;
       case 'focusOnCustomer':
         focusOnCustomer(Number.parseInt(actionEl.dataset.customerId));
         break;
@@ -1300,6 +1540,10 @@ function setupEventListeners() {
                 await loadAvtaler();
                 refreshTeamFocus();
                 renderWeeklyPlan();
+                renderCalendar();
+                if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+                if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
+                applyFilters();
               } else {
                 const delErr = await delResp.json().catch(() => ({}));
                 showToast(delErr.error?.message || 'Kunne ikke slette avtale', 'error');
@@ -1329,6 +1573,7 @@ function setupEventListeners() {
           }
         }
         break;
+      // clearDayAvtaler is now a global function in weekplan.js (called via delegation)
       case 'saveWeeklyPlan':
         e.stopPropagation();
         await saveWeeklyPlan();
@@ -1356,6 +1601,17 @@ function setupEventListeners() {
         closeWpRouteSummary();
         initWeekPlanState(addDaysToDate(weekPlanState.weekStart, 7));
         renderWeeklyPlan();
+        break;
+      case 'weekPlanPickDate':
+        e.stopPropagation();
+        {
+          const picker = document.getElementById('wpDatePicker');
+          if (picker) {
+            picker.style.pointerEvents = 'auto';
+            try { picker.showPicker(); } catch (_) { picker.click(); }
+            picker.style.pointerEvents = 'none';
+          }
+        }
         break;
       case 'setEstimatedTime':
         e.stopPropagation();
@@ -1389,9 +1645,37 @@ function setupEventListeners() {
         e.stopPropagation();
         closeWpRouteSummary();
         break;
+      case 'toggleRouteMarkers':
+        e.stopPropagation();
+        toggleRouteMarkerVisibility();
+        break;
       case 'wpExportMaps':
         e.stopPropagation();
         wpExportToMaps();
+        break;
+      case 'wpSuggestStops':
+        e.stopPropagation();
+        wpSuggestStops();
+        break;
+      case 'wpAutoFillWeek':
+        e.stopPropagation();
+        wpAutoFillWeek();
+        break;
+      case 'wpCloseSuggestions':
+        e.stopPropagation();
+        const suggestContainer = document.getElementById('wpSuggestions');
+        if (suggestContainer) {
+          suggestContainer._candidates = null;
+          suggestContainer.innerHTML = '';
+        }
+        break;
+      case 'wpAddSuggested':
+        e.stopPropagation();
+        wpAddSuggested(Number(actionEl.dataset.customerId));
+        break;
+      case 'wpAddAllSuggested':
+        e.stopPropagation();
+        wpAddAllSuggested();
         break;
       case 'focusTeamMember':
         e.stopPropagation();
@@ -1467,6 +1751,10 @@ function setupEventListeners() {
         e.stopPropagation();
         sendManualReminder(Number.parseInt(actionEl.dataset.customerId));
         break;
+      case 'notifyCustomerOnWay':
+        e.stopPropagation();
+        notifyCustomerOnWay(Number.parseInt(actionEl.dataset.customerId));
+        break;
       case 'createRouteFromGroup':
         e.stopPropagation();
         const groupIds = actionEl.dataset.customerIds.split(',').map(id => Number.parseInt(id));
@@ -1513,6 +1801,9 @@ function setupEventListeners() {
             showToast('Avtale slettet', 'success');
             await loadAvtaler();
             renderCalendar();
+            if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+            if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+            if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
           } else {
             showToast('Kunne ikke slette avtalen', 'error');
           }
@@ -1524,6 +1815,14 @@ function setupEventListeners() {
       case 'quickMarkVisited':
         e.stopPropagation();
         quickMarkVisited(Number.parseInt(actionEl.dataset.customerId));
+        break;
+      case 'popupAddToWeekDay':
+        e.stopPropagation();
+        popupAddToWeekDay(Number.parseInt(actionEl.dataset.customerId), actionEl.dataset.dayKey);
+        break;
+      case 'popupAssignTeam':
+        e.stopPropagation();
+        popupAssignTeam(Number.parseInt(actionEl.dataset.customerId), actionEl.dataset.memberName);
         break;
       case 'openDayDetail':
         const date = actionEl.dataset.date;

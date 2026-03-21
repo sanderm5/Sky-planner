@@ -69,7 +69,7 @@ router.get(
  */
 router.post(
   '/kunder/:kundeId/kontaktlogg',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const kundeId = Number.parseInt(req.params.kundeId);
     if (Number.isNaN(kundeId)) {
@@ -121,7 +121,7 @@ router.post(
  */
 router.delete(
   '/kontaktlogg/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {

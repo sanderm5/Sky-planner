@@ -72,8 +72,12 @@ async function initAdminPanel() {
       loadGrowthChart(),
       loadActivityChart(),
       loadBillingOverview(),
-      loadSentryStatus()
+      loadSentryStatus(),
+      loadSystemMonitor()
     ]);
+
+    // Start system monitor auto-refresh
+    startSystemMonitorAutoRefresh();
 
   } catch (error) {
     console.error('Failed to initialize admin panel:', error);
@@ -164,6 +168,10 @@ function setupEventListeners() {
   document.getElementById('sentrySortSelect').addEventListener('change', (e) => {
     loadSentryIssues(e.target.value);
   });
+
+  // System monitoring
+  document.getElementById('monitorRefreshBtn').addEventListener('click', loadSystemMonitor);
+  document.getElementById('monitorAutoRefresh').addEventListener('change', toggleSystemMonitorAutoRefresh);
 
   // Event delegation for dynamically rendered buttons (CSP-compliant, no inline onclick)
   document.addEventListener('click', (e) => {
@@ -1624,6 +1632,484 @@ async function loadSentryIssues(sort) {
   } catch (error) {
     console.error('Failed to load Sentry issues:', error);
     list.innerHTML = '<div class="sentry-error-text">Kunne ikke laste feil</div>';
+  }
+}
+
+// ========================================
+// SYSTEM MONITORING
+// ========================================
+
+let systemMonitorInterval = null;
+
+async function loadSystemMonitor() {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/system-monitor`);
+    if (!res.ok) {
+      console.warn('System monitor endpoint returned', res.status);
+      return;
+    }
+    const data = await res.json();
+
+    if (data.success && data.data) {
+      const d = data.data;
+      renderMonitorSummaryCards(d);
+      renderDetectedIssues(d.issues || []);
+      renderRequestMetrics(d.requests || {});
+      renderCircuitBreakers(d.circuit_breakers || {});
+      renderCronJobs(d.cron_jobs || []);
+      renderIntegrationSyncs(d.integrations || { total_active: 0, recent_syncs: [], failed_items_count: 0 });
+      renderServiceHealth(d.services || {});
+      renderFrontendErrors(d.frontend_errors || { total_15m: 0, unique_errors: 0, errors: [] });
+      renderSecurityEvents(d.security || { failed_logins_24h: 0, locked_accounts: 0, recent_events: [] });
+      renderDataIntegrity(d.data_integrity || {});
+    }
+  } catch (error) {
+    console.error('Failed to load system monitor:', error);
+  }
+}
+
+function renderMonitorSummaryCards(data) {
+  // Uptime
+  document.getElementById('monitorUptime').textContent = formatUptime(data.server.uptime_seconds);
+
+  // Memory — show current + peak
+  const memEl = document.getElementById('monitorMemory');
+  const mem = data.memory;
+  memEl.textContent = `${mem.heap_used_mb} MB`;
+  if (mem.peak_heap_mb > 0) {
+    memEl.textContent += ` (topp: ${mem.peak_heap_mb})`;
+  }
+  const memCard = memEl.closest('.sentry-stat-card');
+  memCard.className = 'sentry-stat-card monitor-stat-memory';
+  if (mem.heap_used_mb > 1024) memCard.classList.add('status-critical');
+  else if (mem.heap_used_mb > 512) memCard.classList.add('status-warning');
+  else memCard.classList.add('status-healthy');
+
+  // Database — show live latency + rolling average
+  const dbEl = document.getElementById('monitorDbLatency');
+  const dbCard = dbEl.closest('.sentry-stat-card');
+  dbCard.className = 'sentry-stat-card monitor-stat-db';
+  const db = data.database;
+  if (db.status === 'healthy') {
+    let dbText = `${db.latency_ms} ms`;
+    if (db.samples > 1) dbText += ` (snitt: ${db.avg_ms}, p95: ${db.p95_ms})`;
+    dbEl.textContent = dbText;
+    dbCard.classList.add('status-healthy');
+  } else if (db.status === 'degraded') {
+    dbEl.textContent = `${db.latency_ms} ms (treg, snitt: ${db.avg_ms})`;
+    dbCard.classList.add('status-warning');
+  } else {
+    dbEl.textContent = 'Nede';
+    dbCard.classList.add('status-critical');
+  }
+
+  // Request metrics cards
+  const rps = data.requests;
+  document.getElementById('monitorRps').textContent = rps ? `${rps.per_second}` : '-';
+  document.getElementById('monitorAvgResponse').textContent = rps ? `${rps.avg_response_ms} ms` : '-';
+
+  const errorRateEl = document.getElementById('monitorErrorRate');
+  if (rps) {
+    errorRateEl.textContent = `${rps.error_rate_percent}%`;
+    const errorCard = errorRateEl.closest('.sentry-stat-card');
+    errorCard.className = 'sentry-stat-card monitor-stat-errors';
+    if (rps.error_rate_percent > 5) errorCard.classList.add('status-critical');
+    else if (rps.error_rate_percent > 1) errorCard.classList.add('status-warning');
+    else errorCard.classList.add('status-healthy');
+  }
+
+  // WebSocket connections
+  const wsEl = document.getElementById('monitorWsConnections');
+  const ws = data.websocket;
+  wsEl.textContent = ws ? `${ws.total} (${ws.organizations} org)` : '-';
+
+  // Overall status
+  const overallEl = document.getElementById('monitorOverallStatus');
+  const overallCard = overallEl.closest('.sentry-stat-card');
+  overallCard.className = 'sentry-stat-card monitor-stat-overall';
+  const statusLabels = { healthy: 'Alt OK', degraded: 'Degradert', unhealthy: 'Kritisk' };
+  const statusClasses = { healthy: 'status-healthy', degraded: 'status-warning', unhealthy: 'status-critical' };
+  overallEl.textContent = statusLabels[data.overall_status] || data.overall_status;
+  overallCard.classList.add(statusClasses[data.overall_status] || 'status-healthy');
+
+  const iconEl = document.getElementById('monitorOverallIcon');
+  iconEl.style.color = data.overall_status === 'healthy' ? 'var(--success-color)' :
+    data.overall_status === 'degraded' ? 'var(--warning-color)' : 'var(--danger-color)';
+}
+
+function renderDetectedIssues(issues) {
+  const container = document.getElementById('monitorIssuesContainer');
+  const list = document.getElementById('monitorIssuesList');
+  const countEl = document.getElementById('monitorIssuesCount');
+
+  if (!issues || issues.length === 0) {
+    container.style.display = 'block';
+    countEl.style.background = 'var(--success-color)';
+    countEl.textContent = '0';
+    list.innerHTML = '<div class="monitor-no-issues"><i class="fas fa-check-circle"></i>Ingen problemer oppdaget</div>';
+    return;
+  }
+
+  container.style.display = 'block';
+  const criticalCount = issues.filter(i => i.severity === 'critical').length;
+  countEl.textContent = issues.length;
+  countEl.style.background = criticalCount > 0 ? 'var(--danger-color)' : 'var(--warning-color)';
+
+  const severityIcons = {
+    critical: 'fas fa-times',
+    warning: 'fas fa-exclamation',
+    info: 'fas fa-info',
+  };
+
+  list.innerHTML = issues.map(issue => {
+    const icon = severityIcons[issue.severity] || 'fas fa-info';
+    return `<div class="monitor-issue-item">
+      <div class="monitor-issue-icon ${issue.severity}">
+        <i class="${icon}"></i>
+      </div>
+      <div class="monitor-issue-body">
+        <div class="monitor-issue-title">${escapeHtml(issue.title)}</div>
+        <div class="monitor-issue-detail">${escapeHtml(issue.detail)}</div>
+      </div>
+      ${issue.metric ? `<div class="monitor-issue-metric">${escapeHtml(issue.metric)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderRequestMetrics(requests) {
+  const container = document.getElementById('monitorRequests');
+  if (!requests || !requests.total_15m) {
+    container.innerHTML = '<div class="monitor-empty">Ingen forespørsler registrert ennå</div>';
+    return;
+  }
+
+  const sc = requests.status_codes || {};
+  let html = `<div class="monitor-summary-row">
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value">${requests.total_15m}</span>
+      <span class="monitor-summary-label">Totalt (15 min)</span>
+    </div>
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value">${requests.p95_response_ms} ms</span>
+      <span class="monitor-summary-label">P95 responstid</span>
+    </div>
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value">${requests.p99_response_ms} ms</span>
+      <span class="monitor-summary-label">P99 responstid</span>
+    </div>
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value" style="color: var(--success-color)">${sc['2xx'] || 0}</span>
+      <span class="monitor-summary-label">2xx</span>
+    </div>
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value" style="color: var(--warning-color)">${sc['4xx'] || 0}</span>
+      <span class="monitor-summary-label">4xx</span>
+    </div>
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value" style="color: var(--danger-color)">${sc['5xx'] || 0}</span>
+      <span class="monitor-summary-label">5xx</span>
+    </div>
+  </div>`;
+
+  // Slowest endpoints
+  if (requests.slowest_endpoints && requests.slowest_endpoints.length > 0) {
+    html += `<table class="monitor-table">
+      <thead><tr><th>Endepunkt</th><th>Snitt</th><th>Maks</th><th>Kall</th></tr></thead>
+      <tbody>${requests.slowest_endpoints.map(ep => {
+        const avgColor = ep.avgMs > 500 ? 'var(--danger-color)' : ep.avgMs > 200 ? 'var(--warning-color)' : 'var(--text-primary)';
+        return `<tr>
+          <td><code>${escapeHtml(ep.endpoint)}</code></td>
+          <td style="color: ${avgColor}">${ep.avgMs} ms</td>
+          <td>${ep.maxMs} ms</td>
+          <td>${ep.count}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function renderCircuitBreakers(breakers) {
+  const container = document.getElementById('monitorCircuitBreakers');
+  const entries = Object.values(breakers);
+
+  if (entries.length === 0) {
+    container.innerHTML = '<div class="monitor-empty"><i class="fas fa-check-circle"></i>Ingen tjenester registrert ennå</div>';
+    return;
+  }
+
+  container.innerHTML = entries.map(cb => {
+    const dotClass = cb.state === 'CLOSED' ? 'healthy' : cb.state === 'HALF_OPEN' ? 'warning' : 'critical';
+    const badgeClass = dotClass;
+    const stateLabel = cb.state === 'CLOSED' ? 'OK' : cb.state === 'HALF_OPEN' ? 'Tester' : 'Nede';
+    const lastChange = cb.lastStateChange ? formatMonitorTimeAgo(cb.lastStateChange) : '-';
+
+    return `<div class="monitor-service-item">
+      <div class="monitor-service-name">
+        <span class="status-dot ${dotClass}"></span>
+        ${escapeHtml(cb.name)}
+      </div>
+      <div class="monitor-service-meta">
+        <span class="status-badge ${badgeClass}">${stateLabel}</span>
+        <span title="Suksess / Feil">${cb.totalSuccesses ?? 0} / ${cb.totalFailures ?? 0}</span>
+        <span title="Siste endring">${lastChange}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderCronJobs(jobs) {
+  const container = document.getElementById('monitorCronJobs');
+
+  if (!jobs || jobs.length === 0) {
+    container.innerHTML = '<div class="monitor-empty"><i class="fas fa-check-circle"></i>Ingen cron-jobber registrert</div>';
+    return;
+  }
+
+  container.innerHTML = jobs.map(job => {
+    let dotClass = 'healthy';
+    if (job.consecutiveFailures >= 3) dotClass = 'critical';
+    else if (job.consecutiveFailures >= 1) dotClass = 'warning';
+
+    const lastRun = job.lastRun ? formatMonitorTimeAgo(job.lastRun) : 'Aldri';
+    const lastSuccess = job.lastSuccess ? formatMonitorTimeAgo(job.lastSuccess) : 'Aldri';
+    const runningBadge = job.isRunning ? '<span class="status-badge running">Kjører</span>' : '';
+
+    return `<div class="monitor-service-item">
+      <div class="monitor-service-name">
+        <span class="status-dot ${dotClass}"></span>
+        ${escapeHtml(job.name)}
+        ${runningBadge}
+      </div>
+      <div class="monitor-service-meta">
+        <span title="Siste kjøring">${lastRun}</span>
+        <span title="Kjøringer: ${job.totalRuns}, Feil: ${job.totalFailures}">${job.totalRuns}/${job.totalFailures}</span>
+        ${job.consecutiveFailures > 0 ? `<span class="status-badge ${dotClass}">${job.consecutiveFailures}x feil</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderIntegrationSyncs(data) {
+  const container = document.getElementById('monitorIntegrations');
+
+  let html = `<div class="monitor-summary-row">
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value">${data.total_active}</span>
+      <span class="monitor-summary-label">Aktive</span>
+    </div>
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value" style="color: ${data.failed_items_count > 0 ? 'var(--danger-color)' : 'var(--text-primary)'}">${data.failed_items_count}</span>
+      <span class="monitor-summary-label">I feilkø</span>
+    </div>
+  </div>`;
+
+  if (data.recent_syncs.length === 0) {
+    html += '<div class="monitor-empty">Ingen synkroniseringer ennå</div>';
+  } else {
+    html += `<table class="monitor-table">
+      <thead><tr><th>Integrasjon</th><th>Status</th><th>Tidspunkt</th></tr></thead>
+      <tbody>${data.recent_syncs.map(s => {
+        const statusClass = s.status === 'completed' ? 'healthy' : s.status === 'failed' ? 'critical' : 'warning';
+        const statusLabel = s.status === 'completed' ? 'OK' : s.status === 'failed' ? 'Feilet' : s.status;
+        const time = s.completed_at ? formatMonitorTimeAgo(s.completed_at) : '-';
+        return `<tr>
+          <td>${escapeHtml(s.integration_id)}</td>
+          <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+          <td>${time}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function renderSecurityEvents(data) {
+  const container = document.getElementById('monitorSecurity');
+
+  let html = `<div class="monitor-summary-row">
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value" style="color: ${data.failed_logins_24h > 10 ? 'var(--danger-color)' : 'var(--text-primary)'}">${data.failed_logins_24h}</span>
+      <span class="monitor-summary-label">Feilede innlogginger (24t)</span>
+    </div>
+    <div class="monitor-summary-item">
+      <span class="monitor-summary-value" style="color: ${data.locked_accounts > 0 ? 'var(--warning-color)' : 'var(--text-primary)'}">${data.locked_accounts}</span>
+      <span class="monitor-summary-label">Låste kontoer</span>
+    </div>
+  </div>`;
+
+  if (data.recent_events.length === 0) {
+    html += '<div class="monitor-empty"><i class="fas fa-shield-alt"></i>Ingen feilede innlogginger</div>';
+  } else {
+    html += `<table class="monitor-table">
+      <thead><tr><th>E-post</th><th>IP</th><th>Tidspunkt</th></tr></thead>
+      <tbody>${data.recent_events.map(e => {
+        const time = e.tidspunkt ? formatMonitorTimeAgo(e.tidspunkt) : '-';
+        return `<tr>
+          <td>${escapeHtml(e.epost || '-')}</td>
+          <td>${escapeHtml(e.ip_adresse || '-')}</td>
+          <td>${time}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function renderServiceHealth(services) {
+  const container = document.getElementById('monitorServices');
+  const labels = {
+    email: { name: 'E-post', icon: 'fa-envelope' },
+    webhook: { name: 'Webhooks', icon: 'fa-link' },
+    geocoding: { name: 'Geokoding', icon: 'fa-map-marker-alt' },
+    route_optimization: { name: 'Ruteoptimalisering', icon: 'fa-route' },
+  };
+
+  const entries = Object.entries(services);
+  if (entries.length === 0) {
+    container.innerHTML = '<div class="monitor-empty"><i class="fas fa-check-circle"></i>Ingen data ennå</div>';
+    return;
+  }
+
+  container.innerHTML = entries.map(function([key, data]) {
+    const label = labels[key] || { name: key, icon: 'fa-cog' };
+    let dotClass = 'healthy';
+    if (data.total >= 3 && data.failure_rate > 50) dotClass = 'critical';
+    else if (data.total >= 2 && data.failure_rate > 20) dotClass = 'warning';
+    else if (data.failures > 0) dotClass = 'warning';
+
+    return '<div class="monitor-service-item">' +
+      '<div class="monitor-service-name">' +
+        '<span class="status-dot ' + dotClass + '"></span>' +
+        '<i class="fas ' + label.icon + '" style="color: var(--text-muted); font-size: 11px;"></i> ' +
+        escapeHtml(label.name) +
+      '</div>' +
+      '<div class="monitor-service-meta">' +
+        '<span>' + data.successes + ' OK</span>' +
+        (data.failures > 0 ? '<span style="color: var(--danger-color)">' + data.failures + ' feil</span>' : '') +
+        (data.total > 0 ? '<span>' + data.total + ' totalt</span>' : '<span style="color: var(--text-muted)">0 kall</span>') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderFrontendErrors(data) {
+  const container = document.getElementById('monitorFrontendErrors');
+
+  if (data.total_15m === 0) {
+    container.innerHTML = '<div class="monitor-empty"><i class="fas fa-check-circle"></i>Ingen JavaScript-feil</div>';
+    return;
+  }
+
+  let html = '<div class="monitor-summary-row">' +
+    '<div class="monitor-summary-item">' +
+      '<span class="monitor-summary-value" style="color: var(--danger-color)">' + data.total_15m + '</span>' +
+      '<span class="monitor-summary-label">Feil (15 min)</span>' +
+    '</div>' +
+    '<div class="monitor-summary-item">' +
+      '<span class="monitor-summary-value">' + data.unique_errors + '</span>' +
+      '<span class="monitor-summary-label">Unike feil</span>' +
+    '</div>' +
+  '</div>';
+
+  if (data.errors && data.errors.length > 0) {
+    html += data.errors.map(function(err) {
+      return '<div class="monitor-service-item">' +
+        '<div class="monitor-service-name" style="flex-direction: column; align-items: flex-start; gap: 2px;">' +
+          '<span style="font-weight: 600; color: var(--danger-color);">' + escapeHtml(err.message) + '</span>' +
+          (err.source ? '<span style="font-size: 11px; color: var(--text-muted);">' + escapeHtml(err.source) + (err.line ? ':' + err.line : '') + '</span>' : '') +
+        '</div>' +
+        '<div class="monitor-service-meta">' +
+          '<span class="status-badge critical">' + err.count + 'x</span>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  container.innerHTML = html;
+}
+
+function renderDataIntegrity(data) {
+  const container = document.getElementById('monitorDataIntegrity');
+
+  const checks = [
+    {
+      name: 'Kunder uten koordinater',
+      value: data.customers_without_coords || 0,
+      icon: 'fa-map-marker-alt',
+      warn: 10,
+      critical: 50,
+      detail: 'Vises ikke på kartet',
+    },
+    {
+      name: 'Ugruperte tags',
+      value: data.orphaned_tags || 0,
+      icon: 'fa-tags',
+      warn: 20,
+      critical: 100,
+      detail: 'Tags uten gruppe',
+    },
+  ];
+
+  container.innerHTML = checks.map(function(check) {
+    let dotClass = 'healthy';
+    if (check.value >= check.critical) dotClass = 'critical';
+    else if (check.value >= check.warn) dotClass = 'warning';
+
+    return '<div class="monitor-service-item">' +
+      '<div class="monitor-service-name">' +
+        '<span class="status-dot ' + dotClass + '"></span>' +
+        '<i class="fas ' + check.icon + '" style="color: var(--text-muted); font-size: 11px;"></i> ' +
+        escapeHtml(check.name) +
+      '</div>' +
+      '<div class="monitor-service-meta">' +
+        '<span style="font-weight: 600;">' + check.value + '</span>' +
+        (check.value > 0 ? '<span style="color: var(--text-muted); font-size: 11px;">' + check.detail + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function formatUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}t ${mins}m`;
+  if (hours > 0) return `${hours}t ${mins}m`;
+  return `${mins}m`;
+}
+
+function formatMonitorTimeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Nå';
+  if (mins < 60) return `${mins}m siden`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}t siden`;
+  const days = Math.floor(hours / 24);
+  return `${days}d siden`;
+}
+
+function startSystemMonitorAutoRefresh() {
+  if (systemMonitorInterval) clearInterval(systemMonitorInterval);
+  systemMonitorInterval = setInterval(loadSystemMonitor, 30000);
+}
+
+function stopSystemMonitorAutoRefresh() {
+  if (systemMonitorInterval) {
+    clearInterval(systemMonitorInterval);
+    systemMonitorInterval = null;
+  }
+}
+
+function toggleSystemMonitorAutoRefresh(e) {
+  if (e.target.checked) {
+    startSystemMonitorAutoRefresh();
+  } else {
+    stopSystemMonitorAutoRefresh();
   }
 }
 

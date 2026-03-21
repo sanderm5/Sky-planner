@@ -1172,4 +1172,211 @@ router.get(
   })
 );
 
+// ========================================
+// SYSTEM MONITORING
+// ========================================
+
+/**
+ * GET /api/super-admin/system-monitor
+ * Aggregated system health dashboard data
+ */
+router.get(
+  '/system-monitor',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { getAllCircuitBreakerStats } = await import('../services/circuit-breaker');
+    const { getCronJobStatus } = await import('../services/cron-watchdog');
+    const { getAggregatedMetrics, recordDbLatency, detectIssues, getServiceMetrics, getFrontendErrors } = await import('../services/metrics-collector');
+    const { getConnectionCount } = await import('../services/websocket');
+
+    const db = await getDatabase();
+    let supabase: any = null;
+    try {
+      supabase = await db.getSupabaseClient();
+    } catch {
+      // SQLite mode
+    }
+
+    // Server info
+    const server = {
+      uptime_seconds: Math.round(process.uptime()),
+      started_at: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+      node_version: process.version,
+      environment: process.env.NODE_ENV || 'development',
+    };
+
+    // Aggregated metrics from collector (requests, memory trend, db latency history)
+    const metrics = getAggregatedMetrics();
+
+    // Live memory snapshot (current instant)
+    const memUsage = process.memoryUsage();
+    const memory = {
+      heap_used_mb: Math.round(memUsage.heapUsed / 1024 / 1024),
+      heap_total_mb: Math.round(memUsage.heapTotal / 1024 / 1024),
+      heap_percent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),
+      rss_mb: Math.round(memUsage.rss / 1024 / 1024),
+      peak_heap_mb: metrics.memory_trend.peak_heap_mb,
+      avg_heap_mb: metrics.memory_trend.avg_heap_mb,
+    };
+
+    // Circuit breakers (in-memory, instant)
+    const circuit_breakers = getAllCircuitBreakerStats();
+
+    // Cron jobs (in-memory, instant)
+    const cron_jobs = getCronJobStatus();
+
+    // WebSocket connections (in-memory, instant)
+    const websocket = getConnectionCount();
+
+    // Database latency: live probe + record for rolling average
+    let database = {
+      status: 'healthy' as 'healthy' | 'unhealthy' | 'degraded',
+      latency_ms: 0,
+      avg_ms: metrics.database_latency.avg_ms,
+      p95_ms: metrics.database_latency.p95_ms,
+      max_ms: metrics.database_latency.max_ms,
+      samples: metrics.database_latency.samples,
+    };
+    try {
+      const dbStart = Date.now();
+      if (supabase) {
+        const { error } = await supabase.from('organizations').select('id').limit(1);
+        if (error) throw error;
+      } else {
+        await db.getAllOrganizations();
+      }
+      database.latency_ms = Date.now() - dbStart;
+      recordDbLatency(database.latency_ms);
+      if (database.latency_ms > 1000) database.status = 'degraded';
+    } catch {
+      database = { ...database, status: 'unhealthy', latency_ms: -1 };
+    }
+
+    // Integration syncs (cross-org)
+    let integrations = { total_active: 0, recent_syncs: [] as any[], failed_items_count: 0 };
+    if (supabase) {
+      try {
+        const [activeRes, syncsRes, failedRes] = await Promise.all([
+          supabase
+            .from('organization_integrations')
+            .select('id', { count: 'exact', head: true })
+            .eq('is_active', true),
+          supabase
+            .from('integration_sync_log')
+            .select('organization_id, integration_id, sync_type, status, error_message, completed_at, created_count, updated_count, failed_count')
+            .order('completed_at', { ascending: false })
+            .limit(10),
+          supabase
+            .from('failed_sync_items')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'pending'),
+        ]);
+        integrations = {
+          total_active: activeRes.count ?? 0,
+          recent_syncs: syncsRes.data ?? [],
+          failed_items_count: failedRes.count ?? 0,
+        };
+      } catch {
+        // Tables might not exist
+      }
+    }
+
+    // Security events (cross-org)
+    let security = { failed_logins_24h: 0, locked_accounts: 0, recent_events: [] as any[] };
+    if (supabase) {
+      try {
+        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const [failedRes, lockedRes, recentRes] = await Promise.all([
+          supabase
+            .from('login_logg')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'feilet')
+            .gte('tidspunkt', twentyFourHoursAgo),
+          supabase
+            .from('klient')
+            .select('id', { count: 'exact', head: true })
+            .gt('account_locked_until', new Date().toISOString()),
+          supabase
+            .from('login_logg')
+            .select('epost, ip_adresse, tidspunkt, user_agent')
+            .eq('status', 'feilet')
+            .order('tidspunkt', { ascending: false })
+            .limit(10),
+        ]);
+        security = {
+          failed_logins_24h: failedRes.count ?? 0,
+          locked_accounts: lockedRes.count ?? 0,
+          recent_events: recentRes.data ?? [],
+        };
+      } catch {
+        // Tables might not exist
+      }
+    }
+
+    // Service health metrics
+    const services = getServiceMetrics();
+    const frontend_errors = getFrontendErrors();
+
+    // Data integrity checks (lightweight queries)
+    let data_integrity = { customers_without_coords: 0, orphaned_tags: 0 };
+    if (supabase) {
+      try {
+        const [noCoordsRes, orphanTagsRes] = await Promise.all([
+          supabase
+            .from('kunder')
+            .select('id', { count: 'exact', head: true })
+            .or('lat.is.null,lng.is.null'),
+          supabase
+            .from('tags')
+            .select('id', { count: 'exact', head: true })
+            .is('group_id', null),
+        ]);
+        data_integrity = {
+          customers_without_coords: noCoordsRes.count ?? 0,
+          orphaned_tags: orphanTagsRes.count ?? 0,
+        };
+      } catch {
+        // Tables might not exist
+      }
+    }
+
+    // Compute overall status from all signals
+    const memoryDegraded = memory.heap_used_mb > 512;
+    const highErrorRate = metrics.requests.error_rate_percent > 5;
+    const serviceFailures = Object.values(services).some((s: any) => s.total >= 3 && s.failure_rate > 50);
+    const openBreakers = Object.values(circuit_breakers).filter((cb: any) => cb.state === 'OPEN');
+    const failingJobs = cron_jobs.filter(j => j.consecutiveFailures >= 3);
+    let overall_status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+    if (database.status === 'unhealthy') overall_status = 'unhealthy';
+    else if (openBreakers.length > 0 || failingJobs.length > 0 || database.status === 'degraded' || memoryDegraded || highErrorRate || serviceFailures) overall_status = 'degraded';
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        server,
+        memory,
+        requests: metrics.requests,
+        circuit_breakers,
+        cron_jobs,
+        websocket,
+        database,
+        services,
+        frontend_errors,
+        data_integrity,
+        integrations,
+        security,
+        overall_status,
+        issues: detectIssues({
+          circuitBreakers: circuit_breakers as any,
+          cronJobs: cron_jobs as any,
+          security,
+          dataIntegrity: data_integrity,
+        }),
+        timestamp: new Date().toISOString(),
+      },
+      requestId: req.requestId,
+    };
+    res.json(response);
+  })
+);
+
 export default router;

@@ -67,7 +67,7 @@ export function initImportRoutes(databaseService: ImportDbService): Router {
  */
 router.post(
   '/upload',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   upload.single('file'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
@@ -227,7 +227,7 @@ router.get(
  */
 router.post(
   '/batches/:id/mapping',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -274,7 +274,7 @@ router.post(
  */
 router.post(
   '/batches/:id/suggest-mapping',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -305,7 +305,7 @@ router.post(
  */
 router.post(
   '/batches/:id/validate',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -342,7 +342,7 @@ router.post(
  */
 router.post(
   '/batches/:id/commit',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -391,7 +391,7 @@ router.post(
  */
 router.post(
   '/batches/:id/rollback',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -432,7 +432,7 @@ router.post(
  */
 router.delete(
   '/batches/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const batchId = Number(req.params.id);
     if (isNaN(batchId)) {
@@ -514,7 +514,7 @@ router.get(
  */
 router.delete(
   '/templates/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const templateId = Number(req.params.id);
     if (isNaN(templateId)) {

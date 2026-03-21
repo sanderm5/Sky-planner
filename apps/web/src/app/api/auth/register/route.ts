@@ -25,34 +25,57 @@ function timingSafeCompare(a: string, b: string): boolean {
 }
 
 // Rate limiting - in-memory store (resets on server restart)
-const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
+// Tracks both IP and email to prevent enumeration and brute force
+const ipRateLimitStore = new Map<string, { count: number; resetTime: number }>();
+const emailRateLimitStore = new Map<string, { count: number; resetTime: number }>();
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutter
-const MAX_REQUESTS_PER_WINDOW = 5; // Maks 5 forsøk per 15 min
+const MAX_REQUESTS_PER_IP = 5; // Maks 5 forsøk per IP per 15 min
+const MAX_REQUESTS_PER_EMAIL = 3; // Maks 3 forsøk per e-post per 15 min
 
-function checkRateLimit(ip: string): { allowed: boolean; retryAfter?: number } {
-  const now = Date.now();
-  const record = rateLimitStore.get(ip);
-
-  // Rydd opp gamle entries (hver 100. request)
+function cleanupStore(store: Map<string, { count: number; resetTime: number }>, now: number) {
   if (Math.random() < 0.01) {
-    for (const [key, value] of rateLimitStore.entries()) {
+    for (const [key, value] of store.entries()) {
       if (now > value.resetTime) {
-        rateLimitStore.delete(key);
+        store.delete(key);
       }
     }
   }
+}
+
+function checkRateLimitEntry(
+  store: Map<string, { count: number; resetTime: number }>,
+  key: string,
+  maxRequests: number
+): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now();
+  cleanupStore(store, now);
+
+  const record = store.get(key);
 
   if (!record || now > record.resetTime) {
-    rateLimitStore.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    store.set(key, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
     return { allowed: true };
   }
 
-  if (record.count >= MAX_REQUESTS_PER_WINDOW) {
+  if (record.count >= maxRequests) {
     const retryAfter = Math.ceil((record.resetTime - now) / 1000);
     return { allowed: false, retryAfter };
   }
 
   record.count++;
+  return { allowed: true };
+}
+
+function checkRateLimit(ip: string, email?: string): { allowed: boolean; retryAfter?: number } {
+  const ipCheck = checkRateLimitEntry(ipRateLimitStore, ip, MAX_REQUESTS_PER_IP);
+  if (!ipCheck.allowed) return ipCheck;
+
+  if (email) {
+    const normalizedEmail = email.toLowerCase().trim();
+    const emailCheck = checkRateLimitEntry(emailRateLimitStore, normalizedEmail, MAX_REQUESTS_PER_EMAIL);
+    if (!emailCheck.allowed) return emailCheck;
+  }
+
   return { allowed: true };
 }
 
@@ -110,34 +133,12 @@ function generateSlug(name: string): string {
 }
 
 export async function POST(request: NextRequest) {
-  // Rate limiting basert på IP
+  // Rate limiting basert på IP (e-post sjekkes etter body-parsing)
   const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     || request.headers.get('x-real-ip')
     || 'unknown';
 
-  const rateLimit = checkRateLimit(clientIP);
-  if (!rateLimit.allowed) {
-    return new Response(
-      JSON.stringify({
-        error: `For mange forsøk. Prøv igjen om ${rateLimit.retryAfter} sekunder.`
-      }),
-      {
-        status: 429,
-        headers: {
-          'Content-Type': 'application/json',
-          'Retry-After': String(rateLimit.retryAfter)
-        }
-      }
-    );
-  }
-
   // Validate environment at request time (not module load)
-  // Stripe env vars temporarily disabled - manual invoicing via Fiken
-  // const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-  // const STRIPE_PRICE_STANDARD = process.env.STRIPE_PRICE_STANDARD;
-  // const STRIPE_PRICE_PREMIUM = process.env.STRIPE_PRICE_PREMIUM;
-  // const STRIPE_PRICE_STANDARD_YEARLY = process.env.STRIPE_PRICE_STANDARD_YEARLY;
-  // const STRIPE_PRICE_PREMIUM_YEARLY = process.env.STRIPE_PRICE_PREMIUM_YEARLY;
   const ENTERPRISE_SECRET = process.env.ENTERPRISE_SECRET;
 
   // Initialize database client
@@ -146,12 +147,28 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { navn, epost, passord, firma, plan, enterpriseCode, industryId } = body;
-    // billingInterval not used - Stripe temporarily disabled
 
     if (!navn || !epost || !passord || !firma) {
       return new Response(
         JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Alle felt er påkrevd' } }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Rate limit by both IP and email to prevent enumeration
+    const rateLimit = checkRateLimit(clientIP, epost);
+    if (!rateLimit.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: `For mange forsøk. Prøv igjen om ${rateLimit.retryAfter} sekunder.`
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(rateLimit.retryAfter)
+          }
+        }
       );
     }
 
@@ -195,9 +212,18 @@ export async function POST(request: NextRequest) {
 
     const emailExists = await db.isEmailRegistered(epost.toLowerCase());
     if (emailExists) {
+      // Return response identical to successful registration to prevent email enumeration.
+      // Include same fields (redirectUrl, organizationId, message) so attacker
+      // cannot distinguish duplicate from new account by response shape.
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://skyplannerapp-production.up.railway.app';
       return new Response(
-        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'E-postadressen er allerede registrert' } }),
-        { status: 409, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({
+          success: true,
+          redirectUrl: appUrl,
+          organizationId: 0, // Dummy value — client redirects to appUrl regardless
+          message: 'Konto opprettet med 14 dagers prøveperiode',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
@@ -227,7 +253,7 @@ export async function POST(request: NextRequest) {
           stripe_customer_id: undefined,
           subscription_status: 'active',
           industry_template_id: industryId || null, // Optional for MVP
-          onboarding_completed: true,
+          onboarding_completed: false,
           app_mode: 'mvp', // Default to MVP mode for new organizations
         });
 
@@ -283,7 +309,7 @@ export async function POST(request: NextRequest) {
         subscription_status: 'trialing',
         trial_ends_at: trialEndsAt,
         industry_template_id: industryId || null, // Optional for MVP
-        onboarding_completed: true,
+        onboarding_completed: false,
         app_mode: 'mvp', // Default to MVP mode for new organizations
       });
 
@@ -376,7 +402,7 @@ export async function POST(request: NextRequest) {
       stripe_customer_id: stripeCustomer.id,
       subscription_status: 'incomplete',
       industry_template_id: industryId,
-      onboarding_completed: true,
+      onboarding_completed: false,
     });
 
     await db.createKlient({

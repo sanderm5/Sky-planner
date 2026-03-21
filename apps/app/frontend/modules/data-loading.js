@@ -30,8 +30,9 @@ async function loadCustomers() {
       showAppPanels();
     }
 
-    // Update onboarding checklist progress
+    // Update onboarding checklist progress and attention badges
     if (typeof refreshChecklistState === 'function') refreshChecklistState();
+    if (typeof refreshAttentionBadges === 'function') refreshAttentionBadges();
 
     // Load avtaler and subcategory assignments in parallel
     if (!weekPlanState.weekStart) initWeekPlanState(new Date());
@@ -44,111 +45,9 @@ async function loadCustomers() {
   }
 }
 
-// Show or hide the getting started banner based on customer count
-function updateGettingStartedBanner() {
-  const existing = document.getElementById('gettingStartedBanner');
-
-  // Remove banner if customers exist
-  if (customers.length > 0) {
-    if (existing) existing.remove();
-    return;
-  }
-
-  // Don't show if user has dismissed it
-  if (localStorage.getItem('gettingStartedDismissed') === 'true') {
-    return;
-  }
-
-  // Don't show if banner already exists
-  if (existing) return;
-
-  // Create and insert banner
-  const banner = document.createElement('div');
-  banner.id = 'gettingStartedBanner';
-  banner.className = 'getting-started-banner';
-  banner.innerHTML = renderGettingStartedBanner();
-
-  const mapContainer = document.getElementById('sharedMapContainer');
-  if (mapContainer) {
-    mapContainer.appendChild(banner);
-  }
-
-  // Event delegation for banner actions (avoids inline onclick for CSP compliance)
-  banner.addEventListener('click', (e) => {
-    const target = e.target.closest('[data-action]');
-    if (!target) return;
-    const action = target.dataset.action;
-    if (action === 'dismiss-getting-started') {
-      dismissGettingStartedBanner();
-    } else if (action === 'open-integrations') {
-      window.open(target.dataset.url, '_blank');
-    } else if (action === 'open-import') {
-      dismissGettingStartedBanner();
-      showImportModal();
-    } else if (action === 'add-customer-manual') {
-      dismissGettingStartedBanner();
-      addCustomer();
-    }
-  });
-}
-
-// Render getting started banner HTML
-function renderGettingStartedBanner() {
-  const webUrl = appConfig.webUrl || '';
-
-  return `
-    <div class="getting-started-header">
-      <div>
-        <h2>Velkommen til Sky Planner!</h2>
-        <p>Legg til dine kunder for å komme i gang.</p>
-      </div>
-      <button class="getting-started-close" data-action="dismiss-getting-started" title="Lukk">
-        <i aria-hidden="true" class="fas fa-times"></i>
-      </button>
-    </div>
-    <div class="getting-started-cards">
-      <div class="getting-started-card" data-action="open-integrations" data-url="${escapeHtml(webUrl)}/dashboard/innstillinger/integrasjoner">
-        <div class="getting-started-card-icon">
-          <i aria-hidden="true" class="fas fa-plug"></i>
-        </div>
-        <h3>Koble til regnskapssystem</h3>
-        <p>Synkroniser kunder fra Tripletex, Fiken eller PowerOffice.</p>
-      </div>
-      <div class="getting-started-card" data-action="open-import">
-        <div class="getting-started-card-icon">
-          <i aria-hidden="true" class="fas fa-file-import"></i>
-        </div>
-        <h3>Importer fra fil</h3>
-        <p>Last opp kundedata fra Excel eller CSV-fil med vår importveiviser.</p>
-      </div>
-      <div class="getting-started-card" data-action="add-customer-manual">
-        <div class="getting-started-card-icon">
-          <i aria-hidden="true" class="fas fa-plus-circle"></i>
-        </div>
-        <h3>Legg til manuelt</h3>
-        <p>Opprett kunder en og en direkte i systemet.</p>
-      </div>
-    </div>
-  `;
-}
-
-// Dismiss getting started banner
-function dismissGettingStartedBanner() {
-  localStorage.setItem('gettingStartedDismissed', 'true');
-  const banner = document.getElementById('gettingStartedBanner');
-  if (banner) {
-    banner.style.opacity = '0';
-    banner.style.transform = 'translateY(-20px)';
-    setTimeout(() => banner.remove(), 300);
-  }
-  // Reveal sidebar/filter if hidden for new users
-  if (typeof showAppPanels === 'function') showAppPanels();
-
-  // Now that banner is gone, show address prompt if needed (was deferred to avoid collision)
-  setTimeout(() => {
-    if (typeof showAddressBannerIfNeeded === 'function') showAddressBannerIfNeeded();
-  }, 400);
-}
+// Getting started banner removed — onboarding now uses inline address card + checklist
+function updateGettingStartedBanner() {}
+function dismissGettingStartedBanner() {}
 
 // Load områder for filter
 async function loadOmrader() {

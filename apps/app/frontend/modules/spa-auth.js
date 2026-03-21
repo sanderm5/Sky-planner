@@ -96,6 +96,7 @@ async function handleSpaLogin(e) {
           const verifyRes = await fetch('/api/klient/verify', {
             credentials: 'include'
           });
+          if (!verifyRes.ok) throw new Error('Verify failed');
           const verifyData = await verifyRes.json();
           if (verifyData.data?.user?.isSuperAdmin) {
             localStorage.setItem('isSuperAdmin', 'true');
@@ -114,9 +115,19 @@ async function handleSpaLogin(e) {
 
       // Start the transition to app view (with onboarding if needed)
       setTimeout(async () => {
+        // Mobile: show dedicated field view instead of full app
+        if (isMobileDevice()) {
+          const loginOverlay = document.getElementById('loginOverlay');
+          if (loginOverlay) loginOverlay.classList.add('hidden');
+          initWebSocket();
+          showMobileFieldView();
+          return;
+        }
+
+          // Skip blocking wizard — go straight to app with inline onboarding
         if (needsOnboarding) {
-          // Show onboarding wizard
-          await showOnboardingWizard();
+          // Mark onboarding as completed immediately (address setup is optional/inline)
+          try { await skipOnboarding(); } catch (e) { /* continue */ }
         }
         transitionToAppView({ isNewUser: needsOnboarding });
       }, 300);
@@ -269,22 +280,32 @@ function transitionToAppView(options = {}) {
       stopGlobeSpin();
       // Reload config to get office address (user just authenticated, config was loaded pre-login)
       try { await loadConfig(); } catch (e) { /* continue with existing config */ }
-      const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
-      map.flyTo({
-        center: hasOfficeLocation
-          ? [appConfig.routeStartLng, appConfig.routeStartLat]
-          : NORWAY_CENTER,
-        zoom: hasOfficeLocation ? 6 : NORWAY_ZOOM,
-        duration: 1600,
-        essential: true,
-        curve: 1.42
-      });
+      if (isMobile) {
+        // On mobile: set globe view silently, defer flyTo to first "Kart" tab click
+        map.jumpTo({ center: [15.0, 62.0], zoom: 2.5 });
+        window._mobileNeedsFlyIn = true;
+      } else {
+        const hasOfficeLocation = appConfig.routeStartLat && appConfig.routeStartLng;
+        map.flyTo({
+          center: hasOfficeLocation
+            ? [appConfig.routeStartLng, appConfig.routeStartLat]
+            : NORWAY_CENTER,
+          zoom: hasOfficeLocation ? 6 : NORWAY_ZOOM,
+          duration: 1600,
+          essential: true,
+          curve: 1.42
+        });
+      }
     }
   }, 300);
 
   // PHASE 4: Hide login overlay completely (pointer-events already handled by CSS)
   setTimeout(() => {
     loginOverlay.classList.add('hidden');
+    // Initialize mobile tab bar now that login is hidden
+    if (isMobile && typeof initBottomTabBar === 'function') {
+      initBottomTabBar();
+    }
   }, 700);
 
   // PHASE 5: Enable map interactivity
@@ -329,17 +350,25 @@ function transitionToAppView(options = {}) {
       loadCustomers();
     }
 
-    // Initialize onboarding checklist after data is loaded
+    // Initialize onboarding checklist and attention badges after data is loaded
     setTimeout(() => {
       if (typeof initOnboardingChecklist === 'function') {
         initOnboardingChecklist();
+      }
+      // Always refresh attention badges (marks incomplete fields)
+      if (typeof refreshAttentionBadges === 'function') {
+        refreshAttentionBadges();
+      }
+      // For users without address: auto-navigate to admin and highlight
+      if (!appConfig.routeStartLat && typeof showInlineAddressSetup === 'function') {
+        showInlineAddressSetup();
       }
     }, 500);
   }, 1700);
 
   // PHASE 6: Slide in sidebar and show tab navigation
-  // For new users: keep panels hidden so address/getting-started banners aren't blocked
-  if (!isNewUser) {
+  // Always show panels — attention system highlights fields in the real UI
+  {
     setTimeout(() => {
       if (sidebar) {
         sidebar.style.transition = 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease-out';
@@ -382,8 +411,8 @@ function transitionToAppView(options = {}) {
 
   // PHASE 8: Clean up inline styles (after easeTo settles at ~2.6s)
   setTimeout(() => {
-    // Clean up sidebar/filter inline styles (only if they were animated in)
-    if (!isNewUser) {
+    // Clean up sidebar/filter inline styles
+    {
       if (sidebar) {
         sidebar.style.transition = '';
         sidebar.style.transform = '';

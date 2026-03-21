@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import { createLogger } from './logger';
+import { recordServiceEvent } from './metrics-collector';
 import { getConfig } from '../config/env';
 import type {
   WebhookEndpoint,
@@ -386,16 +387,20 @@ export class WebhookService {
 
         await db.recordWebhookSuccess(endpoint.id);
 
+        recordServiceEvent('webhook', true, endpoint.url, responseTime);
+
         log.debug(
           { deliveryId: delivery.id, webhookId: endpoint.id, responseTime },
           'Webhook delivered successfully'
         );
       } else {
+        recordServiceEvent('webhook', false, `${endpoint.url} → ${response.status}`, responseTime);
         await this.handleDeliveryFailure(delivery, endpoint, response.status, responseTime, responseBody);
       }
     } catch (error) {
       const responseTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      recordServiceEvent('webhook', false, `${endpoint.url}: ${errorMessage}`, responseTime);
       await this.handleDeliveryFailure(delivery, endpoint, null, responseTime, undefined, errorMessage);
     }
   }

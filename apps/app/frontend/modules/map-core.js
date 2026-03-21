@@ -25,9 +25,6 @@ function refreshMapTiles() {
   mapboxgl.accessToken = token;
 }
 
-// Map mode: 'satellite' or 'dark'
-let mapMode = 'satellite';
-
 // Track whether custom layers need re-adding after style change
 let _pendingStyleReload = false;
 
@@ -46,52 +43,6 @@ const TERRAIN_PITCH_STEP = 1;
 const TERRAIN_LS_KEY = 'skyplanner_terrainEnabled';
 const TERRAIN_EXAG_LS_KEY = 'skyplanner_terrainExaggeration';
 const TERRAIN_PITCH_LS_KEY = 'skyplanner_terrainPitch';
-
-// Toggle between satellite and dark map style
-function toggleNightMode() {
-  if (!map) return;
-
-  const btn = document.getElementById('nightmodeBtn');
-  const icon = btn?.querySelector('i');
-  const mapContainer = document.getElementById('map');
-
-  // Disable button during transition
-  if (btn) btn.disabled = true;
-
-  // Fade out the map
-  mapContainer.style.transition = 'opacity 0.4s ease-out';
-  mapContainer.style.opacity = '0';
-
-  setTimeout(() => {
-    if (mapMode === 'dark') {
-      map.setStyle('mapbox://styles/mapbox/satellite-streets-v12');
-      mapMode = 'satellite';
-      btn?.classList.add('satellite-active');
-      if (icon) icon.className = 'fas fa-sun';
-      btn?.setAttribute('title', 'Bytt til mørkt kart');
-    } else {
-      map.setStyle('mapbox://styles/mapbox/navigation-night-v1');
-      mapMode = 'dark';
-      btn?.classList.remove('satellite-active');
-      if (icon) icon.className = 'fas fa-moon';
-      btn?.setAttribute('title', 'Bytt til satellittkart');
-    }
-
-    // Re-add custom layers after style loads
-    map.once('style.load', () => {
-      addNorwayBorder();
-      reapplyTerrain();
-      // Re-add cluster source/layers (native GL layers are lost on style change)
-      if (typeof readdClusterLayers === 'function') readdClusterLayers();
-    });
-
-    // Fade back in
-    setTimeout(() => {
-      mapContainer.style.opacity = '1';
-      if (btn) btn.disabled = false;
-    }, 300);
-  }, 400);
-}
 
 // ========================================
 // 3D TERRAIN TOGGLE
@@ -307,6 +258,7 @@ function initSharedMap(options = {}) {
       ? (hasOfficeLocation ? [appConfig.routeStartLng, appConfig.routeStartLat] : NORWAY_CENTER)
       : NORWAY_CENTER;
     const initialZoom = skipGlobe ? (hasOfficeLocation ? 6 : NORWAY_ZOOM) : 3.0;
+    const initialPitch = skipGlobe ? 0 : 20; // Slight tilt for 3D depth on login globe
 
     // Create Mapbox GL JS map with globe projection
     map = new mapboxgl.Map({
@@ -314,6 +266,7 @@ function initSharedMap(options = {}) {
       style: 'mapbox://styles/mapbox/satellite-streets-v12',
       center: initialCenter,
       zoom: initialZoom,
+      pitch: initialPitch,
       minZoom: 1,
       maxZoom: 19,
       projection: 'globe',
@@ -403,92 +356,24 @@ function getRouteStartLocation() {
   return null;
 }
 
-// Show prominent prompt to set office address
+// Show address nudge for returning users without address (no blocking banner)
 function showAddressBannerIfNeeded() {
-  // Only show if no address is configured
   if (getRouteStartLocation()) return;
 
-  // Don't show if getting-started banner is or will be visible (avoid visual collision)
-  // Check both: banner already in DOM, OR banner will appear (no customers + not dismissed)
-  const gettingStartedWillShow = document.getElementById('gettingStartedBanner')
-    || (customers.length === 0 && localStorage.getItem('gettingStartedDismissed') !== 'true');
-  if (gettingStartedWillShow) {
-    // Address prompt will show after getting-started banner is dismissed
-    showPersistentAddressNudge();
-    const adminBadge = document.getElementById('adminAddressBadge');
-    if (adminBadge) adminBadge.style.display = 'inline-flex';
-    return;
-  }
-
-  // If already dismissed this session, show persistent nudge instead
-  if (sessionStorage.getItem('addressBannerDismissed')) {
-    showPersistentAddressNudge();
-    const adminBadge = document.getElementById('adminAddressBadge');
-    if (adminBadge) adminBadge.style.display = 'inline-flex';
-    return;
-  }
-
-  // Remove any existing prompt
-  const existing = document.getElementById('addressSetupBanner');
-  if (existing) existing.remove();
-
-  const prompt = document.createElement('div');
-  prompt.id = 'addressSetupBanner';
-  prompt.className = 'address-setup-prompt';
-  prompt.innerHTML = `
-    <div class="address-prompt-backdrop" onclick="dismissAddressBanner()"></div>
-    <div class="address-prompt-card">
-      <div class="address-prompt-step-indicator">Kom i gang</div>
-      <div class="address-prompt-icon address-prompt-icon-animated">
-        <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
-      </div>
-      <h2>Hvor holder dere til?</h2>
-      <p>Legg inn firmaadresse for å se kontoret ditt på kartet og bruke ruteplanlegging. Det tar bare et øyeblikk.</p>
-      <div class="address-prompt-actions">
-        <button class="address-prompt-btn-primary" onclick="openAdminAddressTab()">
-          <i class="fas fa-map-marker-alt" aria-hidden="true"></i> Legg inn adresse nå
-        </button>
-        <button class="address-prompt-btn-secondary" onclick="dismissAddressBanner()">
-          Jeg gjør det senere
-        </button>
-      </div>
-    </div>
-  `;
-
-  const mapContainer = document.getElementById('sharedMapContainer');
-  if (mapContainer) {
-    mapContainer.appendChild(prompt);
-    requestAnimationFrame(() => prompt.classList.add('visible'));
-  }
-
-  // Show action-needed badge on admin tab
+  // For returning users: show nudge pill + admin badge
+  showPersistentAddressNudge();
   const adminBadge = document.getElementById('adminAddressBadge');
   if (adminBadge) adminBadge.style.display = 'inline-flex';
 }
 
 function dismissAddressBanner() {
-  const prompt = document.getElementById('addressSetupBanner');
-  if (prompt) {
-    prompt.classList.remove('visible');
-    setTimeout(() => prompt.remove(), 300);
-  }
-  // Track dismissal for this login session (cleared on logout)
   sessionStorage.setItem('addressBannerDismissed', 'true');
-
-  // Show persistent nudge pill after banner is dismissed
-  setTimeout(() => showPersistentAddressNudge(), 400);
-
-  // Reveal sidebar/filter if hidden for new users
-  if (typeof showAppPanels === 'function') showAppPanels();
 }
 
 function openAdminAddressTab() {
-  dismissAddressBanner();
-  // Switch to admin tab
   const adminTab = document.getElementById('adminTab');
   if (adminTab) {
     adminTab.click();
-    // Scroll to address section after tab renders
     setTimeout(() => {
       const section = document.getElementById('companyAddressSection');
       if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -747,6 +632,9 @@ function initMap() {
     }
   }
 
+  // Initialize zoom-based panel opacity effect
+  if (typeof initPanelZoomOpacity === 'function') initPanelZoomOpacity();
+
   Logger.log('initMap() complete — Mapbox GL JS with Supercluster clustering');
 }
 
@@ -776,7 +664,7 @@ function updateMarkerLabelsVisibility() {
   const zoom = map.getZoom();
   const mapContainer = document.getElementById('map');
 
-  if (zoom < 10) {
+  if (zoom < 8) {
     mapContainer.classList.add('hide-marker-labels');
   } else {
     mapContainer.classList.remove('hide-marker-labels');
@@ -788,7 +676,7 @@ function addNorwayBorder() {
   if (!map) return;
 
   // Remove existing layers if present (needed after style change)
-  ['norway-border-line'].forEach(id => {
+  ['norway-glow', 'norway-border-line'].forEach(id => {
     if (map.getLayer(id)) map.removeLayer(id);
     if (map.getSource(id)) map.removeSource(id);
   });
@@ -801,6 +689,26 @@ function addNorwayBorder() {
     [12.10, 61.80], [12.15, 61.00], [11.80, 59.80], [11.45, 59.10],
     [11.15, 58.95]
   ];
+
+  // Subtle glow highlight on Norway (fades out when zoomed in past globe view)
+  map.addSource('norway-glow', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: NORWAY_CENTER }
+    }
+  });
+  map.addLayer({
+    id: 'norway-glow',
+    type: 'circle',
+    source: 'norway-glow',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 80, 4, 140, 6, 200, 8, 0],
+      'circle-color': 'rgba(94, 129, 172, 0.12)',
+      'circle-blur': 1,
+      'circle-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.8, 5, 0.6, 7, 0]
+    }
+  });
 
   // Border line
   map.addSource('norway-border-line', {
@@ -860,19 +768,6 @@ function generatePopupContent(customer) {
   // Generate custom organization fields from Excel import
   const customFieldsHtml = renderPopupCustomFields(customer);
 
-  // Show org.nr., kundenr, prosjektnr, estimert tid
-  let extraFieldsHtml = '';
-  const orgNr = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]);
-  if (orgNr) extraFieldsHtml += `<p><strong>Org.nr:</strong> ${escapeHtml(orgNr)}</p>`;
-  if (customer.kundenummer) extraFieldsHtml += `<p><strong>Kundenr:</strong> ${escapeHtml(customer.kundenummer)}</p>`;
-  if (customer.prosjektnummer) extraFieldsHtml += `<p><strong>Prosjektnr:</strong> ${escapeHtml(customer.prosjektnummer)}</p>`;
-  if (customer.estimert_tid) {
-    const _h = Math.floor(customer.estimert_tid / 60);
-    const _m = customer.estimert_tid % 60;
-    const tidStr = _h > 0 ? (_m > 0 ? `${_h}t ${_m}m` : `${_h}t`) : `${_m}m`;
-    extraFieldsHtml += `<p><strong>Est. tid:</strong> ${tidStr}</p>`;
-  }
-
   // Show notater if present (strip internal tags for cleaner display)
   let notatHtml = '';
   if (customer.notater) {
@@ -897,51 +792,86 @@ function generatePopupContent(customer) {
   // Generate subcategory assignments display
   const subcatHtml = renderPopupSubcategories(customer);
 
+  // Determine accent color from control status
+  const accentClass = controlStatus === 'overdue' ? 'accent-overdue'
+    : controlStatus === 'soon' ? 'accent-soon'
+    : controlStatus === 'ok' ? 'accent-ok'
+    : controlStatus === 'good' ? 'accent-good' : '';
+
+  // Build subtitle from location
+  const subtitle = [customer.postnummer, customer.poststed].filter(Boolean).map(s => escapeHtml(s)).join(' ');
+
+  // Build info grid rows
+  let infoRows = '';
+  if (customer.adresse) {
+    infoRows += `<span class="popup-label">Adresse</span><span class="popup-value">${escapeHtml(customer.adresse)}</span>`;
+  }
+  if (subtitle) {
+    infoRows += `<span class="popup-label">Sted</span><span class="popup-value">${subtitle}</span>`;
+  }
+  if (customer.telefon) {
+    infoRows += `<span class="popup-label">Telefon</span><span class="popup-value">${escapeHtml(customer.telefon)}</span>`;
+  }
+  if (customer.epost) {
+    infoRows += `<span class="popup-label">E-post</span><span class="popup-value">${escapeHtml(customer.epost)}</span>`;
+  }
+  const orgNrVal = customer.org_nummer || (customer.notater && customer.notater.match(/\[ORGNR:(\d{9})\]/)?.[1]);
+  if (orgNrVal) {
+    infoRows += `<span class="popup-label">Org.nr</span><span class="popup-value">${escapeHtml(orgNrVal)}</span>`;
+  }
+  if (customer.kundenummer) {
+    infoRows += `<span class="popup-label">Kundenr</span><span class="popup-value">${escapeHtml(customer.kundenummer)}</span>`;
+  }
+  if (customer.prosjektnummer) {
+    infoRows += `<span class="popup-label">Prosjektnr</span><span class="popup-value">${escapeHtml(customer.prosjektnummer)}</span>`;
+  }
+  if (customer.estimert_tid) {
+    const _h = Math.floor(customer.estimert_tid / 60);
+    const _m = customer.estimert_tid % 60;
+    const tidStr = _h > 0 ? (_m > 0 ? `${_h}t ${_m}m` : `${_h}t`) : `${_m}m`;
+    infoRows += `<span class="popup-label">Est. tid</span><span class="popup-value">${tidStr}</span>`;
+  }
+
   return `
-    ${presenceBanner}
-    <h3>${escapeHtml(customer.navn)}</h3>
-    ${customer.kategori ? `<p><strong>Kategori:</strong> ${escapeHtml(customer.kategori)}</p>` : ''}
-    ${subcatHtml}
-    ${extraFieldsHtml}
-    ${customFieldsHtml}
-    <p>${escapeHtml(customer.adresse)}</p>
-    <p>${escapeHtml(customer.postnummer || '')} ${escapeHtml(customer.poststed || '')}</p>
-    ${customer.telefon ? `<p>Tlf: ${escapeHtml(customer.telefon)}</p>` : ''}
-    ${customer.epost ? `<p>E-post: ${escapeHtml(customer.epost)}</p>` : ''}
-    ${kontrollInfoHtml}
-    ${notatHtml}
+    <div class="popup-accent ${accentClass}"></div>
+    <div class="popup-inner">
+      ${presenceBanner}
+      <h3>${escapeHtml(customer.navn)}</h3>
+      <div class="popup-subtitle">${customer.kategori ? escapeHtml(customer.kategori) : ''}${customer.kategori && subtitle ? ' &middot; ' : ''}${!customer.kategori ? subtitle : ''}</div>
+      ${subcatHtml}
+      ${customFieldsHtml}
+      ${infoRows ? `<div class="popup-info-grid">${infoRows}</div>` : ''}
+      ${kontrollInfoHtml}
+      ${notatHtml}
+    </div>
+    ${buildPopupWeekDayPicker(customer.id)}
+    ${buildPopupTeamAssign(customer.id)}
     <div class="popup-actions">
       <button class="btn btn-small btn-navigate" data-action="navigateToCustomer" data-lat="${customer.lat}" data-lng="${customer.lng}" data-name="${escapeHtml(customer.navn)}">
         <i aria-hidden="true" class="fas fa-directions"></i> Naviger
       </button>
       <button class="btn btn-small btn-primary" data-action="toggleCustomerSelection" data-customer-id="${customer.id}">
-        ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
+        <i aria-hidden="true" class="fas fa-route"></i> ${isSelected ? 'Fjern fra rute' : 'Legg til rute'}
       </button>
-      <div class="popup-btn-group">
-        <button class="btn btn-small btn-calendar" data-action="quickAddToday" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i aria-hidden="true" class="fas fa-calendar-plus"></i> I dag
-        </button>
-        <button class="btn btn-small btn-calendar" data-action="showCalendarQuickMenu" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}">
-          <i aria-hidden="true" class="fas fa-chevron-down" style="font-size:9px"></i>
-        </button>
-      </div>
-      ${splitViewOpen && splitViewState.activeDay ? `
-      <button class="btn btn-small btn-calendar" data-action="quickAddToSplitDay" data-customer-id="${customer.id}" data-customer-name="${escapeHtml(customer.navn)}" style="background:var(--color-primary);color:#fff;width:100%;">
-        <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
-      </button>
-      ` : ''}
       <button class="btn btn-small btn-success" data-action="quickMarkVisited" data-customer-id="${customer.id}">
-        <i aria-hidden="true" class="fas fa-check"></i> Marker besøkt
+        <i aria-hidden="true" class="fas fa-check"></i> Besøkt
       </button>
       <button class="btn btn-small btn-secondary" data-action="editCustomer" data-customer-id="${customer.id}">
-        Rediger
+        <i aria-hidden="true" class="fas fa-pen"></i> Rediger
       </button>
       <button class="btn btn-small ${hasEmail ? 'btn-email' : 'btn-disabled'}"
               data-action="sendEmail"
               data-customer-id="${customer.id}"
-              ${hasEmail ? '' : 'disabled'}>
+              ${hasEmail ? '' : 'disabled aria-disabled="true"'}
+              title="${hasEmail ? 'Send e-post til kunden' : 'Ingen e-postadresse registrert'}">
         <i aria-hidden="true" class="fas fa-envelope"></i> E-post
       </button>
+      ${hasEmail ? `<button class="btn btn-small btn-notify-customer"
+              data-action="notifyCustomerOnWay"
+              data-customer-id="${customer.id}"
+              title="Send «på vei»-varsel til kunden">
+        <i aria-hidden="true" class="fas fa-paper-plane"></i> På vei
+      </button>` : ''}
     </div>
   `;
 }

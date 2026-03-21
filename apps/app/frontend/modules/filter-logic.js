@@ -374,7 +374,7 @@ function renderCustomerList(customerData) {
     `;
   });
 
-  customerList.innerHTML = html;
+  if (customerList) customerList.innerHTML = html;
   // Event listeners are handled via event delegation in setupEventListeners()
   // Using data-action attributes on elements for CSP compliance and memory efficiency
 }

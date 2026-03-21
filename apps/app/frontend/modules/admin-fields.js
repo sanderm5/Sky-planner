@@ -43,10 +43,10 @@ function renderAdminFields() {
         </span>
       </div>
       <div class="item-actions">
-        <button class="btn-icon" onclick="openFieldModal(${field.id})" title="Rediger">
+        <button class="btn-icon" data-action="openFieldModal" data-args='[${field.id}]' title="Rediger">
           <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
-        <button class="btn-icon danger" onclick="confirmDeleteField(${field.id})" title="Slett">
+        <button class="btn-icon danger" data-action="confirmDeleteField" data-args='[${field.id}]' title="Slett">
           <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
@@ -110,7 +110,7 @@ function renderFieldOptions(options) {
     <div class="option-item" data-index="${index}" data-id="${opt.id || ''}">
       <input type="text" class="option-value" value="${escapeHtml(opt.value || '')}" placeholder="Verdi">
       <input type="text" class="option-display" value="${escapeHtml(opt.display_name || '')}" placeholder="Visningsnavn">
-      <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
+      <button type="button" class="btn-icon danger" data-action="removeAncestor" data-ancestor=".option-item" title="Fjern">
         <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
@@ -127,7 +127,7 @@ function addFieldOption() {
     <div class="option-item" data-index="${index}" data-id="">
       <input type="text" class="option-value" placeholder="Verdi">
       <input type="text" class="option-display" placeholder="Visningsnavn">
-      <button type="button" class="btn-icon danger" onclick="removeFieldOption(this)" title="Fjern">
+      <button type="button" class="btn-icon danger" data-action="removeAncestor" data-ancestor=".option-item" title="Fjern">
         <i aria-hidden="true" class="fas fa-times"></i>
       </button>
     </div>
@@ -299,15 +299,20 @@ function renderCategoryListItems() {
         <span class="category-list-meta">${cat.default_interval_months || 12} mnd</span>
       </div>
       <div class="category-list-actions">
-        <button class="btn-icon" onclick="document.getElementById('categoryListModal').classList.add('hidden'); openCategoryModal(${cat.id});" title="Rediger">
+        <button class="btn-icon" data-action="editCategoryFromList" data-args='[${cat.id}]' title="Rediger">
           <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
-        <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
+        <button class="btn-icon danger" data-action="confirmDeleteCategory" data-args='[${cat.id}]' title="Slett">
           <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
     </div>
   `).join('');
+}
+
+function editCategoryFromList(catId) {
+  document.getElementById('categoryListModal').classList.add('hidden');
+  openCategoryModal(catId);
 }
 
 function renderAdminCategories() {
@@ -340,10 +345,10 @@ function renderAdminCategories() {
         </span>
       </div>
       <div class="item-actions">
-        <button class="btn-icon" onclick="openCategoryModal(${cat.id})" title="Rediger">
+        <button class="btn-icon" data-action="openCategoryModal" data-args='[${cat.id}]' title="Rediger">
           <i aria-hidden="true" class="fas fa-edit"></i>
         </button>
-        <button class="btn-icon danger" onclick="confirmDeleteCategory(${cat.id})" title="Slett">
+        <button class="btn-icon danger" data-action="confirmDeleteCategory" data-args='[${cat.id}]' title="Slett">
           <i aria-hidden="true" class="fas fa-trash"></i>
         </button>
       </div>
@@ -370,15 +375,16 @@ function renderCategoryIconPicker(selectedIcon) {
   container.innerHTML = CATEGORY_ICONS.map(icon => `
     <button type="button" class="icon-btn ${icon === selectedIcon ? 'selected' : ''}"
             data-icon="${escapeHtml(icon)}" title="${escapeHtml(icon.replace('fa-', ''))}"
-            onclick="selectCategoryIcon(this, '${escapeJsString(icon)}')">
+            data-action="selectCategoryIcon" data-args='["${escapeHtml(icon)}"]'>
       <i aria-hidden="true" class="fas ${escapeHtml(icon)}"></i>
     </button>
   `).join('');
 }
 
-function selectCategoryIcon(btn, icon) {
+function selectCategoryIcon(icon) {
   document.querySelectorAll('#categoryIconPicker .icon-btn').forEach(b => b.classList.remove('selected'));
-  btn.classList.add('selected');
+  const selected = document.querySelector(`#categoryIconPicker .icon-btn[data-icon="${icon}"]`);
+  if (selected) selected.classList.add('selected');
   document.getElementById('categoryIcon').value = icon;
   console.log('[Category] Icon selected:', icon);
 }
@@ -386,6 +392,16 @@ function selectCategoryIcon(btn, icon) {
 function updateCategoryColorPreview(color) {
   const preview = document.getElementById('categoryColorPreview');
   if (preview) preview.style.background = color;
+}
+
+function openCategoryModalFromList() {
+  document.getElementById('categoryListModal').classList.add('hidden');
+  openCategoryModal();
+}
+
+function deleteCategoryFromBtn() {
+  const id = document.getElementById('categoryId').value;
+  if (id) confirmDeleteCategory(parseInt(id));
 }
 
 function openCategoryModal(categoryId = null) {
@@ -567,10 +583,10 @@ async function renderAdminSubcategories() {
         <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
         <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
         <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
-        <button class="btn-icon" style="padding: 2px 4px;" onclick="editSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Gi nytt navn">
+        <button class="btn-icon" style="padding: 2px 4px;" data-action="editSubcatGroup" data-args='[${group.id}, "${escapeHtml(group.navn)}"]' title="Gi nytt navn">
           <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
         </button>
-        <button class="btn-icon danger" style="padding: 2px 4px;" onclick="deleteSubcatGroup(${group.id}, '${escapeJsString(group.navn)}')" title="Slett gruppe">
+        <button class="btn-icon danger" style="padding: 2px 4px;" data-action="deleteSubcatGroup" data-args='[${group.id}, "${escapeHtml(group.navn)}"]' title="Slett gruppe">
           <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
         </button>
       </div>
@@ -579,10 +595,10 @@ async function renderAdminSubcategories() {
         <div style="display: flex; align-items: center; gap: 6px; margin-left: 16px; padding: 2px 0;">
           <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
           <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
-          <button class="btn-icon" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="editSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Gi nytt navn">
+          <button class="btn-icon subcat-hover-btn" style="padding: 2px 4px;" data-action="editSubcatItem" data-args='[${sub.id}, "${escapeHtml(sub.navn)}"]' title="Gi nytt navn">
             <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
           </button>
-          <button class="btn-icon danger" style="padding: 2px 4px; opacity: 0.5;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" onclick="deleteSubcatItem(${sub.id}, '${escapeJsString(sub.navn)}')" title="Slett">
+          <button class="btn-icon danger subcat-hover-btn" style="padding: 2px 4px;" data-action="deleteSubcatItem" data-args='[${sub.id}, "${escapeHtml(sub.navn)}"]' title="Slett">
             <i aria-hidden="true" class="fas fa-trash" style="font-size: 10px;"></i>
           </button>
         </div>
@@ -592,8 +608,8 @@ async function renderAdminSubcategories() {
         <input type="text" class="form-control" placeholder="Ny underkategori..." maxlength="100"
           style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
           data-add-subcat-for-group="${group.id}"
-          onkeydown="if(event.key==='Enter'){addSubcatItem(${group.id}, this); event.preventDefault();}">
-        <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatItem(${group.id}, this.previousElementSibling)">
+          data-on-keydown="addSubcatItemFromInput" data-key="Enter" data-args='[${group.id}]'>
+        <button class="btn btn-primary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" data-action="addSubcatItemBtn" data-args='[${group.id}]'>
           <i aria-hidden="true" class="fas fa-plus"></i>
         </button>
       </div>
@@ -603,12 +619,32 @@ async function renderAdminSubcategories() {
       <input type="text" class="form-control" placeholder="Ny gruppe..." maxlength="100"
         style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
         id="adminAddGroupInput"
-        onkeydown="if(event.key==='Enter'){addSubcatGroup(this); event.preventDefault();}">
-      <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" onclick="addSubcatGroup(document.getElementById('adminAddGroupInput'))">
+        data-on-keydown="addSubcatGroupFromInput" data-key="Enter">
+      <button class="btn btn-secondary btn-small" style="font-size: 11px; padding: 4px 8px; height: 28px;" data-action="addSubcatGroupBtn">
         <i aria-hidden="true" class="fas fa-plus" style="margin-right: 4px;"></i> Gruppe
       </button>
     </div>
   `;
+}
+
+function addSubcatItemFromInput(groupId) {
+  const input = document.querySelector(`[data-add-subcat-for-group="${groupId}"]`);
+  if (input) addSubcatItem(groupId, input);
+}
+
+function addSubcatItemBtn(groupId) {
+  const input = document.querySelector(`[data-add-subcat-for-group="${groupId}"]`);
+  if (input) addSubcatItem(groupId, input);
+}
+
+function addSubcatGroupFromInput() {
+  const input = document.getElementById('adminAddGroupInput');
+  if (input) addSubcatGroup(input);
+}
+
+function addSubcatGroupBtn() {
+  const input = document.getElementById('adminAddGroupInput');
+  if (input) addSubcatGroup(input);
 }
 
 async function addSubcatGroup(inputEl) {

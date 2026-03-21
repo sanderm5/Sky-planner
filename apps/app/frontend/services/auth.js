@@ -9,7 +9,7 @@
  */
 function canEdit() {
   const role = localStorage.getItem('userRole') || 'leser';
-  return role === 'admin' || role === 'redigerer';
+  return role === 'admin' || role === 'teammedlem' || role === 'kontor';
 }
 
 /**
@@ -74,24 +74,90 @@ function handleLogout() {
   appConfig.routeStartLng = undefined;
   appConfig.routeStartAddress = undefined;
 
+  // =====================================================
+  // CRITICAL: Clear ALL in-memory data to prevent leaking
+  // customer/organization data between different logins
+  // =====================================================
+
+  // Clear customer data and map markers
+  customers = [];
+  selectedCustomers.clear();
+  routeMarkers = [];
+  avtaler = [];
+  omrader = [];
+
+  // Clear filter state
+  currentFilter = 'alle';
+  showOnlyWarnings = false;
+  selectedCategory = 'all';
+  selectedSubcategories = {};
+  dynamicFieldFilters = {};
+  if (filterAbortController) {
+    filterAbortController.abort();
+    filterAbortController = null;
+  }
+
+  // Clear organization-specific data
+  organizationFields = [];
+  organizationCategories = [];
+  kundeSubcatMap = {};
+  allSubcategoryGroups = [];
+  teamMembersData = [];
+  subscriptionInfo = null;
+  accessTokenExpiresAt = null;
+
+  // Clear calendar state
+  currentCalendarMonth = new Date().getMonth();
+  currentCalendarYear = new Date().getFullYear();
+  calendarViewMode = 'month';
+  currentWeekStart = null;
+
+  // Clear weekplan state
+  if (typeof weekPlanState !== 'undefined') {
+    weekPlanState.days = {};
+    weekPlanState.activeDay = null;
+    weekPlanState.globalAssignedTo = '';
+  }
+  if (typeof wpTeamMembers !== 'undefined') wpTeamMembers = null;
+
+  // Clear cluster data
+  if (typeof clusterGeoJSONFeatures !== 'undefined') clusterGeoJSONFeatures = [];
+  if (typeof _clusterSourceReady !== 'undefined') _clusterSourceReady = false;
+  if (typeof clusterMarkers !== 'undefined') clusterMarkers.clear();
+
+  // Close WebSocket connection (prevents data from previous session leaking via real-time updates)
+  if (ws && ws.readyState <= 1) {
+    ws.close();
+  }
+  ws = null;
+  wsInitialized = false;
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  wsReconnectAttempts = 0;
+  presenceClaims.clear();
+  currentClaimedKundeId = null;
+  myUserId = null;
+  myInitials = null;
+
+  // Clear route planning data
+  if (typeof currentRouteData !== 'undefined') currentRouteData = null;
+
   // Remove office marker and address nudges from the map
   removeOfficeMarker();
   removeAddressNudge();
   const adminBadge = document.getElementById('adminAddressBadge');
   if (adminBadge) adminBadge.style.display = 'none';
 
-  // Clear address banner dismissal so it shows again on next login
+  // Clear onboarding dismissals for next login
   sessionStorage.removeItem('addressBannerDismissed');
+  sessionStorage.removeItem('inlineAddressDismissed');
 
-  // Clear getting-started dismissal so new user sees it
-  localStorage.removeItem('gettingStartedDismissed');
-
-  // Clean up onboarding checklist UI
+  // Clean up onboarding UI
   if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
+  if (typeof removeInlineAddressCard === 'function') removeInlineAddressCard();
   localStorage.removeItem('skyplanner_checklistMinimized');
-
-  // Reset context tips so they show on next login
-  localStorage.removeItem('shownContextTips');
 
   showLoginView();
 }
@@ -111,6 +177,11 @@ async function stopImpersonation() {
       headers: stopImpHeaders,
       credentials: 'include'
     });
+
+    if (!response.ok) {
+      showNotification('Kunne ikke stoppe representasjon', 'error');
+      return;
+    }
 
     const data = await response.json();
 

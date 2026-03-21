@@ -49,7 +49,7 @@ function renderEmailDialog(customer) {
     <div class="email-dialog">
       <div class="email-dialog-header">
         <h3><i aria-hidden="true" class="fas fa-envelope"></i> Send e-post</h3>
-        <button class="email-dialog-close" onclick="closeEmailDialog()"><i aria-hidden="true" class="fas fa-times"></i></button>
+        <button class="email-dialog-close" data-action="closeEmailDialog"><i aria-hidden="true" class="fas fa-times"></i></button>
       </div>
       <div class="email-dialog-body">
         <div class="email-dialog-recipient">
@@ -59,7 +59,7 @@ function renderEmailDialog(customer) {
 
         <div class="email-dialog-field">
           <label for="emailTemplateSelect">Velg mal:</label>
-          <select id="emailTemplateSelect" class="email-dialog-select" onchange="onEmailTemplateChange()">
+          <select id="emailTemplateSelect" class="email-dialog-select" data-on-change="onEmailTemplateChange">
             ${templates.map(t => `<option value="${t.id}">${escapeHtml(t.name)} (${escapeHtml(t.category)})</option>`).join('')}
           </select>
         </div>
@@ -76,7 +76,7 @@ function renderEmailDialog(customer) {
         </div>
 
         <div class="email-dialog-preview-section">
-          <button class="email-dialog-preview-btn" onclick="previewEmail()">
+          <button class="email-dialog-preview-btn" data-action="previewEmail">
             <i aria-hidden="true" class="fas fa-eye"></i> Forhåndsvis
           </button>
           <div id="emailPreviewContainer" class="email-preview-container" style="display:none">
@@ -86,8 +86,8 @@ function renderEmailDialog(customer) {
         </div>
       </div>
       <div class="email-dialog-footer">
-        <button class="btn btn-secondary" onclick="closeEmailDialog()">Avbryt</button>
-        <button class="btn btn-primary email-send-btn" onclick="sendEmailFromDialog()">
+        <button class="btn btn-secondary" data-action="closeEmailDialog">Avbryt</button>
+        <button class="btn btn-primary email-send-btn" data-action="sendEmailFromDialog">
           <i aria-hidden="true" class="fas fa-paper-plane"></i> Send e-post
         </button>
       </div>

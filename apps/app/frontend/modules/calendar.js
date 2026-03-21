@@ -1,3 +1,72 @@
+// Calendar-map focus state
+let calendarFocusedDay = null;
+let calendarFocusedKundeIds = null;
+
+function focusCalendarDayOnMap(dateStr) {
+  if (calendarFocusedDay === dateStr) {
+    clearCalendarFocus();
+    renderCalendar();
+    return;
+  }
+  // Filter avtaler for this date, collect kunde_ids with coordinates
+  const dayAvtaler = avtaler.filter(a => a.dato === dateStr);
+  const kundeIds = new Set();
+  const boundsPoints = [];
+  for (const a of dayAvtaler) {
+    if (!a.kunde_id) continue;
+    const kunde = customers.find(c => c.id === a.kunde_id);
+    if (kunde && kunde.lat && kunde.lng) {
+      kundeIds.add(kunde.id);
+      boundsPoints.push([kunde.lat, kunde.lng]);
+    }
+  }
+  if (kundeIds.size === 0) {
+    if (typeof showToast === 'function') showToast('Ingen avtaler med koordinater denne dagen', 'info');
+    return;
+  }
+  // Clear any weekplan focus
+  if (typeof wpFocusedTeamMember !== 'undefined' && wpFocusedTeamMember) {
+    wpFocusedTeamMember = null;
+    wpFocusedMemberIds = null;
+  }
+  calendarFocusedDay = dateStr;
+  calendarFocusedKundeIds = kundeIds;
+  applyCalendarFocusToMarkers();
+  if (typeof refreshClusters === 'function') refreshClusters();
+  // Zoom to bounds
+  if (boundsPoints.length > 0 && typeof boundsFromLatLngArray === 'function' && typeof map !== 'undefined' && map) {
+    const bounds = boundsFromLatLngArray(boundsPoints);
+    map.fitBounds(bounds, { padding: 50, maxZoom: 14 });
+  }
+  renderCalendar();
+  const count = kundeIds.size;
+  if (typeof showToast === 'function') showToast(`${count} avtale${count > 1 ? 'r' : ''} vist på kartet`, 'success', 2000);
+}
+
+function applyCalendarFocusToMarkers() {
+  if (typeof markers === 'undefined') return;
+  for (const kundeId of Object.keys(markers)) {
+    const marker = markers[kundeId];
+    if (!marker?._element && !marker?.getElement) continue;
+    const el = marker._element || marker.getElement();
+    if (!el) continue;
+    if (!calendarFocusedKundeIds) {
+      el.classList.remove('cal-hidden');
+    } else if (calendarFocusedKundeIds.has(Number(kundeId))) {
+      el.classList.remove('cal-hidden');
+    } else {
+      el.classList.add('cal-hidden');
+    }
+  }
+}
+
+function clearCalendarFocus() {
+  calendarFocusedDay = null;
+  calendarFocusedKundeIds = null;
+  applyCalendarFocusToMarkers();
+  if (typeof refreshClusters === 'function') refreshClusters();
+}
+
 // Format minutes as "Xt Ym" for calendar display
 function formatEstTid(min) {
   if (!min || min <= 0) return '';
@@ -66,7 +135,17 @@ async function loadAvtaler() {
     const response = await apiFetch('/api/avtaler');
     if (response.ok) {
       const avtaleResult = await response.json();
-      avtaler = avtaleResult.data || avtaleResult;
+      const rawAvtaler = avtaleResult.data || avtaleResult;
+      // Deduplicate: same kunde_id + dato + klokkeslett = keep newest (highest id)
+      const seen = new Map();
+      for (const a of rawAvtaler) {
+        const key = `${a.kunde_id}_${a.dato}_${a.klokkeslett || ''}`;
+        const existing = seen.get(key);
+        if (!existing || (a.id && existing.id && a.id > existing.id)) {
+          seen.set(key, a);
+        }
+      }
+      avtaler = Array.from(seen.values());
       // Refresh plan badges on map if weekly plan is active
       if (weekPlanState.weekStart) {
         updateWeekPlanBadges();
@@ -149,13 +228,15 @@ async function renderCalendar() {
     const areaHint = dayAvtaler.length > 0 ? getAreaTooltip(dayAvtaler) : '';
     const areaCount = dayAvtaler.length > 0 ? getUniqueAreas(dayAvtaler).size : 0;
 
+    const isFocused = calendarFocusedDay === dateStr;
     html += `
-      <div class="calendar-day ${isToday ? 'today' : ''} ${isPast ? 'past' : ''} ${hasContent ? 'has-content' : ''}"
+      <div class="calendar-day ${isToday ? 'today' : ''} ${isPast ? 'past' : ''} ${hasContent ? 'has-content' : ''} ${isFocused ? 'calendar-day-focused' : ''}"
            data-date="${dateStr}" data-action="openDayDetail" role="button" tabindex="0">
         <div class="day-top-row">
           <span class="day-number">${day}</span>
           ${areaCount > 0 ? `<span class="day-area-hint" title="${escapeHtml(areaHint)}">${areaCount} omr.</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
+          ${hasContent ? `<button class="cal-map-btn ${isFocused ? 'active' : ''}" data-action="focusCalendarDayOnMap" data-args='["${dateStr}"]' title="Vis på kartet"><i aria-hidden="true" class="fas fa-map-marker-alt"></i></button>` : ''}
+          ${dayAvtaler.length >= 2 && buildGoogleMapsUrl(dayAvtaler) ? `<a class="day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         <div class="calendar-events">
           ${dayAvtaler.map(a => {
@@ -170,7 +251,7 @@ async function renderCalendar() {
                 ${a.klokkeslett ? `<span class="avtale-time">${a.klokkeslett.substring(0, 5)}</span>` : ''}
                 <span class="avtale-kunde">${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</span>
                 ${poststed ? `<span class="avtale-poststed">${escapeHtml(poststed)}</span>` : ''}
-                ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="avtale-creator" title="Opprettet av ${escapeHtml(a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.opprettet_av, true))}</span>` : ''}
+                ${(a.tildelt_tekniker || a.opprettet_av) && (a.tildelt_tekniker || a.opprettet_av) !== 'admin' ? `<span class="avtale-creator" title="Tildelt: ${escapeHtml(a.tildelt_tekniker || a.opprettet_av)}">${escapeHtml(getCreatorDisplay(a.tildelt_tekniker || a.opprettet_av, true))}</span>` : ''}
               </div>
               <button class="avtale-quick-delete" data-action="quickDeleteAvtale" data-avtale-id="${a.id}" title="Slett avtale" aria-label="Slett avtale"><i aria-hidden="true" class="fas fa-times"></i></button>
             </div>
@@ -233,7 +314,7 @@ async function renderCalendar() {
             <span class="week-day-name">${weekDayNames[i].substring(0, 3)}</span>
             <span class="week-day-date">${dayDate.getDate()}</span>
             ${dayMinutes > 0 ? `<span class="week-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
-            ${dayAvtaler.length >= 2 ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
+            ${dayAvtaler.length >= 2 && buildGoogleMapsUrl(dayAvtaler) ? `<a class="week-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
           </div>
           ${renderAreaBadges(dayAvtaler)}
           <div class="week-day-content">
@@ -241,7 +322,7 @@ async function renderCalendar() {
               const navn = a.kunder?.navn || a.kunde_navn || 'Ukjent';
               const addr = [a.kunder?.adresse || '', a.kunder?.postnummer || '', a.kunder?.poststed || ''].filter(Boolean).join(', ');
               const phone = a.kunder?.telefon || a.telefon || '';
-              const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+              const creator = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
               const initials = creator ? getCreatorDisplay(creator, true) : '';
               const serviceColor = getAvtaleServiceColor(a);
               const serviceIcon = getAvtaleServiceIcon(a);
@@ -304,7 +385,7 @@ async function renderCalendar() {
               <div class="upcoming-info">
                 <strong>${a.er_gjentakelse || a.original_avtale_id ? '<i aria-hidden="true" class="fas fa-sync-alt" style="font-size:0.7em;margin-right:3px" title="Gjentakende"></i>' : ''}${escapeHtml(a.kunder?.navn || a.kunde_navn || 'Ukjent')}</strong>
                 <span>${a.klokkeslett ? a.klokkeslett.substring(0, 5) : ''} ${a.type || ''}</span>
-                ${a.opprettet_av && a.opprettet_av !== 'admin' ? `<span class="upcoming-creator">Av: ${escapeHtml(getCreatorDisplay(a.opprettet_av))}</span>` : ''}
+                ${(a.tildelt_tekniker || a.opprettet_av) && (a.tildelt_tekniker || a.opprettet_av) !== 'admin' ? `<span class="upcoming-creator">${escapeHtml(getCreatorDisplay(a.tildelt_tekniker || a.opprettet_av))}</span>` : ''}
               </div>
             </div>
           `).join('')}
@@ -471,6 +552,9 @@ function openCalendarSplitView() {
           showToast('Avtale slettet', 'success');
           await loadAvtaler();
           renderCalendar();
+          if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+          if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+          if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
         } else {
           showToast('Kunne ikke slette avtalen', 'error');
         }
@@ -519,7 +603,7 @@ function openCalendarSplitView() {
 
   // Invalidate map size so tiles re-render in the visible area
   setTimeout(() => {
-    if (window.map) window.map.resize();
+    if (window.map && typeof window.map.resize === 'function') window.map.resize();
   }, 100);
 }
 
@@ -545,7 +629,7 @@ function closeCalendarSplitView() {
 
   // Invalidate map size
   setTimeout(() => {
-    if (window.map) window.map.resize();
+    if (window.map && typeof window.map.resize === 'function') window.map.resize();
   }, 100);
 }
 
@@ -593,7 +677,7 @@ function renderSplitWeekContent() {
           ${isActive ? '<i aria-hidden="true" class="fas fa-crosshairs split-active-icon"></i>' : ''}
           ${dayMinutes > 0 ? `<span class="split-day-time">${formatEstTid(dayMinutes)}</span>` : ''}
           ${dayAvtaler.length > 0 ? `<span class="split-day-count">${dayAvtaler.length} avtale${dayAvtaler.length !== 1 ? 'r' : ''}</span>` : ''}
-          ${dayAvtaler.length >= 2 ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" onclick="event.stopPropagation()"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
+          ${dayAvtaler.length >= 2 && buildGoogleMapsUrl(dayAvtaler) ? `<a class="split-day-gmaps" href="${buildGoogleMapsUrl(dayAvtaler)}" target="_blank" rel="noopener" title="Åpne rute i Google Maps" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-directions"></i></a>` : ''}
         </div>
         ${dayAvtaler.length > 0 ? renderAreaBadges(dayAvtaler) : ''}
         <div class="split-day-content">
@@ -607,7 +691,7 @@ function renderSplitWeekContent() {
       const navn = a.kunder?.navn || a.kunde_navn || 'Ukjent';
       const addr = [a.kunder?.adresse || '', a.kunder?.postnummer || '', a.kunder?.poststed || ''].filter(Boolean).join(', ');
       const phone = a.kunder?.telefon || a.telefon || '';
-      const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+      const creator = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
       const initials = creator ? getCreatorDisplay(creator, true) : '';
       const serviceColor = getAvtaleServiceColor(a);
       const serviceIcon = getAvtaleServiceIcon(a);
@@ -871,7 +955,7 @@ function setupSplitDivider() {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     // Re-render map
-    setTimeout(() => { if (window.map) window.map.resize(); }, 50);
+    setTimeout(() => { if (window.map && typeof window.map.resize === 'function') window.map.resize(); }, 50);
   };
 
   divider.addEventListener('mousedown', onMouseDown);
@@ -1183,7 +1267,10 @@ async function deleteAvtale() {
     if (response.ok) {
       await loadAvtaler();
       renderCalendar();
-      applyFilters(); // Oppdater kart-markører
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+      if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
+      applyFilters();
       closeAvtaleModal();
     }
   } catch (error) {
@@ -1209,7 +1296,10 @@ async function deleteAvtaleSeries() {
       showMessage(`${result.data.deletedCount} avtaler slettet`, 'success');
       await loadAvtaler();
       renderCalendar();
-      applyFilters(); // Oppdater kart-markører
+      if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+      if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
+      applyFilters();
       closeAvtaleModal();
     }
   } catch (error) {

@@ -4,6 +4,7 @@
  */
 
 import { logger } from '../services/logger';
+import { getCircuitBreaker } from '../services/circuit-breaker';
 import type {
   DataSourceAdapter,
   IntegrationConfig,
@@ -36,45 +37,53 @@ export abstract class BaseDataSourceAdapter implements DataSourceAdapter {
   private windowStart = Date.now();
 
   /**
-   * Make an HTTP request with rate limiting
+   * Make an HTTP request with rate limiting and circuit breaker protection
    */
   protected async rateLimitedFetch<T>(
     url: string,
     options: RequestInit,
     credentials: IntegrationCredentials
   ): Promise<T> {
-    await this.waitForRateLimit();
+    const breaker = getCircuitBreaker({
+      name: this.config.name,
+      failureThreshold: 3,
+      resetTimeoutMs: 300_000, // 5 min for accounting APIs
+    });
 
-    const headers = new Headers(options.headers);
-    headers.set('Authorization', this.getAuthHeader(credentials));
-    headers.set('Content-Type', 'application/json');
+    return breaker.execute(async () => {
+      await this.waitForRateLimit();
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), INTEGRATION_TIMEOUT_MS);
+      const headers = new Headers(options.headers);
+      headers.set('Authorization', this.getAuthHeader(credentials));
+      headers.set('Content-Type', 'application/json');
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timer));
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), INTEGRATION_TIMEOUT_MS);
 
-    // Handle rate limit response
-    if (response.status === 429) {
-      const retryAfter = response.headers.get('Retry-After');
-      const retryMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60000;
-      throw new RateLimitError(this.config.id, retryMs);
-    }
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
 
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => 'No error body');
-      throw new IntegrationError(
-        `API request failed: ${response.status} ${response.statusText} - ${errorBody}`,
-        this.config.id,
-        response.status
-      );
-    }
+      // Handle rate limit response
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const retryMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60000;
+        throw new RateLimitError(this.config.id, retryMs);
+      }
 
-    return await response.json() as T;
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => 'No error body');
+        throw new IntegrationError(
+          `API request failed: ${response.status} ${response.statusText} - ${errorBody}`,
+          this.config.id,
+          response.status
+        );
+      }
+
+      return await response.json() as T;
+    });
   }
 
   /**

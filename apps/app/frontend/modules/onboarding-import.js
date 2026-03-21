@@ -18,6 +18,7 @@ async function updateOnboardingStep(step, data = {}) {
       credentials: 'include',
       body: JSON.stringify({ step, data })
     });
+    if (!response.ok) return { success: false };
     return await response.json();
   } catch (error) {
     console.error('Error updating onboarding step:', error);
@@ -39,6 +40,7 @@ async function skipOnboarding() {
       headers: skipHeaders,
       credentials: 'include'
     });
+    if (!response.ok) return { success: false };
     return await response.json();
   } catch (error) {
     console.error('Error skipping onboarding:', error);
@@ -52,6 +54,7 @@ async function getOnboardingStatus() {
     const response = await fetch('/api/onboarding/status', {
       credentials: 'include'
     });
+    if (!response.ok) return { success: false };
     return await response.json();
   } catch (error) {
     console.error('Error getting onboarding status:', error);
@@ -60,318 +63,27 @@ async function getOnboardingStatus() {
 }
 
 // ========================================
-// ONBOARDING WIZARD - Multi-step
+// ONBOARDING WIZARD - Removed (replaced by inline address setup)
+// Stubs kept for backward compatibility
 // ========================================
 
 const onboardingWizard = {
   currentStep: 0,
-  // Note: Industry selection has been moved to the website registration/settings
-  steps: [
-    { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
-    { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
-    { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
-  ],
-  data: {
-    industry: null,
-    company: {},
-    map: {}
-  },
+  steps: [],
+  data: { industry: null, company: {}, map: {} },
   overlay: null,
   resolve: null
 };
 
-// Show onboarding wizard
+// Wizard removed — resolves immediately
 async function showOnboardingWizard() {
-  return new Promise(async (resolve) => {
-    onboardingWizard.resolve = resolve;
-    onboardingWizard.currentStep = 0;
-
-    // Industry selection is now handled on the website dashboard, not in the app
-    // Build wizard steps (without industry selection)
-    onboardingWizard.steps = [
-      { id: 'welcome', title: 'Velkommen', icon: 'fa-hand-sparkles' },
-      { id: 'company', title: 'Firmainformasjon', icon: 'fa-building' },
-      { id: 'import', title: 'Importer kunder', icon: 'fa-file-excel' },
-      { id: 'map', title: 'Kartinnstillinger', icon: 'fa-map-marker-alt' },
-      { id: 'complete', title: 'Ferdig', icon: 'fa-check-circle' }
-    ];
-
-    // Pre-fill wizard data from existing config (for re-runs)
-    if (appConfig.routeStartAddress) {
-      onboardingWizard.data.company.address = appConfig.routeStartAddress;
-      onboardingWizard.data.company.route_start_lat = appConfig.routeStartLat;
-      onboardingWizard.data.company.route_start_lng = appConfig.routeStartLng;
-    }
-
-    // Create overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'onboardingWizardOverlay';
-    overlay.className = 'onboarding-overlay';
-    onboardingWizard.overlay = overlay;
-
-    document.body.appendChild(overlay);
-
-    // Render initial step
-    await renderWizardStep();
-
-    // Animate in
-    requestAnimationFrame(() => {
-      overlay.classList.add('visible');
-    });
-  });
+  return Promise.resolve();
 }
 
-// Render current wizard step
-async function renderWizardStep() {
-  const overlay = onboardingWizard.overlay;
-  const step = onboardingWizard.steps[onboardingWizard.currentStep];
-
-  // Animate out existing content before switching
-  const existingContent = overlay.querySelector('.wizard-content');
-  if (existingContent) {
-    existingContent.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
-    existingContent.style.opacity = '0';
-    existingContent.style.transform = 'translateX(-20px)';
-    await new Promise(r => setTimeout(r, 200));
-  }
-
-  let stepContent = '';
-
-  switch (step.id) {
-    case 'welcome':
-      stepContent = renderWelcomeStep();
-      break;
-    case 'company':
-      stepContent = renderCompanyStep();
-      break;
-    case 'import':
-      stepContent = renderWizardImportStep();
-      break;
-    case 'map':
-      stepContent = renderMapStep();
-      break;
-    case 'complete':
-      stepContent = renderCompleteStep();
-      break;
-  }
-
-  overlay.innerHTML = `
-    <div class="onboarding-container wizard-container">
-      ${renderWizardProgress()}
-      <div class="wizard-content" data-step="${step.id}">
-        ${stepContent}
-      </div>
-    </div>
-  `;
-
-  // Attach step-specific event listeners
-  attachStepListeners(step.id);
-}
-
-// Render progress indicator
-function renderWizardProgress() {
-  const steps = onboardingWizard.steps;
-  const current = onboardingWizard.currentStep;
-
-  return `
-    <div class="wizard-progress">
-      <div class="wizard-progress-bar">
-        <div class="wizard-progress-fill" style="width: ${(current / (steps.length - 1)) * 100}%"></div>
-      </div>
-      <div class="wizard-steps">
-        ${steps.map((step, index) => `
-          <div class="wizard-step ${index < current ? 'completed' : ''} ${index === current ? 'active' : ''} ${index > current ? 'upcoming' : ''}">
-            <div class="wizard-step-icon">
-              ${index < current ? '<i aria-hidden="true" class="fas fa-check"></i>' : `<span>${index + 1}</span>`}
-            </div>
-            <div class="wizard-step-label">${step.title}</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
-
-// Render welcome/intro step
-function renderWelcomeStep() {
-  const userName = localStorage.getItem('userName') || '';
-  const greeting = userName ? `, ${escapeHtml(userName)}` : '';
-
-  return `
-    <div class="wizard-step-header wizard-welcome">
-      <div class="wizard-welcome-icon">
-        <i aria-hidden="true" class="fas fa-hand-sparkles"></i>
-      </div>
-      <h1>Velkommen til Sky Planner${greeting}!</h1>
-      <p>Vi hjelper deg å komme i gang på under 2 minutter. Du kan når som helst hoppe over og fullføre senere.</p>
-    </div>
-
-    <div class="wizard-welcome-features">
-      <div class="wizard-feature-card">
-        <div class="wizard-feature-card-icon">
-          <i aria-hidden="true" class="fas fa-map-marked-alt"></i>
-        </div>
-        <h3>Kundekart</h3>
-        <p>Se alle kunder som markører på kartet. Klikk for detaljer, filtrer på kategorier og tags.</p>
-      </div>
-      <div class="wizard-feature-card">
-        <div class="wizard-feature-card-icon">
-          <i aria-hidden="true" class="fas fa-route"></i>
-        </div>
-        <h3>Ukeplan og ruter</h3>
-        <p>Planlegg ukens stopp dag for dag. Optimaliser kjøreruten automatisk med ett klikk.</p>
-      </div>
-      <div class="wizard-feature-card">
-        <div class="wizard-feature-card-icon">
-          <i aria-hidden="true" class="fas fa-calendar-alt"></i>
-        </div>
-        <h3>Kalender</h3>
-        <p>Opprett avtaler, sett påminnelser og hold oversikt over fremtidige oppdrag.</p>
-      </div>
-    </div>
-
-    <div class="wizard-footer wizard-footer-center">
-      <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="nextWizardStep()">
-        La oss komme i gang <i aria-hidden="true" class="fas fa-arrow-right"></i>
-      </button>
-      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
-        Hopp over
-      </button>
-    </div>
-  `;
-}
-
-// Render company info step
-function renderCompanyStep() {
-  const data = onboardingWizard.data.company;
-
-  return `
-    <div class="wizard-step-header">
-      <h1><i aria-hidden="true" class="fas fa-building"></i> Firmainformasjon</h1>
-      <p>Oppgi firmaets adresse. Dette brukes som utgangspunkt for ruteplanlegging.</p>
-    </div>
-
-    <div class="wizard-form">
-      <div class="wizard-form-group">
-        <label for="companyAddress"><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Firmaadresse</label>
-        <div class="wizard-address-wrapper">
-          <input type="text" id="companyAddress" placeholder="Begynn å skrive adresse..." value="${escapeHtml(data.address || '')}" autocomplete="off">
-          <div class="wizard-address-suggestions" id="wizardAddressSuggestions"></div>
-        </div>
-      </div>
-
-      <div class="wizard-form-row">
-        <div class="wizard-form-group">
-          <label for="companyPostnummer"><i aria-hidden="true" class="fas fa-hashtag"></i> Postnummer</label>
-          <div class="wizard-postnummer-wrapper">
-            <input type="text" id="companyPostnummer" placeholder="0000" maxlength="4" value="${escapeHtml(data.postnummer || '')}" autocomplete="off">
-            <span class="wizard-postnummer-status" id="wizardPostnummerStatus"></span>
-          </div>
-        </div>
-        <div class="wizard-form-group">
-          <label for="companyPoststed"><i aria-hidden="true" class="fas fa-city"></i> Poststed</label>
-          <input type="text" id="companyPoststed" placeholder="Fylles automatisk" value="${escapeHtml(data.poststed || '')}">
-        </div>
-      </div>
-
-      <div class="wizard-form-group">
-        <label><i aria-hidden="true" class="fas fa-route"></i> Rute-startpunkt</label>
-        <p class="wizard-form-hint">Klikk på kartet for å velge startpunkt for ruter, eller bruk firmaadresse.</p>
-        <div id="wizardRouteMap" class="wizard-mini-map"></div>
-        <div class="wizard-coordinates" id="routeCoordinates">
-          ${data.route_start_lat ? `<span>Valgt: ${data.route_start_lat.toFixed(5)}, ${data.route_start_lng.toFixed(5)}</span>` : '<span class="not-set">Ikke valgt - klikk på kartet</span>'}
-        </div>
-        <button class="wizard-btn wizard-btn-secondary" onclick="useAddressAsRouteStart()">
-          <i aria-hidden="true" class="fas fa-home"></i> Bruk firmaadresse
-        </button>
-      </div>
-    </div>
-
-    <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-skip" onclick="handleSkipOnboarding()">
-        <i aria-hidden="true" class="fas fa-forward"></i> Hopp over oppsett
-      </button>
-      <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Neste <i aria-hidden="true" class="fas fa-arrow-right"></i>
-      </button>
-    </div>
-  `;
-}
-
-// Render map settings step
-function renderMapStep() {
-  const data = onboardingWizard.data.map;
-
-  return `
-    <div class="wizard-step-header">
-      <h1><i aria-hidden="true" class="fas fa-map-marker-alt"></i> Kartinnstillinger</h1>
-      <p>Velg standard kartvisning. Dra og zoom kartet til ønsket område.</p>
-    </div>
-
-    <div class="wizard-form">
-      <div class="wizard-form-group">
-        <label><i aria-hidden="true" class="fas fa-map"></i> Standard kartsentrum</label>
-        <p class="wizard-form-hint">Panorer og zoom kartet til det området du vanligvis jobber i.</p>
-        <div id="wizardMainMap" class="wizard-map"></div>
-      </div>
-
-      <div class="wizard-form-group">
-        <label for="defaultZoom"><i aria-hidden="true" class="fas fa-search-plus"></i> Standard zoom-nivå</label>
-        <div class="wizard-slider-container">
-          <input type="range" id="defaultZoom" min="5" max="18" value="${data.zoom || 10}">
-          <span class="wizard-slider-value" id="zoomValue">${data.zoom || 10}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
-        <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
-      </button>
-      <button class="wizard-btn wizard-btn-primary" onclick="nextWizardStep()">
-        Fullfør oppsett <i aria-hidden="true" class="fas fa-check"></i>
-      </button>
-    </div>
-  `;
-}
-
-// Render completion step
-function renderCompleteStep() {
-  // Use industry from appConfig (set during registration on website)
-  const industryName = appConfig?.industry?.name || onboardingWizard.data.industry?.name || 'din virksomhet';
-
-  return `
-    <div class="wizard-step-header wizard-complete">
-      <div class="wizard-celebration">
-        <div class="wizard-confetti" aria-hidden="true"></div>
-        <div class="wizard-complete-icon wizard-complete-animated">
-          <svg viewBox="0 0 52 52" class="wizard-checkmark-svg">
-            <circle cx="26" cy="26" r="25" fill="none" class="wizard-checkmark-circle"/>
-            <path fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" class="wizard-checkmark-check"/>
-          </svg>
-        </div>
-      </div>
-      <h1 class="wizard-complete-title">Oppsettet er fullført!</h1>
-      <p class="wizard-complete-subtitle">Flott! Systemet er nå tilpasset for ${escapeHtml(industryName)}.</p>
-    </div>
-
-    <div class="wizard-complete-summary">
-      <h3>Hva skjer nå?</h3>
-      <ul class="wizard-tips-list">
-        <li><i aria-hidden="true" class="fas fa-users"></i> Legg til dine første kunder</li>
-        <li><i aria-hidden="true" class="fas fa-route"></i> Planlegg effektive ruter</li>
-        <li><i aria-hidden="true" class="fas fa-calendar-alt"></i> Bruk kalenderen for å holde oversikt</li>
-        <li><i aria-hidden="true" class="fas fa-cog"></i> Tilpass ytterligere i innstillinger</li>
-      </ul>
-    </div>
-
-    <div class="wizard-footer wizard-footer-center">
-      <button class="wizard-btn wizard-btn-primary wizard-btn-large" onclick="completeOnboardingWizard()">
-        <i aria-hidden="true" class="fas fa-rocket"></i> Start å bruke Sky Planner
-      </button>
-    </div>
-  `;
-}
+// Wizard rendering stubs (wizard removed — replaced by inline onboarding)
+async function renderWizardStep() {}
+function renderWizardProgress() { return ''; }
+function renderWelcomeStep() { return ''; }
 
 // ========================================
 // WIZARD IMPORT STEP - Excel/CSV Import
@@ -610,7 +322,7 @@ function renderWizardImportMethodChoice() {
     </div>
 
     <div class="wizard-import-method-choice">
-      <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodIntegration()">
+      <div class="wizard-method-card" role="button" tabindex="0" data-action="selectImportMethodIntegration">
         <div class="wizard-method-icon">
           <i aria-hidden="true" class="fas fa-plug"></i>
         </div>
@@ -619,7 +331,7 @@ function renderWizardImportMethodChoice() {
         <span class="wizard-method-action">Koble til <i aria-hidden="true" class="fas fa-external-link-alt"></i></span>
       </div>
 
-      <div class="wizard-method-card" role="button" tabindex="0" onclick="selectImportMethodFile()">
+      <div class="wizard-method-card" role="button" tabindex="0" data-action="selectImportMethodFile">
         <div class="wizard-method-icon">
           <i aria-hidden="true" class="fas fa-file-excel"></i>
         </div>
@@ -630,10 +342,10 @@ function renderWizardImportMethodChoice() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="prevWizardStep">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
-      <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
+      <button class="wizard-btn wizard-btn-skip" data-action="skipWizardImport">
         Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
@@ -762,7 +474,7 @@ function renderWizardImportSubStep(step) {
       <div class="wizard-import-error">
         <i aria-hidden="true" class="fas fa-exclamation-triangle"></i>
         <p>${escapeHtml(wizardImportState.error)}</p>
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportRetry()">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardImportRetry">
           <i aria-hidden="true" class="fas fa-redo"></i> Prøv igjen
         </button>
       </div>
@@ -804,10 +516,10 @@ function renderWizardImportCleaning() {
           </div>
         </div>
         <div class="wizard-import-actions">
-          <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
+          <button class="wizard-btn wizard-btn-secondary" data-action="wizardCleaningBack">
             <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
           </button>
-          <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
+          <button class="wizard-btn wizard-btn-primary" data-action="wizardCleaningApprove">
             Gå videre <i aria-hidden="true" class="fas fa-arrow-right"></i>
           </button>
         </div>
@@ -844,7 +556,7 @@ function renderWizardImportCleaning() {
           ${report.rules.filter(r => r.affectedCount > 0).map(rule => `
             <label class="wizard-cleaning-rule-toggle">
               <input type="checkbox" ${enabledRules[rule.ruleId] ? 'checked' : ''}
-                onchange="wizardToggleCleaningRule('${rule.ruleId}', this.checked)">
+                data-on-change="wizardToggleCleaningRule" data-args='["${escapeHtml(rule.ruleId)}"]'>
               <span class="wizard-cleaning-rule-info">
                 <span class="wizard-cleaning-rule-name">${escapeHtml(rule.name)}</span>
                 <span class="wizard-cleaning-rule-desc">${escapeHtml(rule.description)}</span>
@@ -908,13 +620,13 @@ function renderWizardImportCleaning() {
 
       <!-- Actions -->
       <div class="wizard-import-actions">
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardCleaningBack()">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardCleaningBack">
           <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
         </button>
-        <button class="wizard-btn wizard-btn-ghost" onclick="wizardCleaningSkip()">
+        <button class="wizard-btn wizard-btn-ghost" data-action="wizardCleaningSkip">
           Hopp over rensing
         </button>
-        <button class="wizard-btn wizard-btn-primary" onclick="wizardCleaningApprove()">
+        <button class="wizard-btn wizard-btn-primary" data-action="wizardCleaningApprove">
           <i aria-hidden="true" class="fas fa-check"></i> Godkjenn rensing <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       </div>
@@ -1027,12 +739,12 @@ function renderCleaningFullTable() {
       ${totalPages > 1 ? `
         <div class="wizard-cleaning-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardCleaningTablePage(${validPage - 1})" ${validPage === 0 ? 'disabled' : ''}>
+            data-action="wizardCleaningTablePage" data-args='[${validPage - 1}]' ${validPage === 0 ? 'disabled' : ''}>
             <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPage + 1} av ${totalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardCleaningTablePage(${validPage + 1})" ${validPage >= totalPages - 1 ? 'disabled' : ''}>
+            data-action="wizardCleaningTablePage" data-args='[${validPage + 1}]' ${validPage >= totalPages - 1 ? 'disabled' : ''}>
             Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
@@ -1155,10 +867,10 @@ function renderWizardImportUpload() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="prevWizardStep()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="prevWizardStep">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
-      <button class="wizard-btn wizard-btn-skip" onclick="skipWizardImport()">
+      <button class="wizard-btn wizard-btn-skip" data-action="skipWizardImport">
         Hopp over <i aria-hidden="true" class="fas fa-forward"></i>
       </button>
     </div>
@@ -1178,7 +890,7 @@ function renderAIQuestions() {
       <div class="wizard-ai-questions-header">
         <i aria-hidden="true" class="fas fa-question-circle"></i>
         <span>AI trenger din hjelp med ${questions.length} ${questions.length === 1 ? 'kolonne' : 'kolonner'}</span>
-        <button class="wizard-btn-link" onclick="skipAIQuestions()">Bruk AI-anbefalinger</button>
+        <button class="wizard-btn-link" data-action="skipAIQuestions">Bruk AI-anbefalinger</button>
       </div>
       <div class="wizard-ai-questions-list">
         ${questions.map((q, index) => `
@@ -1192,19 +904,19 @@ function renderAIQuestions() {
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === q.targetField ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="${q.targetField || ''}"
                   ${wizardImportState.questionAnswers[q.header] === q.targetField || (!wizardImportState.questionAnswers[q.header] && q.targetField) ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '${escapeJsString(q.targetField || '')}')">
+                  data-on-change="handleAIQuestionAnswer" data-args='["${escapeHtml(q.header)}", "${escapeHtml(q.targetField || '')}"]'>
                 <span>${escapeHtml(q.targetField || 'Egendefinert felt')} <span class="recommended">(Anbefalt av AI)</span></span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_custom"
                   ${wizardImportState.questionAnswers[q.header] === '_custom' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_custom')">
+                  data-on-change="handleAIQuestionAnswer" data-args='["${escapeHtml(q.header)}", "_custom"]'>
                 <span>Behold som egendefinert felt</span>
               </label>
               <label class="question-option ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'selected' : ''}">
                 <input type="radio" name="q_${index}" value="_skip"
                   ${wizardImportState.questionAnswers[q.header] === '_skip' ? 'checked' : ''}
-                  onchange="handleAIQuestionAnswer('${escapeJsString(q.header)}', '_skip')">
+                  data-on-change="handleAIQuestionAnswer" data-args='["${escapeHtml(q.header)}", "_skip"]'>
                 <span>Ignorer denne kolonnen</span>
               </label>
             </div>
@@ -1284,7 +996,7 @@ function renderRequiredFieldSelectors(data) {
             <i aria-hidden="true" class="fas fa-user"></i>
             Kundenavn
           </label>
-          <select id="navnColumnSelect" onchange="updateRequiredMapping('navn', this.value)" class="wizard-required-select">
+          <select id="navnColumnSelect" data-on-change="updateRequiredMapping" data-args='["navn"]' class="wizard-required-select">
             <option value="">-- Velg kolonne --</option>
             ${allColumns.map(col => `
               <option value="${escapeHtml(col)}" ${currentMappings.navn === col ? 'selected' : ''}>
@@ -1299,7 +1011,7 @@ function renderRequiredFieldSelectors(data) {
             <i aria-hidden="true" class="fas fa-map-marker-alt"></i>
             Adresse
           </label>
-          <select id="adresseColumnSelect" onchange="updateRequiredMapping('adresse', this.value)" class="wizard-required-select">
+          <select id="adresseColumnSelect" data-on-change="updateRequiredMapping" data-args='["adresse"]' class="wizard-required-select">
             <option value="">-- Velg kolonne --</option>
             ${allColumns.map(col => `
               <option value="${escapeHtml(col)}" ${currentMappings.adresse === col ? 'selected' : ''}>
@@ -1457,11 +1169,11 @@ function renderWizardImportMapping() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="wizardImportBack">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <button class="wizard-btn wizard-btn-primary"
-        onclick="wizardImportNext()"
+        data-action="wizardImportNext"
         ${!areRequiredFieldsMapped() ? 'disabled title="Velg kolonner for kundenavn og adresse først"' : ''}>
         Forhåndsvis <i aria-hidden="true" class="fas fa-arrow-right"></i>
       </button>
@@ -1518,7 +1230,7 @@ function renderUnmappedColumnsSection(data, headers, mapping, targetFields) {
                 <span class="wizard-unmapped-sample">Eksempel: ${escapeHtml(col.sampleValue || '-')}</span>
               </div>
               <div class="wizard-unmapped-action">
-                <select onchange="handleUnmappedColumn('${escapeJsString(col.header)}', this.value)">
+                <select data-on-change="handleUnmappedColumn" data-args='["${escapeHtml(col.header)}"]'>
                   <option value="ignore" ${currentAction === 'ignore' ? 'selected' : ''}>
                     Ignorer
                   </option>
@@ -1600,7 +1312,7 @@ function renderWizardImportPreview() {
               </div>
               <div class="wizard-category-arrow"><i aria-hidden="true" class="fas fa-arrow-right"></i></div>
               <div class="wizard-category-select">
-                <select data-original="${escapeHtml(match.original)}" onchange="updateWizardCategoryMapping('${escapeJsString(match.original)}', this.value)">
+                <select data-original="${escapeHtml(match.original)}" data-on-change="updateWizardCategoryMapping" data-args='["${escapeHtml(match.original)}"]'>
                   ${match.suggested ? `
                     <option value="${escapeHtml(match.suggested.id)}" selected>
                       ${escapeHtml(match.suggested.name)} (anbefalt)
@@ -1727,14 +1439,14 @@ function renderWizardImportPreview() {
           <div class="wizard-preview-controls">
             <label class="wizard-toggle-label">
               <input type="checkbox" ${showBeforeAfter ? 'checked' : ''}
-                onchange="wizardToggleBeforeAfter(this.checked)">
+                data-on-change="wizardToggleBeforeAfter">
               <span>Vis transformasjoner</span>
             </label>
             <div class="wizard-selection-actions">
-              <button class="wizard-btn wizard-btn-small" onclick="wizardSelectAllRows()">
+              <button class="wizard-btn wizard-btn-small" data-action="wizardSelectAllRows">
                 <i aria-hidden="true" class="fas fa-check-square"></i> Velg alle
               </button>
-              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectAllRows()">
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDeselectAllRows">
                 <i aria-hidden="true" class="fas fa-square"></i> Velg ingen
               </button>
               <span class="wizard-selection-count" id="wizardSelectionCount">
@@ -1748,7 +1460,7 @@ function renderWizardImportPreview() {
           <thead>
             <tr>
               <th class="col-checkbox">
-                <input type="checkbox" id="wizardSelectAllCheckbox" onchange="wizardToggleAllRows(this.checked)" ${areAllRowsSelected(previewRows) ? 'checked' : ''}>
+                <input type="checkbox" id="wizardSelectAllCheckbox" data-on-change="wizardToggleAllRows" ${areAllRowsSelected(previewRows) ? 'checked' : ''}>
               </th>
               <th class="col-rownum">#</th>
               ${displayColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
@@ -1765,7 +1477,7 @@ function renderWizardImportPreview() {
               return `
               <tr class="${rowClass}" data-row-index="${globalIdx}">
                 <td class="col-checkbox">
-                  <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="wizardToggleRow(${globalIdx}, this.checked)">
+                  <input type="checkbox" ${isSelected ? 'checked' : ''} data-on-change="wizardToggleRow" data-args='[${globalIdx}]'>
                 </td>
                 <td class="col-rownum">${globalIdx + 1}</td>
                 ${displayColumns.map(col => {
@@ -1810,12 +1522,12 @@ function renderWizardImportPreview() {
       ${previewTotalPages > 1 ? `
         <div class="wizard-preview-pagination">
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardPreviewTablePage(${validPreviewPage - 1})" ${validPreviewPage === 0 ? 'disabled' : ''}>
+            data-action="wizardPreviewTablePage" data-args='[${validPreviewPage - 1}]' ${validPreviewPage === 0 ? 'disabled' : ''}>
             <i aria-hidden="true" class="fas fa-chevron-left"></i> Forrige
           </button>
           <span>Side ${validPreviewPage + 1} av ${previewTotalPages}</span>
           <button class="wizard-btn wizard-btn-small wizard-btn-secondary"
-            onclick="wizardPreviewTablePage(${validPreviewPage + 1})" ${validPreviewPage >= previewTotalPages - 1 ? 'disabled' : ''}>
+            data-action="wizardPreviewTablePage" data-args='[${validPreviewPage + 1}]' ${validPreviewPage >= previewTotalPages - 1 ? 'disabled' : ''}>
             Neste <i aria-hidden="true" class="fas fa-chevron-right"></i>
           </button>
         </div>
@@ -1834,16 +1546,16 @@ function renderWizardImportPreview() {
     </div>
 
     <div class="wizard-footer">
-      <button class="wizard-btn wizard-btn-secondary" onclick="wizardImportBack()">
+      <button class="wizard-btn wizard-btn-secondary" data-action="wizardImportBack">
         <i aria-hidden="true" class="fas fa-arrow-left"></i> Tilbake
       </button>
       <div class="wizard-footer-right">
         ${wizardImportState.batchId ? `
-          <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport som CSV">
+          <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDownloadErrorReport" title="Last ned feilrapport som CSV">
             <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
           </button>
         ` : ''}
-        <button class="wizard-btn wizard-btn-primary" onclick="wizardStartImport()" ${getSelectedValidRowCount() === 0 ? 'disabled' : ''}>
+        <button class="wizard-btn wizard-btn-primary" data-action="wizardStartImport" ${getSelectedValidRowCount() === 0 ? 'disabled' : ''}>
           <i aria-hidden="true" class="fas fa-file-import"></i> Importer ${getSelectedValidRowCount()} kunder
         </button>
       </div>
@@ -1928,26 +1640,26 @@ function renderWizardImportResults() {
 
     <div class="wizard-footer wizard-footer-center">
       ${results.batchId ? `
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardRollbackImport()" title="Angre hele importen">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardRollbackImport" title="Angre hele importen">
           <i aria-hidden="true" class="fas fa-undo"></i> Angre import
         </button>
       ` : ''}
       ${results.errorCount > 0 ? `
-        <button class="wizard-btn wizard-btn-secondary" onclick="wizardReimportFailed()" title="Prøv å importere feilede rader på nytt">
+        <button class="wizard-btn wizard-btn-secondary" data-action="wizardReimportFailed" title="Prøv å importere feilede rader på nytt">
           <i aria-hidden="true" class="fas fa-redo"></i> Reimporter feilede (${results.errorCount})
         </button>
       ` : ''}
       ${results.batchId ? `
-        <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDownloadErrorReport()" title="Last ned feilrapport">
+        <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDownloadErrorReport" title="Last ned feilrapport">
           <i aria-hidden="true" class="fas fa-download"></i> Feilrapport
         </button>
       ` : ''}
       ${standaloneImportMode ? `
-        <button class="wizard-btn wizard-btn-primary" onclick="closeImportModal()">
+        <button class="wizard-btn wizard-btn-primary" data-action="closeImportModal">
           <i aria-hidden="true" class="fas fa-check"></i> Ferdig
         </button>
       ` : `
-        <button class="wizard-btn wizard-btn-primary" onclick="wizardImportComplete()">
+        <button class="wizard-btn wizard-btn-primary" data-action="wizardImportComplete">
           Fortsett til neste steg <i aria-hidden="true" class="fas fa-arrow-right"></i>
         </button>
       `}
@@ -3066,11 +2778,11 @@ function renderErrorGrouping(preview) {
               <span class="error-group-count">${group.count} rader</span>
             </div>
             ${group.field === 'epost' && group.message.includes('skrivefeil') ? `
-              <button class="wizard-btn wizard-btn-small" onclick="wizardFixAllSimilar('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
+              <button class="wizard-btn wizard-btn-small" data-action="wizardFixAllSimilar" data-args='["${escapeHtml(group.field)}", "${escapeHtml(group.message)}"]'>
                 <i aria-hidden="true" class="fas fa-magic"></i> Fiks alle
               </button>
             ` : `
-              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" onclick="wizardDeselectErrorRows('${escapeJsString(group.field)}', '${escapeJsString(group.message)}')">
+              <button class="wizard-btn wizard-btn-small wizard-btn-secondary" data-action="wizardDeselectErrorRows" data-args='["${escapeHtml(group.field)}", "${escapeHtml(group.message)}"]'>
                 <i aria-hidden="true" class="fas fa-minus-circle"></i> Fjern fra import
               </button>
             `}
@@ -3186,53 +2898,50 @@ async function wizardReimportFailed() {
 }
 
 // Attach event listeners for current step
+// Wizard step listeners — only import is still used (via standalone modal)
 function attachStepListeners(stepId) {
-  switch (stepId) {
-    case 'company':
-      attachCompanyListeners();
-      break;
-    case 'import':
-      attachWizardImportListeners();
-      break;
-    case 'map':
-      attachMapListeners();
-      break;
-  }
+  if (stepId === 'import') attachWizardImportListeners();
 }
 
-// Company step listeners
+// Wizard step listeners removed — replaced by inline onboarding
 let wizardRouteMap = null;
 let wizardRouteMarker = null;
+let wizardMainMap = null;
 
 function attachCompanyListeners() {
-  // Initialize mini map for route start
+  // Initialize mini map for route start selection
   setTimeout(() => {
-    const mapContainer = document.getElementById('wizardRouteMap');
-    if (mapContainer && !wizardRouteMap) {
-      const data = onboardingWizard.data.company;
-      const lat = data.route_start_lat || 59.9139;
-      const lng = data.route_start_lng || 10.7522;
+    if (typeof mapboxgl !== 'undefined' && document.getElementById('wizardRouteMap')) {
+      try {
+        const data = onboardingWizard.data.company;
+        const lat = data.route_start_lat || 59.9139;
+        const lng = data.route_start_lng || 10.7522;
 
-      wizardRouteMap = new mapboxgl.Map({
-        container: 'wizardRouteMap',
-        style: 'mapbox://styles/mapbox/streets-v12',
-        center: [lng, lat],
-        zoom: 10,
-        accessToken: mapboxgl.accessToken
-      });
+        wizardRouteMap = new mapboxgl.Map({
+          container: 'wizardRouteMap',
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: [lng, lat],
+          zoom: 10,
+          accessToken: mapboxgl.accessToken
+        });
 
-      if (data.route_start_lat) {
-        wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
+        if (data.route_start_lat) {
+          wizardRouteMarker = new mapboxgl.Marker().setLngLat([lng, lat]).addTo(wizardRouteMap);
+        }
+
+        wizardRouteMap.on('click', (e) => {
+          if (wizardRouteMarker) wizardRouteMarker.remove();
+          wizardRouteMarker = new mapboxgl.Marker().setLngLat(e.lngLat).addTo(wizardRouteMap);
+          onboardingWizard.data.company.route_start_lat = e.lngLat.lat;
+          onboardingWizard.data.company.route_start_lng = e.lngLat.lng;
+          const coordsEl = document.getElementById('routeCoordinates');
+          if (coordsEl) {
+            coordsEl.innerHTML = `<span>Valgt: ${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}</span>`;
+          }
+        });
+      } catch (error) {
+        console.error('Failed to initialize wizard route map:', error);
       }
-
-      wizardRouteMap.on('click', (e) => {
-        if (wizardRouteMarker) wizardRouteMarker.remove();
-        wizardRouteMarker = new mapboxgl.Marker().setLngLat(e.lngLat).addTo(wizardRouteMap);
-        onboardingWizard.data.company.route_start_lat = e.lngLat.lat;
-        onboardingWizard.data.company.route_start_lng = e.lngLat.lng;
-        document.getElementById('routeCoordinates').innerHTML =
-          `<span>Valgt: ${e.lngLat.lat.toFixed(5)}, ${e.lngLat.lng.toFixed(5)}</span>`;
-      });
     }
   }, 100);
 
@@ -3451,35 +3160,39 @@ function updateWizardPostnummerStatus(status) {
   }
 }
 
-// Map step listeners
-let wizardMainMap = null;
-
+// Map step listeners (wizard removed — dead code)
 function attachMapListeners() {
   setTimeout(() => {
     const mapContainer = document.getElementById('wizardMainMap');
     if (mapContainer && !wizardMainMap) {
-      const data = onboardingWizard.data.map;
-      const company = onboardingWizard.data.company;
-      const lat = data.center_lat || company.route_start_lat || 59.9139;
-      const lng = data.center_lng || company.route_start_lng || 10.7522;
-      const zoom = data.zoom || 10;
+      try {
+        const data = onboardingWizard.data.map;
+        const company = onboardingWizard.data.company;
+        const lat = data.center_lat || company.route_start_lat || 59.9139;
+        const lng = data.center_lng || company.route_start_lng || 10.7522;
+        const zoom = data.zoom || 10;
 
-      wizardMainMap = new mapboxgl.Map({
-        container: 'wizardMainMap',
-        style: 'mapbox://styles/mapbox/streets-v12',
-        center: [lng, lat],
-        zoom: zoom,
-        accessToken: mapboxgl.accessToken
-      });
+        wizardMainMap = new mapboxgl.Map({
+          container: 'wizardMainMap',
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: [lng, lat],
+          zoom: zoom,
+          accessToken: mapboxgl.accessToken
+        });
 
-      wizardMainMap.on('moveend', () => {
-        const center = wizardMainMap.getCenter();
-        onboardingWizard.data.map.center_lat = center.lat;
-        onboardingWizard.data.map.center_lng = center.lng;
-        onboardingWizard.data.map.zoom = wizardMainMap.getZoom();
-        document.getElementById('defaultZoom').value = wizardMainMap.getZoom();
-        document.getElementById('zoomValue').textContent = wizardMainMap.getZoom();
-      });
+        wizardMainMap.on('moveend', () => {
+          const center = wizardMainMap.getCenter();
+          onboardingWizard.data.map.center_lat = center.lat;
+          onboardingWizard.data.map.center_lng = center.lng;
+          onboardingWizard.data.map.zoom = wizardMainMap.getZoom();
+          const zoomInput = document.getElementById('defaultZoom');
+          const zoomLabel = document.getElementById('zoomValue');
+          if (zoomInput) zoomInput.value = wizardMainMap.getZoom();
+          if (zoomLabel) zoomLabel.textContent = wizardMainMap.getZoom();
+        });
+      } catch (error) {
+        console.error('Failed to initialize wizard main map:', error);
+      }
     }
   }, 100);
 
@@ -3487,7 +3200,8 @@ function attachMapListeners() {
   if (zoomSlider) {
     zoomSlider.addEventListener('input', (e) => {
       const zoom = parseInt(e.target.value);
-      document.getElementById('zoomValue').textContent = zoom;
+      const zoomLabel = document.getElementById('zoomValue');
+      if (zoomLabel) zoomLabel.textContent = zoom;
       onboardingWizard.data.map.zoom = zoom;
       if (wizardMainMap) {
         wizardMainMap.setZoom(zoom);
@@ -3526,8 +3240,10 @@ async function useAddressAsRouteStart() {
         wizardRouteMap.flyTo({ center: [lng, lat], zoom: 14 });
       }
 
-      document.getElementById('routeCoordinates').innerHTML =
-        `<span>Valgt: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+      const coordsEl = document.getElementById('routeCoordinates');
+      if (coordsEl) {
+        coordsEl.innerHTML = `<span>Valgt: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+      }
     } else {
       showMessage('Kunne ikke finne adressen. Prøv å klikke på kartet manuelt.', 'warning');
     }
@@ -3537,128 +3253,24 @@ async function useAddressAsRouteStart() {
   }
 }
 
-// Navigate to next step
-async function nextWizardStep() {
-  try {
-    console.log('nextWizardStep called, current step:', onboardingWizard.currentStep);
-    const currentStepId = onboardingWizard.steps[onboardingWizard.currentStep].id;
-    console.log('Current step ID:', currentStepId);
-
-    // Save current step data to server
-    if (currentStepId === 'company') {
-      const data = onboardingWizard.data.company;
-      console.log('Saving company data:', data);
-      const result = await updateOnboardingStep('company_info', {
-        company_address: data.address,
-        company_postnummer: data.postnummer,
-        company_poststed: data.poststed,
-        route_start_lat: data.route_start_lat,
-        route_start_lng: data.route_start_lng
-      });
-      console.log('Company step save result:', result);
-    } else if (currentStepId === 'map') {
-      const data = onboardingWizard.data.map;
-      console.log('Saving map data:', data);
-      const result = await updateOnboardingStep('map_settings', {
-        map_center_lat: data.center_lat,
-        map_center_lng: data.center_lng,
-        map_zoom: data.zoom
-      });
-      console.log('Map step save result:', result);
-    }
-
-    // Cleanup maps before step change
-    cleanupWizardMaps();
-
-    onboardingWizard.currentStep++;
-    console.log('Moving to step:', onboardingWizard.currentStep);
-    await renderWizardStep();
-  } catch (error) {
-    console.error('Error in nextWizardStep:', error);
-    showMessage('Det oppstod en feil. Prøv igjen.', 'error');
-  }
-}
-
-// Navigate to previous step
-async function prevWizardStep() {
-  if (onboardingWizard.currentStep > 0) {
-    cleanupWizardMaps();
-    onboardingWizard.currentStep--;
-    await renderWizardStep();
-  }
-}
-
-// Cleanup wizard maps
+// Navigate to next step — wizard removed, stub
+async function nextWizardStep() { return; }
+async function prevWizardStep() { return; }
 function cleanupWizardMaps() {
-  if (wizardRouteMap) {
-    wizardRouteMap.remove();
-    wizardRouteMap = null;
-    wizardRouteMarker = null;
-  }
-  if (wizardMainMap) {
-    wizardMainMap.remove();
-    wizardMainMap = null;
-  }
+  if (wizardRouteMap) { try { wizardRouteMap.remove(); } catch(e) {} wizardRouteMap = null; wizardRouteMarker = null; }
+  if (wizardMainMap) { try { wizardMainMap.remove(); } catch(e) {} wizardMainMap = null; }
 }
+async function completeOnboardingWizard() { return; }
+async function handleSkipOnboarding() { return; }
 
-// Complete onboarding wizard
-async function completeOnboardingWizard() {
-  await updateOnboardingStep('completed', {});
+// (Old wizard navigation code removed — nextWizardStep, prevWizardStep,
+// cleanupWizardMaps, completeOnboardingWizard, handleSkipOnboarding
+// are all stubbed above)
 
-  cleanupWizardMaps();
-
-  const overlay = onboardingWizard.overlay;
-  overlay.classList.remove('visible');
-
-  setTimeout(() => {
-    overlay.remove();
-    onboardingWizard.overlay = null;
-
-    // Show first-time tips
-    showContextTips();
-
-    // Initialize onboarding checklist for continued guidance
-    if (typeof initOnboardingChecklist === 'function') {
-      setTimeout(() => initOnboardingChecklist(), 1500);
-    }
-
-    if (onboardingWizard.resolve) {
-      onboardingWizard.resolve();
-    }
-  }, 400);
-}
-
-// Skip onboarding
-async function handleSkipOnboarding() {
-  const confirmed = await showConfirm('Er du sikker på at du vil hoppe over oppsettet? Du kan alltid endre innstillinger senere.', 'Hopp over oppsett');
-  if (confirmed) {
-    await skipOnboarding();
-    cleanupWizardMaps();
-
-    const overlay = onboardingWizard.overlay;
-    overlay.classList.remove('visible');
-
-    setTimeout(() => {
-      overlay.remove();
-      onboardingWizard.overlay = null;
-
-      // Show checklist since user skipped setup — especially useful here
-      if (typeof initOnboardingChecklist === 'function') {
-        setTimeout(() => initOnboardingChecklist(), 1500);
-      }
-
-      if (onboardingWizard.resolve) {
-        onboardingWizard.resolve();
-      }
-    }, 400);
-  }
-}
-
-// Export wizard functions for onclick handlers
+// Export wizard functions for onclick handlers (stubs)
 window.nextWizardStep = nextWizardStep;
 window.prevWizardStep = prevWizardStep;
 window.handleSkipOnboarding = handleSkipOnboarding;
-window.useAddressAsRouteStart = useAddressAsRouteStart;
 window.completeOnboardingWizard = completeOnboardingWizard;
 
 // Pagination for preview table

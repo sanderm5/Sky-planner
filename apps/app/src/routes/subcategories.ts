@@ -216,7 +216,7 @@ router.get(
  */
 router.put(
   '/kunde/:kundeId',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const kundeId = parseInt(req.params.kundeId, 10);
     if (isNaN(kundeId)) throw Errors.badRequest('Ugyldig kunde-ID');

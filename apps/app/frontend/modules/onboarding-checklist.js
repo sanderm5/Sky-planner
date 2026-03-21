@@ -7,63 +7,47 @@ const onboardingChecklist = {
     {
       id: 'set-address',
       label: 'Sett firmaadresse',
-      description: 'Startpunkt for alle ruter og avstandsberegninger',
+      description: 'Startpunkt for ruter og avstandsberegninger',
       icon: 'fa-map-marker-alt',
       check: () => !!(appConfig.routeStartLat && appConfig.routeStartLng),
       action: () => {
-        const adminTab = document.querySelector('[data-tab="admin"]');
-        if (adminTab) adminTab.click();
-        setTimeout(() => {
-          const section = document.getElementById('companyAddressSection');
-          if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 300);
+        if (typeof navigateAndHighlightAddress === 'function') {
+          navigateAndHighlightAddress();
+        }
       }
     },
     {
       id: 'add-customer',
-      label: 'Legg til din første kunde',
-      description: 'Opprett manuelt eller importer fra Excel/CSV',
+      label: 'Legg til kunder',
+      description: 'Importer fra fil, koble regnskap eller opprett manuelt',
       icon: 'fa-user-plus',
       check: () => typeof customers !== 'undefined' && customers.length > 0,
       action: () => {
-        if (typeof addCustomer === 'function') addCustomer();
+        showAddCustomerOptions();
       }
     },
     {
       id: 'plan-route',
       label: 'Planlegg en rute',
-      description: 'Bruk ukeplanen til å legge inn stopp og optimaliser rekkefølgen',
+      description: 'Legg inn stopp i ukeplanen og optimaliser rekkefølgen',
       icon: 'fa-route',
       check: () => localStorage.getItem('skyplanner_firstRoutePlanned') === 'true',
       action: () => {
-        const wpTab = document.querySelector('[data-tab="weekly-plan"]');
-        if (wpTab) wpTab.click();
-      }
-    },
-    {
-      id: 'calendar-event',
-      label: 'Opprett en avtale',
-      description: 'Klikk på en dato i kalenderen for å opprette en avtale',
-      icon: 'fa-calendar-plus',
-      check: () => localStorage.getItem('skyplanner_firstEventCreated') === 'true',
-      action: () => {
-        const calTab = document.querySelector('[data-tab="calendar"]');
-        if (calTab) calTab.click();
+        if (typeof navigateAndHighlightWeekplan === 'function') {
+          navigateAndHighlightWeekplan();
+        }
       }
     },
     {
       id: 'invite-team',
-      label: 'Inviter et teammedlem',
+      label: 'Inviter teammedlem',
       description: 'Del tilgang med kollegaer for samarbeid',
       icon: 'fa-user-friends',
       check: () => localStorage.getItem('skyplanner_teamInviteSent') === 'true',
       action: () => {
-        const adminTab = document.querySelector('[data-tab="admin"]');
-        if (adminTab) adminTab.click();
-        setTimeout(() => {
-          const section = document.getElementById('teamMembersSection');
-          if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 300);
+        if (typeof navigateAndHighlightTeam === 'function') {
+          navigateAndHighlightTeam();
+        }
       }
     }
   ],
@@ -71,6 +55,65 @@ const onboardingChecklist = {
   minimized: false,
   dismissed: false
 };
+
+// Show popover with add-customer options (import, manual, accounting)
+function showAddCustomerOptions() {
+  // Remove existing popover
+  const existing = document.getElementById('addCustomerPopover');
+  if (existing) { existing.remove(); return; }
+
+  const webUrl = appConfig.webUrl || '';
+
+  const popover = document.createElement('div');
+  popover.id = 'addCustomerPopover';
+  popover.className = 'add-customer-popover';
+  popover.innerHTML = `
+    <div class="add-customer-popover-backdrop"></div>
+    <div class="add-customer-popover-content">
+      <div class="popover-option" data-action="popover-import">
+        <i class="fas fa-file-import" aria-hidden="true"></i>
+        <div>
+          <strong>Importer fra fil</strong>
+          <span>Excel eller CSV</span>
+        </div>
+      </div>
+      <div class="popover-option" data-action="popover-manual">
+        <i class="fas fa-plus-circle" aria-hidden="true"></i>
+        <div>
+          <strong>Legg til manuelt</strong>
+          <span>Opprett en og en</span>
+        </div>
+      </div>
+      <div class="popover-option" data-action="popover-accounting">
+        <i class="fas fa-plug" aria-hidden="true"></i>
+        <div>
+          <strong>Koble regnskapssystem</strong>
+          <span>Tripletex, Fiken, PowerOffice</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(popover);
+  requestAnimationFrame(() => popover.classList.add('visible'));
+
+  popover.addEventListener('click', (e) => {
+    const option = e.target.closest('[data-action]');
+    const action = option ? option.dataset.action : null;
+
+    if (action === 'popover-import') {
+      if (typeof showImportModal === 'function') showImportModal();
+    } else if (action === 'popover-manual') {
+      if (typeof addCustomer === 'function') addCustomer();
+    } else if (action === 'popover-accounting') {
+      if (webUrl) window.open(webUrl + '/dashboard/innstillinger/integrasjoner', '_blank');
+    }
+
+    // Close popover
+    popover.classList.remove('visible');
+    setTimeout(() => popover.remove(), 200);
+  });
+}
 
 // Calculate right offset based on filter panel state
 function getChecklistRightOffset() {
@@ -152,7 +195,7 @@ function renderChecklist() {
 
   const completedCount = onboardingChecklist.completedTasks.length;
   const totalCount = onboardingChecklist.tasks.length;
-  const progressPercent = Math.round((completedCount / totalCount) * 100);
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   if (onboardingChecklist.minimized) {
     renderChecklistFab(completedCount, totalCount, progressPercent);
@@ -222,10 +265,10 @@ function renderChecklistExpanded(completedCount, totalCount, progressPercent) {
       <div class="checklist-header-top">
         <h3><i aria-hidden="true" class="fas fa-clipboard-check"></i> Kom i gang</h3>
         <div class="checklist-header-actions">
-          <button class="checklist-header-btn" onclick="minimizeChecklist()" title="Minimer">
+          <button class="checklist-header-btn" data-action="minimizeChecklist" title="Minimer">
             <i aria-hidden="true" class="fas fa-minus"></i>
           </button>
-          <button class="checklist-header-btn" onclick="dismissChecklist()" title="Lukk">
+          <button class="checklist-header-btn" data-action="dismissChecklist" title="Lukk">
             <i aria-hidden="true" class="fas fa-times"></i>
           </button>
         </div>

@@ -23,6 +23,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import { logger, logRequest } from './services/logger';
+import { recordRequest, startMetricsCollection, stopMetricsCollection } from './services/metrics-collector';
 import { getConfig } from './config/env';
 import { requestIdMiddleware } from './middleware/requestId';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -55,6 +56,7 @@ import cronRoutes from './routes/cron';
 import maintenanceRoutes from './routes/maintenance';
 import cron from 'node-cron';
 import { sendAlert, alertRateLimitExceeded } from './services/alerts';
+import { getAllCircuitBreakerStats } from './services/circuit-breaker';
 import integrationWebhooksRoutes from './routes/integration-webhooks';
 import exportRoutes, { initExportRoutes } from './routes/export';
 import featuresRoutes, { initFeaturesRoutes } from './routes/features';
@@ -65,9 +67,12 @@ import outlookRoutes, { initOutlookRoutes } from './routes/outlook';
 import todaysWorkRoutes, { initTodaysWorkRoutes } from './routes/todays-work';
 import patchNotesRoutes, { initPatchNotesRoutes } from './routes/patch-notes';
 import chatRoutes, { initChatRoutes } from './routes/chat';
+import ukeplanNotaterRoutes, { initUkeplanNotaterRoutes } from './routes/ukeplan-notater';
 import { csrfTokenMiddleware, csrfProtection, getCsrfTokenHandler } from './middleware/csrf';
 import { maintenanceMiddleware } from './middleware/maintenance';
 import { initWebSocketServer, shutdownWebSocket } from './services/websocket';
+import { initCronJobs, stopAllCronJobs, getCronJobStatus } from './services/cron-watchdog';
+import { runStartupChecks } from './services/startup-check';
 import type { AuthenticatedRequest } from './types';
 
 // Validate environment and get config
@@ -126,6 +131,9 @@ async function initializeApp() {
   // Initialize chat routes
   initChatRoutes(db as Parameters<typeof initChatRoutes>[0]);
 
+  // Initialize ukeplan-notater routes
+  initUkeplanNotaterRoutes(db as Parameters<typeof initUkeplanNotaterRoutes>[0]);
+
   return db;
 }
 
@@ -151,7 +159,7 @@ app.use(
           'https://cdn.jsdelivr.net',
           'https://api.mapbox.com',
         ],
-        scriptSrcAttr: ["'unsafe-inline'"],
+        scriptSrcAttr: [], // All inline handlers migrated to data-action delegation
         styleSrc: [
           "'self'",
           "'unsafe-inline'",
@@ -249,7 +257,7 @@ app.use('/api', (req, res, next): void => {
 // Request ID middleware (adds unique ID to each request)
 app.use(requestIdMiddleware);
 
-// Request logging middleware
+// Request logging middleware (also feeds metrics collector)
 app.use((req, res, next) => {
   const startTime = Date.now();
 
@@ -269,6 +277,9 @@ app.use((req, res, next) => {
         organizationId: authReq.organizationId,
       }
     );
+
+    // Feed metrics collector for accurate dashboard data
+    recordRequest(req.method, req.path, res.statusCode, duration);
   });
 
   next();
@@ -393,6 +404,9 @@ app.use('/api/patch-notes', requireTenantAuth, patchNotesRoutes);
 // Chat / messaging
 app.use('/api/chat', requireTenantAuth, requireActiveSubscription, chatRoutes);
 
+// Ukeplan notater (weekly plan notes/huskeliste)
+app.use('/api/ukeplan-notater', requireTenantAuth, requireActiveSubscription, ukeplanNotaterRoutes);
+
 // Import routes (Excel import with staging)
 app.use('/api/import', requireTenantAuth, requireActiveSubscription, importRoutes);
 
@@ -418,6 +432,25 @@ app.use('/api/cron', cronRoutes);
 // Incoming integration webhooks (from Tripletex, etc. - verified by provider, no JWT)
 app.use('/api/integration-webhooks', integrationWebhooksRoutes);
 
+// Frontend error reporting endpoint (no auth - must work regardless of login state)
+app.post('/api/client-errors', (req, res) => {
+  const { recordFrontendError } = require('./services/metrics-collector');
+  const errors = Array.isArray(req.body) ? req.body.slice(0, 10) : [req.body];
+  for (const err of errors) {
+    if (err && typeof err.message === 'string') {
+      recordFrontendError({
+        message: String(err.message).substring(0, 500),
+        source: err.source ? String(err.source).substring(0, 200) : undefined,
+        line: typeof err.line === 'number' ? err.line : undefined,
+        col: typeof err.col === 'number' ? err.col : undefined,
+        url: err.url ? String(err.url).substring(0, 200) : undefined,
+        userAgent: String(req.headers['user-agent'] || '').substring(0, 200),
+      });
+    }
+  }
+  res.json({ success: true });
+});
+
 // Health check endpoint (basic - for load balancers)
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -433,7 +466,7 @@ app.get('/api/health', (_req, res) => {
 // Detailed health check (for monitoring systems) - no sensitive details without auth
 app.get('/api/health/detailed', async (_req, res) => {
   const startTime = Date.now();
-  const checks: Record<string, { status: 'healthy' | 'unhealthy' | 'degraded'; latency_ms?: number; error?: string }> = {};
+  const checks: Record<string, { status: 'healthy' | 'unhealthy' | 'degraded'; latency_ms?: number; heap_used_mb?: number; error?: string }> = {};
   let overallStatus: 'healthy' | 'unhealthy' | 'degraded' = 'healthy';
 
   // Database check
@@ -454,14 +487,64 @@ app.get('/api/health/detailed', async (_req, res) => {
     overallStatus = 'unhealthy';
   }
 
+  // Circuit breaker status for external services
+  const circuitBreakers = getAllCircuitBreakerStats();
+  const openBreakers = Object.values(circuitBreakers).filter(cb => cb.state === 'OPEN');
+  const halfOpenBreakers = Object.values(circuitBreakers).filter(cb => cb.state === 'HALF_OPEN');
+
+  if (openBreakers.length > 0) {
+    checks.external_services = {
+      status: 'degraded',
+      error: `Utilgjengelige tjenester: ${openBreakers.map(cb => cb.name).join(', ')}`,
+    };
+    if (overallStatus === 'healthy') overallStatus = 'degraded';
+  } else if (halfOpenBreakers.length > 0) {
+    checks.external_services = {
+      status: 'degraded',
+      error: `Tjenester under gjenopprettelse: ${halfOpenBreakers.map(cb => cb.name).join(', ')}`,
+    };
+    if (overallStatus === 'healthy') overallStatus = 'degraded';
+  } else if (Object.keys(circuitBreakers).length > 0) {
+    checks.external_services = { status: 'healthy' };
+  }
+
+  // Memory usage check
+  const memUsage = process.memoryUsage();
+  const heapUsedMb = Math.round(memUsage.heapUsed / 1024 / 1024);
+  const heapTotalMb = Math.round(memUsage.heapTotal / 1024 / 1024);
+  const heapPercent = Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100);
+
+  checks.memory = {
+    status: heapPercent > 90 ? 'degraded' : 'healthy',
+    heap_used_mb: heapUsedMb,
+    ...(heapPercent > 90 ? { error: `Heap usage ${heapPercent}% (${heapUsedMb}/${heapTotalMb} MB)` } : {}),
+  };
+  if (heapPercent > 90 && overallStatus === 'healthy') overallStatus = 'degraded';
+
   const totalLatency = Date.now() - startTime;
 
-  res.status(overallStatus === 'healthy' ? 200 : 503).json({
+  // Cron job status
+  const cronJobs = getCronJobStatus();
+  const failingJobs = cronJobs.filter(j => j.consecutiveFailures >= 3);
+  if (failingJobs.length > 0) {
+    checks.cron_jobs = {
+      status: 'degraded',
+      error: `Feilende jobber: ${failingJobs.map(j => `${j.name} (${j.consecutiveFailures}x)`).join(', ')}`,
+    };
+    if (overallStatus === 'healthy') overallStatus = 'degraded';
+  } else if (cronJobs.length > 0) {
+    checks.cron_jobs = { status: 'healthy' };
+  }
+
+  res.status(overallStatus === 'healthy' ? 200 : overallStatus === 'degraded' ? 200 : 503).json({
     success: overallStatus !== 'unhealthy',
     data: {
       status: overallStatus,
       timestamp: new Date().toISOString(),
+      uptime_seconds: Math.round(process.uptime()),
       checks,
+      circuit_breakers: circuitBreakers,
+      cron_jobs: cronJobs,
       total_latency_ms: totalLatency,
     },
   });
@@ -512,6 +595,17 @@ initializeApp()
         environment: config.NODE_ENV,
         database: config.DATABASE_TYPE,
       }, `Server startet på ${config.HOST}:${PORT}`);
+
+      // Run startup self-checks (non-blocking)
+      runStartupChecks().catch(err => {
+        logger.error({ error: err }, 'Oppstartssjekker feilet');
+      });
+
+      // Start metrics collection (memory snapshots every 30s)
+      startMetricsCollection();
+
+      // Initialize self-healing cron jobs
+      initCronJobs();
 
       // Auto-backup: 3x daglig (kl 06:00, 14:00, 22:00)
       if (config.DATABASE_TYPE === 'supabase' && process.env.BACKUP_ENCRYPTION_KEY && config.NODE_ENV === 'production') {
@@ -568,8 +662,10 @@ initializeApp()
       }
     });
 
-    // Graceful shutdown for WebSocket
+    // Graceful shutdown for WebSocket and cron jobs
     const gracefulShutdown = () => {
+      stopAllCronJobs();
+      stopMetricsCollection();
       shutdownWebSocket();
     };
     process.on('SIGINT', gracefulShutdown);

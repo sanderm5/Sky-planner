@@ -750,7 +750,7 @@ router.post(
  */
 router.post(
   '/tripletex/push-customer',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_id } = req.body;
 

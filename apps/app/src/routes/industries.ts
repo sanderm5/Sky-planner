@@ -4,7 +4,6 @@
  */
 
 import { Router, Response } from 'express';
-import { createClient } from '@supabase/supabase-js';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { requireTenantAuth } from '../middleware/auth';
 import { createLogger } from '../services/logger';
@@ -14,10 +13,12 @@ const apiLogger = createLogger('industries');
 
 const router: Router = Router();
 
-// Create Supabase client for direct queries
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Use centralized database service instead of direct service role key
+async function getSupabase() {
+  const { getDatabase } = await import('../services/database');
+  const db = await getDatabase();
+  return db.getSupabaseClient();
+}
 
 // Database service interface (will be injected)
 interface DatabaseService {
@@ -117,8 +118,9 @@ export function initIndustryRoutes(databaseService: DatabaseService): Router {
 router.get(
   '/',
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    // Query Supabase directly for industry templates
-    const { data: industries, error } = await supabase
+    // Query via centralized Supabase client
+    const supabaseClient = await getSupabase();
+    const { data: industries, error } = await supabaseClient
       .from('industry_templates')
       .select('*')
       .eq('aktiv', true)
@@ -131,7 +133,7 @@ router.get(
 
     const response: ApiResponse = {
       success: true,
-      data: (industries || []).map(industry => ({
+      data: (industries || []).map((industry: any) => ({
         id: industry.id,
         name: industry.name,
         slug: industry.slug,
@@ -156,8 +158,9 @@ router.get(
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { slug } = req.params;
 
-    // Get industry template using Supabase directly
-    const { data: industry, error: industryError } = await supabase
+    // Get industry template via centralized client
+    const supabaseClient = await getSupabase();
+    const { data: industry, error: industryError } = await supabaseClient
       .from('industry_templates')
       .select('*')
       .eq('slug', slug)
@@ -168,7 +171,7 @@ router.get(
     }
 
     // Get all service types for this template
-    const { data: serviceTypes, error: stError } = await supabase
+    const { data: serviceTypes, error: stError } = await supabaseClient
       .from('template_service_types')
       .select('*')
       .eq('template_id', industry.id)
@@ -176,15 +179,16 @@ router.get(
       .order('sort_order');
 
     if (stError) {
-      throw Errors.internal('Kunne ikke hente tjenesttyper: ' + stError.message);
+      console.error('Failed to fetch service types:', stError.message);
+      throw Errors.internal('Kunne ikke hente tjenesttyper');
     }
 
     // Get subtypes and equipment for each service type
     const serviceTypesWithDetails = await Promise.all(
       (serviceTypes || []).map(async (st: any) => {
         const [subtypesResult, equipmentResult] = await Promise.all([
-          supabase.from('template_subtypes').select('*').eq('service_type_id', st.id).order('sort_order'),
-          supabase.from('template_equipment').select('*').eq('service_type_id', st.id).order('sort_order'),
+          supabaseClient.from('template_subtypes').select('*').eq('service_type_id', st.id).order('sort_order'),
+          supabaseClient.from('template_equipment').select('*').eq('service_type_id', st.id).order('sort_order'),
         ]);
         return {
           ...st,
@@ -195,7 +199,7 @@ router.get(
     );
 
     // Get intervals
-    const { data: intervals } = await supabase
+    const { data: intervals } = await supabaseClient
       .from('template_intervals')
       .select('*')
       .eq('template_id', industry.id)
@@ -265,8 +269,9 @@ router.post(
       throw Errors.forbidden('Bruker må tilhøre en organisasjon');
     }
 
-    // Find the industry template using Supabase directly
-    let industryQuery = supabase.from('industry_templates').select('*');
+    // Find the industry template using centralized Supabase client
+    const supabaseClient = await getSupabase();
+    let industryQuery = supabaseClient.from('industry_templates').select('*');
     if (industrySlug) {
       industryQuery = industryQuery.eq('slug', industrySlug);
     } else if (industryId) {
@@ -280,22 +285,22 @@ router.post(
 
     const industry = industryData;
 
-    // Update organization with selected industry using Supabase directly
-    const { error: updateError } = await supabase
+    // Update organization with selected industry
+    const { error: updateError } = await supabaseClient
       .from('organizations')
       .update({
-        industry_template_id: industry.id,
-        onboarding_completed: true
+        industry_template_id: industry.id
       })
       .eq('id', organizationId);
 
     if (updateError) {
-      throw Errors.internal('Kunne ikke oppdatere organisasjon: ' + updateError.message);
+      console.error('Failed to update organization:', updateError.message);
+      throw Errors.internal('Kunne ikke oppdatere organisasjon');
     }
 
     // Copy template service types to organization for customization
     try {
-      const { data: templateTypes } = await supabase
+      const { data: templateTypes } = await supabaseClient
         .from('template_service_types')
         .select('*')
         .eq('template_id', industry.id)
@@ -315,7 +320,7 @@ router.post(
           source: 'template',
           source_ref: String(t.id),
         }));
-        await supabase
+        await supabaseClient
           .from('organization_service_types')
           .upsert(rows, { onConflict: 'organization_id,slug', ignoreDuplicates: true });
       }

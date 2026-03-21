@@ -403,16 +403,22 @@ async function getRuteById(id) {
 async function createRute(ruteData) {
   const { kunde_ids, ...rute } = ruteData;
 
+  const insertData = {
+    navn: rute.navn,
+    beskrivelse: rute.beskrivelse,
+    planlagt_dato: rute.planlagt_dato,
+    planned_date: rute.planned_date || rute.planlagt_dato, // Keep both date columns in sync
+    total_distanse: rute.total_distanse,
+    total_tid: rute.total_tid,
+    status: 'planlagt'
+  };
+  if (rute.organization_id) {
+    insertData.organization_id = rute.organization_id;
+  }
+
   const { data: newRute, error: ruteError } = await getClient()
     .from('ruter')
-    .insert({
-      navn: rute.navn,
-      beskrivelse: rute.beskrivelse,
-      planlagt_dato: rute.planlagt_dato,
-      total_distanse: rute.total_distanse,
-      total_tid: rute.total_tid,
-      status: 'planlagt'
-    })
+    .insert(insertData)
     .select()
     .single();
 
@@ -439,16 +445,23 @@ async function createRute(ruteData) {
 async function updateRute(id, ruteData) {
   const { kunde_ids, ...rute } = ruteData;
 
+  const updateFields = {};
+  if (rute.navn !== undefined) updateFields.navn = rute.navn;
+  if (rute.beskrivelse !== undefined) updateFields.beskrivelse = rute.beskrivelse;
+  if (rute.planlagt_dato !== undefined) updateFields.planlagt_dato = rute.planlagt_dato;
+  if (rute.status !== undefined) updateFields.status = rute.status;
+  if (rute.total_distanse !== undefined) updateFields.total_distanse = rute.total_distanse;
+  if (rute.total_tid !== undefined) updateFields.total_tid = rute.total_tid;
+  if ('assigned_to' in rute) updateFields.assigned_to = rute.assigned_to;
+  if ('planned_date' in rute) updateFields.planned_date = rute.planned_date;
+  if ('execution_started_at' in rute) updateFields.execution_started_at = rute.execution_started_at;
+  if ('execution_ended_at' in rute) updateFields.execution_ended_at = rute.execution_ended_at;
+  if ('current_stop_index' in rute) updateFields.current_stop_index = rute.current_stop_index;
+  if (Object.keys(updateFields).length === 0) updateFields.status = 'planlagt';
+
   const { data: updatedRute, error: ruteError } = await getClient()
     .from('ruter')
-    .update({
-      navn: rute.navn,
-      beskrivelse: rute.beskrivelse,
-      planlagt_dato: rute.planlagt_dato,
-      status: rute.status || 'planlagt',
-      total_distanse: rute.total_distanse,
-      total_tid: rute.total_tid
-    })
+    .update(updateFields)
     .eq('id', id)
     .select()
     .single();
@@ -987,6 +1000,7 @@ async function deleteAvtalerByRuteId(ruteId, organizationId) {
     .delete()
     .eq('rute_id', ruteId)
     .eq('organization_id', organizationId)
+    .eq('type', 'Sky Planner')
     .select('id');
 
   if (error) throw error;
@@ -1411,6 +1425,9 @@ async function getAvtalerByTenant(organizationId, startDate, endDate) {
       *,
       kunder (
         id, navn, adresse, postnummer, poststed, telefon, kategori
+      ),
+      ruter!left (
+        id, navn, assigned_to
       )
     `)
     .eq('organization_id', organizationId);
@@ -1422,6 +1439,31 @@ async function getAvtalerByTenant(organizationId, startDate, endDate) {
   const { data, error } = await query.order('dato').order('klokkeslett');
 
   if (error) throw error;
+
+  // Resolve technician names from assigned_to IDs
+  const assignedIds = new Set();
+  for (const a of (data || [])) {
+    if (a.ruter?.assigned_to) assignedIds.add(a.ruter.assigned_to);
+  }
+
+  let techMap = {};
+  if (assignedIds.size > 0) {
+    const { data: techs } = await getClient()
+      .from('klient')
+      .select('id, navn')
+      .in('id', Array.from(assignedIds));
+    if (techs) {
+      for (const t of techs) {
+        techMap[t.id] = t.navn;
+      }
+    }
+  }
+
+  // Attach technician name to each avtale
+  for (const a of (data || [])) {
+    a._tildelt_tekniker = a.ruter?.assigned_to ? (techMap[a.ruter.assigned_to] || null) : null;
+  }
+
   return data;
 }
 

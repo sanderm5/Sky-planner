@@ -106,7 +106,7 @@ router.get(
  */
 router.post(
   '/reports',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_id, report_type, notes, checklist_data } = req.body;
 
@@ -150,7 +150,7 @@ router.post(
  */
 router.put(
   '/reports/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) throw Errors.badRequest('Ugyldig rapport-ID');
@@ -186,7 +186,7 @@ router.put(
  */
 router.post(
   '/reports/:id/advance',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) throw Errors.badRequest('Ugyldig rapport-ID');
@@ -246,7 +246,7 @@ router.post(
  */
 router.delete(
   '/reports/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) throw Errors.badRequest('Ugyldig rapport-ID');

@@ -296,6 +296,8 @@ registerContextMenuAction('ctx-delete-avtale', async (data, ctx) => {
       if (typeof refreshTeamFocus === 'function') refreshTeamFocus();
       if (typeof renderCalendar === 'function') renderCalendar();
       if (typeof renderWeeklyPlan === 'function') renderWeeklyPlan();
+      if (typeof updateWeekPlanBadges === 'function') updateWeekPlanBadges();
+      if (typeof mfLoadCalendarData === 'function') mfLoadCalendarData();
       if (typeof applyFilters === 'function') applyFilters();
     } else {
       const err = await resp.json().catch(() => ({}));
@@ -547,7 +549,7 @@ async function pushCustomerToTripletex(kundeId) {
 
 let activeTooltipEl = null;
 
-function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
+function showMarkerTooltip(customer, markerIconEl) {
   hideMarkerTooltip();
 
   const controlStatus = getControlStatus(customer);
@@ -612,31 +614,29 @@ function showMarkerTooltip(customer, markerIconEl, mouseEvent) {
 
   document.body.appendChild(tooltip);
 
-  // Position: use mouse coordinates if available, fall back to marker icon position
+  // Position: anchor above marker icon, centered horizontally
   const tooltipRect = tooltip.getBoundingClientRect();
   let left, top;
 
-  if (mouseEvent) {
-    left = mouseEvent.clientX + 12;
-    top = mouseEvent.clientY - 10;
-  } else if (markerIconEl) {
+  if (markerIconEl) {
     const rect = markerIconEl.getBoundingClientRect();
-    left = rect.left + rect.width / 2 + 12;
-    top = rect.top - 4;
+    left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+    top = rect.top - tooltipRect.height - 8;
   } else {
     left = 100;
     top = 100;
   }
 
-  // Keep within viewport
-  if (left + tooltipRect.width > window.innerWidth) {
-    left = (mouseEvent ? mouseEvent.clientX : left) - tooltipRect.width - 12;
+  // If no room above, show below
+  if (top < 4) {
+    const rect = markerIconEl ? markerIconEl.getBoundingClientRect() : null;
+    top = rect ? rect.bottom + 8 : 4;
   }
-  if (top + tooltipRect.height > window.innerHeight) {
-    top = window.innerHeight - tooltipRect.height - 8;
+  // Keep within viewport horizontally
+  if (left + tooltipRect.width > window.innerWidth - 4) {
+    left = window.innerWidth - tooltipRect.width - 4;
   }
   if (left < 4) left = 4;
-  if (top < 4) top = 4;
 
   tooltip.style.left = `${left}px`;
   tooltip.style.top = `${top}px`;

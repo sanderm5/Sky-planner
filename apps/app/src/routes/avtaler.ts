@@ -33,6 +33,8 @@ interface AvtaleDbService {
   completeAvtale(id: number, organizationId?: number): Promise<boolean>;
   getOrganizationById(id: number): Promise<Organization | null>;
   getKundeById(id: number, organizationId: number): Promise<Kunde | null>;
+  getRuteKunder?(ruteId: number): Promise<(Kunde & { rekkefolge: number })[]>;
+  setRuteKunder?(ruteId: number, kundeIds: number[], organizationId?: number): Promise<void>;
 }
 
 // Valid recurrence rules
@@ -166,7 +168,7 @@ router.get(
  */
 router.post(
   '/',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_id, dato, klokkeslett, type, beskrivelse, status, opprettet_av, gjentakelse_regel, gjentakelse_slutt, varighet } = req.body;
 
@@ -271,7 +273,7 @@ router.post(
  */
 router.put(
   '/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -327,16 +329,34 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
       throw Errors.badRequest('Ugyldig avtale-ID');
     }
 
+    // Get avtale before deleting to check route link
+    const avtale = await dbService.getAvtaleById(id, req.organizationId);
+    if (!avtale) {
+      throw Errors.notFound('Avtale');
+    }
+
     const deleted = await dbService.deleteAvtale(id, req.organizationId);
     if (!deleted) {
       throw Errors.notFound('Avtale');
+    }
+
+    // If avtale was linked to a route, remove the customer from the route
+    if (avtale.rute_id && avtale.kunde_id && req.organizationId && dbService.getRuteKunder && dbService.setRuteKunder) {
+      try {
+        const ruteKunder = await dbService.getRuteKunder(avtale.rute_id);
+        const updatedIds = ruteKunder.map(k => k.id).filter(kid => kid !== avtale.kunde_id);
+        await dbService.setRuteKunder(avtale.rute_id, updatedIds, req.organizationId);
+        broadcast(req.organizationId, 'rute_updated', { id: avtale.rute_id }, req.user?.userId);
+      } catch (err) {
+        apiLogger.error({ err, avtaleId: id, ruteId: avtale.rute_id }, 'Failed to remove customer from route after avtale delete');
+      }
     }
 
     logAudit(apiLogger, 'DELETE', req.user!.userId, 'avtale', id);
@@ -362,7 +382,7 @@ router.delete(
  */
 router.delete(
   '/:id/series',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -400,7 +420,7 @@ router.delete(
  */
 router.post(
   '/:id/complete',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {

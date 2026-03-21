@@ -134,9 +134,10 @@ function renderMarkers(customerData) {
 
       // Hover tooltip (PC only)
       if (hasFeature('hover_tooltip')) {
-        el.addEventListener('mouseenter', (ev) => {
-          if (window.innerWidth > 768 && !currentPopup) {
-            showMarkerTooltip(customer, el, ev);
+        const markerIcon = el.querySelector('.marker-icon');
+        el.addEventListener('mouseenter', () => {
+          if (window.innerWidth > 768 && marker._addedToMap) {
+            showMarkerTooltip(customer, markerIcon || el);
           }
         });
         el.addEventListener('mouseleave', () => {

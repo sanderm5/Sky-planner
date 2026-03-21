@@ -98,6 +98,8 @@ function loadClusterData(customerData) {
   }));
   const src = map && map.getSource(CLUSTER_SOURCE);
   if (src) src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
+  // Re-filter if route/team/calendar focus is active
+  if (wpRouteActive || wpFocusedMemberIds || (typeof calendarFocusedKundeIds !== 'undefined' && calendarFocusedKundeIds)) refreshClusters();
 }
 
 function updateClusters() {
@@ -152,6 +154,7 @@ function setClusterLayerVisibility(visible) {
 }
 
 function onClusterClick(e) {
+  hideMarkerTooltip();
   const feats = map.queryRenderedFeatures(e.point, { layers: [CLUSTER_CIRCLE_LAYER] });
   if (!feats.length) return;
   const clusterId = feats[0].properties.cluster_id;
@@ -187,7 +190,7 @@ function onClusterClick(e) {
 function generateClusterPopupContent(clusterCustomers) {
   const list = clusterCustomers.slice(0, 10).map(c => {
     const status = getControlStatus(c);
-    return `<div class="cluster-popup-item" onclick="focusOnCustomer(${c.id})" style="cursor:pointer;padding:4px 0;border-bottom:1px solid var(--color-border);">
+    return `<div class="cluster-popup-item" data-action="focusOnCustomer" data-customer-id="${c.id}" style="cursor:pointer;padding:4px 0;border-bottom:1px solid var(--color-border);">
       <span class="popup-status ${status.class}" style="display:inline-block;width:8px;height:8px;border-radius:50;margin-right:6px;"></span>
       <strong>${escapeHtml(c.navn)}</strong>
       ${c.poststed ? `<span style="color:var(--color-text-secondary);font-size:12px;"> — ${escapeHtml(c.poststed)}</span>` : ''}
@@ -215,7 +218,17 @@ function refreshClusters() {
   if (!map || !_clusterSourceReady) return;
   const src = map.getSource(CLUSTER_SOURCE);
   if (src && clusterGeoJSONFeatures.length > 0) {
-    src.setData({ type: 'FeatureCollection', features: clusterGeoJSONFeatures });
+    let features = clusterGeoJSONFeatures;
+    if (!wpShowAllMarkers) {
+      if (wpRouteActive && wpRouteStopIds) {
+        features = clusterGeoJSONFeatures.filter(f => wpRouteStopIds.has(f.properties.customerId));
+      } else if (wpFocusedMemberIds) {
+        features = clusterGeoJSONFeatures.filter(f => wpFocusedMemberIds.has(f.properties.customerId));
+      } else if (typeof calendarFocusedKundeIds !== 'undefined' && calendarFocusedKundeIds) {
+        features = clusterGeoJSONFeatures.filter(f => calendarFocusedKundeIds.has(f.properties.customerId));
+      }
+    }
+    src.setData({ type: 'FeatureCollection', features });
   }
   updateClusters();
 }

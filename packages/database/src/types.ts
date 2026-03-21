@@ -69,7 +69,7 @@ export interface Klient {
   aktiv: boolean;
   organization_id?: number;
   opprettet?: string;
-  rolle?: 'admin' | 'redigerer' | 'leser';
+  rolle?: 'admin' | 'teammedlem' | 'kontor' | 'leser';
 }
 
 export interface Bruker {
@@ -77,7 +77,7 @@ export interface Bruker {
   navn: string;
   epost: string;
   passord_hash: string;
-  rolle: 'admin' | 'bruker';
+  rolle?: 'admin' | 'teammedlem' | 'kontor' | 'leser';
   aktiv: boolean;
   organization_id?: number;
   sist_innlogget?: string;

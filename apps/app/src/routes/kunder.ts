@@ -217,7 +217,7 @@ router.get(
  */
 router.post(
   '/',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     // Validate input
     const validationErrors = validateKunde(req.body);
@@ -300,7 +300,7 @@ router.post(
  */
 router.put(
   '/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -420,7 +420,7 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -480,7 +480,7 @@ router.delete(
  */
 router.post(
   '/bulk-complete',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_ids, type, dato } = req.body;
 
@@ -541,7 +541,7 @@ router.post(
  */
 router.post(
   '/mark-visited',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { kunde_ids, visited_date, service_type_slugs } = req.body;
 
@@ -640,7 +640,7 @@ function prepareKundeData(
  */
 router.post(
   '/import/parse',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   upload.single('file'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
@@ -771,7 +771,7 @@ router.post(
  */
 router.post(
   '/import/execute',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { rows, columnMapping } = req.body as {
       rows: Array<Record<string, unknown>>;

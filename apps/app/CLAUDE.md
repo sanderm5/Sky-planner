@@ -10,7 +10,7 @@
 | Hva | Hvor |
 |-----|------|
 | Backend API | `src/server.ts` |
-| Frontend kilde | `frontend/` (50 filer → bygges til `public/app.js`) |
+| Frontend kilde | `frontend/` (70 filer → bygges til `public/app.js`) |
 | Database | Supabase |
 | Port | 3000 |
 
@@ -54,6 +54,8 @@ apps/app/
 │   │   ├── outlook.ts      # Outlook-kalendersynkronisering
 │   │   ├── cron.ts         # Planlagte vedlikeholdsoppgaver
 │   │   ├── super-admin.ts  # Super admin-funksjoner
+│   │   ├── ukeplan-notater.ts # Ukeplan-huskeliste (CRUD)
+│   │   ├── subcategories.ts # Underkategorier
 │   │   ├── docs.ts         # API-dokumentasjon
 │   │   └── public-api/     # Public API v1
 │   │       └── v1/
@@ -68,6 +70,12 @@ apps/app/
 │   │   ├── geocoding.ts    # Geokoding
 │   │   ├── alerts.ts       # Varslingssystem (Slack, Discord, webhook)
 │   │   ├── export.ts       # Eksport-tjeneste (CSV, JSON, GDPR)
+│   │   ├── circuit-breaker.ts # Circuit breaker for eksterne tjenester
+│   │   ├── cron-watchdog.ts   # Intern cron-scheduler med auto-retry
+│   │   ├── metrics-collector.ts # System-metrikk (request, latency, memory)
+│   │   ├── startup-check.ts  # Preflight-validering ved oppstart
+│   │   ├── database/         # Database-queries
+│   │   │   └── ukeplan-notater-queries.ts
 │   │   └── import/         # Import-system
 │   │       ├── index.ts
 │   │       ├── parser.ts
@@ -104,10 +112,10 @@ apps/app/
 │   └── docs/
 │       └── openapi.yaml    # OpenAPI-spesifikasjon
 ├── frontend/               # Frontend kildekode (rediger her!)
-│   ├── utils/              # Hjelpefunksjoner (escapeHtml, logger, csrf, modal, theme, sorting)
+│   ├── utils/              # Hjelpefunksjoner (escapeHtml, delegation, logger, csrf, modal, theme, sorting)
 │   ├── constants/          # Konstanter (icons)
-│   ├── services/           # Tjenester (auth, api, feature-flags, subscription, websocket)
-│   ├── modules/            # Feature-moduler (37 filer: markers, weekplan, calendar, etc.)
+│   ├── services/           # Tjenester (auth, api, route-service, feature-flags, subscription, websocket)
+│   ├── modules/            # Feature-moduler (57 filer: markers, weekplan, calendar, mobile-*, etc.)
 │   └── app-legacy.js       # Global state + DOMContentLoaded + setupEventListeners
 ├── public/                 # Generert output (IKKE rediger manuelt!)
 │   ├── index.html          # Hovedside
@@ -239,6 +247,15 @@ npm run dev:frontend    # Watch-modus for frontend
 | POST | `/api/tags/kunder/:id/tags/:tagId` | Legg tag på kunde |
 | DELETE | `/api/tags/kunder/:id/tags/:tagId` | Fjern tag fra kunde |
 
+### Ukeplan-notater (huskeliste)
+| Metode | Endpoint | Beskrivelse |
+|--------|----------|-------------|
+| GET | `/api/ukeplan-notater?uke_start=YYYY-MM-DD` | Hent notater for en uke |
+| GET | `/api/ukeplan-notater/overforte?uke_start=YYYY-MM-DD` | Hent ufullforde notater fra tidligere uker |
+| POST | `/api/ukeplan-notater` | Opprett notat (type, tilordnet, maldag) |
+| PUT | `/api/ukeplan-notater/:id` | Oppdater notat |
+| DELETE | `/api/ukeplan-notater/:id` | Slett notat |
+
 ### Andre
 | Metode | Endpoint | Beskrivelse |
 |--------|----------|-------------|
@@ -273,6 +290,7 @@ npm run dev:frontend    # Watch-modus for frontend
 - `tag_groups` - Tag-grupper (hierarki: gruppe → tags, med farge og sortering)
 - `kunde_tags` - Kobling mellom kunder og tags
 - `organization_service_types` - Org-spesifikke tjenestekategorier
+- `ukeplan_notater` - Ukeplan-huskeliste (type, tilordnet, maldag, overfort_fra)
 
 ---
 
@@ -281,16 +299,19 @@ npm run dev:frontend    # Watch-modus for frontend
 1. **Kunder** - Søk og områdefilter
 2. **Varsler** - Kommende kontroller
 3. **Ruter** - Lagrede ruter
-4. **Kalender** - Månedsoversikt
-5. **Planlegger** - År/område-planlegging
-6. **Ukeplan** - Ukentlig ruteplanlegging med:
-   - Manuell kundesøk (alltid synlig)
-   - Nummererte stopp med team-initialer og farger
-   - Tidsestimater per stopp (08:00-08:30 format)
-   - Progresjonslinje (estimert tid vs 8-timers dag)
-   - Ruteoptimalisering via VROOM API
-   - Slett/fjern kunder fra plan
-   - Per-kunde tilordning (hvem la til kunden)
+4. **Arbeid** - Samlet arbeidsfane med sub-navigation (`arbeid-nav.js`):
+   - **Oversikt** — Team Overview med daglig status, push-route, quick-assign (`team-overview.js`)
+   - **Ukeplan** — Ukentlig ruteplanlegging med:
+     - Manuell kundesøk (alltid synlig)
+     - Nummererte stopp med team-initialer og farger
+     - Tidsestimater per stopp (08:00-08:30 format)
+     - Progresjonslinje (estimert tid vs 8-timers dag)
+     - Ruteoptimalisering via VROOM API
+     - Huskeliste/notater (5 typer: ring, besok, bestill, oppfolging, notat)
+     - Carry-forward av ufullforte notater fra tidligere uker
+     - Per-kunde tilordning (hvem la til kunden)
+   - **Kalender** — Månedsoversikt med avtaler
+   - **Planlegger** — År/område-planlegging
 
 ---
 
@@ -325,8 +346,10 @@ npm run dev:frontend    # Watch-modus for frontend
 | Innholdsvalidering | Avviser forespørsler uten riktig Content-Type |
 | Inaktivitets-logout | Auto-logout etter 15 min inaktivitet (varsel etter 13 min) |
 | Kontolåsing | Låser konto ved gjentatte feilet innlogginger |
-| TOTP | Replay-beskyttelse mot gjenbruk av 2FA-koder |
+| TOTP | Replay-beskyttelse + atomic attempt counting (forhindrer race conditions) |
 | Backup-kryptering | AES-256-GCM kryptering av database-backups |
+| Event delegation | CSP-compliant allowlist med 115+ whitelisted actions (`delegation.js`) |
+| Circuit breaker | Forhindrer kaskaderende feil mot eksterne tjenester |
 
 **Middleware-rekkefølge:** Helmet → CORS → Body parsing → Cookie → CSRF-token → CSRF-validering → Content-Type → Request ID → Logging → Rate limiting
 
@@ -379,3 +402,36 @@ npm run dev:frontend    # Watch-modus for frontend
 | 040_rls_performance_optimization | RLS ytelsesoptimalisering |
 | 041_rls_security_fixes | RLS sikkerhetsforbedringer |
 | 042_tag_groups | Tag-grupper (hierarkisk kategori-system) |
+| 052_ukeplan_notater | Ukeplan-huskeliste (notater per kunde per uke) |
+| 053_ukeplan_notater_enhancements | Notattyper, tilordning, maldag, carry-forward |
+| 054_fix_ruter_assigned_to_fk | Foreign key-fiks for ruter.assigned_to |
+| 055_atomic_totp_attempts | Atomic 2FA attempt counting (PL/pgSQL-funksjon) |
+| 056_standardize_roles | Rolle-standardisering (admin, teammedlem, kontor, leser) |
+
+---
+
+## Mobil-arkitektur
+
+8 dedikerte mobilmoduler i `frontend/modules/mobile-*.js`:
+
+| Modul | Beskrivelse |
+|-------|-------------|
+| `mobile-field.js` | Hovedvisning for feltarbeid |
+| `mobile-admin.js` | Admin/planlegger-fane (team, push-route, quick-assign) |
+| `mobile-weekplan-edit.js` | Redigering av ukeplan |
+| `mobile-weekplan-areas.js` | Områdebasert kundevalg |
+| `mobile-calendar.js` | Kalendervisning |
+| `mobile-chat.js` | Chat |
+| `mobile-visit-form.js` | Kundebesok-skjema |
+| `mobile-ui.js` | Mobil UI-hjelper (layout, navigasjon) |
+
+---
+
+## Backend Resilience
+
+| Tjeneste | Fil | Beskrivelse |
+|----------|-----|-------------|
+| Circuit Breaker | `services/circuit-breaker.ts` | CLOSED/OPEN/HALF_OPEN — forhindrer kaskaderende feil. Pre-konfigurert for Kartverket, ORS, Mapbox, Nominatim, Tripletex, Fiken, PowerOffice |
+| Cron Watchdog | `services/cron-watchdog.ts` | Intern cron-scheduler med auto-retry (2 forsok, 30s backoff). Jobber: token cleanup, daglig opprydding, GDPR-sletting, integrasjonssynk |
+| Metrics Collector | `services/metrics-collector.ts` | Rolling 15-min vindu for request/latency/memory-metrikk |
+| Startup Check | `services/startup-check.ts` | Preflight-validering av env vars, database og eksterne tjenester |

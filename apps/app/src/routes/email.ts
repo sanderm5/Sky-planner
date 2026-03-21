@@ -206,7 +206,7 @@ router.get(
  */
 router.put(
   '/innstillinger/:kundeId',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const kundeId = Number.parseInt(req.params.kundeId);
     if (Number.isNaN(kundeId)) {
@@ -245,7 +245,7 @@ router.put(
  */
 router.post(
   '/test',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');
@@ -285,7 +285,7 @@ router.post(
  */
 router.post(
   '/send-varsler',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');
@@ -311,7 +311,7 @@ router.post(
  */
 router.post(
   '/send-reminder',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');
@@ -369,7 +369,7 @@ router.post(
  */
 router.post(
   '/test-reminder',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!emailService) {
       throw Errors.badRequest('E-posttjeneste ikke konfigurert');

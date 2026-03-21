@@ -46,6 +46,8 @@ interface DatabaseService {
   deleteSessionByJti(jti: string): Promise<boolean>;
   countRecentFailedLogins?(epost: string, windowMinutes: number): Promise<number>;
   recordLoginAttempt?(epost: string, ipAddress: string, success: boolean): Promise<void>;
+  countOrganizationKunder?(organizationId: number): Promise<number>;
+  updateOnboardingStage?(organizationId: number, stage: string, additionalData?: Record<string, unknown>): Promise<boolean>;
 }
 
 interface KundeRecord {
@@ -180,7 +182,8 @@ router.post(
       const recentFailures = await dbService.countRecentFailedLogins(epost, ACCOUNT_LOCKOUT_WINDOW);
       if (recentFailures >= ACCOUNT_LOCKOUT_MAX) {
         logSecurityEvent({ action: 'account_locked', details: { epost, recentFailures }, ipAddress: ip, userAgent });
-        throw Errors.tooManyRequests(`Kontoen er midlertidig låst. Prøv igjen om ${ACCOUNT_LOCKOUT_WINDOW} minutter.`);
+        // Use same error message as invalid credentials to prevent account enumeration
+        throw Errors.unauthorized('Feil e-post eller passord');
       }
     }
 
@@ -327,6 +330,20 @@ router.post(
     // Send login notification email (async, don't wait)
     sendLoginNotification(user, userType, ip, userAgent)
       .catch(err => authLogger.error({ err }, 'Failed to send login notification'));
+
+    // Auto-complete onboarding for existing orgs that already have customers
+    if (organization && !organization.onboarding_completed && user.organization_id) {
+      try {
+        const kundeCount = await dbService.countOrganizationKunder?.(user.organization_id) ?? 0;
+        if (kundeCount > 0) {
+          await dbService.updateOnboardingStage?.(user.organization_id, 'completed', { onboarding_completed: true });
+          organization.onboarding_completed = true;
+          authLogger.info({ organizationId: user.organization_id, kundeCount }, 'Auto-completed onboarding for existing org with customers');
+        }
+      } catch (err) {
+        authLogger.warn({ err, organizationId: user.organization_id }, 'Failed to auto-complete onboarding');
+      }
+    }
 
     // Build response
     const response: ApiResponse = {
@@ -672,6 +689,16 @@ const SSO_MAX_ATTEMPTS = 10;
 
 function isSsoRateLimited(ip: string): boolean {
   const now = Date.now();
+
+  // Periodic cleanup to prevent memory leak
+  if (ssoAttempts.size > 100) {
+    for (const [key, val] of ssoAttempts) {
+      if (now - val.firstAttempt >= SSO_RATE_LIMIT_WINDOW) {
+        ssoAttempts.delete(key);
+      }
+    }
+  }
+
   const attempts = ssoAttempts.get(ip);
 
   if (!attempts || now - attempts.firstAttempt >= SSO_RATE_LIMIT_WINDOW) {
@@ -712,24 +739,24 @@ router.post(
     const { getSupabaseClient } = await import('@skyplanner/database');
     const supabase = getSupabaseClient();
 
+    // Atomically delete and return the token (prevents race condition with concurrent requests)
     const { data: ssoRecord, error: ssoError } = await supabase
       .from('sso_tokens')
-      .select('*')
+      .delete()
       .eq('token_hash', tokenHash)
+      .select('*')
       .single();
 
     if (ssoError || !ssoRecord) {
       return res.redirect('/?error=invalid_sso_token');
     }
 
-    // Check expiration BEFORE deleting (correct order)
+    // Check expiration (token already consumed — no cleanup needed)
     if (new Date(ssoRecord.expires_at) < new Date()) {
-      // Delete expired token
-      await supabase.from('sso_tokens').delete().eq('id', ssoRecord.id);
       return res.redirect('/?error=sso_token_expired');
     }
 
-    // Verify IP binding BEFORE deleting — token must be redeemed from same IP that created it
+    // Verify IP binding — token must be redeemed from same IP that created it
     if (ssoRecord.ip_hash) {
       const currentIpHash = crypto.createHash('sha256').update(ip).digest('hex');
       if (currentIpHash !== ssoRecord.ip_hash) {
@@ -737,9 +764,6 @@ router.post(
         return res.redirect('/?error=invalid_sso_token');
       }
     }
-
-    // Delete token immediately (one-time use) — after all validation passes
-    await supabase.from('sso_tokens').delete().eq('id', ssoRecord.id);
 
     // Fetch user and organization
     let user: KlientRecord | BrukerRecord | null = null;

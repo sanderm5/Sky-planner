@@ -221,6 +221,179 @@
         </div>
       </section>
 
+      <!-- System Monitoring section -->
+      <section class="system-monitor-section" id="systemMonitorSection">
+        <div class="section-header">
+          <h2><i class="fas fa-server"></i> Systemovervåking</h2>
+          <div class="section-actions">
+            <div class="sentry-auto-refresh">
+              <label>
+                <input type="checkbox" id="monitorAutoRefresh" checked>
+                <span>Auto-oppdater (30s)</span>
+              </label>
+            </div>
+            <button class="btn-sm btn-secondary" id="monitorRefreshBtn">
+              <i class="fas fa-sync-alt"></i> Oppdater
+            </button>
+          </div>
+        </div>
+
+        <!-- Summary cards row 1 -->
+        <div class="sentry-stats">
+          <div class="sentry-stat-card monitor-stat-uptime">
+            <div class="sentry-stat-icon"><i class="fas fa-clock"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorUptime">-</span>
+              <span class="sentry-stat-label">Server-oppetid</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card monitor-stat-memory">
+            <div class="sentry-stat-icon"><i class="fas fa-memory"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorMemory">-</span>
+              <span class="sentry-stat-label">Minnebruk (heap)</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card monitor-stat-db">
+            <div class="sentry-stat-icon"><i class="fas fa-database"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorDbLatency">-</span>
+              <span class="sentry-stat-label">Database-latency</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card monitor-stat-overall">
+            <div class="sentry-stat-icon" id="monitorOverallIcon"><i class="fas fa-heartbeat"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorOverallStatus">-</span>
+              <span class="sentry-stat-label">Overordnet status</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Summary cards row 2: Request metrics -->
+        <div class="sentry-stats" style="margin-top: -8px;">
+          <div class="sentry-stat-card">
+            <div class="sentry-stat-icon"><i class="fas fa-tachometer-alt"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorRps">-</span>
+              <span class="sentry-stat-label">Forespørsler/sek</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card">
+            <div class="sentry-stat-icon"><i class="fas fa-stopwatch"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorAvgResponse">-</span>
+              <span class="sentry-stat-label">Gj.snitt responstid</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card monitor-stat-errors">
+            <div class="sentry-stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorErrorRate">-</span>
+              <span class="sentry-stat-label">Feilrate (5xx)</span>
+            </div>
+          </div>
+          <div class="sentry-stat-card">
+            <div class="sentry-stat-icon"><i class="fas fa-wifi"></i></div>
+            <div class="sentry-stat-content">
+              <span class="sentry-stat-value" id="monitorWsConnections">-</span>
+              <span class="sentry-stat-label">WebSocket-tilkoblinger</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detected issues -->
+        <div class="monitor-issues-container" id="monitorIssuesContainer" style="display: none;">
+          <div class="monitor-detail-card monitor-issues-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-exclamation-triangle"></i> Potensielle problemer</h3>
+              <span class="monitor-issues-count" id="monitorIssuesCount">0</span>
+            </div>
+            <div class="monitor-issues-list" id="monitorIssuesList"></div>
+          </div>
+        </div>
+
+        <!-- Request details + Circuit breakers -->
+        <div class="monitor-detail-row">
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-chart-bar"></i> Forespørsler (siste 15 min)</h3>
+            </div>
+            <div class="monitor-requests-content" id="monitorRequests">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-plug"></i> Eksterne tjenester</h3>
+            </div>
+            <div class="monitor-service-list" id="monitorCircuitBreakers">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cron jobs + Integrations -->
+        <div class="monitor-detail-row">
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-cogs"></i> Cron-jobber</h3>
+            </div>
+            <div class="monitor-service-list" id="monitorCronJobs">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-exchange-alt"></i> Integrasjonssynk</h3>
+            </div>
+            <div class="monitor-integration-content" id="monitorIntegrations">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Service health + Frontend errors -->
+        <div class="monitor-detail-row">
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-envelope"></i> Tjenestehelse</h3>
+            </div>
+            <div class="monitor-service-list" id="monitorServices">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-browser"></i> Frontend-feil</h3>
+            </div>
+            <div class="monitor-service-list" id="monitorFrontendErrors">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Security + Data integrity -->
+        <div class="monitor-detail-row">
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-shield-alt"></i> Sikkerhetshendelser</h3>
+            </div>
+            <div class="monitor-security-content" id="monitorSecurity">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+          <div class="monitor-detail-card">
+            <div class="chart-header">
+              <h3><i class="fas fa-database"></i> Dataintegritet</h3>
+            </div>
+            <div class="monitor-service-list" id="monitorDataIntegrity">
+              <div class="loading-text"><i class="fas fa-spinner fa-spin"></i> Laster...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Organizations section -->
       <section class="orgs-section">
         <div class="section-header">

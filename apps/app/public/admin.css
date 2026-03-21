@@ -1720,6 +1720,348 @@ body {
 }
 
 /* ========================================
+   SYSTEM MONITORING
+======================================== */
+
+.system-monitor-section {
+  margin-bottom: 32px;
+}
+
+.system-monitor-section .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.system-monitor-section .section-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.system-monitor-section .section-header h2 i {
+  color: var(--primary-color);
+}
+
+.system-monitor-section .section-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Status color modifiers for stat cards */
+.monitor-stat-uptime { border-left: 3px solid var(--success-color); }
+.monitor-stat-memory.status-healthy { border-left: 3px solid var(--success-color); }
+.monitor-stat-memory.status-warning { border-left: 3px solid var(--warning-color); }
+.monitor-stat-memory.status-critical { border-left: 3px solid var(--danger-color); }
+.monitor-stat-db.status-healthy { border-left: 3px solid var(--success-color); }
+.monitor-stat-db.status-warning { border-left: 3px solid var(--warning-color); }
+.monitor-stat-db.status-critical { border-left: 3px solid var(--danger-color); }
+.monitor-stat-overall.status-healthy { border-left: 3px solid var(--success-color); }
+.monitor-stat-overall.status-warning { border-left: 3px solid var(--warning-color); }
+.monitor-stat-overall.status-critical { border-left: 3px solid var(--danger-color); }
+.monitor-stat-errors.status-healthy { border-left: 3px solid var(--success-color); }
+.monitor-stat-errors.status-warning { border-left: 3px solid var(--warning-color); }
+.monitor-stat-errors.status-critical { border-left: 3px solid var(--danger-color); }
+
+/* Detail rows */
+.monitor-detail-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.monitor-detail-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.monitor-detail-card .chart-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.monitor-detail-card .chart-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Service list items (circuit breakers, cron jobs) */
+.monitor-service-list {
+  padding: 4px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.monitor-service-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+
+.monitor-service-item:last-child {
+  border-bottom: none;
+}
+
+.monitor-service-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  min-width: 140px;
+}
+
+.monitor-service-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Status dot */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.healthy { background: var(--success-color); }
+.status-dot.warning { background: var(--warning-color); }
+.status-dot.critical { background: var(--danger-color); }
+
+/* Status badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.status-badge.healthy {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success-color);
+}
+
+.status-badge.warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning-color);
+}
+
+.status-badge.critical {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger-color);
+}
+
+.status-badge.running {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--primary-color);
+}
+
+/* Integration & Security content */
+.monitor-integration-content,
+.monitor-security-content {
+  padding: 0;
+}
+
+.monitor-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.monitor-table code {
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.monitor-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.monitor-summary-value {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.monitor-summary-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Monitor table */
+.monitor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.monitor-table th {
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.monitor-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+.monitor-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Issues section */
+.monitor-issues-container {
+  margin-bottom: 16px;
+}
+
+.monitor-issues-card .chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.monitor-issues-count {
+  background: var(--danger-color);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.monitor-issues-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.monitor-issue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+
+.monitor-issue-item:last-child {
+  border-bottom: none;
+}
+
+.monitor-issue-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+.monitor-issue-icon.critical {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger-color);
+}
+
+.monitor-issue-icon.warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning-color);
+}
+
+.monitor-issue-icon.info {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--primary-color);
+}
+
+.monitor-issue-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.monitor-issue-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.monitor-issue-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.monitor-issue-metric {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+}
+
+.monitor-no-issues {
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--success-color);
+  font-size: 13px;
+}
+
+.monitor-no-issues i {
+  display: block;
+  font-size: 24px;
+  margin-bottom: 6px;
+}
+
+.monitor-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.monitor-empty i {
+  display: block;
+  font-size: 24px;
+  margin-bottom: 8px;
+  color: var(--success-color);
+}
+
+/* ========================================
    RESPONSIVE
 ======================================== */
 
@@ -1763,6 +2105,10 @@ body {
   }
 
   .sentry-content-row {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-detail-row {
     grid-template-columns: 1fr;
   }
 

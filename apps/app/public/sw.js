@@ -1,7 +1,7 @@
 // Sky Planner Service Worker
 // Handles caching strategies for offline support
 
-const SHELL_CACHE = 'skyplanner-shell-v5';
+const SHELL_CACHE = 'skyplanner-shell-v9';
 const CDN_CACHE = 'skyplanner-cdn-v1';
 const TILE_CACHE = 'skyplanner-tiles-v1';
 const API_CACHE = 'skyplanner-api-v1';
@@ -12,8 +12,8 @@ const MAX_TILE_CACHE = 2000;
 const SHELL_ASSETS = [
   '/',
   '/index.html',
-  '/app.js?v=20260226-ui-cleanup',
-  '/style.css?v=20260226-ui-cleanup',
+  '/app.js?v=20260321a',
+  '/style.css?v=20260321a',
   '/offline-storage.js?v=1',
   '/sync-manager.js?v=1',
   '/skyplanner-logo.svg',
@@ -42,8 +42,8 @@ const CACHEABLE_API = [
   '/api/todays-work/my-route',
   '/api/kunder',
   '/api/ruter',
-  '/api/config',
   '/api/klient/dashboard'
+  // NOTE: /api/config removed — should not be cached as it may contain sensitive settings
 ];
 
 // Install: precache app shell
@@ -101,9 +101,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 4. App shell: cache-first for known assets
+  // 4. App shell: network-first (ensures fresh code on deploy)
   if (isShellAsset(url.pathname)) {
-    event.respondWith(cacheFirst(request, SHELL_CACHE));
+    event.respondWith(networkFirst(request, SHELL_CACHE));
     return;
   }
 

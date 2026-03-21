@@ -88,7 +88,7 @@ async function loadTeamMembers() {
               <div class="team-member-name">${escapeHtml(member.navn)}</div>
               <div class="team-member-email">${escapeHtml(member.epost)}</div>
               <div class="team-member-meta">
-                <span class="team-member-role">${escapeHtml(member.rolle || 'medlem')}</span>
+                <span class="team-member-role">${escapeHtml({ admin: 'Administrator', teammedlem: 'Teammedlem', kontor: 'Kontor', leser: 'Leser' }[member.rolle] || member.rolle || 'Leser')}</span>
                 <span class="team-member-last-login">Sist: ${lastLogin}</span>
               </div>
             </div>
@@ -128,15 +128,19 @@ function openTeamMemberModal(member = null) {
     document.getElementById('memberNavn').value = member.navn || '';
     document.getElementById('memberEpost').value = member.epost || '';
     document.getElementById('memberTelefon').value = member.telefon || '';
-    document.getElementById('memberRolle').value = member.rolle || 'medlem';
+    document.getElementById('memberRolle').value = member.rolle || 'leser';
     passwordInput.required = false;
     passwordInput.placeholder = 'La stå tom for å beholde';
+    const hint = document.getElementById('memberPassordHint');
+    if (hint) hint.textContent = 'La stå tom for å beholde eksisterende passord.';
     deleteBtn.style.display = 'inline-flex';
   } else {
     // Create mode
     title.textContent = 'Nytt teammedlem';
     passwordInput.required = true;
-    passwordInput.placeholder = 'Minst 8 tegn';
+    passwordInput.placeholder = 'Min. 10 tegn, stor/liten, tall, spesialtegn';
+    const hint = document.getElementById('memberPassordHint');
+    if (hint) hint.textContent = 'Min. 10 tegn, stor og liten bokstav, tall og spesialtegn (!@#$%&...).';
     deleteBtn.style.display = 'none';
   }
 
@@ -712,7 +716,7 @@ function renderAdminAddressSuggestions(results) {
 
   container.innerHTML = results.map((r, i) => `
     <div class="admin-address-suggestion${i === adminSelectedIndex ? ' selected' : ''}"
-         onclick="selectAdminAddressSuggestion(adminAddressSuggestions[${i}])">
+         data-action="selectAdminAddressSuggestionByIndex" data-args='[${i}]'>
       <i class="fas fa-map-marker-alt"></i>
       <span>${escapeHtml(r.adresse)} &mdash; ${escapeHtml(r.postnummer)} ${escapeHtml(r.poststed)}</span>
     </div>
@@ -725,6 +729,10 @@ function highlightAdminSuggestion() {
   items.forEach((item, i) => {
     item.classList.toggle('selected', i === adminSelectedIndex);
   });
+}
+
+function selectAdminAddressSuggestionByIndex(index) {
+  selectAdminAddressSuggestion(adminAddressSuggestions[index]);
 }
 
 function selectAdminAddressSuggestion(suggestion) {
@@ -933,21 +941,6 @@ function initOnboardingSettingsUI() {
     if (!btn) return;
     const action = btn.dataset.action;
 
-    if (action === 'rerun-wizard') {
-      btn.disabled = true;
-      btn.innerHTML = '<i aria-hidden="true" class="fas fa-spinner fa-spin"></i> Tilbakestiller...';
-      try {
-        await apiFetch('/api/onboarding/reset', { method: 'POST' });
-        if (typeof showOnboardingWizard === 'function') {
-          await showOnboardingWizard();
-        }
-      } catch (err) {
-        showToast('Kunne ikke starte veiviseren', 'error');
-      }
-      btn.disabled = false;
-      btn.innerHTML = '<i aria-hidden="true" class="fas fa-redo"></i> Kjør veiviseren på nytt';
-    }
-
     if (action === 'show-checklist') {
       if (typeof showOnboardingChecklist === 'function') {
         showOnboardingChecklist();
@@ -955,10 +948,13 @@ function initOnboardingSettingsUI() {
       }
     }
 
-    if (action === 'reset-tips') {
-      if (typeof resetContextTips === 'function') resetContextTips();
-      if (typeof resetFeatureTours === 'function') resetFeatureTours();
-      showToast('Tips tilbakestilt — de vises ved neste besøk', 'success');
+    if (action === 'test-onboarding') {
+      // Simulate incomplete onboarding for testing highlights
+      localStorage.removeItem('skyplanner_firstRoutePlanned');
+      localStorage.removeItem('skyplanner_teamInviteSent');
+      if (typeof showOnboardingChecklist === 'function') showOnboardingChecklist();
+      if (typeof refreshAttentionBadges === 'function') refreshAttentionBadges();
+      showToast('Onboarding tilbakestilt for testing', 'info');
     }
   });
 
@@ -972,13 +968,6 @@ function initOnboardingSettingsUI() {
 
       if (!enabled) {
         if (typeof hideOnboardingChecklist === 'function') hideOnboardingChecklist();
-        if (typeof contextTips !== 'undefined' && contextTips.tipOverlay) {
-          contextTips.tipOverlay.remove();
-          contextTips.tipOverlay = null;
-        }
-        document.querySelectorAll('.context-tip-highlight').forEach(el => {
-          el.classList.remove('context-tip-highlight');
-        });
       } else {
         if (typeof initOnboardingChecklist === 'function') {
           if (localStorage.getItem('skyplanner_checklistDismissed') !== 'true') {
@@ -1000,18 +989,8 @@ function renderOnboardingSettings() {
   container.innerHTML = `
     <div class="onboarding-setting-card">
       <div class="setting-info">
-        <h4><i aria-hidden="true" class="fas fa-magic"></i> Oppstartsveiviser</h4>
-        <p>Kjør gjennom oppsettet på nytt for å oppdatere firmainformasjon og kartinnstillinger.</p>
-      </div>
-      <button class="btn btn-secondary" data-action="rerun-wizard">
-        <i aria-hidden="true" class="fas fa-redo"></i> Kjør på nytt
-      </button>
-    </div>
-
-    <div class="onboarding-setting-card">
-      <div class="setting-info">
-        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Veiledningstips</h4>
-        <p>Vis hjelpetips, sjekkliste og veiledning for nye funksjoner.</p>
+        <h4><i aria-hidden="true" class="fas fa-lightbulb"></i> Veiledning</h4>
+        <p>Vis sjekkliste og veiledning for oppstartsoppgaver.</p>
       </div>
       <label class="guidance-toggle-switch">
         <input type="checkbox" ${guidanceEnabled ? 'checked' : ''} data-action="toggle-guidance">
@@ -1031,11 +1010,11 @@ function renderOnboardingSettings() {
 
     <div class="onboarding-setting-card">
       <div class="setting-info">
-        <h4><i aria-hidden="true" class="fas fa-info-circle"></i> Tips tilbakestill</h4>
-        <p>Tilbakestill alle veiledningstips slik at de vises på nytt.</p>
+        <h4><i aria-hidden="true" class="fas fa-flask"></i> Test onboarding</h4>
+        <p>Tilbakestill oppgaver og vis sjekkliste med highlighting.</p>
       </div>
-      <button class="btn btn-secondary" data-action="reset-tips">
-        <i aria-hidden="true" class="fas fa-undo"></i> Tilbakestill
+      <button class="btn btn-secondary" data-action="test-onboarding">
+        <i aria-hidden="true" class="fas fa-redo"></i> Test
       </button>
     </div>
   `;

@@ -9,6 +9,8 @@ import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { getConfig } from '../config/env';
 import type { AppConfig, ApiResponse, Organization, JWTPayload, AuthenticatedRequest, IndustryTemplate, OrganizationServiceType } from '../types';
 import jwt from 'jsonwebtoken';
+import { getOrsBreaker, getMapboxBreaker, CircuitOpenError } from '../services/circuit-breaker';
+import { recordServiceEvent } from '../services/metrics-collector';
 
 const router: Router = Router();
 
@@ -143,7 +145,7 @@ router.get(
       emailNotificationsEnabled: envConfig.EMAIL_NOTIFICATIONS_ENABLED,
       organizationName: organization?.navn,
       companyName: organization?.navn || process.env.COMPANY_NAME,
-      companySubtitle: organization?.brand_subtitle || process.env.COMPANY_SUBTITLE || 'Kontrollsystem',
+      companySubtitle: organization?.brand_subtitle || process.env.COMPANY_SUBTITLE || 'Kundeadministrasjon og ruteplanlegging for servicebedrifter',
       webUrl: envConfig.WEB_URL || undefined,
       enabledFeatures,
       featureConfigs: Object.keys(featureConfigs).length > 0 ? featureConfigs : undefined,
@@ -262,21 +264,26 @@ router.post(
     }
 
     try {
-      const response = await fetch('https://api.openrouteservice.org/optimization', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': config.ORS_API_KEY,
-        },
-        body: JSON.stringify({ jobs, vehicles }),
+      const data = await getOrsBreaker().execute(async () => {
+        const response = await fetch('https://api.openrouteservice.org/optimization', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': config.ORS_API_KEY!,
+          },
+          body: JSON.stringify({ jobs, vehicles }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`ORS optimization API error: ${response.status} - ${errorText}`);
+          throw new Error('Ekstern tjeneste returnerte en feil');
+        }
+
+        return await response.json();
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`ORS API error: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
+      recordServiceEvent('route_optimization', true);
 
       const apiResponse: ApiResponse = {
         success: true,
@@ -285,8 +292,12 @@ router.post(
 
       res.json(apiResponse);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Ukjent feil ved ruteoptimalisering';
-      throw Errors.internal(message);
+      recordServiceEvent('route_optimization', false, error instanceof Error ? error.message : 'Unknown');
+      if (error instanceof CircuitOpenError) {
+        throw Errors.internal('Ruteoptimalisering er midlertidig utilgjengelig. Prøv igjen om litt.');
+      }
+      console.error('Route optimization error:', error);
+      throw Errors.internal('Ukjent feil ved ruteoptimalisering');
     }
   })
 );
@@ -328,21 +339,24 @@ router.post(
     }
 
     try {
-      const response = await fetch(`https://api.openrouteservice.org/v2/directions/${profile}/geojson`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': config.ORS_API_KEY,
-        },
-        body: JSON.stringify({ coordinates }),
+      const data = await getOrsBreaker().execute(async () => {
+        const response = await fetch(`https://api.openrouteservice.org/v2/directions/${profile}/geojson`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': config.ORS_API_KEY!,
+          },
+          body: JSON.stringify({ coordinates }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`ORS directions API error: ${response.status} - ${errorText}`);
+          throw new Error('Ekstern tjeneste returnerte en feil');
+        }
+
+        return await response.json();
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`ORS API error: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
 
       const apiResponse: ApiResponse = {
         success: true,
@@ -351,8 +365,11 @@ router.post(
 
       res.json(apiResponse);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Ukjent feil ved ruteberegning';
-      throw Errors.internal(message);
+      if (error instanceof CircuitOpenError) {
+        throw Errors.internal('Ruteberegning er midlertidig utilgjengelig. Prøv igjen om litt.');
+      }
+      console.error('Route directions error:', error);
+      throw Errors.internal('Ukjent feil ved ruteberegning');
     }
   })
 );
@@ -392,16 +409,19 @@ router.get(
     }
 
     try {
-      const url = `https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lngNum},${latNum}?contours_minutes=${minutesStr}&polygons=true&denoise=1&generalize=500&access_token=${config.MAPBOX_ACCESS_TOKEN}`;
+      const data = await getMapboxBreaker().execute(async () => {
+        const url = `https://api.mapbox.com/isochrone/v1/mapbox/${profile}/${lngNum},${latNum}?contours_minutes=${minutesStr}&polygons=true&denoise=1&generalize=500&access_token=${config.MAPBOX_ACCESS_TOKEN}`;
 
-      const response = await fetch(url);
+        const response = await fetch(url);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Mapbox Isochrone API error: ${response.status} - ${errorText}`);
-      }
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`Mapbox Isochrone API error: ${response.status} - ${errorText}`);
+          throw new Error('Ekstern tjeneste returnerte en feil');
+        }
 
-      const data = await response.json();
+        return await response.json();
+      });
 
       const apiResponse: ApiResponse = {
         success: true,
@@ -410,8 +430,11 @@ router.get(
 
       res.json(apiResponse);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Ukjent feil ved isochrone-beregning';
-      throw Errors.internal(message);
+      if (error instanceof CircuitOpenError) {
+        throw Errors.internal('Mapbox-tjenesten er midlertidig utilgjengelig. Prøv igjen om litt.');
+      }
+      console.error('Isochrone calculation error:', error);
+      throw Errors.internal('Ukjent feil ved isochrone-beregning');
     }
   })
 );
@@ -449,18 +472,30 @@ router.post(
     }
 
     try {
+      // Validate optional parameters to prevent URL injection
+      if (sources !== undefined && !/^\d+(,\d+)*$/.test(String(sources))) {
+        throw Errors.badRequest('Ugyldig sources-parameter (komma-separerte heltall)');
+      }
+      if (destinations !== undefined && !/^\d+(,\d+)*$/.test(String(destinations))) {
+        throw Errors.badRequest('Ugyldig destinations-parameter (komma-separerte heltall)');
+      }
+      if (depart_at && isNaN(new Date(String(depart_at)).getTime())) {
+        throw Errors.badRequest('Ugyldig depart_at-parameter (ISO 8601 datoformat)');
+      }
+
       const coordStr = coordinates.map((c: number[]) => `${c[0]},${c[1]}`).join(';');
       let url = `https://api.mapbox.com/directions-matrix/v1/mapbox/${profile}/${coordStr}?annotations=duration,distance&access_token=${config.MAPBOX_ACCESS_TOKEN}`;
 
-      if (sources !== undefined) url += `&sources=${sources}`;
-      if (destinations !== undefined) url += `&destinations=${destinations}`;
-      if (depart_at) url += `&depart_at=${depart_at}`;
+      if (sources !== undefined) url += `&sources=${encodeURIComponent(String(sources))}`;
+      if (destinations !== undefined) url += `&destinations=${encodeURIComponent(String(destinations))}`;
+      if (depart_at) url += `&depart_at=${encodeURIComponent(String(depart_at))}`;
 
       const response = await fetch(url);
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Mapbox Matrix API error: ${response.status} - ${errorText}`);
+        console.error(`Mapbox Matrix API error: ${response.status} - ${errorText}`);
+        throw new Error('Ekstern tjeneste returnerte en feil');
       }
 
       const data = await response.json();
@@ -472,8 +507,9 @@ router.post(
 
       res.json(apiResponse);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Ukjent feil ved matrise-beregning';
-      throw Errors.internal(message);
+      if ((error as any)?.statusCode === 400) throw error; // Re-throw validation errors
+      console.error('Matrix calculation error:', error);
+      throw Errors.internal('Ukjent feil ved matrise-beregning');
     }
   })
 );

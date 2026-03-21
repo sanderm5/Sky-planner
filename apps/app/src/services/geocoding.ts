@@ -6,6 +6,8 @@
 
 import { logger } from './logger';
 import { getConfig } from '../config/env';
+import { getKartverketBreaker, getNominatimBreaker, getMapboxBreaker } from './circuit-breaker';
+import { recordServiceEvent } from './metrics-collector';
 
 // ============ Types ============
 
@@ -73,18 +75,30 @@ export async function geocodeAddress(
 ): Promise<GeocodingResult | null> {
   // Need at least address or poststed
   if (!adresse && !poststed) {
+    recordServiceEvent('geocoding', false, 'Mangler adresse og poststed');
+    return null;
+  }
+
+  // Input length validation to prevent abuse
+  const MAX_INPUT_LENGTH = 500;
+  if ((adresse && adresse.length > MAX_INPUT_LENGTH) ||
+      (postnummer && postnummer.length > 10) ||
+      (poststed && poststed.length > MAX_INPUT_LENGTH)) {
+    logger.warn('Geocoding input too long, rejecting');
     return null;
   }
 
   // Try Kartverket first (fast, free, excellent for Norwegian addresses)
   const kartverketResult = await tryKartverket(adresse, postnummer, poststed);
   if (kartverketResult) {
+    recordServiceEvent('geocoding', true, 'kartverket');
     return kartverketResult;
   }
 
   // Fallback to Mapbox (better for ambiguous or international queries)
   const mapboxResult = await tryMapbox(adresse, postnummer, poststed);
   if (mapboxResult) {
+    recordServiceEvent('geocoding', true, 'mapbox');
     return mapboxResult;
   }
 
@@ -92,6 +106,7 @@ export async function geocodeAddress(
   if (poststed) {
     const kartverketPoststedResult = await tryKartverketPoststed(poststed);
     if (kartverketPoststedResult) {
+      recordServiceEvent('geocoding', true, 'kartverket-poststed');
       return kartverketPoststedResult;
     }
   }
@@ -99,6 +114,7 @@ export async function geocodeAddress(
   // Fallback to Nominatim
   const nominatimResult = await tryNominatim(adresse, postnummer, poststed);
   if (nominatimResult) {
+    recordServiceEvent('geocoding', true, 'nominatim');
     return nominatimResult;
   }
 
@@ -106,10 +122,12 @@ export async function geocodeAddress(
   if (poststed) {
     const nominatimPoststedResult = await tryNominatimPoststed(poststed);
     if (nominatimPoststedResult) {
+      recordServiceEvent('geocoding', true, nominatimPoststedResult.source);
       return nominatimPoststedResult;
     }
   }
 
+  recordServiceEvent('geocoding', false, `Alle tjenester feilet for: ${(adresse || poststed || '').substring(0, 50)}`);
   return null;
 }
 
@@ -198,16 +216,15 @@ async function tryMapbox(
   const config = getConfig();
   if (!config.MAPBOX_ACCESS_TOKEN) return null;
 
-  try {
-    const searchText = [adresse, postnummer, poststed].filter(Boolean).join(' ');
-    if (!searchText.trim()) return null;
+  const searchText = [adresse, postnummer, poststed].filter(Boolean).join(' ');
+  if (!searchText.trim()) return null;
 
+  return getMapboxBreaker().executeWithFallback(async () => {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchText)}.json?access_token=${config.MAPBOX_ACCESS_TOKEN}&country=no&language=no&limit=1&types=address`;
     const response = await fetchWithTimeout(url);
 
     if (!response.ok) {
-      logger.debug({ status: response.status }, 'Mapbox Geocoding API error');
-      return null;
+      throw new Error(`Mapbox Geocoding API error: ${response.status}`);
     }
 
     const data = await response.json() as { features?: Array<{ center: [number, number]; relevance: number; place_name?: string }> };
@@ -220,17 +237,14 @@ async function tryMapbox(
       return {
         lat,
         lng,
-        source: 'mapbox',
+        source: 'mapbox' as const,
         quality,
         matchedAddress: feature.place_name,
       };
     }
 
     return null;
-  } catch (error) {
-    logger.debug({ error }, 'Mapbox geocoding failed');
-    return null;
-  }
+  }, null);
 }
 
 /**
@@ -241,83 +255,87 @@ export async function reverseGeocode(lat: number, lng: number): Promise<ReverseG
 
   // Try Mapbox first
   if (config.MAPBOX_ACCESS_TOKEN) {
-    try {
+    const mapboxResult = await getMapboxBreaker().executeWithFallback(async () => {
       const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${config.MAPBOX_ACCESS_TOKEN}&country=no&language=no&types=address&limit=1`;
       const response = await fetchWithTimeout(url);
 
-      if (response.ok) {
-        const data = await response.json() as { features?: Array<{ text?: string; place_name?: string; context?: Array<{ id: string; text: string }> }> };
+      if (!response.ok) {
+        throw new Error(`Mapbox reverse geocoding error: ${response.status}`);
+      }
 
-        if (data.features && data.features.length > 0) {
-          const feature = data.features[0];
-          let postnummer = '';
-          let poststed = '';
-          let kommune = '';
+      const data = await response.json() as { features?: Array<{ text?: string; place_name?: string; context?: Array<{ id: string; text: string }> }> };
 
-          if (feature.context) {
-            for (const ctx of feature.context) {
-              if (ctx.id?.startsWith('postcode')) postnummer = ctx.text || '';
-              if (ctx.id?.startsWith('place')) poststed = ctx.text || '';
-              if (ctx.id?.startsWith('district') || ctx.id?.startsWith('locality')) {
-                if (!kommune) kommune = ctx.text || '';
-              }
+      if (data.features && data.features.length > 0) {
+        const feature = data.features[0];
+        let postnummer = '';
+        let poststed = '';
+        let kommune = '';
+
+        if (feature.context) {
+          for (const ctx of feature.context) {
+            if (ctx.id?.startsWith('postcode')) postnummer = ctx.text || '';
+            if (ctx.id?.startsWith('place')) poststed = ctx.text || '';
+            if (ctx.id?.startsWith('district') || ctx.id?.startsWith('locality')) {
+              if (!kommune) kommune = ctx.text || '';
             }
           }
-
-          return {
-            address: feature.text || feature.place_name || '',
-            postnummer,
-            poststed,
-            kommune,
-            source: 'mapbox',
-          };
         }
+
+        return {
+          address: feature.text || feature.place_name || '',
+          postnummer,
+          poststed,
+          kommune,
+          source: 'mapbox' as const,
+        };
       }
-    } catch (error) {
-      logger.debug({ error }, 'Mapbox reverse geocoding failed');
-    }
+
+      return null;
+    }, null);
+
+    if (mapboxResult) return mapboxResult;
   }
 
   // Fallback to Nominatim
-  try {
+  return getNominatimBreaker().executeWithFallback(async () => {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
     const response = await fetchWithTimeout(url, {
       headers: { 'User-Agent': 'SkyPlanner/1.0 (contact@skyplanner.no)' },
     });
 
-    if (response.ok) {
-      const data = await response.json() as {
-        address?: {
-          road?: string;
-          house_number?: string;
-          postcode?: string;
-          city?: string;
-          town?: string;
-          village?: string;
-          municipality?: string;
-        };
-        display_name?: string;
-      };
-
-      if (data.address) {
-        const road = data.address.road || '';
-        const houseNumber = data.address.house_number || '';
-        const address = houseNumber ? `${road} ${houseNumber}` : road;
-
-        return {
-          address,
-          postnummer: data.address.postcode || '',
-          poststed: data.address.city || data.address.town || data.address.village || '',
-          kommune: data.address.municipality || '',
-          source: 'nominatim',
-        };
-      }
+    if (!response.ok) {
+      throw new Error(`Nominatim reverse geocoding error: ${response.status}`);
     }
-  } catch (error) {
-    logger.debug({ error }, 'Nominatim reverse geocoding failed');
-  }
 
-  return null;
+    const data = await response.json() as {
+      address?: {
+        road?: string;
+        house_number?: string;
+        postcode?: string;
+        city?: string;
+        town?: string;
+        village?: string;
+        municipality?: string;
+      };
+      display_name?: string;
+    };
+
+    if (data.address) {
+      const road = data.address.road || '';
+      const houseNumber = data.address.house_number || '';
+      const address = houseNumber ? `${road} ${houseNumber}` : road;
+
+      return {
+        address,
+        postnummer: data.address.postcode || '',
+        poststed: data.address.city || data.address.town || data.address.village || '',
+        kommune: data.address.municipality || '',
+        source: 'nominatim' as const,
+      };
+    }
+
+    return null;
+  }, null);
 }
 
 async function tryKartverket(
@@ -325,16 +343,15 @@ async function tryKartverket(
   postnummer: string | undefined | null,
   poststed: string | undefined | null
 ): Promise<GeocodingResult | null> {
-  try {
-    const searchText = [adresse, postnummer, poststed].filter(Boolean).join(' ');
-    if (!searchText.trim()) return null;
+  const searchText = [adresse, postnummer, poststed].filter(Boolean).join(' ');
+  if (!searchText.trim()) return null;
 
+  return getKartverketBreaker().executeWithFallback(async () => {
     const url = `${KARTVERKET_API}?sok=${encodeURIComponent(searchText)}&treffPerSide=1`;
     const response = await fetchWithTimeout(url);
 
     if (!response.ok) {
-      logger.debug({ status: response.status }, 'Kartverket API error');
-      return null;
+      throw new Error(`Kartverket API error: ${response.status}`);
     }
 
     const data = await response.json() as KartverketResponse;
@@ -345,26 +362,25 @@ async function tryKartverket(
         return {
           lat: result.representasjonspunkt.lat,
           lng: result.representasjonspunkt.lon,
-          source: 'kartverket',
-          quality: 'exact',
+          source: 'kartverket' as const,
+          quality: 'exact' as const,
           matchedAddress: result.adressetekst,
         };
       }
     }
 
     return null;
-  } catch (error) {
-    logger.debug({ error }, 'Kartverket geocoding failed');
-    return null;
-  }
+  }, null);
 }
 
 async function tryKartverketPoststed(poststed: string): Promise<GeocodingResult | null> {
-  try {
+  return getKartverketBreaker().executeWithFallback(async () => {
     const url = `${KARTVERKET_API}?sok=${encodeURIComponent(poststed)}&treffPerSide=1`;
     const response = await fetchWithTimeout(url);
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw new Error(`Kartverket API error: ${response.status}`);
+    }
 
     const data = await response.json() as KartverketResponse;
 
@@ -374,18 +390,15 @@ async function tryKartverketPoststed(poststed: string): Promise<GeocodingResult 
         return {
           lat: result.representasjonspunkt.lat,
           lng: result.representasjonspunkt.lon,
-          source: 'kartverket-poststed',
-          quality: 'area',
+          source: 'kartverket-poststed' as const,
+          quality: 'area' as const,
           matchedAddress: result.poststed || poststed,
         };
       }
     }
 
     return null;
-  } catch (error) {
-    logger.debug({ error }, 'Kartverket poststed geocoding failed');
-    return null;
-  }
+  }, null);
 }
 
 async function tryNominatim(
@@ -393,19 +406,21 @@ async function tryNominatim(
   postnummer: string | undefined | null,
   poststed: string | undefined | null
 ): Promise<GeocodingResult | null> {
-  try {
-    const fullAddress = [adresse, postnummer, poststed, 'Norway']
-      .filter(Boolean)
-      .join(', ');
+  const fullAddress = [adresse, postnummer, poststed, 'Norway']
+    .filter(Boolean)
+    .join(', ');
 
-    if (!fullAddress.trim() || fullAddress === 'Norway') return null;
+  if (!fullAddress.trim() || fullAddress === 'Norway') return null;
 
+  return getNominatimBreaker().executeWithFallback(async () => {
     const url = `${NOMINATIM_API}?format=json&q=${encodeURIComponent(fullAddress)}&limit=1`;
     const response = await fetchWithTimeout(url, {
       headers: { 'User-Agent': 'SkyPlanner/1.0 (contact@skyplanner.no)' },
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw new Error(`Nominatim API error: ${response.status}`);
+    }
 
     const data = await response.json() as NominatimResponse;
 
@@ -413,7 +428,6 @@ async function tryNominatim(
       const lat = Number.parseFloat(data[0].lat);
       const lng = Number.parseFloat(data[0].lon);
 
-      // Validate coordinates are valid numbers
       if (Number.isNaN(lat) || Number.isNaN(lng)) {
         logger.warn({ rawLat: data[0].lat, rawLon: data[0].lon }, 'Invalid coordinates from Nominatim');
         return null;
@@ -422,27 +436,26 @@ async function tryNominatim(
       return {
         lat,
         lng,
-        source: 'nominatim',
-        quality: 'street',
+        source: 'nominatim' as const,
+        quality: 'street' as const,
         matchedAddress: data[0].display_name,
       };
     }
 
     return null;
-  } catch (error) {
-    logger.debug({ error }, 'Nominatim geocoding failed');
-    return null;
-  }
+  }, null);
 }
 
 async function tryNominatimPoststed(poststed: string): Promise<GeocodingResult | null> {
-  try {
+  return getNominatimBreaker().executeWithFallback(async () => {
     const url = `${NOMINATIM_API}?format=json&q=${encodeURIComponent(poststed + ', Norway')}&limit=1`;
     const response = await fetchWithTimeout(url, {
       headers: { 'User-Agent': 'SkyPlanner/1.0 (contact@skyplanner.no)' },
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw new Error(`Nominatim API error: ${response.status}`);
+    }
 
     const data = await response.json() as NominatimResponse;
 
@@ -450,7 +463,6 @@ async function tryNominatimPoststed(poststed: string): Promise<GeocodingResult |
       const lat = Number.parseFloat(data[0].lat);
       const lng = Number.parseFloat(data[0].lon);
 
-      // Validate coordinates are valid numbers
       if (Number.isNaN(lat) || Number.isNaN(lng)) {
         logger.warn({ rawLat: data[0].lat, rawLon: data[0].lon }, 'Invalid coordinates from Nominatim poststed');
         return null;
@@ -459,17 +471,14 @@ async function tryNominatimPoststed(poststed: string): Promise<GeocodingResult |
       return {
         lat,
         lng,
-        source: 'nominatim-poststed',
-        quality: 'area',
+        source: 'nominatim-poststed' as const,
+        quality: 'area' as const,
         matchedAddress: data[0].display_name,
       };
     }
 
     return null;
-  } catch (error) {
-    logger.debug({ error }, 'Nominatim poststed geocoding failed');
-    return null;
-  }
+  }, null);
 }
 
 // ============ Utilities ============

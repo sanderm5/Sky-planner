@@ -103,9 +103,16 @@ export async function sendEmail(
     }
 
     const data = await response.json() as { id: string };
+    // Notify metrics collector if available (app context only)
+    if (typeof globalThis !== 'undefined' && (globalThis as any).__recordServiceEvent) {
+      (globalThis as any).__recordServiceEvent('email', true);
+    }
     return { success: true, messageId: data.id };
   } catch (error) {
     console.error('[Email] Error sending email:', error);
+    if (typeof globalThis !== 'undefined' && (globalThis as any).__recordServiceEvent) {
+      (globalThis as any).__recordServiceEvent('email', false, error instanceof Error ? error.message : 'Unknown error');
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

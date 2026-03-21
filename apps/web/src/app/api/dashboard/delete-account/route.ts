@@ -63,7 +63,7 @@ function verifyAuth(request: NextRequest): AuthResult {
       success: false,
       error: Response.json(
         { success: false, error: { code: 'ERROR', message: 'Ingen organisasjon tilknyttet' } },
-        { status: 400 }
+        { status: 403 }
       ),
     };
   }

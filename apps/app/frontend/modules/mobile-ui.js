@@ -217,15 +217,17 @@ function hidePatchNotesBadge() {
 function initBottomTabBar() {
   if (document.getElementById('bottomTabBar')) return;
 
+  // Don't show tab bar on login screen
+  const loginOverlay = document.getElementById('loginOverlay');
+  if (loginOverlay && !loginOverlay.classList.contains('hidden')) return;
+
   document.body.classList.add('has-bottom-tab-bar');
 
   const hasTodaysWork = hasFeature('todays_work');
 
   const tabs = [
     { id: 'map', icon: 'fa-map-marker-alt', label: 'Kart', action: 'showMap' },
-    { id: 'work', icon: 'fa-briefcase', label: 'Arbeid',
-      action: hasTodaysWork ? 'todays-work' : 'weekly-plan' },
-    { id: 'calendar', icon: 'fa-calendar-alt', label: 'Kalender', action: 'calendar' },
+    { id: 'work', icon: 'fa-hard-hat', label: 'Arbeid', action: 'arbeid' },
     { id: 'more', icon: 'fa-ellipsis-h', label: 'Mer', action: 'showMore' }
   ];
 
@@ -312,6 +314,37 @@ function handleBottomTabClick(tab) {
     closeMoreMenu();
     hideMobileFilterSheet();
     if (searchFab) searchFab.classList.remove('hidden');
+    // Fly to overview when tapping Kart
+    console.log('[Mobile] Kart tapped, map:', !!map, 'zoom:', map?.getZoom());
+    if (map) {
+      // Zoom out to show all of Norway, then swoop to customers
+      const hasOffice = appConfig?.routeStartLat && appConfig?.routeStartLng;
+      const target = hasOffice
+        ? [appConfig.routeStartLng, appConfig.routeStartLat]
+        : [10.0, 62.0];
+      const currentZoom = map.getZoom();
+      if (currentZoom > 4) {
+        // Already zoomed in — zoom out first, then back down
+        map.jumpTo({ center: target, zoom: 2.5 });
+        setTimeout(() => {
+          map.flyTo({
+            center: target,
+            zoom: hasOffice ? 6 : 5,
+            duration: 2000,
+            essential: true,
+            curve: 1.42
+          });
+        }, 50);
+      } else {
+        map.flyTo({
+          center: target,
+          zoom: hasOffice ? 6 : 5,
+          duration: 2000,
+          essential: true,
+          curve: 1.42
+        });
+      }
+    }
   } else if (tab.action === 'showMore') {
     closeContentPanelMobile();
     hideMobileFilterSheet();
@@ -355,24 +388,11 @@ function createMoreMenuOverlay() {
   const items = [
     { tab: 'dashboard', icon: 'fa-th-large', label: 'Dashboard' },
     { tab: 'customers', icon: 'fa-users', label: 'Kunder' },
-    { tab: 'overdue', icon: 'fa-exclamation-triangle', label: 'Forfalte', badgeId: 'overdueBadge' },
-    { tab: 'warnings', icon: 'fa-bell', label: 'Kommende', badgeId: 'upcomingBadge' },
-    { tab: 'planner', icon: 'fa-route', label: 'Planlegger' },
-    { tab: 'statistikk', icon: 'fa-chart-line', label: 'Statistikk' },
-    { tab: 'missingdata', icon: 'fa-exclamation-circle', label: 'Mangler data', badgeId: 'missingDataBadge' },
+    { tab: 'chat', icon: 'fa-comments', label: 'Meldinger' },
   ];
 
   if (isAdmin) {
     items.push({ tab: 'admin', icon: 'fa-shield-alt', label: 'Admin' });
-  }
-
-  // Add Today's Work to More menu if it's not the primary work tab
-  const hasTodaysWork = hasFeature('todays_work');
-  if (!hasTodaysWork) {
-    const todaysWorkTab = document.getElementById('todaysWorkTab');
-    if (todaysWorkTab && todaysWorkTab.style.display !== 'none') {
-      items.splice(2, 0, { tab: 'todays-work', icon: 'fa-briefcase', label: 'Dagens arbeid', badgeId: 'todaysWorkBadge' });
-    }
   }
 
   overlay.innerHTML = `
@@ -590,13 +610,13 @@ function createMobileSelectionFab() {
   fab.className = 'mobile-selection-fab';
   fab.innerHTML = '<i aria-hidden="true" class="fas fa-check-circle"></i> <span id="mobileSelectionCount">0</span> valgt';
   fab.addEventListener('click', () => {
-    // Open planner tab to show selected customers
+    // Open arbeid tab (planlegger sub-view) to show selected customers
     switchToTab('planner');
     if (document.getElementById('bottomTabBar')) {
       document.querySelectorAll('.bottom-tab-item').forEach(b =>
-        b.classList.toggle('active', b.dataset.bottomTab === 'planner')
+        b.classList.toggle('active', b.dataset.bottomTab === 'work')
       );
-      activeBottomTab = 'planner';
+      activeBottomTab = 'work';
     }
   });
   document.body.appendChild(fab);
@@ -855,6 +875,119 @@ function setViewportHeight() {
 
 setViewportHeight();
 window.addEventListener('resize', setViewportHeight);
+
+// ============================================
+// PULL-TO-REFRESH (Mobile)
+// ============================================
+
+let prState = 'idle'; // 'idle' | 'pulling' | 'refreshing' | 'done'
+let prStartY = 0;
+let prLocked = false;
+
+function initPullToRefresh() {
+  const scrollContainer = document.querySelector('.tab-content');
+  if (!scrollContainer || !isMobile) return;
+
+  // Create indicator SVG
+  const indicator = document.createElement('div');
+  indicator.className = 'pull-refresh-indicator';
+  indicator.innerHTML = `<svg viewBox="0 0 36 36"><circle class="pr-circle" cx="18" cy="18" r="15"/><polyline class="pr-check" points="11,18 16,23 25,14"/></svg>`;
+  scrollContainer.style.position = 'relative';
+  scrollContainer.prepend(indicator);
+
+  scrollContainer.addEventListener('touchstart', (e) => {
+    if (prLocked || prState !== 'idle') return;
+    if (scrollContainer.scrollTop > 0) return;
+    prStartY = e.touches[0].clientY;
+    prState = 'pulling';
+  }, { passive: true });
+
+  scrollContainer.addEventListener('touchmove', (e) => {
+    if (prState !== 'pulling') return;
+    const delta = e.touches[0].clientY - prStartY;
+    if (delta <= 0) { prState = 'idle'; return; }
+
+    const pull = Math.min(delta * 0.4, 80);
+    scrollContainer.style.transform = `translateY(${pull}px)`;
+
+    indicator.classList.add('visible');
+    indicator.style.top = `${pull - 45}px`;
+
+    // Update circle progress
+    const circle = indicator.querySelector('.pr-circle');
+    if (circle) {
+      const progress = Math.min(delta / 150, 1);
+      circle.style.strokeDashoffset = 95 - (progress * 70);
+    }
+  }, { passive: true });
+
+  scrollContainer.addEventListener('touchend', () => {
+    if (prState !== 'pulling') return;
+
+    const currentTransform = parseFloat(scrollContainer.style.transform.replace(/[^0-9.-]/g, '')) || 0;
+
+    if (currentTransform > 24) {
+      // Trigger refresh
+      prState = 'refreshing';
+      indicator.classList.add('spinning');
+      scrollContainer.classList.add('pull-refreshing');
+      scrollContainer.style.transform = 'translateY(45px)';
+
+      refreshCurrentTabData().then(() => {
+        indicator.classList.remove('spinning');
+        indicator.classList.add('done');
+        prState = 'done';
+
+        setTimeout(() => {
+          scrollContainer.classList.add('pull-refreshing');
+          scrollContainer.style.transform = '';
+          indicator.classList.remove('visible', 'done');
+          indicator.style.top = '-50px';
+          const circle = indicator.querySelector('.pr-circle');
+          if (circle) circle.style.strokeDashoffset = 95;
+
+          prState = 'idle';
+          prLocked = true;
+          setTimeout(() => { prLocked = false; }, 2000);
+        }, 600);
+      });
+    } else {
+      // Bounce back
+      scrollContainer.classList.add('pull-refreshing');
+      scrollContainer.style.transform = '';
+      indicator.classList.remove('visible');
+      indicator.style.top = '-50px';
+      prState = 'idle';
+
+      setTimeout(() => {
+        scrollContainer.classList.remove('pull-refreshing');
+      }, 400);
+    }
+  }, { passive: true });
+}
+
+// Refresh data for active tab
+async function refreshCurrentTabData() {
+  const activeTab = document.querySelector('.tab-item.active')?.dataset?.tab;
+  try {
+    if (activeTab === 'dashboard') {
+      if (typeof renderDashboardSections === 'function') renderDashboardSections();
+    } else if (activeTab === 'customers' && typeof loadCustomers === 'function') {
+      await loadCustomers();
+    } else if (activeTab === 'arbeid') {
+      if (typeof loadArbeidTab === 'function') loadArbeidTab();
+    } else if (activeTab === 'chat') {
+      if (typeof loadConversations === 'function') loadConversations();
+    }
+  } catch (e) {
+    console.warn('Pull-to-refresh: reload failed', e);
+  }
+}
+
+// Init after DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(initPullToRefresh, 500);
+});
 
 // Export mobile functions
 window.toggleMobileSidebar = toggleMobileSidebar;

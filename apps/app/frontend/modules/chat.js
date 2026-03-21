@@ -63,6 +63,7 @@ async function initChat() {
     const response = await fetch('/api/chat/init', {
       method: 'POST',
       headers: chatHeaders(),
+      credentials: 'include',
     });
     if (!response.ok) {
       console.error('Chat init failed:', response.status, response.statusText);
@@ -83,7 +84,7 @@ async function initChat() {
 // Fetch conversations
 async function loadChatConversations() {
   try {
-    const response = await fetch('/api/chat/conversations');
+    const response = await fetch('/api/chat/conversations', { credentials: 'include' });
     if (!response.ok) return;
     const result = await response.json();
     if (result.success && result.data) {
@@ -110,7 +111,7 @@ async function loadChatMessages(conversationId, before) {
   try {
     let url = `/api/chat/conversations/${conversationId}/messages?limit=50`;
     if (before) url += `&before=${before}`;
-    const response = await fetch(url);
+    const response = await fetch(url, { credentials: 'include' });
     if (!response.ok) return;
     const result = await response.json();
     if (result.success && result.data) {
@@ -134,6 +135,7 @@ async function sendChatMessage(conversationId, content) {
     const response = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
       method: 'POST',
       headers: chatHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ content: content.trim() }),
     });
     if (!response.ok) return;
@@ -161,6 +163,7 @@ async function markChatAsRead(conversationId) {
     await fetch(`/api/chat/conversations/${conversationId}/read`, {
       method: 'PUT',
       headers: chatHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ messageId: lastMsg.id }),
     });
     // Update local state
@@ -179,6 +182,7 @@ async function startDmConversation(targetUserId) {
     const response = await fetch('/api/chat/conversations/dm', {
       method: 'POST',
       headers: chatHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ targetUserId }),
     });
     if (!response.ok) return null;
@@ -261,13 +265,16 @@ function sendChatTypingStart(conversationId) {
 // Update chat badge
 function updateChatBadge() {
   const badge = document.getElementById('chatUnreadBadge');
-  if (!badge) return;
-  if (chatState.totalUnread > 0) {
-    badge.textContent = chatState.totalUnread > 99 ? '99+' : chatState.totalUnread;
-    badge.style.display = '';
-  } else {
-    badge.style.display = 'none';
+  if (badge) {
+    if (chatState.totalUnread > 0) {
+      badge.textContent = chatState.totalUnread > 99 ? '99+' : chatState.totalUnread;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
   }
+  // Mobile chat badge
+  if (typeof mfUpdateChatBadge === 'function') mfUpdateChatBadge();
 }
 
 // Format chat timestamp
@@ -350,6 +357,9 @@ function renderChatConversations() {
       openChatConversation(convId, convType);
     });
   });
+
+  // Mobile delegation
+  if (typeof mfRenderChatConversations === 'function') mfRenderChatConversations();
 }
 
 // Open a conversation
@@ -401,7 +411,7 @@ function renderChatMessages(conversationId) {
 
   // Load more button if we have exactly 50 messages (might be more)
   if (messages.length >= 50) {
-    html += `<div class="chat-load-more"><button onclick="loadOlderChatMessages()">Last eldre meldinger</button></div>`;
+    html += `<div class="chat-load-more"><button data-action="loadOlderChatMessages">Last eldre meldinger</button></div>`;
   }
 
   for (const msg of messages) {
@@ -423,6 +433,9 @@ function renderChatMessages(conversationId) {
   }
 
   container.innerHTML = html;
+
+  // Mobile delegation
+  if (typeof mfRenderChatMessages === 'function') mfRenderChatMessages(conversationId);
 }
 
 // Scroll chat to bottom
@@ -465,6 +478,9 @@ function renderTypingIndicator(conversationId) {
       text.textContent = `${typingNames.join(' og ')} skriver...`;
     }
   }
+
+  // Mobile delegation
+  if (typeof mfRenderTypingIndicator === 'function') mfRenderTypingIndicator(conversationId);
 }
 
 // Show new DM view
@@ -483,7 +499,7 @@ async function showNewDmView() {
 
   // Load team members
   try {
-    const response = await fetch('/api/chat/team-members');
+    const response = await fetch('/api/chat/team-members', { credentials: 'include' });
     if (!response.ok) {
       console.error('Team members failed:', response.status, response.statusText);
       try { console.error('Team members body:', await response.text()); } catch {}

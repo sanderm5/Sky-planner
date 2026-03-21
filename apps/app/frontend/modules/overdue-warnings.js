@@ -50,14 +50,22 @@ function renderOverdue() {
     // No pre-sort needed - clustering handles grouping
   }
 
-  // Update badge
+  // Update badges
   updateBadge('overdueBadge', overdueCustomers.length);
+  updateBadge('overdueTabBadge', overdueCustomers.length);
 
   // Update header count
   if (countHeader) {
     countHeader.textContent = overdueCustomers.length > 0
       ? `(${overdueCustomers.length} stk)`
       : '';
+  }
+
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashOverdueSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = overdueCustomers.length > 0 ? overdueCustomers.length : '';
+    sectionBadge.style.display = overdueCustomers.length > 0 ? '' : 'none';
   }
 
   // Render
@@ -85,15 +93,15 @@ function renderOverdue() {
             <span class="overdue-severity-dot ${severity}"></span>
             ${title} (${items.length})
           </div>
-          ${items.map(c => `
-            <div class="overdue-item" data-action="focusOnCustomer" data-customer-id="${c.id}">
+          ${items.map((c, idx) => `
+            <div class="overdue-item stagger-item" style="--stagger-index:${Math.min(idx, 15)}" data-action="focusOnCustomer" data-customer-id="${c.id}">
               <div class="overdue-customer-info">
                 <div class="overdue-customer-main">
                   <h4>${escapeHtml(c.navn)}</h4>
                   <span class="overdue-category">${escapeHtml(c.kategori || 'Ukjent')}</span>
                 </div>
                 <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+                ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
               </div>
               <div class="overdue-status">
                 <span class="overdue-days">${c.daysOverdue} dager</span>
@@ -109,11 +117,11 @@ function renderOverdue() {
     };
 
     const renderGroupedItems = (items) => {
-      return items.map(c => {
+      return items.map((c, idx) => {
         const kat = c.kategori || '';
         const katBadge = kat ? `<span class="overdue-kat-badge ${kat.includes('El') ? 'kat-el' : kat.includes('Brann') ? 'kat-brann' : 'kat-other'}">${escapeHtml(kat)}</span>` : '';
         return `
-        <div class="overdue-item" data-action="focusOnCustomer" data-customer-id="${c.id}">
+        <div class="overdue-item stagger-item" style="--stagger-index:${Math.min(idx, 15)}" data-action="focusOnCustomer" data-customer-id="${c.id}">
           <div class="overdue-customer-info">
             <div class="overdue-customer-main">
               <h4>${escapeHtml(c.navn)}</h4>
@@ -121,7 +129,7 @@ function renderOverdue() {
               <span class="overdue-days-inline ${c.daysOverdue > 60 ? 'critical' : c.daysOverdue > 30 ? 'warning' : 'mild'}">${c.daysOverdue}d forfalt</span>
             </div>
             <p class="overdue-address">${escapeHtml(c.adresse)}, ${escapeHtml(c.poststed || '')}</p>
-            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" onclick="event.stopPropagation();"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
+            ${c.telefon ? `<a href="tel:${c.telefon}" class="overdue-phone" data-action="none" data-stop-propagation="true"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(c.telefon)}</a>` : ''}
           </div>
           <div class="overdue-status">
             <span class="overdue-date">${formatDate(c._controlDate)}</span>
@@ -310,6 +318,10 @@ function renderOverdue() {
   }
 }
 
+function renderOverdueTab() {
+  renderOverdue();
+}
+
 // Update overdue badge count — same logic as renderOverdue()
 function updateOverdueBadge() {
   const today = new Date();
@@ -324,6 +336,14 @@ function updateOverdueBadge() {
   }).length;
 
   updateBadge('overdueBadge', overdueCount);
+  updateBadge('overdueTabBadge', overdueCount);
+
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashOverdueSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = overdueCount > 0 ? overdueCount : '';
+    sectionBadge.style.display = overdueCount > 0 ? '' : 'none';
+  }
 
   // Also update upcoming badge
   updateUpcomingBadge();
@@ -345,6 +365,14 @@ function updateUpcomingBadge() {
   }).length;
 
   updateBadge('upcomingBadge', upcomingCount);
+  updateBadge('upcomingTabBadge', upcomingCount);
+
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashWarningSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = upcomingCount > 0 ? upcomingCount : '';
+    sectionBadge.style.display = upcomingCount > 0 ? '' : 'none';
+  }
 }
 
 // Render warnings for upcoming controls
@@ -504,5 +532,9 @@ function renderWarnings() {
   if (proxSettings) {
     proxSettings.style.display = sortBy === 'proximity' ? '' : 'none';
   }
+}
+
+function renderUpcomingTab() {
+  renderWarnings();
 }
 

@@ -44,10 +44,17 @@ export async function sendEmail(options, config) {
             };
         }
         const data = await response.json();
+        // Notify metrics collector if available (app context only)
+        if (typeof globalThis !== 'undefined' && globalThis.__recordServiceEvent) {
+            globalThis.__recordServiceEvent('email', true);
+        }
         return { success: true, messageId: data.id };
     }
     catch (error) {
         console.error('[Email] Error sending email:', error);
+        if (typeof globalThis !== 'undefined' && globalThis.__recordServiceEvent) {
+            globalThis.__recordServiceEvent('email', false, error instanceof Error ? error.message : 'Unknown error');
+        }
         return {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error',

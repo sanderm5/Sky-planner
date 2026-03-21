@@ -203,9 +203,10 @@ const SmartRouteEngine = {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Start-lokasjon (fra config eller default)
-    const startLat = appConfig.routeStartLat || 59.9139;
-    const startLng = appConfig.routeStartLng || 10.7522;
+    // Start-lokasjon (fra config)
+    const startLat = appConfig.routeStartLat;
+    const startLng = appConfig.routeStartLng;
+    if (!startLat || !startLng) return null;
 
     // Sentroid
     const centroid = this.getCentroid(cluster);
@@ -1147,9 +1148,47 @@ function clearMapHighlights() {
  * Switch to a specific tab
  */
 function switchToTab(tabName) {
-  const tabBtn = document.querySelector(`.tab-item[data-tab="${tabName}"]`);
+  // Map old tab names to new consolidated structure
+  const migrationMap = {
+    'overdue': 'overdue',
+    'warnings': 'upcoming',
+    'statistikk': 'dashboard',
+    'missingdata': 'dashboard',
+    'team-overview': 'arbeid',
+    'todays-work': 'arbeid',
+    'calendar': 'arbeid',
+    'weekly-plan': 'arbeid',
+    'planner': 'arbeid'
+  };
+  const arbeidViewMap = {
+    'team-overview': 'idag',
+    'todays-work': 'idag',
+    'calendar': 'maaned',
+    'weekly-plan': 'uke',
+    'planner': 'planlegger'
+  };
+
+  const mappedTab = migrationMap[tabName] || tabName;
+  const arbeidView = arbeidViewMap[tabName];
+
+  const tabBtn = document.querySelector(`.tab-item[data-tab="${mappedTab}"]`);
   if (tabBtn) {
     tabBtn.click();
+    // If switching to arbeid with a specific sub-view, switch to it
+    if (arbeidView && typeof switchArbeidView === 'function') {
+      setTimeout(() => switchArbeidView(arbeidView), 50);
+    }
+    // If switching to dashboard with a specific section, scroll to it
+    if (mappedTab === 'dashboard' && tabName !== 'dashboard') {
+      const sectionMap = { 'overdue': 'dash-overdue', 'warnings': 'dash-warnings', 'statistikk': 'dash-statistikk', 'missingdata': 'dash-missingdata' };
+      const sectionId = sectionMap[tabName];
+      if (sectionId) {
+        setTimeout(() => {
+          const el = document.getElementById(sectionId);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 100);
+      }
+    }
   }
 }
 

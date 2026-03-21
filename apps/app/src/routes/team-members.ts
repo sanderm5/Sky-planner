@@ -130,13 +130,17 @@ router.post(
     // Hash password
     const passord_hash = await bcrypt.hash(passord, 12);
 
+    // Validate role
+    const validRoles = ['admin', 'teammedlem', 'kontor', 'leser'];
+    const safeRolle = rolle && validRoles.includes(rolle) ? rolle : 'leser';
+
     // Create member
     const member = await dbService.createTeamMember({
       navn,
       epost,
       passord_hash,
       telefon,
-      rolle: rolle || 'medlem',
+      rolle: safeRolle,
       organization_id: req.organizationId!,
     });
 
@@ -173,6 +177,12 @@ router.put(
     }
 
     const { navn, telefon, rolle, aktiv } = req.body;
+
+    // Validate role if provided
+    const validRoles = ['admin', 'teammedlem', 'kontor', 'leser'];
+    if (rolle !== undefined && !validRoles.includes(rolle)) {
+      throw Errors.badRequest(`Ugyldig rolle. Gyldige roller: ${validRoles.join(', ')}`);
+    }
 
     const updated = await dbService.updateTeamMember(id, req.organizationId!, {
       navn,

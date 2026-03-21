@@ -30,6 +30,7 @@ interface RuteDbService {
   updateKunde(id: number, data: Partial<Kunde>, organizationId?: number): Promise<Kunde | null>;
   createAvtale(data: Partial<Avtale> & { organization_id: number }): Promise<Avtale & { kunde_navn?: string }>;
   deleteAvtalerByRuteId(ruteId: number, organizationId: number): Promise<number>;
+  getActiveTeamMembersForOrg?(organizationId: number): Promise<Array<{ id: number; navn: string }>>;
 }
 
 let dbService: RuteDbService;
@@ -55,6 +56,42 @@ router.get(
     const response: ApiResponse<(Rute & { antall_kunder: number })[]> = {
       success: true,
       data: ruter,
+      requestId: req.requestId,
+    };
+
+    res.json(response);
+  })
+);
+
+/**
+ * GET /api/ruter/find-by-date
+ * Find an existing route by date and name (for idempotent weekplan saves)
+ * Query: ?date=YYYY-MM-DD&name=Uke 12 - Mandag
+ */
+router.get(
+  '/find-by-date',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const date = req.query.date as string;
+    const name = req.query.name as string;
+
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw Errors.badRequest('date er påkrevd (YYYY-MM-DD)');
+    }
+    if (!name) {
+      throw Errors.badRequest('name er påkrevd');
+    }
+
+    // Find route matching date + name for this org
+    const allRuter = await dbService.getAllRuter(req.organizationId);
+    const match = allRuter.find(r => {
+      const ruteDate = (r as any).planned_date || (r as any).planlagt_dato;
+      return ruteDate === date && r.navn === name;
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: match || null,
       requestId: req.requestId,
     };
 
@@ -99,7 +136,7 @@ router.get(
  */
 router.post(
   '/',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { navn, beskrivelse, planlagt_dato, kunde_ids, total_distanse, total_tid } = req.body;
 
@@ -111,10 +148,11 @@ router.post(
       throw Errors.badRequest('Ugyldig datoformat (bruk YYYY-MM-DD)');
     }
 
-    const ruteData: CreateRuteRequest & { organization_id?: number } = {
+    const ruteData: CreateRuteRequest & { organization_id?: number; planned_date?: string } = {
       navn: navn.trim(),
       beskrivelse,
       planlagt_dato,
+      planned_date: planlagt_dato, // Keep both date columns in sync
       kunde_ids: kunde_ids || [],
       total_distanse,
       total_tid,
@@ -144,6 +182,49 @@ router.post(
       broadcast(req.organizationId, 'rute_created', rute, req.user?.userId);
     }
 
+    // Auto-create calendar entries if route has date and customers
+    if (req.organizationId && planlagt_dato && kunde_ids?.length > 0 && rute.assigned_to) {
+      try {
+        const ruteKunder = await dbService.getRuteKunder(rute.id);
+        let currentMinutes = 8 * 60;
+
+        let memberName: string = req.user?.epost || 'admin';
+        if (dbService.getActiveTeamMembersForOrg) {
+          try {
+            const members = await dbService.getActiveTeamMembersForOrg(req.organizationId);
+            const member = members.find(m => m.id === rute.assigned_to);
+            if (member) memberName = member.navn;
+          } catch { /* fallback */ }
+        }
+
+        for (const kunde of ruteKunder) {
+          const hours = Math.floor(currentMinutes / 60);
+          const mins = currentMinutes % 60;
+          const klokkeslett = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+          const varighet = kunde.estimert_tid || 30;
+
+          await dbService.createAvtale({
+            kunde_id: kunde.id,
+            dato: planlagt_dato,
+            klokkeslett,
+            type: 'Sky Planner',
+            beskrivelse: `${kunde.navn} (rute: ${rute.navn})`,
+            status: 'planlagt',
+            opprettet_av: memberName,
+            organization_id: req.organizationId,
+            rute_id: rute.id,
+            varighet,
+          });
+
+          currentMinutes += varighet + 15;
+        }
+
+        broadcast(req.organizationId, 'avtaler_bulk_created', { rute_id: rute.id, count: ruteKunder.length }, req.user?.userId);
+      } catch (err) {
+        apiLogger.error({ err, ruteId: rute.id }, 'Failed to auto-create calendar entries for new route');
+      }
+    }
+
     res.status(201).json(response);
   })
 );
@@ -154,7 +235,7 @@ router.post(
  */
 router.put(
   '/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -188,6 +269,8 @@ router.put(
     // Update customers if provided
     if (kunde_ids !== undefined && Array.isArray(kunde_ids)) {
       await dbService.setRuteKunder(id, kunde_ids, req.organizationId);
+      // Note: calendar entries (avtaler) are synced by the /assign endpoint only,
+      // to avoid double-creation when PUT + assign are called in sequence.
     }
 
     logAudit(apiLogger, 'UPDATE', req.user!.userId, 'rute', id, {
@@ -215,11 +298,20 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
       throw Errors.badRequest('Ugyldig rute-ID');
+    }
+
+    // Delete associated calendar entries first
+    if (req.organizationId) {
+      try {
+        await dbService.deleteAvtalerByRuteId(id, req.organizationId);
+      } catch (err) {
+        apiLogger.error({ err, ruteId: id }, 'Failed to delete calendar entries for route');
+      }
     }
 
     const deleted = await dbService.deleteRute(id, req.organizationId);
@@ -250,7 +342,7 @@ router.delete(
  */
 router.post(
   '/:id/complete',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
@@ -295,18 +387,18 @@ router.post(
 
 /**
  * PUT /api/ruter/:id/assign
- * Assign a route to a technician (admin only)
+ * Assign a route to a team member
  */
 router.put(
   '/:id/assign',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
     if (Number.isNaN(id)) {
       throw Errors.badRequest('Ugyldig rute-ID');
     }
 
-    const { assigned_to, planned_date } = req.body;
+    const { assigned_to, planned_date, technician_name: teamMemberName } = req.body;
 
     if (assigned_to !== null && assigned_to !== undefined && typeof assigned_to !== 'number') {
       throw Errors.badRequest('assigned_to må være et gyldig bruker-ID eller null');
@@ -353,6 +445,23 @@ router.put(
           const ruteKunder = await dbService.getRuteKunder(id);
           let currentMinutes = 8 * 60; // Start kl 08:00
 
+          // Use team member name from request (sent by frontend) as primary source,
+          // then try DB lookup, then fall back to current user's email
+          let memberName: string = '';
+          if (teamMemberName && typeof teamMemberName === 'string' && teamMemberName.trim()) {
+            memberName = teamMemberName.trim();
+          }
+          if (!memberName && dbService.getActiveTeamMembersForOrg) {
+            try {
+              const members = await dbService.getActiveTeamMembersForOrg(req.organizationId!);
+              const member = members.find(m => m.id === assigned_to);
+              if (member) memberName = member.navn;
+            } catch { /* fallback below */ }
+          }
+          if (!memberName) {
+            memberName = req.user?.epost || 'admin';
+          }
+
           for (const kunde of ruteKunder) {
             const hours = Math.floor(currentMinutes / 60);
             const mins = currentMinutes % 60;
@@ -366,7 +475,7 @@ router.put(
               type: 'Sky Planner',
               beskrivelse: `${kunde.navn} (rute: ${rute.navn})`,
               status: 'planlagt',
-              opprettet_av: req.user?.epost,
+              opprettet_av: memberName,
               organization_id: req.organizationId,
               rute_id: id,
               varighet,
@@ -398,7 +507,7 @@ router.put(
  */
 router.post(
   '/:id/start-execution',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   requireFeature('field_work'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
@@ -447,7 +556,7 @@ router.post(
  */
 router.post(
   '/:id/visit-customer',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   requireFeature('field_work'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const ruteId = Number.parseInt(req.params.id);
@@ -542,7 +651,7 @@ router.get(
  */
 router.post(
   '/:id/end-execution',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   requireFeature('field_work'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const id = Number.parseInt(req.params.id);
@@ -582,6 +691,93 @@ router.post(
     };
 
     res.json(response);
+  })
+);
+
+/**
+ * POST /api/ruter/:id/add-customer
+ * Quick-add a customer to an existing route (mobile admin)
+ */
+router.post(
+  '/:id/add-customer',
+  requireTenantAuth,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const ruteId = parseInt(req.params.id);
+    const { kunde_id } = req.body;
+
+    if (!kunde_id || isNaN(Number(kunde_id))) {
+      res.status(400).json({ success: false, error: 'kunde_id er påkrevd' });
+      return;
+    }
+
+    const rute = await dbService.getRuteById(ruteId, req.organizationId);
+    if (!rute) {
+      res.status(404).json({ success: false, error: 'Rute ikke funnet' });
+      return;
+    }
+
+    // Get current customers on the route
+    const existingKunder = await dbService.getRuteKunder(ruteId);
+    const existingIds = existingKunder.map(k => k.id);
+
+    if (existingIds.includes(Number(kunde_id))) {
+      res.status(409).json({ success: false, error: 'Kunden er allerede på ruten' });
+      return;
+    }
+
+    // Append new customer at the end
+    const updatedIds = [...existingIds, Number(kunde_id)];
+    await dbService.setRuteKunder(ruteId, updatedIds, req.organizationId);
+
+    // Create calendar entry for new customer if route has assignment and date
+    const routeDate = rute.planned_date || (rute as any).planlagt_dato;
+    if (req.organizationId && rute.assigned_to && routeDate) {
+      try {
+        // Calculate time slot: after existing stops
+        const existingAvtaleCount = existingKunder.length;
+        let currentMinutes = 8 * 60 + existingAvtaleCount * 45; // 30min work + 15min travel per stop
+
+        const kunde = await dbService.getRuteKunder(ruteId);
+        const newKunde = kunde.find(k => k.id === Number(kunde_id));
+
+        if (newKunde) {
+          let memberName: string = req.user?.epost || 'admin';
+          if (dbService.getActiveTeamMembersForOrg) {
+            try {
+              const members = await dbService.getActiveTeamMembersForOrg(req.organizationId);
+              const member = members.find(m => m.id === rute.assigned_to);
+              if (member) memberName = member.navn;
+            } catch { /* fallback */ }
+          }
+
+          const hours = Math.floor(currentMinutes / 60);
+          const mins = currentMinutes % 60;
+          const klokkeslett = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+          const varighet = newKunde.estimert_tid || 30;
+
+          await dbService.createAvtale({
+            kunde_id: Number(kunde_id),
+            dato: routeDate,
+            klokkeslett,
+            type: 'Sky Planner',
+            beskrivelse: `${newKunde.navn} (rute: ${rute.navn})`,
+            status: 'planlagt',
+            opprettet_av: memberName,
+            organization_id: req.organizationId,
+            rute_id: ruteId,
+            varighet,
+          });
+
+          broadcast(req.organizationId, 'avtale_created', { rute_id: ruteId, kunde_id }, req.user?.userId);
+        }
+      } catch (err) {
+        apiLogger.error({ err, ruteId }, 'Failed to create calendar entry for added customer');
+      }
+    }
+
+    broadcast(req.organizationId!, 'rute_updated', { ruteId });
+
+    res.json({ success: true, data: { message: 'Kunde lagt til på ruten', total_kunder: updatedIds.length } });
   })
 );
 

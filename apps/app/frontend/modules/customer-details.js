@@ -889,6 +889,13 @@ function renderMissingData() {
   const totalMissing = missingPhone.length + missingEmail.length + missingCoords.length + missingControl.length;
   updateBadge('missingDataBadge', totalMissing);
 
+  // Update dashboard section badge
+  const sectionBadge = document.getElementById('dashMissingSectionBadge');
+  if (sectionBadge) {
+    sectionBadge.textContent = totalMissing > 0 ? totalMissing : '';
+    sectionBadge.style.display = totalMissing > 0 ? '' : 'none';
+  }
+
   // Render lists
   renderMissingList('missingPhoneList', missingPhone, 'telefon');
   renderMissingList('missingEmailList', missingEmail, 'e-post');
@@ -1011,7 +1018,45 @@ function showNotification(message, type = 'success') {
   }, 2500);
 }
 
+// ---- Notify customer "on my way" from popup/desktop ----
+
+async function notifyCustomerOnWay(kundeId) {
+  const kunde = customers.find(c => c.id === kundeId);
+  if (!kunde) return;
+
+  if (!kunde.epost) {
+    showToast('Kunden har ikke registrert e-post', 'error');
+    return;
+  }
+
+  const estMin = kunde.estimert_tid || 10;
+  const contactName = kunde.kontaktperson || kunde.navn;
+
+  const confirmed = await showConfirm(
+    `Send «på vei»-varsel til ${contactName} (${kunde.epost})?`,
+    'Varsle kunde'
+  );
+  if (!confirmed) return;
+
+  try {
+    const resp = await apiFetch(`/api/todays-work/notify-customer/${kundeId}`, {
+      method: 'POST',
+      body: JSON.stringify({ estimert_tid: estMin }),
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      showToast(`Varsel sendt til ${kunde.epost}`, 'success');
+    } else {
+      showToast(data.error || 'Kunne ikke sende varsel', 'error');
+    }
+  } catch (err) {
+    showToast('Kunne ikke sende varsel', 'error');
+  }
+}
+
 // Make functions available globally for onclick handlers
+window.notifyCustomerOnWay = notifyCustomerOnWay;
 window.editCustomer = editCustomer;
 window.toggleCustomerSelection = toggleCustomerSelection;
 window.focusOnCustomer = focusOnCustomer;

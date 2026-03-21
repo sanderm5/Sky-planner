@@ -499,6 +499,12 @@
     }
 
     /* === RESPONSIVE LOGIN === */
+    @keyframes loginAurora {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
     @media (max-width: 1024px) {
       .login-brand-content {
         display: none;
@@ -510,6 +516,12 @@
         width: 100%;
         min-width: unset;
         border-right: none;
+        background:
+          radial-gradient(ellipse at 20% 0%, rgba(94, 129, 172, 0.15) 0%, transparent 60%),
+          radial-gradient(ellipse at 80% 100%, rgba(76, 110, 150, 0.1) 0%, transparent 50%),
+          linear-gradient(160deg, #111318 0%, #1a1d24 40%, #151820 100%);
+        background-size: 200% 200%, 200% 200%, 100% 100%;
+        animation: loginAurora 12s ease-in-out infinite;
       }
     }
 
@@ -608,7 +620,7 @@
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" />
   <link rel="stylesheet" href="polarnatt.css" />
-  <link rel="stylesheet" href="style.css?v=20260226-ui-cleanup" />
+  <link rel="stylesheet" href="style.css?v=20260321a" />
 </head>
 <body>
   <a href="#contentPanel" class="skip-to-content">Hopp til hovedinnhold</a>
@@ -687,7 +699,7 @@
     <div class="login-brand-content">
       <img src="/skyplanner-logo.svg" alt="Sky Planner" class="login-brand-logo" id="loginLogo">
       <p class="login-brand-title" id="loginBrandTitle">Sky Planner</p>
-      <p class="login-brand-subtitle" id="loginBrandSubtitle">Kontroll. Oversikt. Alltid.</p>
+      <p class="login-brand-subtitle" id="loginBrandSubtitle">Kundeadministrasjon og ruteplanlegging for servicebedrifter</p>
 
       <div class="login-features" id="loginFeatures">
         <!-- Fylles dynamisk av renderLoginFeatures() -->
@@ -753,62 +765,54 @@
         </div>
       </div>
 
-      <!-- Vertical Tab Navigation -->
+      <!-- Vertical Tab Navigation (Consolidated: 5 tabs) -->
       <nav class="tab-navigation" role="tablist" aria-label="Hovednavigasjon">
         <button class="tab-item active" data-tab="dashboard" id="tab-btn-dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">
           <i class="fas fa-th-large" aria-hidden="true"></i>
           <span>Dashboard</span>
+          <span class="tab-badge" id="overdueBadge" style="display: none;">0</span>
         </button>
         <button class="tab-item" data-tab="customers" id="tab-btn-customers" role="tab" aria-selected="false" aria-controls="tab-customers">
           <i class="fas fa-users" aria-hidden="true"></i>
           <span>Kunder</span>
         </button>
-        <button class="tab-item" data-tab="overdue" id="tab-btn-overdue" role="tab" aria-selected="false" aria-controls="tab-overdue">
-          <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
-          <span>Forfalte</span>
-          <span class="tab-badge" id="overdueBadge" style="display: none;">0</span>
-        </button>
-        <button class="tab-item" data-tab="warnings" id="tab-btn-warnings" role="tab" aria-selected="false" aria-controls="tab-warnings">
-          <i class="fas fa-bell" aria-hidden="true"></i>
-          <span>Kommende kontroller</span>
-          <span class="tab-badge" id="upcomingBadge" style="display: none;">0</span>
-        </button>
-        <button class="tab-item" data-tab="todays-work" id="todaysWorkTab" role="tab" aria-selected="false" aria-controls="tab-todays-work" style="display: none;">
-          <i class="fas fa-briefcase" aria-hidden="true"></i>
-          <span>Dagens arbeid</span>
-          <span class="tab-badge" id="todaysWorkBadge" style="display: none;">0/0</span>
-        </button>
-        <button class="tab-item" data-tab="calendar" id="tab-btn-calendar" role="tab" aria-selected="false" aria-controls="tab-calendar">
-          <i class="fas fa-calendar" aria-hidden="true"></i>
-          <span>Kalender</span>
-        </button>
-        <button class="tab-item" data-tab="weekly-plan" id="tab-btn-weekly-plan" role="tab" aria-selected="false" aria-controls="tab-weekly-plan">
-          <i class="fas fa-clipboard-list" aria-hidden="true"></i>
-          <span>Ukeplan</span>
-        </button>
-        <button class="tab-item" data-tab="planner" id="tab-btn-planner" role="tab" aria-selected="false" aria-controls="tab-planner">
-          <i class="fas fa-route" aria-hidden="true"></i>
-          <span>Ruteplanlegger</span>
-        </button>
-        <button class="tab-item" data-tab="statistikk" id="tab-btn-statistikk" role="tab" aria-selected="false" aria-controls="tab-statistikk">
-          <i class="fas fa-chart-line" aria-hidden="true"></i>
-          <span>Statistikk</span>
-        </button>
-        <button class="tab-item" data-tab="missingdata" id="tab-btn-missingdata" role="tab" aria-selected="false" aria-controls="tab-missingdata">
-          <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
-          <span>Mangler data</span>
-          <span class="tab-badge missing-badge" id="missingDataBadge" style="display: none;">0</span>
+        <button class="tab-item" data-tab="arbeid" id="tab-btn-arbeid" role="tab" aria-selected="false" aria-controls="tab-arbeid">
+          <i class="fas fa-hard-hat" aria-hidden="true"></i>
+          <span>Arbeid</span>
+          <span class="tab-badge" id="teamOverviewBadge" style="display: none;">0</span>
         </button>
         <button class="tab-item" data-tab="chat" id="chatTab" role="tab" aria-selected="false" aria-controls="tab-chat">
           <i class="fas fa-comments" aria-hidden="true"></i>
           <span>Meldinger</span>
           <span class="tab-badge chat-badge" id="chatUnreadBadge" style="display: none;">0</span>
         </button>
+        <button class="tab-item" data-tab="overdue" id="tab-btn-overdue" role="tab" aria-selected="false" aria-controls="tab-overdue">
+          <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+          <span>Forfalte</span>
+          <span class="tab-badge" id="overdueTabBadge" style="display: none;">0</span>
+        </button>
+        <button class="tab-item" data-tab="upcoming" id="tab-btn-upcoming" role="tab" aria-selected="false" aria-controls="tab-upcoming">
+          <i class="fas fa-bell" aria-hidden="true"></i>
+          <span>Kommende</span>
+          <span class="tab-badge" id="upcomingTabBadge" style="display: none;">0</span>
+        </button>
         <button class="tab-item admin-only" data-tab="admin" id="adminTab" role="tab" aria-selected="false" aria-controls="tab-admin" style="display: none;">
           <i class="fas fa-shield-alt" aria-hidden="true"></i>
           <span>Admin</span>
           <span class="tab-badge address-action-badge" id="adminAddressBadge" style="display: none;">!</span>
         </button>
+        <!-- Hidden badges for backward compat (referenced by other modules) -->
+        <span id="upcomingBadge" class="sr-only" aria-hidden="true">0</span>
+        <span id="missingDataBadge" class="sr-only" aria-hidden="true">0</span>
+        <span id="todaysWorkBadge" class="sr-only" aria-hidden="true">0</span>
+        <!-- Hidden legacy tab buttons for switchToTab backward compat -->
+        <button class="tab-item" data-tab="team-overview" id="tab-btn-team-overview" style="display:none;"></button>
+        <button class="tab-item" data-tab="todays-work" id="todaysWorkTab" style="display:none;"></button>
+        <button class="tab-item" data-tab="calendar" id="tab-btn-calendar" style="display:none;"></button>
+        <button class="tab-item" data-tab="weekly-plan" id="tab-btn-weekly-plan" style="display:none;"></button>
+        <button class="tab-item" data-tab="planner" id="tab-btn-planner" style="display:none;"></button>
+        <button class="tab-item" data-tab="statistikk" id="tab-btn-statistikk" style="display:none;"></button>
+        <button class="tab-item" data-tab="missingdata" id="tab-btn-missingdata" style="display:none;"></button>
       </nav>
 
       <!-- Quick Stats i bunnen av sidebar -->
@@ -857,6 +861,8 @@
         <!-- Tab: Dashboard -->
         <div class="tab-pane active" id="tab-dashboard" role="tabpanel" aria-labelledby="tab-btn-dashboard">
           <div class="dashboard-container">
+            <!-- Morning Briefing Widget -->
+            <div id="morningBriefContainer"></div>
             <!-- Quick Stats Row -->
             <div class="dashboard-stats">
               <div class="stat-card stat-total">
@@ -891,29 +897,127 @@
 
             <!-- Action Cards Row -->
             <div class="dashboard-actions">
-              <div class="action-card" data-action="showOverdueTab" role="button" tabindex="0">
-                <div class="action-icon overdue"><i class="fas fa-exclamation-triangle" aria-hidden="true"></i></div>
+              <div class="action-card" data-action="showArbeidUke" role="button" tabindex="0">
+                <div class="action-icon route"><i class="fas fa-clipboard-list" aria-hidden="true"></i></div>
                 <div class="action-content">
-                  <h3>Forfalte kontroller</h3>
-                  <p><span id="dashOverdueCount">0</span> kunder trenger kontroll</p>
+                  <h3>Ukeplan</h3>
+                  <p>Planlegg ukens serviceturer</p>
                 </div>
                 <i class="fas fa-chevron-right" aria-hidden="true"></i>
               </div>
-              <div class="action-card" data-action="showRoutesTab" role="button" tabindex="0">
-                <div class="action-icon route"><i class="fas fa-route" aria-hidden="true"></i></div>
-                <div class="action-content">
-                  <h3>Planlegg rute</h3>
-                  <p>Optimaliser dagens servicetur</p>
-                </div>
-                <i class="fas fa-chevron-right" aria-hidden="true"></i>
-              </div>
-              <div class="action-card" data-action="showCalendarTab" role="button" tabindex="0">
+              <div class="action-card" data-action="showArbeidMaaned" role="button" tabindex="0">
                 <div class="action-icon calendar"><i class="fas fa-calendar-check" aria-hidden="true"></i></div>
                 <div class="action-content">
                   <h3>Kalender</h3>
                   <p>Se avtaler og planlegg fremover</p>
                 </div>
                 <i class="fas fa-chevron-right" aria-hidden="true"></i>
+              </div>
+            </div>
+
+            <!-- Statistikk -->
+            <div class="dashboard-section">
+              <h3><i class="fas fa-chart-line" aria-hidden="true"></i> Statistikk & Trender</h3>
+              <div class="dashboard-section-content" id="dash-statistikk">
+                <div class="statistikk-container">
+                  <div class="stats-overview" id="statsOverview">
+                    <div class="overview-card">
+                      <div class="overview-icon"><i class="fas fa-users"></i></div>
+                      <div class="overview-content">
+                        <span class="overview-value" id="statTotalKunder">0</span>
+                        <span class="overview-label">Totalt kunder</span>
+                      </div>
+                    </div>
+                    <div class="overview-card status-overdue">
+                      <div class="overview-icon"><i class="fas fa-exclamation-circle"></i></div>
+                      <div class="overview-content">
+                        <span class="overview-value" id="statForfalte">0</span>
+                        <span class="overview-label">Forfalte</span>
+                      </div>
+                    </div>
+                    <div class="overview-card status-soon">
+                      <div class="overview-icon"><i class="fas fa-clock"></i></div>
+                      <div class="overview-content">
+                        <span class="overview-value" id="statSnart">0</span>
+                        <span class="overview-label">Innen 30 dager</span>
+                      </div>
+                    </div>
+                    <div class="overview-card status-good">
+                      <div class="overview-icon"><i class="fas fa-check-circle"></i></div>
+                      <div class="overview-content">
+                        <span class="overview-value" id="statOk">0</span>
+                        <span class="overview-label">I orden</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stats-section">
+                    <h3><i class="fas fa-calendar-alt"></i> Sesonganalyse - Kontroller per måned</h3>
+                    <p class="stats-description">Viser når kontroller forfaller gjennom året</p>
+                    <div class="season-chart" id="seasonChart"></div>
+                  </div>
+                  <div class="stats-section">
+                    <h3><i class="fas fa-pie-chart"></i> Kategori-fordeling</h3>
+                    <div class="category-stats" id="categoryStats"></div>
+                  </div>
+                  <div class="stats-section">
+                    <h3><i class="fas fa-map-marker-alt"></i> Kunder per område</h3>
+                    <div class="area-stats" id="areaStats"></div>
+                  </div>
+                  <div class="stats-section">
+                    <h3><i class="fas fa-bolt"></i> El-kontroll typer</h3>
+                    <div class="eltype-stats" id="eltypeStats"></div>
+                  </div>
+                  <div class="stats-section">
+                    <h3><i class="fas fa-fire"></i> Brannvarsling-systemer</h3>
+                    <div class="brannsystem-stats" id="brannsystemStats"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Mangler data -->
+            <div class="dashboard-section">
+              <h3><i class="fas fa-exclamation-circle" aria-hidden="true"></i> Mangler data <span class="section-badge" id="dashMissingSectionBadge"></span></h3>
+              <div class="dashboard-section-content" id="dash-missingdata">
+                <div class="missing-data-container">
+                  <p class="missing-data-intro">Kunder som mangler viktig informasjon:</p>
+                  <div class="missing-section">
+                    <div class="missing-header" data-toggle="missing-phone">
+                      <i class="fas fa-phone-slash"></i>
+                      <span>Mangler telefon</span>
+                      <span class="missing-count" id="missingPhoneCount">0</span>
+                      <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="missing-list collapsed" id="missingPhoneList"></div>
+                  </div>
+                  <div class="missing-section">
+                    <div class="missing-header" data-toggle="missing-email">
+                      <i class="fas fa-envelope-open"></i>
+                      <span>Mangler e-post</span>
+                      <span class="missing-count" id="missingEmailCount">0</span>
+                      <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="missing-list collapsed" id="missingEmailList"></div>
+                  </div>
+                  <div class="missing-section">
+                    <div class="missing-header" data-toggle="missing-coords">
+                      <i class="fas fa-map-marker-alt"></i>
+                      <span>Mangler koordinater</span>
+                      <span class="missing-count" id="missingCoordsCount">0</span>
+                      <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="missing-list collapsed" id="missingCoordsList"></div>
+                  </div>
+                  <div class="missing-section">
+                    <div class="missing-header" data-toggle="missing-control">
+                      <i class="fas fa-calendar-times"></i>
+                      <span>Mangler neste kontroll</span>
+                      <span class="missing-count" id="missingControlCount">0</span>
+                      <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="missing-list collapsed" id="missingControlList"></div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -934,6 +1038,69 @@
             </div>
 
           </div>
+        </div>
+
+        <!-- Tab: Forfalte kontroller -->
+        <div class="tab-pane" id="tab-overdue" role="tabpanel" aria-labelledby="tab-btn-overdue">
+          <div class="tab-header">
+            <h2><i class="fas fa-exclamation-triangle" aria-hidden="true"></i> Forfalte kontroller</h2>
+          </div>
+          <div class="overdue-filters">
+            <div class="filter-group">
+              <label for="overdueSortSelect">Sorter etter:</label>
+              <select id="overdueSortSelect">
+                <option value="proximity">Nærhet (ta flere samtidig)</option>
+                <option value="days">Ferskeste først (minst dager)</option>
+                <option value="days-desc">Eldste først (flest dager)</option>
+                <option value="name">Navn A-Å</option>
+                <option value="category">Kategori</option>
+                <option value="area">Område (poststed)</option>
+              </select>
+            </div>
+            <div class="overdue-actions">
+              <button id="showOverdueOnMapBtn" class="btn btn-secondary btn-small">
+                <i class="fas fa-map-marker-alt"></i> Vis på kart
+              </button>
+              <button id="createOverdueRouteBtn" class="btn btn-primary btn-small">
+                <i class="fas fa-route"></i> Lag rute
+              </button>
+            </div>
+          </div>
+          <div class="proximity-settings" id="overdueProximitySettings">
+            <div class="proximity-settings-row">
+              <label for="overdueProximityRadius"><i class="fas fa-sliders-h"></i> Grupperingsradius:</label>
+              <input type="range" id="overdueProximityRadius" min="3" max="50" step="1" value="15">
+              <span class="proximity-radius-value" id="overdueProximityRadiusValue">15 km</span>
+            </div>
+          </div>
+          <div class="overdue-container" id="overdueContainer"></div>
+        </div>
+
+        <!-- Tab: Kommende kontroller -->
+        <div class="tab-pane" id="tab-upcoming" role="tabpanel" aria-labelledby="tab-btn-upcoming">
+          <div class="tab-header">
+            <h2><i class="fas fa-bell" aria-hidden="true"></i> Kommende kontroller</h2>
+          </div>
+          <div class="warning-actions">
+            <div class="filter-group">
+              <label for="warningSortSelect">Sorter etter:</label>
+              <select id="warningSortSelect">
+                <option value="proximity">Nærhet (ta flere samtidig)</option>
+                <option value="category">Kategori</option>
+              </select>
+            </div>
+            <button id="selectWarningsBtn" class="btn btn-secondary btn-small">
+              <i class="fas fa-check"></i> Velg alle
+            </button>
+          </div>
+          <div class="proximity-settings" id="warningProximitySettings">
+            <div class="proximity-settings-row">
+              <label for="warningProximityRadius"><i class="fas fa-sliders-h"></i> Grupperingsradius:</label>
+              <input type="range" id="warningProximityRadius" min="3" max="50" step="1" value="15">
+              <span class="proximity-radius-value" id="warningProximityRadiusValue">15 km</span>
+            </div>
+          </div>
+          <div id="warningsContainer" class="warnings-container"></div>
         </div>
 
         <!-- Tab: Customers -->
@@ -999,328 +1166,101 @@
           </div>
         </div>
 
-        <!-- Tab: Overdue -->
-        <div class="tab-pane" id="tab-overdue" role="tabpanel" aria-labelledby="tab-btn-overdue">
-          <div class="tab-header">
-            <h2>Forfalte kontroller</h2>
-            <span class="overdue-count-header" id="overdueCountHeader"></span>
-          </div>
-          <div class="overdue-filters">
-            <div class="filter-group">
-              <label for="overdueSortSelect">Sorter etter:</label>
-              <select id="overdueSortSelect">
-                <option value="proximity">Nærhet (ta flere samtidig)</option>
-                <option value="days">Ferskeste først (minst dager)</option>
-                <option value="days-desc">Eldste først (flest dager)</option>
-                <option value="name">Navn A-Å</option>
-                <option value="category">Kategori</option>
-                <option value="area">Område (poststed)</option>
-              </select>
-            </div>
-            <div class="overdue-actions">
-              <button id="showOverdueOnMapBtn" class="btn btn-secondary btn-small">
-                <i class="fas fa-map-marker-alt"></i> Vis på kart
-              </button>
-              <button id="createOverdueRouteBtn" class="btn btn-primary btn-small">
-                <i class="fas fa-route"></i> Lag rute
-              </button>
-            </div>
-          </div>
-          <div class="proximity-settings" id="overdueProximitySettings">
-            <div class="proximity-settings-row">
-              <label for="overdueProximityRadius"><i class="fas fa-sliders-h"></i> Grupperingsradius:</label>
-              <input type="range" id="overdueProximityRadius" min="3" max="50" step="1" value="15">
-              <span class="proximity-radius-value" id="overdueProximityRadiusValue">15 km</span>
-            </div>
-          </div>
-          <div class="overdue-container" id="overdueContainer">
-            <!-- Forfalte kunder lastes her -->
-          </div>
-        </div>
-
-        <!-- Tab: Warnings -->
-        <div class="tab-pane" id="tab-warnings" role="tabpanel" aria-labelledby="tab-btn-warnings">
-          <div class="tab-header">
-            <h2>Kommende kontroller</h2>
+        <!-- Tab: Arbeid (consolidated: Team + Ukeplan + Kalender + Planlegger) -->
+        <div class="tab-pane" id="tab-arbeid" role="tabpanel" aria-labelledby="tab-btn-arbeid">
+          <!-- Sub-navigation pills -->
+          <div class="arbeid-sub-nav">
+            <button class="arbeid-pill active" data-arbeid-view="idag"><i class="fas fa-users"></i> <span>Oversikt</span></button>
+            <button class="arbeid-pill" data-arbeid-view="uke"><i class="fas fa-clipboard-list"></i> <span>Ukeplan</span></button>
+            <button class="arbeid-pill" data-arbeid-view="maaned"><i class="fas fa-calendar-alt"></i> <span>Kalender</span></button>
+            <button class="arbeid-pill" data-arbeid-view="planlegger"><i class="fas fa-route"></i> <span>Ruter</span></button>
           </div>
 
-          <div class="warning-actions">
-            <div class="filter-group">
-              <label for="warningSortSelect">Sorter etter:</label>
-              <select id="warningSortSelect">
-                <option value="proximity">Nærhet (ta flere samtidig)</option>
-                <option value="category">Kategori</option>
-              </select>
-            </div>
-            <button id="selectWarningsBtn" class="btn btn-secondary btn-small">
-              <i class="fas fa-check"></i>
-              Velg alle
-            </button>
-          </div>
-          <div class="proximity-settings" id="warningProximitySettings">
-            <div class="proximity-settings-row">
-              <label for="warningProximityRadius"><i class="fas fa-sliders-h"></i> Grupperingsradius:</label>
-              <input type="range" id="warningProximityRadius" min="3" max="50" step="1" value="15">
-              <span class="proximity-radius-value" id="warningProximityRadiusValue">15 km</span>
-            </div>
-          </div>
-
-          <div id="warningsContainer" class="warnings-container">
-            <!-- Varsler lastes her -->
-          </div>
-        </div>
-
-        <!-- Tab: Today's Work -->
-        <div class="tab-pane" id="tab-todays-work" role="tabpanel" aria-labelledby="todaysWorkTab">
-          <div class="tab-header">
-            <h2>Dagens arbeid</h2>
-            <div class="todays-work-date-nav">
-              <button class="btn btn-icon btn-small" id="twPrevDay" title="Forrige dag">
-                <i class="fas fa-chevron-left"></i>
-              </button>
-              <span id="twDateLabel">I dag</span>
-              <button class="btn btn-icon btn-small" id="twNextDay" title="Neste dag">
-                <i class="fas fa-chevron-right"></i>
-              </button>
-            </div>
-          </div>
-
-          <!-- Route summary card -->
-          <div class="tw-route-card" id="twRouteCard" style="display: none;">
-            <div class="tw-route-header">
-              <h3 id="twRouteName"></h3>
-              <span class="tw-route-status" id="twRouteStatus"></span>
-            </div>
-            <div class="tw-route-stats">
-              <div class="tw-stat">
-                <i class="fas fa-map-marker-alt"></i>
-                <span><span id="twCompleted">0</span>/<span id="twTotal">0</span> besøkt</span>
+          <!-- Sub-view: Idag (Team Overview + Dagens arbeid) -->
+          <div class="arbeid-view active" id="arbeid-idag">
+            <div id="teamOverviewContent" class="team-overview-content"></div>
+            <div id="todaysWorkSection">
+              <div class="todays-work-date-nav" style="display:none;" id="twDateNav">
+                <button class="btn btn-icon btn-small" id="twPrevDay" title="Forrige dag">
+                  <i class="fas fa-chevron-left"></i>
+                </button>
+                <span id="twDateLabel">I dag</span>
+                <button class="btn btn-icon btn-small" id="twNextDay" title="Neste dag">
+                  <i class="fas fa-chevron-right"></i>
+                </button>
               </div>
-              <div class="tw-stat" id="twDistanceStat" style="display: none;">
-                <i class="fas fa-route"></i>
-                <span id="twDistance"></span>
-              </div>
-            </div>
-            <div class="tw-progress-bar">
-              <div class="tw-progress-fill" id="twProgressFill"></div>
-            </div>
-            <button class="btn btn-primary btn-block" id="twStartRouteBtn">
-              <i class="fas fa-play"></i> Start rute
-            </button>
-          </div>
-
-          <!-- Customer stops list -->
-          <div class="tw-stops-list" id="twStopsList"></div>
-
-          <!-- Empty state -->
-          <div class="tw-empty" id="twEmpty" style="display: none;">
-            <i class="fas fa-calendar-check"></i>
-            <h3>Ingen rute tildelt</h3>
-            <p>Du har ingen rute tildelt for denne datoen.</p>
-          </div>
-        </div>
-
-        <!-- Tab: Calendar -->
-        <div class="tab-pane" id="tab-calendar" role="tabpanel" aria-labelledby="tab-btn-calendar">
-          <div class="tab-header">
-            <h2>Kalender</h2>
-          </div>
-
-          <div id="calendarContainer" class="calendar-container">
-            <!-- Kalender lastes her -->
-          </div>
-        </div>
-
-        <!-- Tab: Weekly Plan / Ukeplan -->
-        <div class="tab-pane" id="tab-weekly-plan" role="tabpanel" aria-labelledby="tab-btn-weekly-plan">
-          <div id="weeklyPlanContainer"></div>
-        </div>
-
-        <!-- Tab: Planner / Ruteplanlegger -->
-        <div class="tab-pane" id="tab-planner" role="tabpanel" aria-labelledby="tab-btn-planner">
-          <div class="tab-header">
-            <h2><i class="fas fa-route"></i> Ruteplanlegger</h2>
-            <p class="tab-description">Finn effektive ruteklynger basert på geografisk nærhet og kontrollbehov</p>
-          </div>
-
-          <div id="plannerContainer" class="planner-container">
-            <!-- Innstillinger panel -->
-            <div class="planner-settings-panel">
-              <h3><i class="fas fa-sliders-h"></i> Innstillinger</h3>
-
-              <div class="setting-row">
-                <label for="smartDaysAhead">Dager fremover</label>
-                <input type="range" id="smartDaysAhead" min="7" max="180" value="60">
-                <span class="setting-value" id="smartDaysAheadValue">60 dager</span>
-              </div>
-
-              <div class="setting-row">
-                <label for="smartMaxCustomers">Maks kunder</label>
-                <input type="range" id="smartMaxCustomers" min="3" max="30" value="15">
-                <span class="setting-value" id="smartMaxCustomersValue">15 kunder</span>
-              </div>
-
-              <div class="setting-row">
-                <label for="smartClusterRadius">Klyngeradius</label>
-                <input type="range" id="smartClusterRadius" min="1" max="20" value="5">
-                <span class="setting-value" id="smartClusterRadiusValue">5 km</span>
-              </div>
-
-              <button class="btn btn-primary" id="refreshSmartRecommendationsBtn">
-                <i class="fas fa-sync-alt"></i> Oppdater anbefalinger
-              </button>
-            </div>
-
-            <!-- Anbefalinger grid -->
-            <div class="planner-recommendations">
-              <h3><i class="fas fa-lightbulb"></i> Anbefalte ruteklynger</h3>
-              <div id="smartRecommendations" class="recommendations-grid">
-                <!-- Fylles dynamisk av SmartRouteEngine -->
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tab: Statistikk -->
-        <div class="tab-pane" id="tab-statistikk" role="tabpanel" aria-labelledby="tab-btn-statistikk">
-          <div class="tab-header">
-            <h2>Statistikk & Trender</h2>
-          </div>
-
-          <div class="statistikk-container">
-            <!-- Overview Cards -->
-            <div class="stats-overview" id="statsOverview">
-              <div class="overview-card">
-                <div class="overview-icon"><i class="fas fa-users"></i></div>
-                <div class="overview-content">
-                  <span class="overview-value" id="statTotalKunder">0</span>
-                  <span class="overview-label">Totalt kunder</span>
+              <div class="tw-route-card" id="twRouteCard" style="display: none;">
+                <div class="tw-route-header">
+                  <h3 id="twRouteName"></h3>
+                  <span class="tw-route-status" id="twRouteStatus"></span>
                 </div>
-              </div>
-              <div class="overview-card status-overdue">
-                <div class="overview-icon"><i class="fas fa-exclamation-circle"></i></div>
-                <div class="overview-content">
-                  <span class="overview-value" id="statForfalte">0</span>
-                  <span class="overview-label">Forfalte</span>
+                <div class="tw-route-stats">
+                  <div class="tw-stat">
+                    <i class="fas fa-map-marker-alt"></i>
+                    <span><span id="twCompleted">0</span>/<span id="twTotal">0</span> besøkt</span>
+                  </div>
+                  <div class="tw-stat" id="twDistanceStat" style="display: none;">
+                    <i class="fas fa-route"></i>
+                    <span id="twDistance"></span>
+                  </div>
                 </div>
-              </div>
-              <div class="overview-card status-soon">
-                <div class="overview-icon"><i class="fas fa-clock"></i></div>
-                <div class="overview-content">
-                  <span class="overview-value" id="statSnart">0</span>
-                  <span class="overview-label">Innen 30 dager</span>
+                <div class="tw-progress-bar">
+                  <div class="tw-progress-fill" id="twProgressFill"></div>
                 </div>
+                <button class="btn btn-primary btn-block" id="twStartRouteBtn">
+                  <i class="fas fa-play"></i> Start rute
+                </button>
               </div>
-              <div class="overview-card status-good">
-                <div class="overview-icon"><i class="fas fa-check-circle"></i></div>
-                <div class="overview-content">
-                  <span class="overview-value" id="statOk">0</span>
-                  <span class="overview-label">I orden</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Sesonganalyse -->
-            <div class="stats-section">
-              <h3><i class="fas fa-calendar-alt"></i> Sesonganalyse - Kontroller per måned</h3>
-              <p class="stats-description">Viser når kontroller forfaller gjennom året</p>
-              <div class="season-chart" id="seasonChart">
-                <!-- Genereres av JavaScript -->
-              </div>
-            </div>
-
-            <!-- Kategori-fordeling -->
-            <div class="stats-section">
-              <h3><i class="fas fa-pie-chart"></i> Kategori-fordeling</h3>
-              <div class="category-stats" id="categoryStats">
-                <!-- Genereres av JavaScript -->
-              </div>
-            </div>
-
-            <!-- Område-fordeling -->
-            <div class="stats-section">
-              <h3><i class="fas fa-map-marker-alt"></i> Kunder per område</h3>
-              <div class="area-stats" id="areaStats">
-                <!-- Genereres av JavaScript -->
-              </div>
-            </div>
-
-            <!-- El-type fordeling -->
-            <div class="stats-section">
-              <h3><i class="fas fa-bolt"></i> El-kontroll typer</h3>
-              <div class="eltype-stats" id="eltypeStats">
-                <!-- Genereres av JavaScript -->
-              </div>
-            </div>
-
-            <!-- Brann-system fordeling -->
-            <div class="stats-section">
-              <h3><i class="fas fa-fire"></i> Brannvarsling-systemer</h3>
-              <div class="brannsystem-stats" id="brannsystemStats">
-                <!-- Genereres av JavaScript -->
+              <div class="tw-stops-list" id="twStopsList"></div>
+              <div class="tw-empty" id="twEmpty" style="display: none;">
+                <i class="fas fa-calendar-check"></i>
+                <h3>Ingen rute tildelt</h3>
+                <p>Du har ingen rute tildelt for denne datoen.</p>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Tab: Missing Data -->
-        <div class="tab-pane" id="tab-missingdata" role="tabpanel" aria-labelledby="tab-btn-missingdata">
-          <div class="tab-header">
-            <h2>Mangler data</h2>
+          <!-- Sub-view: Uke (Ukeplan) -->
+          <div class="arbeid-view" id="arbeid-uke" style="display:none;">
+            <div id="weeklyPlanContainer"></div>
           </div>
 
-          <div class="missing-data-container">
-            <p class="missing-data-intro">Kunder som mangler viktig informasjon:</p>
+          <!-- Sub-view: Måned (Kalender) -->
+          <div class="arbeid-view" id="arbeid-maaned" style="display:none;">
+            <div id="calendarContainer" class="calendar-container"></div>
+          </div>
 
-            <!-- Mangler telefon -->
-            <div class="missing-section">
-              <div class="missing-header" data-toggle="missing-phone">
-                <i class="fas fa-phone-slash"></i>
-                <span>Mangler telefon</span>
-                <span class="missing-count" id="missingPhoneCount">0</span>
-                <i class="fas fa-chevron-down toggle-icon"></i>
-              </div>
-              <div class="missing-list collapsed" id="missingPhoneList">
-                <!-- Genereres av JavaScript -->
-              </div>
+          <!-- Sub-view: Planlegger -->
+          <div class="arbeid-view" id="arbeid-planlegger" style="display:none;">
+            <div class="tab-header">
+              <h2><i class="fas fa-route"></i> Ruteplanlegger</h2>
+              <p class="tab-description">Finn effektive ruteklynger basert på geografisk nærhet og kontrollbehov</p>
             </div>
-
-            <!-- Mangler e-post -->
-            <div class="missing-section">
-              <div class="missing-header" data-toggle="missing-email">
-                <i class="fas fa-envelope-open"></i>
-                <span>Mangler e-post</span>
-                <span class="missing-count" id="missingEmailCount">0</span>
-                <i class="fas fa-chevron-down toggle-icon"></i>
+            <div id="plannerContainer" class="planner-container">
+              <div class="planner-settings-panel">
+                <h3><i class="fas fa-sliders-h"></i> Innstillinger</h3>
+                <div class="setting-row">
+                  <label for="smartDaysAhead">Dager fremover</label>
+                  <input type="range" id="smartDaysAhead" min="7" max="180" value="60">
+                  <span class="setting-value" id="smartDaysAheadValue">60 dager</span>
+                </div>
+                <div class="setting-row">
+                  <label for="smartMaxCustomers">Maks kunder</label>
+                  <input type="range" id="smartMaxCustomers" min="3" max="30" value="15">
+                  <span class="setting-value" id="smartMaxCustomersValue">15 kunder</span>
+                </div>
+                <div class="setting-row">
+                  <label for="smartClusterRadius">Klyngeradius</label>
+                  <input type="range" id="smartClusterRadius" min="1" max="20" value="5">
+                  <span class="setting-value" id="smartClusterRadiusValue">5 km</span>
+                </div>
+                <button class="btn btn-primary" id="refreshSmartRecommendationsBtn">
+                  <i class="fas fa-sync-alt"></i> Oppdater anbefalinger
+                </button>
               </div>
-              <div class="missing-list collapsed" id="missingEmailList">
-                <!-- Genereres av JavaScript -->
-              </div>
-            </div>
-
-            <!-- Mangler koordinater -->
-            <div class="missing-section">
-              <div class="missing-header" data-toggle="missing-coords">
-                <i class="fas fa-map-marker-alt"></i>
-                <span>Mangler koordinater</span>
-                <span class="missing-count" id="missingCoordsCount">0</span>
-                <i class="fas fa-chevron-down toggle-icon"></i>
-              </div>
-              <div class="missing-list collapsed" id="missingCoordsList">
-                <!-- Genereres av JavaScript -->
-              </div>
-            </div>
-
-            <!-- Mangler neste kontroll -->
-            <div class="missing-section">
-              <div class="missing-header" data-toggle="missing-control">
-                <i class="fas fa-calendar-times"></i>
-                <span>Mangler neste kontroll</span>
-                <span class="missing-count" id="missingControlCount">0</span>
-                <i class="fas fa-chevron-down toggle-icon"></i>
-              </div>
-              <div class="missing-list collapsed" id="missingControlList">
-                <!-- Genereres av JavaScript -->
+              <div class="planner-recommendations">
+                <h3><i class="fas fa-lightbulb"></i> Anbefalte ruteklynger</h3>
+                <div id="smartRecommendations" class="recommendations-grid"></div>
               </div>
             </div>
           </div>
@@ -1370,10 +1310,10 @@
               </div>
 
               <div class="form-actions">
-                <button class="btn btn-primary btn-small" id="saveCompanyAddressBtn" onclick="saveCompanyAddress()">
+                <button class="btn btn-primary btn-small" id="saveCompanyAddressBtn" data-action="saveCompanyAddress">
                   <i class="fas fa-save"></i> Lagre adresse
                 </button>
-                <button class="btn btn-danger btn-small" id="clearCompanyAddressBtn" onclick="clearCompanyAddress()" style="display: none;">
+                <button class="btn btn-danger btn-small" id="clearCompanyAddressBtn" data-action="clearCompanyAddress" style="display: none;">
                   <i class="fas fa-times"></i> Fjern adresse
                 </button>
               </div>
@@ -1793,7 +1733,7 @@
             <div class="category-filter">
               <div class="category-filter-title">
                 Kategori
-                <button class="category-manage-btn" id="manageCategoriesBtn" title="Administrer kategorier" onclick="openCategoryListModal()">
+                <button class="category-manage-btn" id="manageCategoriesBtn" title="Administrer kategorier" data-action="openCategoryListModal">
                   <i class="fas fa-cog"></i>
                 </button>
               </div>
@@ -1888,6 +1828,44 @@
   </div>
 
   </div><!-- End of appView -->
+
+  <!-- ========== MOBILE FIELD VIEW (replaces full app on mobile) ========== -->
+  <div id="mobileFieldView" style="display: none;">
+    <!-- Tab views -->
+    <div class="mf-tab-view" id="mfWeekplanView" style="display: flex;">
+      <div class="mf-weekplan-inline" id="mfWeekplanInline">
+        <!-- Populated by mobile-weekplan-edit.js -->
+      </div>
+    </div>
+
+    <div class="mf-tab-view" id="mfMapView" style="display: none;">
+      <div class="mf-map-container" id="mfMapContainer">
+        <!-- Map gets moved here when active -->
+      </div>
+    </div>
+
+    <div class="mf-tab-view" id="mfAccountView" style="display: none;">
+      <div class="mf-account-content" id="mfAccountContent">
+        <!-- Populated by mobile-field.js -->
+      </div>
+    </div>
+
+    <!-- Bottom navigation bar -->
+    <nav class="mf-bottom-bar" role="tablist">
+      <button class="mf-tab-btn active" data-tab="ukeplan" data-action="mfSwitchTab" data-args='["ukeplan"]' role="tab" aria-label="Ukeplan">
+        <i class="fas fa-calendar-week" aria-hidden="true"></i>
+        <span>Ukeplan</span>
+      </button>
+      <button class="mf-tab-btn" data-tab="map" data-action="mfSwitchTab" data-args='["map"]' role="tab" aria-label="Kart">
+        <i class="fas fa-map" aria-hidden="true"></i>
+        <span>Kart</span>
+      </button>
+      <button class="mf-tab-btn" data-tab="account" data-action="mfSwitchTab" data-args='["account"]' role="tab" aria-label="Konto">
+        <i class="fas fa-user-circle" aria-hidden="true"></i>
+        <span>Konto</span>
+      </button>
+    </nav>
+  </div><!-- End of mobileFieldView -->
 
   <!-- ========== MODAL PORTAL (outside appView stacking context for correct z-index) ========== -->
   <div id="modalPortal">
@@ -2322,8 +2300,8 @@
         </div>
         <div class="form-group" id="passwordGroup">
           <label for="memberPassord">Passord *</label>
-          <input type="password" id="memberPassord" placeholder="Minst 8 tegn" minlength="8">
-          <small class="form-hint">Minst 8 tegn. La stå tom for å beholde eksisterende passord ved redigering.</small>
+          <input type="password" id="memberPassord" placeholder="Min. 10 tegn, stor/liten, tall, spesialtegn" minlength="10">
+          <small class="form-hint" id="memberPassordHint">Min. 10 tegn, stor og liten bokstav, tall og spesialtegn (!@#$%&amp;...).</small>
         </div>
         <div class="form-group">
           <label for="memberTelefon">Telefon</label>
@@ -2332,7 +2310,9 @@
         <div class="form-group">
           <label for="memberRolle">Rolle</label>
           <select id="memberRolle">
-            <option value="medlem">Medlem</option>
+            <option value="leser">Leser</option>
+            <option value="kontor">Kontor</option>
+            <option value="teammedlem">Teammedlem</option>
             <option value="admin">Administrator</option>
           </select>
         </div>
@@ -2422,13 +2402,13 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="categoryListModalTitle"><i class="fas fa-tags" aria-hidden="true"></i> Kategorier</h2>
-        <button class="modal-close" aria-label="Lukk" onclick="document.getElementById('categoryListModal').classList.add('hidden')">&times;</button>
+        <button class="modal-close" aria-label="Lukk" data-action="hideElement" data-target="categoryListModal">&times;</button>
       </div>
       <div class="modal-body">
         <div id="categoryListItems">
           <!-- Populated dynamically -->
         </div>
-        <button class="btn btn-primary" style="width: 100%; margin-top: 12px;" onclick="document.getElementById('categoryListModal').classList.add('hidden'); openCategoryModal();">
+        <button class="btn btn-primary" style="width: 100%; margin-top: 12px;" data-action="openCategoryModalFromList">
           <i class="fas fa-plus"></i> Ny kategori
         </button>
       </div>
@@ -2440,9 +2420,9 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="categoryModalTitle">Ny kategori</h2>
-        <button class="modal-close" id="closeCategoryModal" aria-label="Lukk" onclick="document.getElementById('categoryModal').classList.add('hidden')">&times;</button>
+        <button class="modal-close" id="closeCategoryModal" aria-label="Lukk" data-action="hideElement" data-target="categoryModal">&times;</button>
       </div>
-      <form id="categoryForm" onsubmit="saveCategory(event)">
+      <form id="categoryForm" data-on-submit="saveCategory">
         <input type="hidden" id="categoryId">
         <input type="hidden" id="categorySlug">
         <input type="hidden" id="categoryIcon" value="fa-wrench">
@@ -2455,7 +2435,7 @@
             <label for="categoryColor">Farge</label>
             <div class="color-picker-row">
               <div class="color-preview" id="categoryColorPreview" style="background: #5E81AC;"></div>
-              <input type="color" id="categoryColor" value="#5E81AC" oninput="updateCategoryColorPreview(this.value)">
+              <input type="color" id="categoryColor" value="#5E81AC" data-on-input="updateCategoryColorPreview">
             </div>
           </div>
           <div class="form-group">
@@ -2485,8 +2465,8 @@
           <span class="source-badge" id="categorySourceBadge"></span>
         </div>
         <div class="form-actions">
-          <button type="button" id="deleteCategoryBtn" class="btn btn-danger" style="display: none;" onclick="const id = document.getElementById('categoryId').value; if(id) confirmDeleteCategory(parseInt(id));">Slett</button>
-          <button type="button" id="cancelCategory" class="btn btn-secondary" onclick="document.getElementById('categoryModal').classList.add('hidden')">Avbryt</button>
+          <button type="button" id="deleteCategoryBtn" class="btn btn-danger" style="display: none;" data-action="deleteCategoryFromBtn">Slett</button>
+          <button type="button" id="cancelCategory" class="btn btn-secondary" data-action="hideElement" data-target="categoryModal">Avbryt</button>
           <button type="submit" class="btn btn-primary">Lagre</button>
         </div>
       </form>
@@ -2539,7 +2519,7 @@
   <script src="https://unpkg.com/supercluster@8.0.1/dist/supercluster.min.js"></script>
   <script src="offline-storage.js?v=1"></script>
   <script src="sync-manager.js?v=1"></script>
-  <script src="app.js?v=20260226-ui-cleanup"></script>
+  <script src="app.js?v=20260321a"></script>
   <script>
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {

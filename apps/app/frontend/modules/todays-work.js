@@ -4,28 +4,29 @@
 
 let twCurrentDate = new Date().toISOString().split('T')[0];
 let twRouteData = null;
+let twInitialized = false;
+
+function twHandlePrevDay() {
+  const d = new Date(twCurrentDate);
+  d.setDate(d.getDate() - 1);
+  twCurrentDate = d.toISOString().split('T')[0];
+  loadTodaysWork();
+}
+
+function twHandleNextDay() {
+  const d = new Date(twCurrentDate);
+  d.setDate(d.getDate() + 1);
+  twCurrentDate = d.toISOString().split('T')[0];
+  loadTodaysWork();
+}
 
 function initTodaysWork() {
-  // Show tab if feature is enabled
-  if (hasFeature('todays_work')) {
-    const tab = document.getElementById('todaysWorkTab');
-    if (tab) tab.style.display = '';
-  }
+  if (twInitialized) return;
+  twInitialized = true;
 
   // Date navigation
-  document.getElementById('twPrevDay')?.addEventListener('click', () => {
-    const d = new Date(twCurrentDate);
-    d.setDate(d.getDate() - 1);
-    twCurrentDate = d.toISOString().split('T')[0];
-    loadTodaysWork();
-  });
-
-  document.getElementById('twNextDay')?.addEventListener('click', () => {
-    const d = new Date(twCurrentDate);
-    d.setDate(d.getDate() + 1);
-    twCurrentDate = d.toISOString().split('T')[0];
-    loadTodaysWork();
-  });
+  document.getElementById('twPrevDay')?.addEventListener('click', twHandlePrevDay);
+  document.getElementById('twNextDay')?.addEventListener('click', twHandleNextDay);
 
   // Start route button
   document.getElementById('twStartRouteBtn')?.addEventListener('click', startTodaysRoute);
@@ -36,19 +37,22 @@ async function loadTodaysWork() {
   const today = new Date().toISOString().split('T')[0];
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
-  if (twCurrentDate === today) {
-    dateLabel.textContent = 'I dag';
-  } else if (twCurrentDate === tomorrow) {
-    dateLabel.textContent = 'I morgen';
-  } else {
-    const d = new Date(twCurrentDate);
-    dateLabel.textContent = d.toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' });
+  if (dateLabel) {
+    if (twCurrentDate === today) {
+      dateLabel.textContent = 'I dag';
+    } else if (twCurrentDate === tomorrow) {
+      dateLabel.textContent = 'I morgen';
+    } else {
+      const d = new Date(twCurrentDate);
+      dateLabel.textContent = d.toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' });
+    }
   }
 
   try {
     const csrfToken = getCsrfToken();
     const response = await fetch(`/api/todays-work/my-route?date=${twCurrentDate}`, {
-      headers: { 'X-CSRF-Token': csrfToken }
+      headers: { 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
     });
     if (!response.ok) return;
     const json = await response.json();
@@ -124,6 +128,8 @@ function renderTodaysWork() {
   if (route.total_distanse) {
     document.getElementById('twDistanceStat').style.display = '';
     document.getElementById('twDistance').textContent = (route.total_distanse / 1000).toFixed(1) + ' km';
+  } else {
+    document.getElementById('twDistanceStat').style.display = 'none';
   }
 
   updateTodaysWorkBadge(completed, total);
@@ -162,11 +168,11 @@ function renderTodaysWork() {
         <p class="tw-next-stop-address">${escapeHtml(address)}</p>
         ${nextKunde.telefon ? `<p class="tw-next-stop-phone"><i aria-hidden="true" class="fas fa-phone"></i> ${escapeHtml(nextKunde.telefon)}</p>` : ''}
         <div class="tw-next-stop-actions">
-          <button class="btn btn-primary tw-next-nav-btn" onclick="twNavigateToCustomer(${nextKunde.id})">
+          <button class="btn btn-primary tw-next-nav-btn" data-action="twNavigateToCustomer" data-args='[${nextKunde.id}]'>
             <i aria-hidden="true" class="fas fa-directions"></i> Naviger hit
           </button>
           ${nextKunde.telefon ? `<a href="tel:${escapeHtml(nextKunde.telefon)}" class="btn btn-secondary tw-next-call-btn"><i aria-hidden="true" class="fas fa-phone"></i> Ring</a>` : ''}
-          <button class="btn btn-success tw-next-done-btn" onclick="twMarkVisited(${nextKunde.id})">
+          <button class="btn btn-success tw-next-done-btn" data-action="twMarkVisited" data-args='[${nextKunde.id}]'>
             <i aria-hidden="true" class="fas fa-check"></i> Fullført
           </button>
         </div>
@@ -193,10 +199,10 @@ function renderTodaysWork() {
         </div>
         <div class="tw-stop-actions">
           ${!isVisited && kunde.telefon ? `<a href="tel:${escapeHtml(kunde.telefon)}" class="btn btn-icon btn-small tw-action-call" title="Ring"><i aria-hidden="true" class="fas fa-phone"></i></a>` : ''}
-          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" onclick="twNavigateToCustomer(${kunde.id})" title="Naviger"><i aria-hidden="true" class="fas fa-directions"></i></button>` : ''}
+          ${!isVisited ? `<button class="btn btn-icon btn-small tw-action-nav" data-action="twNavigateToCustomer" data-args='[${kunde.id}]' title="Naviger"><i aria-hidden="true" class="fas fa-directions"></i></button>` : ''}
           ${isVisited
             ? '<span class="tw-visited-check"><i aria-hidden="true" class="fas fa-check-circle"></i></span>'
-            : `<button class="btn btn-icon btn-small tw-action-visit" onclick="twMarkVisited(${kunde.id})" title="Marker besøkt"><i aria-hidden="true" class="fas fa-check"></i></button>`
+            : `<button class="btn btn-icon btn-small tw-action-visit" data-action="twMarkVisited" data-args='[${kunde.id}]' title="Marker besøkt"><i aria-hidden="true" class="fas fa-check"></i></button>`
           }
         </div>
       </div>
@@ -215,7 +221,7 @@ function renderTodaysWork() {
   if (visitedStops.length > 0) {
     html += `
       <div class="tw-visited-section">
-        <button class="tw-visited-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+        <button class="tw-visited-toggle" data-action="toggleParentClass" data-class="expanded">
           <i aria-hidden="true" class="fas fa-check-circle"></i>
           <span>Besøkt (${visitedStops.length})</span>
           <i aria-hidden="true" class="fas fa-chevron-down tw-visited-chevron"></i>
@@ -240,6 +246,16 @@ function updateTodaysWorkBadge(completed, total) {
       badge.style.display = 'none';
     }
   }
+  // Also update the visible desktop tab badge
+  const tabBadge = document.getElementById('teamOverviewBadge');
+  if (tabBadge) {
+    if (total > 0) {
+      tabBadge.textContent = `${completed}/${total}`;
+      tabBadge.style.display = '';
+    } else {
+      tabBadge.style.display = 'none';
+    }
+  }
 }
 
 async function startTodaysRoute() {
@@ -249,7 +265,8 @@ async function startTodaysRoute() {
     const csrfToken = getCsrfToken();
     const response = await fetch(`/api/todays-work/start-route/${twRouteData.id}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include'
     });
     const json = await response.json();
     if (json.success) {
@@ -269,6 +286,7 @@ async function twMarkVisited(kundeId) {
     const response = await fetch(`/api/todays-work/visit/${kundeId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      credentials: 'include',
       body: JSON.stringify({ rute_id: twRouteData.id, completed: true })
     });
     const json = await response.json();
@@ -278,7 +296,7 @@ async function twMarkVisited(kundeId) {
     }
   } catch (err) {
     // Offline: optimistic update + queue for sync
-    if (!navigator.onLine && window.SyncManager) {
+    if (!navigator.onLine && window.SyncManager && twRouteData) {
       // Update local state optimistically
       if (twRouteData.visits) {
         const existing = twRouteData.visits.find(v => v.kunde_id === kundeId);
@@ -288,8 +306,8 @@ async function twMarkVisited(kundeId) {
         } else {
           twRouteData.visits.push({ kunde_id: kundeId, completed: true, visited_at: new Date().toISOString() });
         }
+        twRouteData.completed_count = twRouteData.visits.filter(v => v.completed).length;
       }
-      twRouteData.completed_count = (twRouteData.completed_count || 0) + 1;
       renderTodaysWork();
 
       // Queue for sync
@@ -319,13 +337,13 @@ function twNavigateToCustomer(kundeId) {
 
   const address = [kunde.adresse, kunde.postnummer, kunde.poststed].filter(Boolean).join(', ');
 
-  if (kunde.latitude && kunde.longitude) {
+  if (kunde.lat && kunde.lng) {
     // Use coordinates for precision
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     if (isIOS) {
-      window.open(`maps://maps.apple.com/?daddr=${kunde.latitude},${kunde.longitude}&dirflg=d`);
+      window.open(`maps://maps.apple.com/?daddr=${kunde.lat},${kunde.lng}&dirflg=d`);
     } else {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${kunde.latitude},${kunde.longitude}`);
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${kunde.lat},${kunde.lng}`);
     }
   } else if (address) {
     // Fallback to address

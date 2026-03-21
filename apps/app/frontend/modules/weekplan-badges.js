@@ -17,15 +17,18 @@ function updateWeekPlanBadges() {
 
   // Planned (unsaved) customers from weekly plan
   if (weekPlanState.days) {
+    const globalAssigned = weekPlanState.globalAssignedTo || userName;
     for (const dayKey of weekDayKeys) {
       const dayData = weekPlanState.days[dayKey];
       if (!dayData) continue;
       for (const c of dayData.planned) {
+        const assignedName = c.addedBy || globalAssigned;
+        const assignedInitials = getCreatorDisplay(assignedName, true);
         planMap.set(c.id, {
-          initials: userInitials,
+          initials: assignedInitials,
           day: weekDayLabels[weekDayKeys.indexOf(dayKey)].substring(0, 3),
-          color: colorByName.get(userName) || TEAM_COLORS[0],
-          creator: userName
+          color: colorByName.get(assignedName) || TEAM_COLORS[0],
+          creator: assignedName
         });
       }
     }
@@ -37,7 +40,7 @@ function updateWeekPlanBadges() {
     for (const a of avtaler) {
       if (!weekDates.has(a.dato) || !a.kunde_id) continue;
       if (planMap.has(a.kunde_id)) continue;
-      const creator = a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '';
+      const creator = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
       if (!creator) continue;
       const initials = getCreatorDisplay(creator, true);
       const dayDate = new Date(a.dato + 'T00:00:00');

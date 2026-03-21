@@ -40,12 +40,14 @@ export declare function verifyBackupCode(code: string, hashedCodes: string[], hm
  */
 export declare function generateTOTPUri(secret: string, accountName: string, issuer?: string): string;
 /**
- * Encrypt TOTP secret for storage
+ * Encrypt TOTP secret for storage with per-user salt.
+ * New format (4 parts): perUserSalt:iv:authTag:encrypted
+ * Legacy format (3 parts): iv:authTag:encrypted (uses shared salt)
  */
 export declare function encryptTOTPSecret(secret: string, encryptionKey: string, salt: string): string;
 /**
- * Decrypt TOTP secret from storage
- * Falls back to legacy salt 'totp-salt' for backward compatibility with existing secrets
+ * Decrypt TOTP secret from storage.
+ * Supports both new format (4 parts, per-user salt) and legacy format (3 parts, shared salt).
  */
 export declare function decryptTOTPSecret(encryptedData: string, encryptionKey: string, salt: string): string;
 export interface TOTPSetupData {

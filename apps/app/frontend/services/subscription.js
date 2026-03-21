@@ -24,7 +24,7 @@ function showSubscriptionWarningBanner(message) {
       <i aria-hidden="true" class="fas fa-exclamation-circle"></i>
       <span>${escapeHtml(message)}</span>
     </div>
-    <button onclick="this.parentElement.remove()" style="background:none;border:none;color:white;cursor:pointer;font-size:18px;padding:0 5px;">&times;</button>
+    <button data-action="removeParent" style="background:none;border:none;color:white;cursor:pointer;font-size:18px;padding:0 5px;">&times;</button>
   `;
 
   document.body.prepend(banner);

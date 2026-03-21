@@ -101,7 +101,7 @@ router.get(
  */
 router.post(
   '/sync/:kundeId',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const kundeId = Number.parseInt(req.params.kundeId);
     if (Number.isNaN(kundeId)) throw Errors.badRequest('Ugyldig kunde-ID');
@@ -197,7 +197,7 @@ router.post(
  */
 router.post(
   '/sync-all',
-  requireRole('tekniker'),
+  requireRole('teammedlem'),
   asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!dbService.getIntegrationCredentials) {
       throw Errors.internal('Outlook-integrasjon er ikke konfigurert');
