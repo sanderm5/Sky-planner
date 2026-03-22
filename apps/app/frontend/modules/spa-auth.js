@@ -1,3 +1,8 @@
+// Clean error params from URL (e.g. SSO redirect errors)
+if (window.location.search.includes('error=')) {
+  window.history.replaceState({}, '', window.location.pathname);
+}
+
 // Handle SPA login
 async function handleSpaLogin(e) {
   e.preventDefault();

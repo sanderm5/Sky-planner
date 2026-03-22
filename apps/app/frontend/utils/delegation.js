@@ -39,6 +39,9 @@
     'mfShowCustomerInfo','mfLogout','mfSwitchTab','mfPrevDay','mfNextDay',
     // Mobile chat
     'mfOpenChatConversation','mfSendChatMessage','mfShowChatList','mfShowNewDmView','mfStartDm',
+    // Support widget
+    'toggleSupportWidget','sendSupportWidgetMessage','sendSupportWidgetTopic',
+    'openSupportTicket','supportWidgetBack',
     // Mobile calendar
     'mfCompleteAvtale','mfShowNewAvtaleSheet','mfCloseNewAvtaleSheet','mfSubmitNewAvtale',
     'mfSelectNewAvtaleKunde','mfClearNewAvtaleKunde',

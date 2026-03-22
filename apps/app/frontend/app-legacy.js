@@ -348,6 +348,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize chat system
     initChat();
     initChatEventListeners();
+    initSupportWidget();
 
     // Show address setup banner if no office address is configured
     showAddressBannerIfNeeded();
@@ -449,6 +450,7 @@ async function initializeApp() {
   // Initialize chat system
   initChat();
   initChatEventListeners();
+  initSupportWidget();
 
   // Show address setup banner if no office address is configured
   showAddressBannerIfNeeded();

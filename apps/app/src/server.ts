@@ -67,6 +67,7 @@ import outlookRoutes, { initOutlookRoutes } from './routes/outlook';
 import todaysWorkRoutes, { initTodaysWorkRoutes } from './routes/todays-work';
 import patchNotesRoutes, { initPatchNotesRoutes } from './routes/patch-notes';
 import chatRoutes, { initChatRoutes } from './routes/chat';
+import { initSupportChatRoutes, supportChatUserRouter, supportChatAdminRouter } from './routes/support-chat';
 import ukeplanNotaterRoutes, { initUkeplanNotaterRoutes } from './routes/ukeplan-notater';
 import { csrfTokenMiddleware, csrfProtection, getCsrfTokenHandler } from './middleware/csrf';
 import { maintenanceMiddleware } from './middleware/maintenance';
@@ -130,6 +131,9 @@ async function initializeApp() {
 
   // Initialize chat routes
   initChatRoutes(db as Parameters<typeof initChatRoutes>[0]);
+
+  // Initialize support chat routes
+  initSupportChatRoutes(db as Parameters<typeof initSupportChatRoutes>[0]);
 
   // Initialize ukeplan-notater routes
   initUkeplanNotaterRoutes(db as Parameters<typeof initUkeplanNotaterRoutes>[0]);
@@ -376,6 +380,7 @@ app.use('/api/onboarding', requireTenantAuth, onboardingRoutes);
 // Super admin routes (no tenant auth - super admin can access all orgs)
 // MUST be before catch-all /api routes to avoid requireTenantAuth intercepting
 app.use('/api/super-admin', superAdminRoutes);
+app.use('/api/super-admin/support-chat', supportChatAdminRouter);
 
 // ===== UNAUTHENTICATED API ROUTES (must be before catch-all /api routes) =====
 app.use('/api', configRoutes);  // Routes include /config and /routes/* (config is intentionally unauthenticated)
@@ -403,6 +408,7 @@ app.use('/api/patch-notes', requireTenantAuth, patchNotesRoutes);
 
 // Chat / messaging
 app.use('/api/chat', requireTenantAuth, requireActiveSubscription, chatRoutes);
+app.use('/api/support-chat', requireTenantAuth, requireActiveSubscription, supportChatUserRouter);
 
 // Ukeplan notater (weekly plan notes/huskeliste)
 app.use('/api/ukeplan-notater', requireTenantAuth, requireActiveSubscription, ukeplanNotaterRoutes);

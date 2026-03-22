@@ -7,7 +7,7 @@
 import { Router, Response } from 'express';
 import { requireTenantAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { broadcast, sendToUser } from '../services/websocket';
+import { broadcast, sendToUser, broadcastToSuperAdmin } from '../services/websocket';
 import type { AuthenticatedRequest, ApiResponse, ChatConversation, ChatMessage } from '../types';
 
 const router: Router = Router();
@@ -159,6 +159,18 @@ router.post(
           });
         }
       }
+    } else if (conversation?.type === 'support') {
+      // Support: broadcast to all in org except sender + notify superadmin
+      broadcast(req.organizationId!, 'chat_message', {
+        ...message,
+        conversationType: 'support',
+      }, req.user!.userId);
+      // Also notify superadmin via dedicated channel
+      broadcastToSuperAdmin('support_chat_message', {
+        ...message,
+        conversationType: 'support',
+        organizationId: req.organizationId,
+      });
     }
 
     // Auto-mark as read for sender

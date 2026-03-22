@@ -395,8 +395,11 @@ export interface CoverageArea {
 export interface ChatConversation {
   id: number;
   organization_id: number;
-  type: 'org' | 'dm';
+  type: 'org' | 'dm' | 'support';
   created_at: string;
+  // Support ticket fields
+  subject?: string;
+  status?: 'open' | 'closed';
   // Joined/computed fields
   last_message?: ChatMessage;
   unread_count?: number;

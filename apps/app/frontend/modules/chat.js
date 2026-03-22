@@ -198,6 +198,14 @@ async function startDmConversation(targetUserId) {
 
 // Handle incoming chat message from WebSocket
 function handleIncomingChatMessage(data) {
+  // Route support messages to the widget
+  if (data.conversationType === 'support') {
+    if (typeof handleSupportWidgetMessage === 'function') {
+      handleSupportWidgetMessage(data);
+    }
+    return;
+  }
+
   const convId = data.conversation_id;
   // Add to local messages if we have this conversation loaded
   if (chatState.messages[convId]) {

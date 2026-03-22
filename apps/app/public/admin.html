@@ -82,6 +82,40 @@
         </div>
       </section>
 
+      <!-- Support Chat section -->
+      <section class="support-chat-section" id="supportChatSection">
+        <div class="section-header">
+          <h2><i class="fas fa-headset"></i> Support Chat <span class="support-total-badge" id="supportTotalUnread" style="display:none;">0</span></h2>
+          <div class="section-actions">
+            <button class="btn-sm btn-secondary" id="supportRefreshBtn">
+              <i class="fas fa-sync-alt"></i> Oppdater
+            </button>
+          </div>
+        </div>
+        <div class="support-chat-layout">
+          <div class="support-conv-list" id="supportConvList">
+            <div class="support-empty">
+              <i class="fas fa-comments" aria-hidden="true"></i>
+              <p>Ingen support-samtaler ennå</p>
+            </div>
+          </div>
+          <div class="support-msg-area" id="supportMsgArea" style="display:none;">
+            <div class="support-msg-header">
+              <button class="support-back-btn" id="supportBackBtn"><i class="fas fa-arrow-left"></i></button>
+              <span class="support-msg-org-name" id="supportMsgOrgName">-</span>
+              <button class="support-close-ticket-btn" id="supportCloseTicketBtn" title="Lukk saken">
+                <i class="fas fa-check-circle"></i> Lukk sak
+              </button>
+            </div>
+            <div class="support-messages" id="supportMessages"></div>
+            <div class="support-input-area">
+              <input type="text" id="supportChatInput" placeholder="Skriv en melding..." maxlength="2000" autocomplete="off">
+              <button class="support-send-btn" id="supportSendBtn"><i class="fas fa-paper-plane"></i></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Dashboard Charts section -->
       <section class="charts-section">
         <div class="charts-row">

@@ -305,7 +305,8 @@ function applyBranding() {
 
   // Apply organization name to sidebar H1 (fallback to app name, then Sky Planner)
   if (headerAppName) {
-    headerAppName.textContent = appConfig.companyName || appConfig.appName || 'Sky Planner';
+    const name = appConfig.companyName || appConfig.appName || 'Sky Planner';
+    headerAppName.innerHTML = `${escapeHtml(name)} <span class="beta-badge">Beta</span>`;
   }
 
   // Apply industry name as subtitle in header

@@ -16,6 +16,7 @@ interface AuthenticatedSocket extends WebSocket {
   userName: string;
   organizationId: number;
   sessionId: string;
+  isSuperAdmin?: boolean;
 }
 
 // Presence claim info
@@ -28,6 +29,9 @@ interface PresenceClaim {
 
 // Tenant-isolated connections: orgId → Set of authenticated sockets
 const connections = new Map<number, Set<AuthenticatedSocket>>();
+
+// Super admin sockets (for cross-org support chat notifications)
+const superAdminSockets = new Set<AuthenticatedSocket>();
 
 // In-memory presence: orgId → Map<kundeId, PresenceClaim>
 const presenceClaims = new Map<number, Map<number, PresenceClaim>>();
@@ -53,7 +57,7 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 /**
  * Authenticate WebSocket upgrade request via cookie
  */
-async function authenticateUpgrade(req: IncomingMessage): Promise<{ userId: number; organizationId: number; userName: string } | null> {
+async function authenticateUpgrade(req: IncomingMessage): Promise<{ userId: number; organizationId: number; userName: string; isSuperAdmin?: boolean } | null> {
   const cookieHeader = req.headers.cookie;
   if (!cookieHeader) return null;
 
@@ -68,10 +72,24 @@ async function authenticateUpgrade(req: IncomingMessage): Promise<{ userId: numb
   const blacklisted = await isTokenBlacklisted(tokenId);
   if (blacklisted) return null;
 
+  // Check super admin status for bruker-type users
+  let isSuperAdmin = false;
+  if (decoded.type === 'bruker') {
+    try {
+      const { getDatabase } = await import('./database');
+      const db = await getDatabase();
+      const bruker = await db.getBrukerById(decoded.userId);
+      isSuperAdmin = !!bruker?.is_super_admin;
+    } catch {
+      // Non-critical — default to false
+    }
+  }
+
   return {
     userId: decoded.userId,
     organizationId: decoded.organizationId,
     userName: decoded.epost?.split('@')[0] || `Bruker ${decoded.userId}`,
+    isSuperAdmin,
   };
 }
 
@@ -114,6 +132,7 @@ export function initWebSocketServer(server: Server): void {
         authWs.userName = auth.userName;
         authWs.organizationId = auth.organizationId;
         authWs.sessionId = `${auth.userId}-${Date.now()}`;
+        authWs.isSuperAdmin = auth.isSuperAdmin;
 
         wss!.emit('connection', authWs, req);
       });
@@ -132,9 +151,15 @@ export function initWebSocketServer(server: Server): void {
     }
     connections.get(ws.organizationId)!.add(ws);
 
+    // Track super admin sockets for cross-org support chat
+    if (ws.isSuperAdmin) {
+      superAdminSockets.add(ws);
+    }
+
     logger.info({
       userId: ws.userId,
       organizationId: ws.organizationId,
+      isSuperAdmin: ws.isSuperAdmin,
     }, 'WebSocket client connected');
 
     // Send welcome message with current presence state
@@ -184,6 +209,7 @@ export function initWebSocketServer(server: Server): void {
         }
       }
       messageCounters.delete(ws);
+      superAdminSockets.delete(ws);
 
       // Auto-release all presence claims by this user
       releaseAllClaims(ws.organizationId, ws.userId);
@@ -426,6 +452,31 @@ export function sendToUser(
 }
 
 /**
+ * Broadcast a message to all connected super admin sockets
+ * Used for support chat notifications across all organizations
+ */
+export function broadcastToSuperAdmin(
+  type: string,
+  data: unknown,
+  excludeUserId?: number,
+): void {
+  if (superAdminSockets.size === 0) return;
+
+  const message = JSON.stringify({ type, data });
+
+  for (const ws of superAdminSockets) {
+    if (excludeUserId && ws.userId === excludeUserId) continue;
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(message);
+      } catch {
+        // Socket closed between check and send
+      }
+    }
+  }
+}
+
+/**
  * Get all presence claims for an organization
  */
 export function getPresenceForOrg(organizationId: number): Record<string, PresenceClaim> {
@@ -487,6 +538,7 @@ export function shutdownWebSocket(): void {
     }
     connections.clear();
     presenceClaims.clear();
+    superAdminSockets.clear();
     wss.close();
     wss = null;
     logger.info('WebSocket server shut down');

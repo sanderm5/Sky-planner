@@ -1008,6 +1008,361 @@ export async function getChatTotalUnread(ctx: DatabaseContext, userId: number, o
   return counts.reduce((sum, c) => sum + c.count, 0);
 }
 
+// ============ SUPPORT CHAT (TICKET SYSTEM) ============
+
+/**
+ * Create a new support ticket for an org.
+ */
+export async function createSupportTicket(ctx: DatabaseContext, organizationId: number, subject: string): Promise<{ id: number }> {
+  ctx.validateTenantContext(organizationId, 'createSupportTicket');
+
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+    const { data, error } = await supabase
+      .from('chat_conversations')
+      .insert({ organization_id: organizationId, type: 'support', subject, status: 'open' })
+      .select('id')
+      .single();
+    if (error) throw new Error(`Failed to create support ticket: ${error.message}`);
+    return { id: data.id };
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+  const result = ctx.sqlite.prepare(
+    'INSERT INTO chat_conversations (organization_id, type, subject, status) VALUES (?, ?, ?, ?)'
+  ).run(organizationId, 'support', subject, 'open');
+  return { id: Number(result.lastInsertRowid) };
+}
+
+/**
+ * Get open support tickets for an org (user-facing).
+ */
+export async function getOrgSupportTickets(ctx: DatabaseContext, organizationId: number): Promise<import('../../types').ChatConversation[]> {
+  ctx.validateTenantContext(organizationId, 'getOrgSupportTickets');
+
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+    const { data: convs } = await supabase
+      .from('chat_conversations')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('type', 'support')
+      .order('created_at', { ascending: false });
+    return (convs || []) as import('../../types').ChatConversation[];
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+  return ctx.sqlite.prepare(
+    'SELECT * FROM chat_conversations WHERE organization_id = ? AND type = ? ORDER BY created_at DESC'
+  ).all(organizationId, 'support') as import('../../types').ChatConversation[];
+}
+
+/**
+ * Close a support ticket (set status = 'closed').
+ */
+export async function closeSupportTicket(ctx: DatabaseContext, conversationId: number): Promise<void> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+    await supabase
+      .from('chat_conversations')
+      .update({ status: 'closed' })
+      .eq('id', conversationId)
+      .eq('type', 'support');
+    return;
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+  ctx.sqlite.prepare(
+    'UPDATE chat_conversations SET status = ? WHERE id = ? AND type = ?'
+  ).run('closed', conversationId, 'support');
+}
+
+/**
+ * Get all support tickets across all orgs (for superadmin dashboard).
+ * No tenant validation — superadmin operates cross-org via service_role.
+ */
+export async function getAllSupportConversations(ctx: DatabaseContext, adminUserId: number): Promise<Array<{
+  id: number;
+  organization_id: number;
+  organization_name: string;
+  subject?: string;
+  status?: string;
+  last_message?: import('../../types').ChatMessage;
+  unread_count: number;
+  created_at: string;
+}>> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+
+    const { data: convs } = await supabase
+      .from('chat_conversations')
+      .select('id, organization_id, subject, status, created_at')
+      .eq('type', 'support')
+      .order('created_at', { ascending: false });
+
+    if (!convs || convs.length === 0) return [];
+
+    const orgIds = [...new Set(convs.map((c: { organization_id: number }) => c.organization_id))];
+    const { data: orgs } = await supabase
+      .from('organizations')
+      .select('id, navn')
+      .in('id', orgIds);
+    const orgMap = new Map((orgs || []).map((o: { id: number; navn: string }) => [o.id, o.navn]));
+
+    const result = await Promise.all(convs.map(async (conv: { id: number; organization_id: number; subject?: string; status?: string; created_at: string }) => {
+      const [lastMsgRes, readStatusRes] = await Promise.all([
+        supabase
+          .from('chat_messages')
+          .select('*')
+          .eq('conversation_id', conv.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from('chat_read_status')
+          .select('last_read_message_id')
+          .eq('user_id', adminUserId)
+          .eq('conversation_id', conv.id)
+          .maybeSingle(),
+      ]);
+
+      const lastReadId = readStatusRes.data?.last_read_message_id ?? 0;
+      const { count: unreadCount } = await supabase
+        .from('chat_messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('conversation_id', conv.id)
+        .gt('id', lastReadId)
+        .neq('sender_id', adminUserId);
+
+      return {
+        id: conv.id,
+        organization_id: conv.organization_id,
+        organization_name: orgMap.get(conv.organization_id) || `Org ${conv.organization_id}`,
+        subject: conv.subject,
+        status: conv.status,
+        last_message: lastMsgRes.data || undefined,
+        unread_count: unreadCount ?? 0,
+        created_at: conv.created_at,
+      };
+    }));
+
+    // Open first, then by last message time
+    result.sort((a, b) => {
+      if (a.status === 'open' && b.status !== 'open') return -1;
+      if (a.status !== 'open' && b.status === 'open') return 1;
+      const aTime = a.last_message?.created_at || a.created_at;
+      const bTime = b.last_message?.created_at || b.created_at;
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
+    });
+
+    return result;
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+
+  const convs = ctx.sqlite.prepare(
+    'SELECT * FROM chat_conversations WHERE type = ? ORDER BY created_at DESC'
+  ).all('support') as Array<{ id: number; organization_id: number; subject?: string; status?: string; created_at: string }>;
+
+  const result = convs.map(conv => {
+    const org = ctx.sqlite!.prepare('SELECT navn FROM organizations WHERE id = ?').get(conv.organization_id) as { navn: string } | undefined;
+    const lastMsg = ctx.sqlite!.prepare(
+      'SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).get(conv.id) as import('../../types').ChatMessage | undefined;
+    const readStatus = ctx.sqlite!.prepare(
+      'SELECT last_read_message_id FROM chat_read_status WHERE user_id = ? AND conversation_id = ?'
+    ).get(adminUserId, conv.id) as { last_read_message_id: number } | undefined;
+    const lastReadId = readStatus?.last_read_message_id ?? 0;
+    const unreadRow = ctx.sqlite!.prepare(
+      'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = ? AND id > ? AND sender_id != ?'
+    ).get(conv.id, lastReadId, adminUserId) as { count: number };
+
+    return {
+      id: conv.id,
+      organization_id: conv.organization_id,
+      organization_name: org?.navn || `Org ${conv.organization_id}`,
+      subject: conv.subject,
+      status: conv.status,
+      last_message: lastMsg,
+      unread_count: unreadRow.count,
+      created_at: conv.created_at,
+    };
+  });
+
+  result.sort((a, b) => {
+    if (a.status === 'open' && b.status !== 'open') return -1;
+    if (a.status !== 'open' && b.status === 'open') return 1;
+    const aTime = a.last_message?.created_at || a.created_at;
+    const bTime = b.last_message?.created_at || b.created_at;
+    return new Date(bTime).getTime() - new Date(aTime).getTime();
+  });
+
+  return result;
+}
+
+/**
+ * Get support chat messages for superadmin (no tenant validation).
+ */
+export async function getSupportChatMessages(
+  ctx: DatabaseContext,
+  conversationId: number,
+  limit: number = 50,
+  before?: number
+): Promise<import('../../types').ChatMessage[]> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+
+    let query = supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('id', { ascending: false })
+      .limit(limit);
+
+    if (before) {
+      query = query.lt('id', before);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error(`Failed to fetch support messages: ${error.message}`);
+    return (data || []).reverse() as import('../../types').ChatMessage[];
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+
+  const beforeClause = before ? 'AND id < ?' : '';
+  const params = before ? [conversationId, before, limit] : [conversationId, limit];
+
+  const messages = ctx.sqlite.prepare(
+    `SELECT * FROM chat_messages WHERE conversation_id = ? ${beforeClause} ORDER BY id DESC LIMIT ?`
+  ).all(...params) as import('../../types').ChatMessage[];
+
+  return messages.reverse();
+}
+
+/**
+ * Create support chat message as superadmin (no tenant validation).
+ */
+export async function createSupportChatMessage(
+  ctx: DatabaseContext,
+  conversationId: number,
+  senderId: number,
+  senderName: string,
+  content: string
+): Promise<import('../../types').ChatMessage> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert({
+        conversation_id: conversationId,
+        sender_id: senderId,
+        sender_name: senderName,
+        content,
+      })
+      .select()
+      .single();
+    if (error) throw new Error(`Failed to create support message: ${error.message}`);
+    return data as import('../../types').ChatMessage;
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+
+  const now = new Date().toISOString();
+  const result = ctx.sqlite.prepare(
+    'INSERT INTO chat_messages (conversation_id, sender_id, sender_name, content, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(conversationId, senderId, senderName, content, now);
+
+  return {
+    id: Number(result.lastInsertRowid),
+    conversation_id: conversationId,
+    sender_id: senderId,
+    sender_name: senderName,
+    content,
+    created_at: now,
+  };
+}
+
+/**
+ * Get the organization_id for a support conversation (for superadmin broadcast).
+ */
+export async function getSupportConversationOrgId(ctx: DatabaseContext, conversationId: number): Promise<number | null> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+    const { data } = await supabase
+      .from('chat_conversations')
+      .select('organization_id')
+      .eq('id', conversationId)
+      .eq('type', 'support')
+      .maybeSingle();
+    return data?.organization_id ?? null;
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+  const row = ctx.sqlite.prepare(
+    'SELECT organization_id FROM chat_conversations WHERE id = ? AND type = ?'
+  ).get(conversationId, 'support') as { organization_id: number } | undefined;
+  return row?.organization_id ?? null;
+}
+
+/**
+ * Get total unread support messages for superadmin across all orgs.
+ */
+export async function getSupportTotalUnread(ctx: DatabaseContext, adminUserId: number): Promise<number> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+
+    const { data: convs } = await supabase
+      .from('chat_conversations')
+      .select('id')
+      .eq('type', 'support');
+
+    if (!convs || convs.length === 0) return 0;
+
+    let total = 0;
+    for (const conv of convs) {
+      const readStatus = await supabase
+        .from('chat_read_status')
+        .select('last_read_message_id')
+        .eq('user_id', adminUserId)
+        .eq('conversation_id', conv.id)
+        .maybeSingle();
+      const lastReadId = readStatus.data?.last_read_message_id ?? 0;
+
+      const { count } = await supabase
+        .from('chat_messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('conversation_id', conv.id)
+        .gt('id', lastReadId)
+        .neq('sender_id', adminUserId);
+
+      total += count ?? 0;
+    }
+    return total;
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+
+  const convs = ctx.sqlite.prepare(
+    'SELECT id FROM chat_conversations WHERE type = ?'
+  ).all('support') as { id: number }[];
+
+  let total = 0;
+  for (const conv of convs) {
+    const readStatus = ctx.sqlite.prepare(
+      'SELECT last_read_message_id FROM chat_read_status WHERE user_id = ? AND conversation_id = ?'
+    ).get(adminUserId, conv.id) as { last_read_message_id: number } | undefined;
+    const lastReadId = readStatus?.last_read_message_id ?? 0;
+
+    const row = ctx.sqlite.prepare(
+      'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = ? AND id > ? AND sender_id != ?'
+    ).get(conv.id, lastReadId, adminUserId) as { count: number };
+    total += row.count;
+  }
+  return total;
+}
+
 // ============ KONTAKTLOGG ============
 
 export async function getKontaktloggByKunde(ctx: DatabaseContext, kundeId: number, organizationId: number): Promise<Kontaktlogg[]> {

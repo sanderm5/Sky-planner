@@ -41,6 +41,7 @@ const SOURCE_FILES = [
   'frontend/modules/service-type-registry.js',
   'frontend/modules/smart-route-engine.js',
   'frontend/modules/chat.js',
+  'frontend/modules/support-widget.js',
   'frontend/modules/todays-work.js',
   'frontend/modules/mobile-visit-form.js',
   'frontend/modules/mobile-calendar.js',

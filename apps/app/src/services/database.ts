@@ -2548,6 +2548,44 @@ class DatabaseService implements DatabaseContext {
     return communicationQueries.getChatTotalUnread(this, userId, organizationId);
   }
 
+  // ============ Support Chat (delegated to database/communication-queries.ts) ============
+
+  async createSupportTicket(organizationId: number, subject: string): Promise<{ id: number }> {
+    return communicationQueries.createSupportTicket(this, organizationId, subject);
+  }
+
+  async getOrgSupportTickets(organizationId: number): Promise<import('../types').ChatConversation[]> {
+    return communicationQueries.getOrgSupportTickets(this, organizationId);
+  }
+
+  async closeSupportTicket(conversationId: number): Promise<void> {
+    return communicationQueries.closeSupportTicket(this, conversationId);
+  }
+
+  async getAllSupportConversations(adminUserId: number): Promise<Array<{
+    id: number; organization_id: number; organization_name: string;
+    subject?: string; status?: string;
+    last_message?: import('../types').ChatMessage; unread_count: number; created_at: string;
+  }>> {
+    return communicationQueries.getAllSupportConversations(this, adminUserId);
+  }
+
+  async getSupportChatMessages(conversationId: number, limit?: number, before?: number): Promise<import('../types').ChatMessage[]> {
+    return communicationQueries.getSupportChatMessages(this, conversationId, limit, before);
+  }
+
+  async createSupportChatMessage(conversationId: number, senderId: number, senderName: string, content: string): Promise<import('../types').ChatMessage> {
+    return communicationQueries.createSupportChatMessage(this, conversationId, senderId, senderName, content);
+  }
+
+  async getSupportConversationOrgId(conversationId: number): Promise<number | null> {
+    return communicationQueries.getSupportConversationOrgId(this, conversationId);
+  }
+
+  async getSupportTotalUnread(adminUserId: number): Promise<number> {
+    return communicationQueries.getSupportTotalUnread(this, adminUserId);
+  }
+
   // ============ Coverage Areas (delegated to database/org-setup-queries.ts) ============
 
   async getCoverageAreas(organizationId: number): Promise<import('../types').CoverageArea[]> {

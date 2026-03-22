@@ -73,11 +73,16 @@ async function initAdminPanel() {
       loadActivityChart(),
       loadBillingOverview(),
       loadSentryStatus(),
-      loadSystemMonitor()
+      loadSystemMonitor(),
+      loadSupportConversations()
     ]);
 
     // Start system monitor auto-refresh
     startSystemMonitorAutoRefresh();
+
+    // Setup support chat
+    setupSupportChatListeners();
+    initSupportWebSocket();
 
   } catch (error) {
     console.error('Failed to initialize admin panel:', error);
@@ -1372,6 +1377,9 @@ async function handleLogout() {
     console.error('Logout request failed:', error);
   }
 
+  // Close support chat WebSocket
+  closeSupportWebSocket();
+
   // Clear UI state (auth cookie is cleared by server)
   localStorage.removeItem('isImpersonating');
   localStorage.removeItem('impersonatingOrgId');
@@ -2111,6 +2119,369 @@ function toggleSystemMonitorAutoRefresh(e) {
   } else {
     stopSystemMonitorAutoRefresh();
   }
+}
+
+// ========================================
+// SUPPORT CHAT
+// ========================================
+
+const SUPPORT_API = '/api/super-admin/support-chat';
+let supportConversations = [];
+let activeSupportConvId = null;
+let activeSupportOrgName = null;
+let supportMessages = [];
+let supportWs = null;
+let supportWsReconnectTimer = null;
+
+async function loadSupportConversations() {
+  try {
+    const res = await fetchWithAuth(`${SUPPORT_API}/conversations`);
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.success && result.data) {
+      supportConversations = result.data;
+      renderSupportConversations();
+      updateSupportTotalBadge();
+    }
+  } catch (e) {
+    console.error('Failed to load support conversations:', e);
+  }
+}
+
+function renderSupportConversations() {
+  const container = document.getElementById('supportConvList');
+  if (!container) return;
+
+  if (supportConversations.length === 0) {
+    container.innerHTML = `
+      <div class="support-empty">
+        <i class="fas fa-comments" aria-hidden="true"></i>
+        <p>Ingen support-samtaler ennå</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = supportConversations.map(conv => {
+    const preview = conv.last_message
+      ? escapeHtmlAdmin(conv.last_message.content.substring(0, 60))
+      : 'Ingen meldinger ennå';
+    const time = conv.last_message ? formatSupportTime(conv.last_message.created_at) : '';
+    const unread = conv.unread_count || 0;
+    const isClosed = conv.status === 'closed';
+    const statusBadge = isClosed
+      ? '<span class="support-status-badge closed">Lukket</span>'
+      : '<span class="support-status-badge open">Åpen</span>';
+
+    return `
+      <div class="support-conv-item ${unread > 0 ? 'unread' : ''} ${activeSupportConvId === conv.id ? 'active' : ''} ${isClosed ? 'closed' : ''}"
+           data-conv-id="${conv.id}" data-org-name="${escapeHtmlAdmin(conv.organization_name)}">
+        <div class="support-conv-icon"><i class="fas fa-building" aria-hidden="true"></i></div>
+        <div class="support-conv-info">
+          <div class="support-conv-name">${escapeHtmlAdmin(conv.organization_name)} <span class="support-ticket-id">#${conv.id}</span></div>
+          <div class="support-conv-subject">${escapeHtmlAdmin(conv.subject || '')} ${statusBadge}</div>
+          <div class="support-conv-preview">${preview}</div>
+        </div>
+        <div class="support-conv-meta">
+          <span class="support-conv-time">${time}</span>
+          ${unread > 0 ? `<span class="support-conv-unread">${unread}</span>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  // Click handlers
+  container.querySelectorAll('.support-conv-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const convId = parseInt(item.dataset.convId, 10);
+      const orgName = item.dataset.orgName;
+      openSupportConversation(convId, orgName);
+    });
+  });
+}
+
+async function openSupportConversation(convId, orgName) {
+  activeSupportConvId = convId;
+  activeSupportOrgName = orgName;
+
+  const conv = supportConversations.find(c => c.id === convId);
+  const isClosed = conv?.status === 'closed';
+
+  // Update header
+  const nameEl = document.getElementById('supportMsgOrgName');
+  if (nameEl) nameEl.innerHTML = `${escapeHtmlAdmin(orgName)} <span class="support-ticket-id">#${convId}</span>` +
+    (conv?.subject ? ` — ${escapeHtmlAdmin(conv.subject)}` : '');
+
+  // Show/hide close button and input
+  const closeBtn = document.getElementById('supportCloseTicketBtn');
+  if (closeBtn) closeBtn.style.display = isClosed ? 'none' : 'inline-flex';
+  const inputArea = document.querySelector('#supportMsgArea .support-input-area');
+  if (inputArea) inputArea.style.display = isClosed ? 'none' : 'flex';
+
+  // Show message area
+  document.getElementById('supportMsgArea').style.display = 'flex';
+
+  // Highlight active in list
+  renderSupportConversations();
+
+  // Load messages
+  await loadSupportMessages(convId);
+  scrollSupportToBottom();
+
+  // Mark as read
+  await markSupportAsRead(convId);
+
+  // Focus input
+  if (!isClosed) {
+    const input = document.getElementById('supportChatInput');
+    if (input) input.focus();
+  }
+}
+
+async function closeSupportTicket() {
+  if (!activeSupportConvId) return;
+  if (!confirm('Lukk denne saken?')) return;
+  try {
+    await fetchWithAuth(`${SUPPORT_API}/conversations/${activeSupportConvId}/close`, { method: 'PUT' });
+    const conv = supportConversations.find(c => c.id === activeSupportConvId);
+    if (conv) conv.status = 'closed';
+    // Re-open to refresh UI
+    openSupportConversation(activeSupportConvId, activeSupportOrgName);
+  } catch (e) {
+    console.error('Failed to close ticket:', e);
+  }
+}
+
+async function loadSupportMessages(convId) {
+  try {
+    const res = await fetchWithAuth(`${SUPPORT_API}/conversations/${convId}/messages?limit=50`);
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.success && result.data) {
+      supportMessages = result.data;
+      renderSupportMessages();
+    }
+  } catch (e) {
+    console.error('Failed to load support messages:', e);
+  }
+}
+
+function renderSupportMessages() {
+  const container = document.getElementById('supportMessages');
+  if (!container) return;
+
+  if (supportMessages.length === 0) {
+    container.innerHTML = `
+      <div class="support-empty-msgs">
+        <p>Ingen meldinger ennå. Skriv den første meldingen!</p>
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  let lastDate = '';
+
+  for (const msg of supportMessages) {
+    const msgDate = new Date(msg.created_at).toLocaleDateString('no-NO', { day: 'numeric', month: 'long', year: 'numeric' });
+    if (msgDate !== lastDate) {
+      html += `<div class="support-date-sep">${msgDate}</div>`;
+      lastDate = msgDate;
+    }
+
+    const isSelf = msg.sender_name === 'Efffekt Support';
+    const time = new Date(msg.created_at).toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' });
+
+    html += `
+      <div class="support-msg ${isSelf ? 'self' : 'other'}">
+        ${!isSelf ? `<div class="support-msg-sender">${escapeHtmlAdmin(msg.sender_name)}</div>` : ''}
+        <div class="support-msg-content">${escapeHtmlAdmin(msg.content)}</div>
+        <div class="support-msg-time">${time}</div>
+      </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function scrollSupportToBottom() {
+  const container = document.getElementById('supportMessages');
+  if (container) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+async function sendSupportMessage() {
+  if (!activeSupportConvId) return;
+
+  const input = document.getElementById('supportChatInput');
+  const content = input?.value?.trim();
+  if (!content) return;
+
+  input.value = '';
+
+  try {
+    const res = await fetchWithAuth(`${SUPPORT_API}/conversations/${activeSupportConvId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.success && result.data) {
+      supportMessages.push(result.data);
+      renderSupportMessages();
+      scrollSupportToBottom();
+      // Update conversation list (move to top)
+      loadSupportConversations();
+    }
+  } catch (e) {
+    console.error('Failed to send support message:', e);
+  }
+}
+
+async function markSupportAsRead(convId) {
+  if (supportMessages.length === 0) return;
+  const lastMsg = supportMessages[supportMessages.length - 1];
+  try {
+    await fetchWithAuth(`${SUPPORT_API}/conversations/${convId}/read`, {
+      method: 'PUT',
+      body: JSON.stringify({ messageId: lastMsg.id }),
+    });
+    // Update local unread count
+    const conv = supportConversations.find(c => c.id === convId);
+    if (conv) conv.unread_count = 0;
+    renderSupportConversations();
+    updateSupportTotalBadge();
+  } catch (e) {
+    // Non-critical
+  }
+}
+
+function updateSupportTotalBadge() {
+  const badge = document.getElementById('supportTotalUnread');
+  if (!badge) return;
+  const total = supportConversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
+  badge.textContent = total;
+  badge.style.display = total > 0 ? 'inline-flex' : 'none';
+}
+
+function formatSupportTime(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) {
+    return d.toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' });
+  } else if (diffDays === 1) {
+    return 'I går';
+  } else if (diffDays < 7) {
+    return d.toLocaleDateString('no-NO', { weekday: 'short' });
+  }
+  return d.toLocaleDateString('no-NO', { day: 'numeric', month: 'short' });
+}
+
+function escapeHtmlAdmin(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// WebSocket for real-time support messages
+function initSupportWebSocket() {
+  if (supportWs) return;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}`;
+
+  try {
+    supportWs = new WebSocket(wsUrl);
+
+    supportWs.addEventListener('open', () => {
+      console.log('Support WebSocket connected');
+    });
+
+    supportWs.addEventListener('message', (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'support_chat_message') {
+          handleSupportWsMessage(msg.data);
+        }
+      } catch {
+        // Ignore malformed
+      }
+    });
+
+    supportWs.addEventListener('close', () => {
+      supportWs = null;
+      // Reconnect after 5 seconds
+      supportWsReconnectTimer = setTimeout(initSupportWebSocket, 5000);
+    });
+
+    supportWs.addEventListener('error', () => {
+      supportWs?.close();
+    });
+  } catch (e) {
+    console.error('Support WebSocket error:', e);
+  }
+}
+
+function handleSupportWsMessage(data) {
+  // If this message is for the currently active conversation, add it
+  if (data.conversation_id === activeSupportConvId) {
+    // Avoid duplicates
+    if (!supportMessages.find(m => m.id === data.id)) {
+      supportMessages.push(data);
+      renderSupportMessages();
+      scrollSupportToBottom();
+      // Auto-mark as read since we're viewing
+      markSupportAsRead(activeSupportConvId);
+    }
+  }
+
+  // Reload conversation list to update unread/ordering
+  loadSupportConversations();
+}
+
+function closeSupportWebSocket() {
+  if (supportWsReconnectTimer) {
+    clearTimeout(supportWsReconnectTimer);
+    supportWsReconnectTimer = null;
+  }
+  if (supportWs) {
+    supportWs.close();
+    supportWs = null;
+  }
+}
+
+function setupSupportChatListeners() {
+  // Send button
+  const sendBtn = document.getElementById('supportSendBtn');
+  if (sendBtn) sendBtn.addEventListener('click', sendSupportMessage);
+
+  // Enter to send
+  const input = document.getElementById('supportChatInput');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendSupportMessage();
+      }
+    });
+  }
+
+  // Back button (for smaller screens)
+  const backBtn = document.getElementById('supportBackBtn');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      activeSupportConvId = null;
+      document.getElementById('supportMsgArea').style.display = 'none';
+      renderSupportConversations();
+    });
+  }
+
+  // Refresh button
+  const refreshBtn = document.getElementById('supportRefreshBtn');
+  if (refreshBtn) refreshBtn.addEventListener('click', loadSupportConversations);
+
+  // Close ticket button
+  const closeTicketBtn = document.getElementById('supportCloseTicketBtn');
+  if (closeTicketBtn) closeTicketBtn.addEventListener('click', closeSupportTicket);
 }
 
 // ========================================
