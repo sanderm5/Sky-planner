@@ -28,7 +28,7 @@ import { getConfig } from './config/env';
 import { requestIdMiddleware } from './middleware/requestId';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { requireActiveSubscription, checkSubscriptionWarning } from './middleware/subscription';
-import { requireTenantAuth } from './middleware/auth';
+import { requireTenantAuth, requireSuperAdmin } from './middleware/auth';
 import { getDatabase, registerShutdownHandlers } from './services/database';
 import authRoutes, { initAuthRoutes } from './routes/auth';
 import kunderRoutes, { initKunderRoutes } from './routes/kunder';
@@ -469,8 +469,8 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Detailed health check (for monitoring systems) - no sensitive details without auth
-app.get('/api/health/detailed', async (_req, res) => {
+// Detailed health check (for monitoring systems) - requires super admin auth
+app.get('/api/health/detailed', requireSuperAdmin, async (_req, res) => {
   const startTime = Date.now();
   const checks: Record<string, { status: 'healthy' | 'unhealthy' | 'degraded'; latency_ms?: number; heap_used_mb?: number; error?: string }> = {};
   let overallStatus: 'healthy' | 'unhealthy' | 'degraded' = 'healthy';

@@ -82,12 +82,12 @@ async function initAdminPanel() {
     // Start system monitor auto-refresh
     startSystemMonitorAutoRefresh();
 
+    // Setup broadcast + maintenance (run first — critical)
+    setupBroadcastListeners();
+
     // Setup support chat
     setupSupportChatListeners();
     initSupportWebSocket();
-
-    // Setup broadcast
-    setupBroadcastListeners();
 
   } catch (error) {
     console.error('Failed to initialize admin panel:', error);
@@ -2163,7 +2163,9 @@ function updateBroadcastUI(enabled, message) {
 }
 
 async function sendBroadcast() {
+  console.log('sendBroadcast called');
   const message = document.getElementById('broadcastMessage').value.trim();
+  console.log('message:', message);
   if (!message) return alert('Skriv en melding først');
 
   try {
@@ -2171,8 +2173,9 @@ async function sendBroadcast() {
       method: 'POST',
       body: JSON.stringify({ enabled: true, message }),
     });
-    if (!res.ok) return;
+    console.log('broadcast response status:', res.status);
     const result = await res.json();
+    console.log('broadcast result:', result);
     if (result.success) {
       updateBroadcastUI(true, result.data.message);
     }
@@ -2194,61 +2197,129 @@ async function clearBroadcast() {
   }
 }
 
+let adminMaintenanceTimerInterval = null;
+let adminMaintenanceStartedAt = null;
+
+function formatAdminMaintenanceDuration(startedAt) {
+  if (!startedAt) return '';
+  let elapsed = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+  if (elapsed < 0) elapsed = 0;
+  const h = Math.floor(elapsed / 3600);
+  const m = Math.floor((elapsed % 3600) / 60);
+  const s = elapsed % 60;
+  if (h > 0) return `${h}t ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+  if (m > 0) return `${m}m ${String(s).padStart(2,'0')}s`;
+  return `${s}s`;
+}
+
+function startAdminMaintenanceTimer(startedAt, estimatedEnd) {
+  adminMaintenanceStartedAt = startedAt;
+  const timerEl = document.getElementById('maintenanceTimer');
+  if (!timerEl) return;
+  timerEl.style.display = 'block';
+  const startTime = new Date(startedAt);
+  const hh = String(startTime.getHours()).padStart(2, '0');
+  const mm = String(startTime.getMinutes()).padStart(2, '0');
+  const estText = estimatedEnd ? ` — Forventet ferdig kl. ${escapeHtmlAdmin(estimatedEnd)}` : '';
+  timerEl.innerHTML = `<i class="fas fa-clock" style="margin-right:4px;font-size:11px;"></i> Startet kl. ${hh}:${mm}${estText} — Varighet: <span id="maintenanceTimerValue">${formatAdminMaintenanceDuration(startedAt)}</span>`;
+  if (adminMaintenanceTimerInterval) clearInterval(adminMaintenanceTimerInterval);
+  adminMaintenanceTimerInterval = setInterval(() => {
+    const valEl = document.getElementById('maintenanceTimerValue');
+    if (valEl) valEl.textContent = formatAdminMaintenanceDuration(adminMaintenanceStartedAt);
+  }, 1000);
+}
+
+function stopAdminMaintenanceTimer() {
+  adminMaintenanceStartedAt = null;
+  if (adminMaintenanceTimerInterval) {
+    clearInterval(adminMaintenanceTimerInterval);
+    adminMaintenanceTimerInterval = null;
+  }
+  const timerEl = document.getElementById('maintenanceTimer');
+  if (timerEl) timerEl.style.display = 'none';
+}
+
 async function loadMaintenanceStatus() {
   try {
     const res = await fetchWithAuth(`${API_BASE}/maintenance`);
     if (!res.ok) return;
     const result = await res.json();
     if (result.success && result.data) {
-      updateMaintenanceUI(result.data.enabled, result.data.mode, result.data.message);
+      updateMaintenanceUI(result.data.enabled, result.data.mode, result.data.message, result.data.startedAt, result.data.estimatedEnd);
     }
   } catch (e) {
     // Silent fail
   }
 }
 
-function updateMaintenanceUI(enabled, mode, message) {
+function updateMaintenanceUI(enabled, mode, message, startedAt, estimatedEnd) {
   const status = document.getElementById('maintenanceStatus');
   const textarea = document.getElementById('maintenanceMessage');
   const onBtn = document.getElementById('maintenanceOnBtn');
   const offBtn = document.getElementById('maintenanceOffBtn');
+  const estimatedEndInput = document.getElementById('maintenanceEstimatedEnd');
 
   if (enabled) {
     const modeText = mode === 'full' ? 'Full blokkering' : 'Banner';
     status.innerHTML = `<span class="broadcast-status-dot active" style="background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.4);"></span><span>Aktiv — ${escapeHtmlAdmin(modeText)}</span>`;
     if (message) textarea.value = message;
+    if (estimatedEnd && estimatedEndInput) estimatedEndInput.value = estimatedEnd;
     onBtn.style.display = 'none';
     offBtn.style.display = 'inline-flex';
     // Set radio
     const radio = document.querySelector(`input[name="maintenanceMode"][value="${mode}"]`);
     if (radio) radio.checked = true;
+    if (startedAt) startAdminMaintenanceTimer(startedAt, estimatedEnd);
   } else {
     status.innerHTML = '<span class="broadcast-status-dot inactive"></span><span>Av</span>';
     onBtn.style.display = 'inline-flex';
     offBtn.style.display = 'none';
+    if (estimatedEndInput) estimatedEndInput.value = '';
+    stopAdminMaintenanceTimer();
   }
 }
 
-async function toggleMaintenance(enabled) {
+function isMaintenanceActive() {
+  const offBtn = document.getElementById('maintenanceOffBtn');
+  return offBtn && offBtn.style.display !== 'none';
+}
+
+function getMaintenanceFormValues() {
   const message = document.getElementById('maintenanceMessage').value.trim();
   const modeRadio = document.querySelector('input[name="maintenanceMode"]:checked');
   const mode = modeRadio ? modeRadio.value : 'banner';
+  const estimatedEndInput = document.getElementById('maintenanceEstimatedEnd');
+  const estimatedEnd = estimatedEndInput ? estimatedEndInput.value : '';
+  return { message, mode, estimatedEnd };
+}
 
-  if (enabled && !message) return alert('Skriv en vedlikeholdsmelding først');
-
+async function sendMaintenanceUpdate(enabled) {
+  const { message, mode, estimatedEnd } = getMaintenanceFormValues();
   try {
     const res = await fetchWithAuth(`${API_BASE}/maintenance`, {
       method: 'POST',
-      body: JSON.stringify({ enabled, mode, message: message || undefined }),
+      body: JSON.stringify({ enabled, mode, message: message || undefined, estimatedEnd: estimatedEnd || null }),
     });
     if (!res.ok) return;
     const result = await res.json();
     if (result.success) {
-      updateMaintenanceUI(result.data.enabled, result.data.mode, result.data.message);
+      updateMaintenanceUI(result.data.enabled, result.data.mode, result.data.message, result.data.startedAt, result.data.estimatedEnd);
     }
   } catch (e) {
-    console.error('Failed to toggle maintenance:', e);
+    console.error('Failed to update maintenance:', e);
   }
+}
+
+async function toggleMaintenance(enabled) {
+  if (enabled) {
+    const { message } = getMaintenanceFormValues();
+    if (!message) return alert('Skriv en vedlikeholdsmelding først');
+  }
+  await sendMaintenanceUpdate(enabled);
+}
+
+function onMaintenanceSettingChanged() {
+  if (isMaintenanceActive()) sendMaintenanceUpdate(true);
 }
 
 function setupBroadcastListeners() {
@@ -2262,7 +2333,15 @@ function setupBroadcastListeners() {
   const maintenanceOffBtn = document.getElementById('maintenanceOffBtn');
   if (maintenanceOffBtn) maintenanceOffBtn.addEventListener('click', () => toggleMaintenance(false));
 
-  // Preset buttons — fill textarea on click
+  const estimatedEndInput = document.getElementById('maintenanceEstimatedEnd');
+  if (estimatedEndInput) estimatedEndInput.addEventListener('change', onMaintenanceSettingChanged);
+
+  // Mode radio — live update when maintenance active
+  document.querySelectorAll('input[name="maintenanceMode"]').forEach(radio => {
+    radio.addEventListener('change', onMaintenanceSettingChanged);
+  });
+
+  // Preset buttons — fill textarea on click (+ live update if active)
   document.querySelectorAll('#broadcastPresets .preset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.getElementById('broadcastMessage').value = btn.dataset.msg;
@@ -2271,6 +2350,7 @@ function setupBroadcastListeners() {
   document.querySelectorAll('#maintenancePresets .preset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.getElementById('maintenanceMessage').value = btn.dataset.msg;
+      onMaintenanceSettingChanged();
     });
   });
 }

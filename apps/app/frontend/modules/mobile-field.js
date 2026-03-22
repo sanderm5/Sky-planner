@@ -12,9 +12,9 @@ let mfMapInitialized = false;
 // ---- Detection & activation ----
 
 function isMobileDevice() {
-  // Catch phones (<= 768px) and tablets (touch + <= 1024px)
+  // Catch phones (<= 768px) and tablets (touch + <= 1199px, covers iPad landscape)
   if (window.innerWidth <= 768) return true;
-  if (window.innerWidth <= 1024 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
+  if (window.innerWidth <= 1199 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
   return false;
 }
 

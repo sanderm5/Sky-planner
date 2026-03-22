@@ -739,7 +739,7 @@ router.post(
     // Import generateToken from auth middleware
     const { generateToken } = await import('../middleware/auth');
 
-    // Generate impersonation token with shorter expiry
+    // Generate impersonation token with shorter expiry, bound to IP
     const impersonationToken = generateToken(
       {
         userId: req.user!.userId,
@@ -751,6 +751,7 @@ router.post(
         subscriptionPlan: org.plan_type as 'free' | 'standard' | 'premium' | 'enterprise',
         isImpersonating: true,
         originalUserId: req.user!.userId,
+        boundIp: req.ip,
       },
       '1h' // Short duration for impersonation security
     );
@@ -1388,7 +1389,9 @@ import {
   getMaintenanceMode,
   getMaintenanceMessage,
   getMaintenanceStartedAt,
+  getMaintenanceEstimatedEnd,
   setMaintenance,
+  registerBroadcastGetter,
 } from './maintenance';
 
 /**
@@ -1397,12 +1400,12 @@ import {
  * Body: { enabled: boolean, mode?: "banner" | "full", message?: string }
  */
 router.post('/maintenance', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const { enabled, mode, message } = req.body;
+  const { enabled, mode, message, estimatedEnd } = req.body;
   if (typeof enabled !== 'boolean') {
     res.status(400).json({ success: false, error: { code: 'INVALID', message: 'enabled må være true/false' } });
     return;
   }
-  setMaintenance(enabled, mode, message);
+  setMaintenance(enabled, mode, message, estimatedEnd);
   res.json({
     success: true,
     data: {
@@ -1410,6 +1413,7 @@ router.post('/maintenance', asyncHandler(async (req: AuthenticatedRequest, res: 
       mode: getMaintenanceMode(),
       message: getMaintenanceMessage(),
       startedAt: getMaintenanceStartedAt(),
+      estimatedEnd: getMaintenanceEstimatedEnd(),
     },
   });
 }));
@@ -1426,6 +1430,7 @@ router.get('/maintenance', asyncHandler(async (req: AuthenticatedRequest, res: R
       mode: getMaintenanceMode(),
       message: getMaintenanceMessage(),
       startedAt: getMaintenanceStartedAt(),
+      estimatedEnd: getMaintenanceEstimatedEnd(),
     },
   });
 }));
@@ -1435,6 +1440,9 @@ router.get('/maintenance', asyncHandler(async (req: AuthenticatedRequest, res: R
 // to avoid circular dependency with CRON_SECRET auth
 let broadcastMessage = '';
 let broadcastEnabled = false;
+
+// Register getter so maintenance/status endpoint can include broadcast
+registerBroadcastGetter(() => broadcastEnabled ? broadcastMessage : null);
 
 /**
  * POST /api/super-admin/broadcast

@@ -25,10 +25,10 @@
   var FONT = '-apple-system,BlinkMacSystemFont,sans-serif';
 
   // Difficulty scaling
-  var BASE_SPEED = 2.2;
-  var MAX_SPEED = 4.5;
-  var ACCEL = 0.18;
-  var FRICTION = 0.88;
+  var BASE_SPEED = 1.6;
+  var MAX_SPEED = 3.2;
+  var ACCEL = 0.14;
+  var FRICTION = 0.85;
   var MARKER_COUNT = 5;
 
   // Colors
@@ -832,49 +832,89 @@
   }
 
   function createDpad(parent) {
-    var dpad = document.createElement('div');
-    dpad.id = 'mg-dpad';
-    dpad.style.cssText = 'display:grid;grid-template-columns:52px 52px 52px;grid-template-rows:52px 52px;gap:6px;justify-content:center;margin-top:14px;user-select:none;-webkit-user-select:none;';
+    var SIZE = 120;
+    var KNOB = 44;
+    var DEAD = 10;
+    var wrapper = document.createElement('div');
+    wrapper.id = 'mg-dpad';
+    wrapper.style.cssText = 'display:flex;justify-content:center;margin-top:14px;user-select:none;-webkit-user-select:none;';
 
-    var btnBase = 'display:flex;align-items:center;justify-content:center;border-radius:14px;font-size:18px;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:none;transition:background 0.1s,transform 0.1s;';
+    var base = document.createElement('div');
+    base.style.cssText = 'width:' + SIZE + 'px;height:' + SIZE + 'px;border-radius:50%;background:rgba(99,102,241,0.08);border:1.5px solid rgba(99,102,241,0.2);position:relative;touch-action:none;';
 
-    var dirs = [
-      { label: '\u25B2', col: '2/3', row: '1/2', dx: 0, dy: -1 },
-      { label: '\u25C0', col: '1/2', row: '2/3', dx: -1, dy: 0 },
-      { label: '\u25BC', col: '2/3', row: '2/3', dx: 0, dy: 1 },
-      { label: '\u25B6', col: '3/4', row: '2/3', dx: 1, dy: 0 }
-    ];
+    var knob = document.createElement('div');
+    knob.style.cssText = 'width:' + KNOB + 'px;height:' + KNOB + 'px;border-radius:50%;background:rgba(99,102,241,0.25);border:1.5px solid rgba(99,102,241,0.4);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);transition:none;pointer-events:none;';
+    base.appendChild(knob);
 
-    dirs.forEach(function(d) {
-      var btn = document.createElement('div');
-      btn.style.cssText = btnBase + 'grid-column:' + d.col + ';grid-row:' + d.row + ';background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#818cf8;';
-      btn.textContent = d.label;
+    var center = SIZE / 2;
+    var maxDist = (SIZE - KNOB) / 2;
+    var active = false;
 
-      function press(e) {
-        e.preventDefault();
-        touchDir.x = d.dx; touchDir.y = d.dy;
-        btn.style.background = 'rgba(99,102,241,0.3)';
-        btn.style.transform = 'scale(0.92)';
-        if (gameState !== 'playing') startGame();
+    function updateKnob(cx, cy) {
+      var dx = cx - center;
+      var dy = cy - center;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > maxDist) { dx = dx / dist * maxDist; dy = dy / dist * maxDist; dist = maxDist; }
+      knob.style.left = (center + dx) + 'px';
+      knob.style.top = (center + dy) + 'px';
+      knob.style.transform = 'translate(-50%,-50%)';
+
+      if (dist < DEAD) {
+        touchDir.x = 0; touchDir.y = 0;
+      } else {
+        touchDir.x = dx / maxDist;
+        touchDir.y = dy / maxDist;
       }
-      function release(e) {
-        e.preventDefault();
-        if (d.dx !== 0) touchDir.x = 0;
-        if (d.dy !== 0) touchDir.y = 0;
-        btn.style.background = 'rgba(99,102,241,0.12)';
-        btn.style.transform = 'scale(1)';
-      }
+    }
 
-      btn.addEventListener('touchstart', press, { passive: false });
-      btn.addEventListener('touchend', release, { passive: false });
-      btn.addEventListener('touchcancel', release, { passive: false });
-      btn.addEventListener('mousedown', press);
-      btn.addEventListener('mouseup', release);
-      btn.addEventListener('mouseleave', release);
-      dpad.appendChild(btn);
+    function resetKnob() {
+      knob.style.left = '50%';
+      knob.style.top = '50%';
+      knob.style.transform = 'translate(-50%,-50%)';
+      touchDir.x = 0; touchDir.y = 0;
+      active = false;
+    }
+
+    function getPos(e) {
+      var rect = base.getBoundingClientRect();
+      var t = e.touches ? e.touches[0] : e;
+      return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+    }
+
+    base.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      active = true;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+      if (gameState !== 'playing') startGame();
+    }, { passive: false });
+
+    base.addEventListener('touchmove', function(e) {
+      e.preventDefault();
+      if (!active) return;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+    }, { passive: false });
+
+    base.addEventListener('touchend', function(e) { e.preventDefault(); resetKnob(); }, { passive: false });
+    base.addEventListener('touchcancel', function(e) { e.preventDefault(); resetKnob(); }, { passive: false });
+
+    // Mouse fallback
+    base.addEventListener('mousedown', function(e) {
+      active = true;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+      if (gameState !== 'playing') startGame();
     });
+    document.addEventListener('mousemove', function(e) {
+      if (!active) return;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+    });
+    document.addEventListener('mouseup', function() { if (active) resetKnob(); });
 
-    parent.appendChild(dpad);
+    wrapper.appendChild(base);
+    parent.appendChild(wrapper);
   }
 
   function setupCanvasTouch() {
@@ -896,6 +936,13 @@
 
     highScore = parseInt(localStorage.getItem(HS_KEY) || '0', 10);
     dpr = window.devicePixelRatio || 1;
+
+    // Scale for mobile
+    var isMobile = window.innerWidth <= 500;
+    if (isMobile) {
+      W = Math.min(280, window.innerWidth - 40);
+      H = Math.round(W * 1.3);
+    }
 
     canvas = document.createElement('canvas');
     canvas.width = W * dpr;

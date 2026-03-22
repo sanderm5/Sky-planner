@@ -24737,7 +24737,7 @@ body.role-kontor .export-btn {
   flex-shrink: 0;
 }
 
-/* ---- Desktop adaptation for weekplan editor ---- */
+/* ---- Desktop/tablet adaptation for weekplan editor ---- */
 
 @media (min-width: 769px) {
   .mf-weekplan-day {
@@ -24765,14 +24765,753 @@ body.role-kontor .export-btn {
   .mf-weekplan-day-header {
     padding: 10px 12px;
   }
-  /* Bottom sheets act as centered modals on desktop */
-  .mf-weekplan-overlay .mf-sheet-content {
+  /* Bottom sheets act as centered modals on wider screens */
+  .mf-weekplan-overlay .mf-sheet-content,
+  .mf-weekplan-inline .mf-sheet-content {
     max-width: 520px;
     margin: 0 auto;
     border-radius: 16px 16px 0 0;
   }
-  .mf-weekplan-overlay .mf-area-sheet-content {
+  .mf-weekplan-overlay .mf-area-sheet-content,
+  .mf-weekplan-inline .mf-area-sheet-content {
     max-width: 600px;
+  }
+}
+
+/* ============================================
+   TABLET ADAPTATION (769px - 1024px)
+   Optimized for iPad and tablets in portrait
+   ============================================ */
+
+@media (min-width: 769px) and (max-width: 1199px) {
+
+  /* ---- Bottom bar: horizontal labels, larger touch targets ---- */
+  .mf-bottom-bar {
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 24px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom, 0));
+  }
+
+  .mf-tab-btn {
+    flex: 0 1 auto;
+    flex-direction: row;
+    gap: 10px;
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 500;
+    min-height: 52px;
+    border-radius: 12px;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .mf-tab-btn i {
+    font-size: 20px;
+  }
+
+  .mf-tab-btn.active {
+    background: rgba(59, 130, 246, 0.12);
+  }
+
+  .mf-bottom-bar.admin-mode .mf-tab-btn {
+    font-size: 13px;
+    gap: 8px;
+    padding: 10px 16px;
+  }
+
+  .mf-bottom-bar.admin-mode .mf-tab-btn i {
+    font-size: 18px;
+  }
+
+  /* ---- Header: more breathing room ---- */
+  .mf-header {
+    padding: 16px 28px;
+  }
+
+  .mf-date-nav {
+    font-size: 22px;
+    padding: 12px 16px;
+    min-width: 52px;
+    min-height: 52px;
+  }
+
+  .mf-date-label {
+    font-size: 20px;
+    min-width: 160px;
+  }
+
+  /* ---- Progress bar ---- */
+  .mf-progress-bar {
+    padding: 10px 28px;
+  }
+
+  .mf-progress-label {
+    font-size: 15px;
+  }
+
+  .mf-progress-track {
+    height: 8px;
+  }
+
+  /* ============================================
+     BOTTOM SHEETS & MODALS: centered, larger
+     ============================================ */
+
+  .mf-bottom-sheet {
+    align-items: center;
+    padding: 24px;
+  }
+
+  .mf-sheet-content {
+    max-width: 560px;
+    border-radius: 16px;
+    max-height: 80vh;
+    padding: 0 24px 24px;
+  }
+
+  .mf-bottom-sheet.open .mf-sheet-content {
+    transform: translateY(0);
+  }
+
+  .mf-sheet-content h3 {
+    font-size: 20px;
+    margin-bottom: 20px;
+  }
+
+  .mf-sheet-label {
+    font-size: 13px;
+    margin: 16px 0 8px;
+  }
+
+  .mf-sheet-select {
+    padding: 14px;
+    font-size: 16px;
+    border-radius: 12px;
+  }
+
+  .mf-sheet-date {
+    padding: 12px 14px;
+    font-size: 16px;
+    border-radius: 10px;
+  }
+
+  .mf-sheet-textarea {
+    padding: 14px 16px;
+    font-size: 16px;
+    border-radius: 10px;
+  }
+
+  .mf-search-input {
+    padding: 14px 16px;
+    font-size: 16px;
+    border-radius: 12px;
+  }
+
+  .mf-info-card {
+    max-width: 560px;
+    border-radius: 16px;
+    padding: 24px;
+  }
+
+  .mf-info-header h3 {
+    font-size: 22px;
+  }
+
+  /* ---- Buttons: larger touch targets ---- */
+  .mf-btn,
+  .mf-btn-primary,
+  .mf-btn-secondary {
+    padding: 14px 20px;
+    font-size: 15px;
+    min-height: 48px;
+    border-radius: 12px;
+    gap: 10px;
+  }
+
+  .mf-btn-chip {
+    padding: 10px 18px;
+    font-size: 14px;
+  }
+
+  .mf-action-btn {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+    border-radius: 12px;
+  }
+
+  /* ---- Method picker ---- */
+  .mf-method-option {
+    padding: 18px 16px;
+    border-radius: 14px;
+  }
+
+  .mf-method-icon {
+    width: 48px;
+    height: 48px;
+    font-size: 20px;
+  }
+
+  .mf-method-text strong {
+    font-size: 16px;
+  }
+
+  .mf-method-text span {
+    font-size: 14px;
+  }
+
+  /* ---- Assign results ---- */
+  .mf-assign-results {
+    margin-top: 12px;
+  }
+
+  .mf-assign-row {
+    padding: 14px 8px;
+  }
+
+  .mf-assign-item,
+  .mf-assign-row h4 {
+    font-size: 15px;
+  }
+
+  .mf-assign-row p {
+    font-size: 14px;
+  }
+
+  /* ============================================
+     FIELD VIEW: stop cards, next card
+     ============================================ */
+
+  .mf-route-content {
+    padding: 16px 28px;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+
+  .mf-stop-card {
+    padding: 18px;
+    gap: 14px;
+    border-radius: 14px;
+  }
+
+  .mf-stop-num {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+    border-radius: 12px;
+  }
+
+  .mf-stop-info h4 {
+    font-size: 17px;
+  }
+
+  .mf-stop-info p {
+    font-size: 15px;
+  }
+
+  .mf-stop-actions {
+    gap: 8px;
+  }
+
+  .mf-stop-est,
+  .mf-next-est {
+    font-size: 14px;
+  }
+
+  .mf-est-input {
+    font-size: 15px;
+    border-radius: 8px;
+    padding: 6px 8px;
+  }
+
+  .mf-next-card {
+    padding: 20px;
+    border-radius: 16px;
+  }
+
+  .mf-next-info h4 {
+    font-size: 18px;
+  }
+
+  .mf-next-info p {
+    font-size: 15px;
+  }
+
+  .mf-next-actions {
+    gap: 10px;
+  }
+
+  .mf-next-actions .mf-btn {
+    padding: 14px 20px;
+    font-size: 15px;
+  }
+
+  /* ---- Visited section ---- */
+  .mf-visited-toggle {
+    padding: 14px 16px;
+    font-size: 15px;
+    gap: 10px;
+  }
+
+  .mf-visited-list {
+    gap: 8px;
+  }
+
+  /* ---- Empty state ---- */
+  .mf-empty-state i {
+    font-size: 48px;
+  }
+
+  .mf-empty-state p {
+    font-size: 16px;
+  }
+
+  .mf-empty-hint {
+    font-size: 14px;
+  }
+
+  /* ============================================
+     WEEKPLAN: days, stops, dots
+     ============================================ */
+
+  .mf-weekplan-inline {
+    padding: 0;
+  }
+
+  .mf-weekplan-day {
+    min-width: 0;
+    flex: 1 1 calc(33.333% - 8px);
+    border-radius: 14px;
+  }
+
+  .mf-weekplan-days {
+    flex-wrap: wrap;
+    padding: 12px 24px 16px;
+    gap: 12px;
+  }
+
+  .mf-weekplan-day-header h4 {
+    font-size: 16px;
+  }
+
+  .mf-wp-today-badge {
+    font-size: 12px;
+  }
+
+  .mf-day-count {
+    font-size: 14px;
+  }
+
+  .mf-day-add,
+  .mf-day-assign-all {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+    border-radius: 10px;
+  }
+
+  .mf-wp-stops-list {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .mf-wp-stop-content {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .mf-wp-stop-num {
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+  }
+
+  .mf-wp-stop-name {
+    font-size: 15px;
+  }
+
+  .mf-wp-stop-addr {
+    font-size: 13px;
+  }
+
+  .mf-wp-stop-meta {
+    font-size: 13px;
+  }
+
+  .mf-wp-stop-tech i,
+  .mf-wp-stop-time i {
+    font-size: 12px;
+  }
+
+  .mf-wp-stop-actions {
+    gap: 6px;
+  }
+
+  .mf-wp-reassign,
+  .mf-wp-delete-btn {
+    width: 38px;
+    height: 38px;
+    font-size: 14px;
+    border-radius: 10px;
+  }
+
+  .mf-wp-tech-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 11px;
+  }
+
+  .mf-wp-tech-name {
+    font-size: 14px;
+  }
+
+  .mf-wp-tech-count {
+    font-size: 13px;
+  }
+
+  .mf-wp-tech-header {
+    padding: 8px 6px;
+    gap: 10px;
+  }
+
+  .mf-wp-est-input {
+    font-size: 13px;
+    border-radius: 6px;
+    padding: 4px 6px;
+  }
+
+  .mf-weekplan-save {
+    padding: 10px 18px;
+    font-size: 15px;
+    border-radius: 10px;
+  }
+
+  /* ============================================
+     ADMIN TAB: team cards, summary
+     ============================================ */
+
+  .mf-admin-content,
+  #mfAdminContent {
+    padding: 20px 28px;
+  }
+
+  .mf-summary-card {
+    max-width: 650px;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 20px 16px;
+    border-radius: 16px;
+  }
+
+  .mf-summary-num {
+    font-size: 32px;
+  }
+
+  .mf-summary-stat span:last-child {
+    font-size: 13px;
+  }
+
+  .mf-team-actions {
+    max-width: 650px;
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 16px;
+  }
+
+  .mf-team-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .mf-team-card {
+    margin-bottom: 0;
+    padding: 16px;
+    border-radius: 14px;
+    gap: 14px;
+  }
+
+  .mf-team-avatar {
+    width: 48px;
+    height: 48px;
+    font-size: 16px;
+  }
+
+  .mf-team-info h4 {
+    font-size: 16px;
+  }
+
+  .mf-team-info p {
+    font-size: 14px;
+  }
+
+  .mf-team-section-label {
+    font-size: 14px;
+    padding: 12px 0 8px;
+  }
+
+  /* Expanded card and its details span full width */
+  .mf-team-card.expanded,
+  .mf-team-week-grid,
+  .mf-team-stops,
+  .mf-team-section-label {
+    grid-column: 1 / -1;
+  }
+
+  .mf-team-day-header {
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+
+  .mf-team-day-label {
+    font-size: 14px;
+  }
+
+  .mf-team-day-count {
+    font-size: 13px;
+  }
+
+  .mf-team-stop {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+
+  .mf-team-stop-num {
+    font-size: 13px;
+    width: 24px;
+  }
+
+  .mf-team-stop-name {
+    font-size: 14px;
+  }
+
+  /* ============================================
+     CALENDAR TAB
+     ============================================ */
+
+  .mf-cal-header {
+    padding: 16px 28px;
+  }
+
+  .mf-cal-header h3 {
+    font-size: 18px;
+  }
+
+  .mf-cal-date-header {
+    font-size: 15px;
+    padding: 12px 16px;
+  }
+
+  .mf-cal-date-group {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .mf-cal-card {
+    border-bottom: none;
+    border: 1px solid var(--color-border, #2e3440);
+    border-radius: 12px;
+    padding: 16px;
+    gap: 14px;
+  }
+
+  .mf-cal-date-header {
+    grid-column: 1 / -1;
+  }
+
+  .mf-cal-time {
+    font-size: 16px;
+  }
+
+  .mf-cal-status {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 10px;
+  }
+
+  .mf-cal-card-info h4 {
+    font-size: 16px;
+  }
+
+  .mf-cal-desc {
+    font-size: 14px;
+  }
+
+  .mf-cal-address {
+    font-size: 13px;
+  }
+
+  .mf-cal-address i,
+  .mf-cal-assigned i {
+    font-size: 12px;
+  }
+
+  .mf-cal-assigned {
+    font-size: 13px;
+  }
+
+  /* ============================================
+     CHAT TAB
+     ============================================ */
+
+  .mf-chat-list-view,
+  .mf-chat-message-view,
+  .mf-chat-newdm-view {
+    max-width: 650px;
+    margin: 0 auto;
+  }
+
+  .mf-chat-header h3 {
+    font-size: 18px;
+  }
+
+  .mf-chat-conv-item {
+    padding: 16px 20px;
+    gap: 14px;
+  }
+
+  .mf-chat-conv-icon {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+  }
+
+  .mf-chat-conv-info h4 {
+    font-size: 16px;
+  }
+
+  .mf-chat-conv-preview {
+    font-size: 14px;
+  }
+
+  .mf-chat-conv-time {
+    font-size: 13px;
+  }
+
+  .mf-chat-conv-unread {
+    font-size: 12px;
+    min-width: 22px;
+    height: 22px;
+  }
+
+  .mf-chat-message {
+    max-width: 65%;
+    font-size: 15px;
+    padding: 12px 16px;
+    border-radius: 14px;
+  }
+
+  .mf-chat-msg-sender {
+    font-size: 13px;
+  }
+
+  .mf-chat-date-sep {
+    font-size: 13px;
+  }
+
+  .mf-chat-input {
+    padding: 14px 16px;
+    font-size: 16px;
+    border-radius: 12px;
+  }
+
+  .mf-chat-send-btn {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+  }
+
+  .mf-chat-team-avatar {
+    width: 42px;
+    height: 42px;
+    font-size: 14px;
+  }
+
+  /* ============================================
+     SUPPORT TAB
+     ============================================ */
+
+  .mf-support-topic-grid {
+    gap: 12px;
+  }
+
+  .mf-support-topic-btn {
+    padding: 18px 12px;
+    font-size: 15px;
+    gap: 10px;
+    border-radius: 12px;
+  }
+
+  .mf-support-topic-btn i {
+    font-size: 22px;
+  }
+
+  .mf-support-section-title {
+    font-size: 14px;
+  }
+
+  .mf-support-closed-badge {
+    font-size: 12px;
+  }
+
+  /* ============================================
+     AREA BROWSER
+     ============================================ */
+
+  .mf-area-tab {
+    padding: 12px 12px;
+    font-size: 15px;
+    border-radius: 12px;
+  }
+
+  .mf-area-tab i {
+    font-size: 14px;
+  }
+
+  .mf-area-hint {
+    font-size: 14px;
+  }
+
+  /* ============================================
+     ACCOUNT / SETTINGS VIEW
+     ============================================ */
+
+  .mf-account-content {
+    max-width: 650px;
+    margin: 0 auto;
+    padding: 20px 28px;
+  }
+
+  .mf-account-avatar {
+    width: 56px;
+    height: 56px;
+    font-size: 22px;
+  }
+
+  /* ============================================
+     INFO OVERLAY (customer details)
+     ============================================ */
+
+  .mf-info-row {
+    padding: 12px 0;
+    font-size: 15px;
+  }
+
+  .mf-info-row i {
+    font-size: 18px;
+    width: 24px;
+  }
+
+  .mf-info-header h3 {
+    font-size: 22px;
+  }
+
+  .mf-info-close {
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
   }
 }
 

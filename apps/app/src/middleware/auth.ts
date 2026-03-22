@@ -84,8 +84,18 @@ export async function requireAuth(
     req.user = decoded;
     req.organizationId = decoded.organizationId;
 
-    // Validate impersonation tokens: verify originalUserId is still a super admin
+    // Validate impersonation tokens: verify originalUserId is still a super admin + IP binding
     if (decoded.isImpersonating && decoded.originalUserId) {
+      // Verify IP binding to prevent token theft
+      if (decoded.boundIp && decoded.boundIp !== req.ip) {
+        authLogger.warn({
+          originalUserId: decoded.originalUserId,
+          expectedIp: decoded.boundIp,
+          actualIp: req.ip,
+        }, 'Impersonation token rejected: IP mismatch');
+        return next(Errors.unauthorized('Impersoneringstoken ugyldiggjort'));
+      }
+
       try {
         const { getDatabase } = await import('../services/database');
         const db = await getDatabase();

@@ -441,6 +441,7 @@ export interface JWTPayload {
   // Impersonation fields (super-admin only)
   isImpersonating?: boolean;
   originalUserId?: number;
+  boundIp?: string;
 }
 
 export interface ApiError {

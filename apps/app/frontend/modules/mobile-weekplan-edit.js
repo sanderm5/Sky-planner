@@ -1001,7 +1001,9 @@ function mfWpShowReassign(kundeId, dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('open'));
 }
 
@@ -1079,7 +1081,9 @@ function mfWpShowAssignAll(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('open'));
 }
 
@@ -1163,7 +1167,9 @@ function mfWpAddCustomerDirect(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => {
     overlay.classList.add('open');
     // Pre-select last used team member on this day

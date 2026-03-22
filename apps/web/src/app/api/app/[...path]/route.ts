@@ -3,15 +3,28 @@
  * This solves CORS issues and allows cookie-based auth to work
  */
 import { NextRequest } from 'next/server';
+import { isIP } from 'net';
 
 const APP_API_URL = process.env.APP_API_URL || (process.env.NODE_ENV === 'production' ? 'https://skyplannerapp-production.up.railway.app' : 'http://localhost:3000');
 
-/** Validate that a string looks like an IPv4 or IPv6 address */
+/** Validate that a string is a valid IPv4 or IPv6 address using Node.js built-in */
 function isValidIP(ip: string): boolean {
-  const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
-  const ipv6 = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
-  return ipv4.test(ip) || ipv6.test(ip);
+  return isIP(ip) !== 0;
 }
+
+/** Response headers safe to forward from backend */
+const ALLOWED_RESPONSE_HEADERS = new Set([
+  'content-type',
+  'cache-control',
+  'etag',
+  'last-modified',
+  'vary',
+  'x-request-id',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
+  'set-cookie',
+]);
 
 async function handleProxy(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path: pathSegments } = await params;
@@ -111,12 +124,11 @@ async function handleProxy(request: NextRequest, { params }: { params: Promise<{
       clearTimeout(timeout);
     }
 
-    // Forward response headers
+    // Forward only allowlisted response headers
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
-      // Skip headers that shouldn't be forwarded
-      if (!['transfer-encoding', 'connection', 'content-encoding', 'content-length'].includes(key.toLowerCase())) {
-        responseHeaders.set(key, value);
+      if (ALLOWED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+        responseHeaders.append(key, value);
       }
     });
 
@@ -142,7 +154,7 @@ async function handleProxy(request: NextRequest, { params }: { params: Promise<{
     });
   } catch (error) {
     const isTimeout = error instanceof Error && error.name === 'AbortError';
-    console.error('Proxy error:', isTimeout ? 'Request timed out after 30s' : error);
+    console.error('Proxy error:', isTimeout ? 'Request timed out after 30s' : (error instanceof Error ? error.message : 'Unknown error'));
     return new Response(
       JSON.stringify({
         success: false,

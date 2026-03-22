@@ -145,6 +145,7 @@ function mfRenderCalendarView() {
   for (const [date, avtaler] of Object.entries(groups)) {
     const label = mfFormatDateLabel(date);
     html += `<div class="mf-cal-date-header">${escapeHtml(label)}</div>`;
+    html += `<div class="mf-cal-date-group">`;
 
     for (const avtale of avtaler) {
       const isCompleted = avtale.status === 'fullf\u00f8rt';
@@ -177,6 +178,7 @@ function mfRenderCalendarView() {
         </div>
       `;
     }
+    html += `</div>`;
   }
 
   content.innerHTML = html;

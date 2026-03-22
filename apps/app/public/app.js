@@ -1887,21 +1887,12 @@ async function apiFetch(url, options = {}) {
   if (response.status === 503) {
     const data = await response.clone().json().catch(() => ({}));
     if (data.error && data.error.code === 'MAINTENANCE') {
-      showMaintenanceOverlay(data.error.message);
+      showMaintenanceOverlay(data.error.message, data.error.startedAt, data.error.estimatedEnd);
       throw new Error(data.error.message || 'Vedlikehold pågår');
     }
   }
 
-  // Check for maintenance banner header (banner mode — app still works)
-  const maintenanceHeader = response.headers.get('X-Maintenance');
-  if (maintenanceHeader === 'banner') {
-    const msg = response.headers.get('X-Maintenance-Message');
-    showMaintenanceBanner(msg ? decodeURIComponent(msg) : 'Vedlikehold pågår');
-  } else {
-    hideMaintenanceBanner();
-  }
-
-  // Broadcast banner is managed by the background poller only (avoids flickering)
+  // Maintenance banner + broadcast banner managed by background poller only (avoids flickering)
 
   // Check for subscription warning header (grace period / trial ending soon)
   const subscriptionWarning = response.headers.get('X-Subscription-Warning');
@@ -1912,26 +1903,102 @@ async function apiFetch(url, options = {}) {
   return response;
 }
 
+// Maintenance timer helper
+let maintenanceTimerInterval = null;
+let maintenanceStartedAtISO = null;
+
+function formatMaintenanceDuration(startedAt) {
+  if (!startedAt) return null;
+  var elapsed = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+  if (elapsed < 0) elapsed = 0;
+  var h = Math.floor(elapsed / 3600);
+  var m = Math.floor((elapsed % 3600) / 60);
+  var s = elapsed % 60;
+  if (h > 0) return h + 't ' + (m < 10 ? '0' : '') + m + 'm ' + (s < 10 ? '0' : '') + s + 's';
+  if (m > 0) return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
+  return s + 's';
+}
+
+function formatMaintenanceStartedTime(startedAt) {
+  if (!startedAt) return '';
+  var d = new Date(startedAt);
+  var hh = String(d.getHours()).padStart(2, '0');
+  var mm = String(d.getMinutes()).padStart(2, '0');
+  return 'Startet kl. ' + hh + ':' + mm;
+}
+
+function updateMaintenanceTimers() {
+  if (!maintenanceStartedAtISO) return;
+  var text = formatMaintenanceDuration(maintenanceStartedAtISO);
+  if (!text) return;
+  // Update banner timer (in parentheses)
+  var bannerTimer = document.getElementById('maintenance-banner-timer');
+  if (bannerTimer) bannerTimer.textContent = '(' + text + ')';
+  // Update overlay timer
+  var overlayTimer = document.getElementById('maintenance-overlay-timer');
+  if (overlayTimer) overlayTimer.textContent = text;
+}
+
+function startMaintenanceTimer(startedAt) {
+  maintenanceStartedAtISO = startedAt;
+  if (maintenanceTimerInterval) clearInterval(maintenanceTimerInterval);
+  updateMaintenanceTimers();
+  maintenanceTimerInterval = setInterval(updateMaintenanceTimers, 1000);
+}
+
+function stopMaintenanceTimer() {
+  maintenanceStartedAtISO = null;
+  if (maintenanceTimerInterval) {
+    clearInterval(maintenanceTimerInterval);
+    maintenanceTimerInterval = null;
+  }
+}
+
 // Maintenance banner (yellow bar at top — app still usable)
 let maintenanceBannerEl = null;
 
-function showMaintenanceBanner(message) {
+function showMaintenanceBanner(message, startedAt, estimatedEnd) {
   if (maintenanceBannerEl) {
     maintenanceBannerEl.querySelector('.maintenance-banner-text').textContent = message;
+    var estEl = maintenanceBannerEl.querySelector('.maintenance-banner-est');
+    if (estEl) estEl.textContent = estimatedEnd ? ' \u2014 Ferdig kl. ' + estimatedEnd : '';
+    if (startedAt) startMaintenanceTimer(startedAt);
     return;
   }
 
+  var timerText = startedAt ? formatMaintenanceDuration(startedAt) : '';
+  var startedText = startedAt ? formatMaintenanceStartedTime(startedAt) : '';
+  var estHtml = '<span class="maintenance-banner-est" style="opacity:0.7;margin-left:6px;font-weight:500;">' + (estimatedEnd ? ' \u2014 Ferdig kl. ' + escapeHtml(estimatedEnd) : '') + '</span>';
+  var timerHtml = (startedText ? '<span style="opacity:0.7;margin-left:6px;font-weight:500;">' + startedText + '</span>' : '')
+    + '<span id="maintenance-banner-timer" style="opacity:0.8;font-variant-numeric:tabular-nums;margin-left:6px;">' + (timerText ? '(' + timerText + ')' : '') + '</span>'
+    + estHtml;
+
+  var isMobile = window.innerWidth <= 768;
   maintenanceBannerEl = document.createElement('div');
   maintenanceBannerEl.id = 'maintenance-banner';
-  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:#1a1a1a;text-align:center;padding:6px 16px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
-  maintenanceBannerEl.innerHTML = '<i class="fas fa-tools" style="margin-right:6px;font-size:12px;"></i><span class="maintenance-banner-text">' + escapeHtml(message) + '</span>';
-  document.body.appendChild(maintenanceBannerEl);
+  if (isMobile) {
+    maintenanceBannerEl.style.cssText = 'position:relative;z-index:999999;background:#f59e0b;color:#1a1a1a;padding:8px 12px;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px;text-align:center;';
+    maintenanceBannerEl.innerHTML = '<i class="fas fa-tools" style="font-size:11px;flex-shrink:0;"></i><span class="maintenance-banner-text">' + escapeHtml(message) + '</span>' + timerHtml;
+    var mfView = document.getElementById('mobileFieldView');
+    if (mfView) {
+      mfView.insertBefore(maintenanceBannerEl, mfView.firstChild);
+    } else {
+      document.body.insertBefore(maintenanceBannerEl, document.body.firstChild);
+    }
+  } else {
+    maintenanceBannerEl.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);max-width:600px;z-index:999999;background:#f59e0b;color:#1a1a1a;padding:10px 16px;font-size:13px;font-weight:600;border-radius:10px;box-shadow:0 4px 20px rgba(245,158,11,0.4);display:flex;align-items:center;gap:8px;';
+    maintenanceBannerEl.innerHTML = '<i class="fas fa-tools" style="font-size:14px;flex-shrink:0;"></i><span class="maintenance-banner-text">' + escapeHtml(message) + '</span>' + timerHtml;
+    document.body.appendChild(maintenanceBannerEl);
+  }
+
+  if (startedAt) startMaintenanceTimer(startedAt);
 }
 
 function hideMaintenanceBanner() {
   if (maintenanceBannerEl) {
     maintenanceBannerEl.remove();
     maintenanceBannerEl = null;
+    stopMaintenanceTimer();
   }
 }
 
@@ -1947,9 +2014,23 @@ function showBroadcastBanner(message) {
   var isMobile = window.innerWidth <= 768;
   broadcastBannerEl = document.createElement('div');
   broadcastBannerEl.id = 'broadcast-banner';
-  broadcastBannerEl.style.cssText = 'position:fixed;' + (isMobile ? 'bottom:64px;left:8px;right:8px;' : 'bottom:24px;left:50%;transform:translateX(-50%);max-width:600px;') + 'z-index:9999;background:#6366f1;color:#fff;padding:10px 16px;font-size:13px;font-weight:500;border-radius:10px;box-shadow:0 4px 20px rgba(99,102,241,0.4);display:flex;align-items:center;gap:8px;';
-  broadcastBannerEl.innerHTML = '<i class="fas fa-bullhorn" style="font-size:14px;flex-shrink:0;"></i> <span class="broadcast-banner-text">' + escapeHtml(message) + '</span>';
-  document.body.appendChild(broadcastBannerEl);
+  if (isMobile) {
+    // Mobile: static bar at top of body, pushes content down
+    broadcastBannerEl.style.cssText = 'position:relative;z-index:999999;background:#6366f1;color:#fff;padding:8px 12px;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;text-align:center;';
+    broadcastBannerEl.innerHTML = '<i class="fas fa-bullhorn" style="font-size:11px;flex-shrink:0;"></i> <span class="broadcast-banner-text">' + escapeHtml(message) + '</span>';
+    // Insert at very top of mobile view
+    var mfView = document.getElementById('mobileFieldView');
+    if (mfView) {
+      mfView.insertBefore(broadcastBannerEl, mfView.firstChild);
+    } else {
+      document.body.insertBefore(broadcastBannerEl, document.body.firstChild);
+    }
+  } else {
+    // Desktop: floating pill at bottom center
+    broadcastBannerEl.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);max-width:600px;z-index:999999;background:#6366f1;color:#fff;padding:10px 16px;font-size:13px;font-weight:500;border-radius:10px;box-shadow:0 4px 20px rgba(99,102,241,0.4);display:flex;align-items:center;gap:8px;';
+    broadcastBannerEl.innerHTML = '<i class="fas fa-bullhorn" style="font-size:14px;flex-shrink:0;"></i> <span class="broadcast-banner-text">' + escapeHtml(message) + '</span>';
+    document.body.appendChild(broadcastBannerEl);
+  }
 }
 
 function hideBroadcastBanner() {
@@ -1963,25 +2044,79 @@ function hideBroadcastBanner() {
 let maintenanceOverlayEl = null;
 let maintenancePollInterval = null;
 
-function showMaintenanceOverlay(message) {
-  if (maintenanceOverlayEl) return; // Already showing
+function updateMaintenanceOverlayContent(message, estimatedEnd) {
+  if (!maintenanceOverlayEl) return;
+  var msgEl = maintenanceOverlayEl.querySelector('#maintenance-overlay-message');
+  if (msgEl) msgEl.textContent = message;
+  var estEl = maintenanceOverlayEl.querySelector('#maintenance-overlay-est');
+  if (estEl) {
+    if (estimatedEnd) {
+      estEl.textContent = 'Forventet ferdig kl. ' + estimatedEnd;
+      estEl.style.display = '';
+    } else {
+      estEl.textContent = '';
+      estEl.style.display = 'none';
+    }
+  }
+}
+
+function showMaintenanceOverlay(message, startedAt, estimatedEnd) {
+  if (maintenanceOverlayEl) {
+    updateMaintenanceOverlayContent(message, estimatedEnd);
+    return;
+  }
   // Hide broadcast banner — maintenance takes priority
   hideBroadcastBanner();
 
+  var timerText = startedAt ? formatMaintenanceDuration(startedAt) : '';
+
   maintenanceOverlayEl = document.createElement('div');
   maintenanceOverlayEl.id = 'maintenance-overlay';
-  maintenanceOverlayEl.style.cssText = 'position:fixed;inset:0;z-index:100000;background:var(--color-bg-primary);display:flex;align-items:center;justify-content:center;';
-  maintenanceOverlayEl.innerHTML = '<div style="text-align:center;padding:2rem;max-width:480px;color:var(--color-text-primary);font-family:-apple-system,BlinkMacSystemFont,sans-serif;">'
-    + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" style="margin:0 auto 1.5rem;display:block;"><defs><linearGradient id="mg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#6366f1"/><stop offset="100%" style="stop-color:#a855f7"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#mg)"/><rect x="5" y="18" width="5" height="10" rx="1" fill="white" opacity="0.5"/><rect x="13" y="12" width="5" height="16" rx="1" fill="white" opacity="0.75"/><rect x="21" y="6" width="5" height="22" rx="1" fill="white"/><path d="M6 16L15 9L24 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 3"/></svg>'
-    + '<h1 style="font-size:1.5rem;font-weight:600;margin-bottom:0.75rem;color:var(--color-text-primary);">Vedlikehold pågår</h1>'
-    + '<p style="color:var(--color-text-secondary);font-size:1rem;line-height:1.6;margin-bottom:2rem;">' + escapeHtml(message) + '</p>'
-    + '<div style="width:32px;height:32px;border:3px solid rgba(99,102,241,0.2);border-top-color:#6366f1;border-radius:50%;animation:mtspin 1s linear infinite;margin:0 auto 1rem;"></div>'
-    + '<p style="color:var(--color-text-muted);font-size:0.8rem;">Siden sjekker automatisk om vi er tilbake...</p>'
-    + '<button id="maintenance-game-btn" data-action="startMaintenanceGame" style="margin-top:1.5rem;padding:10px 24px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:10px;color:#a5b4fc;font-size:0.9rem;font-weight:500;cursor:pointer;transition:background 0.2s;" onmouseenter="this.style.background=\'rgba(99,102,241,0.25)\'" onmouseleave="this.style.background=\'rgba(99,102,241,0.15)\'">Spill mens du venter?</button>'
-    + '<div id="maintenance-game-container" style="margin-top:1rem;"></div>'
-    + '<a href="/superlogin" style="display:inline-block;margin-top:1.5rem;color:rgba(255,255,255,0.08);font-size:0.6rem;text-decoration:none;" onmouseenter="this.style.color=\'rgba(255,255,255,0.25)\'" onmouseleave="this.style.color=\'rgba(255,255,255,0.08)\'">Admin</a>'
+  maintenanceOverlayEl.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(10,14,22,0.8);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;overflow-y:auto;-webkit-overflow-scrolling:touch;';
+  maintenanceOverlayEl.innerHTML = ''
+    // Logo + dashboard link top-right
+    + '<a href="https://skyplanner.no/dashboard" style="position:absolute;top:20px;left:50%;transform:translateX(-50%);z-index:2;display:flex;align-items:center;gap:10px;text-decoration:none;color:#e2e8f0;opacity:0.7;transition:opacity 0.2s;" onmouseenter="this.style.opacity=\'1\'" onmouseleave="this.style.opacity=\'0.7\'">'
+    + '  <img src="/skyplanner-logo.svg" alt="Sky Planner" style="width:28px;height:28px;">'
+    + '  <span style="font-size:14px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">Sky Planner</span>'
+    + '</a>'
+    // Content
+    + '<div style="text-align:center;padding:2rem;max-width:480px;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;position:relative;z-index:1;">'
+    + '  <h1 style="font-size:1.5rem;font-weight:600;margin-bottom:0.75rem;">Vedlikehold pågår</h1>'
+    + '  <p id="maintenance-overlay-message" style="color:#94a3b8;font-size:1rem;line-height:1.6;margin-bottom:1rem;">' + escapeHtml(message) + '</p>'
+    + (startedAt ? '  <p style="color:#64748b;font-size:0.8rem;margin-bottom:0.25rem;">' + formatMaintenanceStartedTime(startedAt) + '</p>' : '')
+    + '  <p id="maintenance-overlay-est" style="color:#4ade80;font-size:0.9rem;font-weight:600;margin-bottom:0.5rem;' + (estimatedEnd ? '' : 'display:none;') + '">' + (estimatedEnd ? 'Forventet ferdig kl. ' + escapeHtml(estimatedEnd) : '') + '</p>'
+    + '  <div id="maintenance-overlay-timer" style="color:#a5b4fc;font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums;margin-bottom:1.5rem;letter-spacing:0.05em;">' + (timerText || '') + '</div>'
+    + '  <div style="width:32px;height:32px;border:3px solid rgba(99,102,241,0.2);border-top-color:#6366f1;border-radius:50%;animation:mtspin 1s linear infinite;margin:0 auto 1rem;"></div>'
+    + '  <p style="color:#64748b;font-size:0.8rem;">Siden sjekker automatisk om vi er tilbake...</p>'
+    + '  <button id="maintenance-game-btn" data-action="startMaintenanceGame" style="margin-top:1.5rem;padding:10px 24px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:10px;color:#a5b4fc;font-size:0.9rem;font-weight:500;cursor:pointer;-webkit-tap-highlight-color:transparent;">Spill mens du venter?</button>'
+    + '  <div id="maintenance-game-container" style="margin-top:1rem;"></div>'
+    + '  <a href="/superlogin" style="display:inline-block;margin-top:1.5rem;color:rgba(255,255,255,0.06);font-size:0.6rem;text-decoration:none;" onmouseenter="this.style.color=\'rgba(255,255,255,0.2)\'" onmouseleave="this.style.color=\'rgba(255,255,255,0.06)\'">Admin</a>'
     + '</div>'
     + '<style>@keyframes mtspin{to{transform:rotate(360deg)}}</style>';
+
+  if (startedAt) startMaintenanceTimer(startedAt);
+
+  // Hide login and app UI — keep only the map visible behind overlay
+  var loginOverlay = document.getElementById('loginOverlay');
+  if (loginOverlay) loginOverlay.style.display = 'none';
+  var appView = document.getElementById('appView');
+  if (appView) appView.style.display = 'none';
+  var sidebar = document.getElementById('sidebar');
+  if (sidebar) sidebar.style.display = 'none';
+  var filterPanel = document.getElementById('filterPanel');
+  if (filterPanel) filterPanel.style.display = 'none';
+  var userBar = document.getElementById('userBar');
+  if (userBar) userBar.style.display = 'none';
+
+  // Zoom map out to globe view centered on screen and start spinning
+  if (typeof map !== 'undefined' && map) {
+    try {
+      map.resize();
+      map.jumpTo({ center: [15.0, 65.0], zoom: 3.0, pitch: 20, bearing: 0 });
+      if (typeof setMapInteractive === 'function') setMapInteractive(false);
+      if (typeof startGlobeSpin === 'function') startGlobeSpin();
+    } catch(e) {}
+  }
   document.body.appendChild(maintenanceOverlayEl);
 
   // Poll for maintenance end (every 5s)
@@ -2001,6 +2136,7 @@ function showMaintenanceOverlay(message) {
 
 function startMaintenanceCountdown() {
   if (!maintenanceOverlayEl) return;
+  stopMaintenanceTimer();
   if (typeof destroyMaintenanceGame === 'function') destroyMaintenanceGame();
   var seconds = 10;
   // Replace spinner and auto-refresh text with countdown
@@ -2042,16 +2178,19 @@ function startMaintenanceCountdown() {
     fetch('/api/maintenance/status')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        // Maintenance overlay
-        if (!maintenanceOverlayEl && data.maintenance && data.mode === 'full') {
-          showMaintenanceOverlay(data.message || 'Vedlikehold pågår');
+        // Maintenance: full overlay or banner
+        if (data.maintenance && data.mode === 'full') {
+          showMaintenanceOverlay(data.message || 'Vedlikehold pågår', data.startedAt, data.estimatedEnd);
+        } else if (data.maintenance && data.mode === 'banner') {
+          showMaintenanceBanner(data.message || 'Vedlikehold pågår', data.startedAt, data.estimatedEnd);
+        } else if (!data.maintenance) {
+          hideMaintenanceBanner();
         }
-        // Broadcast banner (hide if maintenance active, or user not logged in)
-        var loginOverlay = document.getElementById('loginOverlay');
-        var isLoggedIn = !loginOverlay || loginOverlay.classList.contains('hidden');
-        if (data.broadcast && !maintenanceBannerEl && !maintenanceOverlayEl && isLoggedIn) {
+
+        // Broadcast banner (hide if maintenance active)
+        if (data.broadcast && !maintenanceBannerEl && !maintenanceOverlayEl) {
           showBroadcastBanner(data.broadcast);
-        } else if (!data.broadcast || maintenanceBannerEl || maintenanceOverlayEl || !isLoggedIn) {
+        } else if (!data.broadcast || maintenanceBannerEl || maintenanceOverlayEl) {
           hideBroadcastBanner();
         }
       })
@@ -6982,6 +7121,7 @@ function mfRenderCalendarView() {
   for (const [date, avtaler] of Object.entries(groups)) {
     const label = mfFormatDateLabel(date);
     html += `<div class="mf-cal-date-header">${escapeHtml(label)}</div>`;
+    html += `<div class="mf-cal-date-group">`;
 
     for (const avtale of avtaler) {
       const isCompleted = avtale.status === 'fullf\u00f8rt';
@@ -7014,6 +7154,7 @@ function mfRenderCalendarView() {
         </div>
       `;
     }
+    html += `</div>`;
   }
 
   content.innerHTML = html;
@@ -8226,9 +8367,9 @@ let mfMapInitialized = false;
 // ---- Detection & activation ----
 
 function isMobileDevice() {
-  // Catch phones (<= 768px) and tablets (touch + <= 1024px)
+  // Catch phones (<= 768px) and tablets (touch + <= 1199px, covers iPad landscape)
   if (window.innerWidth <= 768) return true;
-  if (window.innerWidth <= 1024 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
+  if (window.innerWidth <= 1199 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
   return false;
 }
 
@@ -9714,6 +9855,7 @@ function mfRenderTeamWeekView() {
   if (members.length === 0) {
     html += '<div class="mf-empty-state"><i class="fas fa-users"></i><p>Ingen teammedlemmer med ruter denne uken.</p></div>';
   } else {
+    html += '<div class="mf-team-list">';
     members.forEach((member, mIdx) => {
       const color = TEAM_COLORS[mIdx % TEAM_COLORS.length];
       const initials = mfGetInitials(member.navn);
@@ -9779,15 +9921,15 @@ function mfRenderTeamWeekView() {
         html += '</div>';
       }
     });
+    html += '</div>';
   }
 
   // Unassigned routes
   const hasUnassigned = dates.some(d => unassigned[d] && unassigned[d].length > 0);
   if (hasUnassigned) {
     const totalUnassigned = dates.reduce((s, d) => s + (unassigned[d]?.length || 0), 0);
-    html += `
-      <div class="mf-team-section-label">Utildelte ruter (${totalUnassigned})</div>
-    `;
+    html += `<div class="mf-team-section-label">Utildelte ruter (${totalUnassigned})</div>`;
+    html += '<div class="mf-team-list">';
     dates.forEach((date, dIdx) => {
       const routes = unassigned[date] || [];
       if (routes.length === 0) return;
@@ -9805,6 +9947,7 @@ function mfRenderTeamWeekView() {
         `;
       });
     });
+    html += '</div>';
   }
 
   content.innerHTML = html;
@@ -11408,7 +11551,9 @@ function mfWpShowReassign(kundeId, dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('open'));
 }
 
@@ -11486,7 +11631,9 @@ function mfWpShowAssignAll(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('open'));
 }
 
@@ -11570,7 +11717,9 @@ function mfWpAddCustomerDirect(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => {
     overlay.classList.add('open');
     // Pre-select last used team member on this day
@@ -12192,7 +12341,9 @@ async function mfWpShowAreaBrowser(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => {
     overlay.classList.add('open');
   });
@@ -12571,7 +12722,9 @@ function mfWpShowAddMethodPicker(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('open'));
 }
 
@@ -13603,7 +13756,8 @@ function cnpSelectType(typeKey) {
   if (pills) {
     pills.forEach(p => {
       const args = p.dataset.args;
-      const key = args ? JSON.parse(args)[0] : '';
+      let key = '';
+      try { key = args ? JSON.parse(args)[0] : ''; } catch { /* ignore */ }
       p.classList.toggle('active', key === typeKey);
     });
   }
@@ -36844,10 +36998,10 @@ function clusterCustomersByProximity(customerList) {
   var FONT = '-apple-system,BlinkMacSystemFont,sans-serif';
 
   // Difficulty scaling
-  var BASE_SPEED = 2.2;
-  var MAX_SPEED = 4.5;
-  var ACCEL = 0.18;
-  var FRICTION = 0.88;
+  var BASE_SPEED = 1.6;
+  var MAX_SPEED = 3.2;
+  var ACCEL = 0.14;
+  var FRICTION = 0.85;
   var MARKER_COUNT = 5;
 
   // Colors
@@ -37651,49 +37805,89 @@ function clusterCustomersByProximity(customerList) {
   }
 
   function createDpad(parent) {
-    var dpad = document.createElement('div');
-    dpad.id = 'mg-dpad';
-    dpad.style.cssText = 'display:grid;grid-template-columns:52px 52px 52px;grid-template-rows:52px 52px;gap:6px;justify-content:center;margin-top:14px;user-select:none;-webkit-user-select:none;';
+    var SIZE = 120;
+    var KNOB = 44;
+    var DEAD = 10;
+    var wrapper = document.createElement('div');
+    wrapper.id = 'mg-dpad';
+    wrapper.style.cssText = 'display:flex;justify-content:center;margin-top:14px;user-select:none;-webkit-user-select:none;';
 
-    var btnBase = 'display:flex;align-items:center;justify-content:center;border-radius:14px;font-size:18px;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:none;transition:background 0.1s,transform 0.1s;';
+    var base = document.createElement('div');
+    base.style.cssText = 'width:' + SIZE + 'px;height:' + SIZE + 'px;border-radius:50%;background:rgba(99,102,241,0.08);border:1.5px solid rgba(99,102,241,0.2);position:relative;touch-action:none;';
 
-    var dirs = [
-      { label: '\u25B2', col: '2/3', row: '1/2', dx: 0, dy: -1 },
-      { label: '\u25C0', col: '1/2', row: '2/3', dx: -1, dy: 0 },
-      { label: '\u25BC', col: '2/3', row: '2/3', dx: 0, dy: 1 },
-      { label: '\u25B6', col: '3/4', row: '2/3', dx: 1, dy: 0 }
-    ];
+    var knob = document.createElement('div');
+    knob.style.cssText = 'width:' + KNOB + 'px;height:' + KNOB + 'px;border-radius:50%;background:rgba(99,102,241,0.25);border:1.5px solid rgba(99,102,241,0.4);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);transition:none;pointer-events:none;';
+    base.appendChild(knob);
 
-    dirs.forEach(function(d) {
-      var btn = document.createElement('div');
-      btn.style.cssText = btnBase + 'grid-column:' + d.col + ';grid-row:' + d.row + ';background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#818cf8;';
-      btn.textContent = d.label;
+    var center = SIZE / 2;
+    var maxDist = (SIZE - KNOB) / 2;
+    var active = false;
 
-      function press(e) {
-        e.preventDefault();
-        touchDir.x = d.dx; touchDir.y = d.dy;
-        btn.style.background = 'rgba(99,102,241,0.3)';
-        btn.style.transform = 'scale(0.92)';
-        if (gameState !== 'playing') startGame();
+    function updateKnob(cx, cy) {
+      var dx = cx - center;
+      var dy = cy - center;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > maxDist) { dx = dx / dist * maxDist; dy = dy / dist * maxDist; dist = maxDist; }
+      knob.style.left = (center + dx) + 'px';
+      knob.style.top = (center + dy) + 'px';
+      knob.style.transform = 'translate(-50%,-50%)';
+
+      if (dist < DEAD) {
+        touchDir.x = 0; touchDir.y = 0;
+      } else {
+        touchDir.x = dx / maxDist;
+        touchDir.y = dy / maxDist;
       }
-      function release(e) {
-        e.preventDefault();
-        if (d.dx !== 0) touchDir.x = 0;
-        if (d.dy !== 0) touchDir.y = 0;
-        btn.style.background = 'rgba(99,102,241,0.12)';
-        btn.style.transform = 'scale(1)';
-      }
+    }
 
-      btn.addEventListener('touchstart', press, { passive: false });
-      btn.addEventListener('touchend', release, { passive: false });
-      btn.addEventListener('touchcancel', release, { passive: false });
-      btn.addEventListener('mousedown', press);
-      btn.addEventListener('mouseup', release);
-      btn.addEventListener('mouseleave', release);
-      dpad.appendChild(btn);
+    function resetKnob() {
+      knob.style.left = '50%';
+      knob.style.top = '50%';
+      knob.style.transform = 'translate(-50%,-50%)';
+      touchDir.x = 0; touchDir.y = 0;
+      active = false;
+    }
+
+    function getPos(e) {
+      var rect = base.getBoundingClientRect();
+      var t = e.touches ? e.touches[0] : e;
+      return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+    }
+
+    base.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      active = true;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+      if (gameState !== 'playing') startGame();
+    }, { passive: false });
+
+    base.addEventListener('touchmove', function(e) {
+      e.preventDefault();
+      if (!active) return;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+    }, { passive: false });
+
+    base.addEventListener('touchend', function(e) { e.preventDefault(); resetKnob(); }, { passive: false });
+    base.addEventListener('touchcancel', function(e) { e.preventDefault(); resetKnob(); }, { passive: false });
+
+    // Mouse fallback
+    base.addEventListener('mousedown', function(e) {
+      active = true;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+      if (gameState !== 'playing') startGame();
     });
+    document.addEventListener('mousemove', function(e) {
+      if (!active) return;
+      var p = getPos(e);
+      updateKnob(p.x, p.y);
+    });
+    document.addEventListener('mouseup', function() { if (active) resetKnob(); });
 
-    parent.appendChild(dpad);
+    wrapper.appendChild(base);
+    parent.appendChild(wrapper);
   }
 
   function setupCanvasTouch() {
@@ -37715,6 +37909,13 @@ function clusterCustomersByProximity(customerList) {
 
     highScore = parseInt(localStorage.getItem(HS_KEY) || '0', 10);
     dpr = window.devicePixelRatio || 1;
+
+    // Scale for mobile
+    var isMobile = window.innerWidth <= 500;
+    if (isMobile) {
+      W = Math.min(280, window.innerWidth - 40);
+      H = Math.round(W * 1.3);
+    }
 
     canvas = document.createElement('canvas');
     canvas.width = W * dpr;
@@ -37969,6 +38170,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load configuration first
   await loadConfig();
+
+  // Check maintenance BEFORE anything else renders
+  let fullMaintenanceActive = false;
+  try {
+    const mtRes = await fetch('/api/maintenance/status');
+    const mtData = await mtRes.json();
+    if (mtData.maintenance && mtData.mode === 'full') {
+      fullMaintenanceActive = true;
+      // Hide login overlay immediately
+      const lo = document.getElementById('loginOverlay');
+      if (lo) lo.style.display = 'none';
+      // Init map in globe mode, then show maintenance overlay
+      applyBranding();
+      initSharedMap({ skipGlobe: false });
+      showMaintenanceOverlay(mtData.message || 'Vedlikehold pågår', mtData.startedAt, mtData.estimatedEnd);
+      return;
+    }
+  } catch(e) { /* continue if check fails */ }
 
   // Apply branding from config
   applyBranding();

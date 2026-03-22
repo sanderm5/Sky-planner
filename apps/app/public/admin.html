@@ -98,17 +98,17 @@
             </div>
             <div class="broadcast-form">
               <div class="preset-btns" id="broadcastPresets">
-                <button class="preset-btn" data-msg="Vi opplever for tiden treg ytelse. Vi jobber med saken.">Treg ytelse</button>
-                <button class="preset-btn" data-msg="Vi har problemer med databasen. Noen funksjoner kan være utilgjengelige.">Databasefeil</button>
-                <button class="preset-btn" data-msg="Planlagt vedlikehold i kveld kl. 22:00–23:00. Appen kan være utilgjengelig.">Planlagt vedlikehold</button>
-                <button class="preset-btn" data-msg="Vi har oppdatert appen med nye funksjoner! Se patch notes for detaljer.">Ny oppdatering</button>
+                <button type="button" class="preset-btn" data-msg="Vi opplever for tiden treg ytelse. Vi jobber med saken.">Treg ytelse</button>
+                <button type="button" class="preset-btn" data-msg="Vi har problemer med databasen. Noen funksjoner kan være utilgjengelige.">Databasefeil</button>
+                <button type="button" class="preset-btn" data-msg="Planlagt vedlikehold i kveld kl. 22:00–23:00. Appen kan være utilgjengelig.">Planlagt vedlikehold</button>
+                <button type="button" class="preset-btn" data-msg="Vi har oppdatert appen med nye funksjoner! Se patch notes for detaljer.">Ny oppdatering</button>
               </div>
               <textarea id="broadcastMessage" rows="2" placeholder="Eller skriv en egen melding..." maxlength="500"></textarea>
               <div class="broadcast-actions">
-                <button class="btn-sm btn-primary" id="broadcastSendBtn">
+                <button type="button" class="btn-sm btn-primary" id="broadcastSendBtn">
                   <i class="fas fa-bullhorn"></i> Publiser
                 </button>
-                <button class="btn-sm btn-secondary" id="broadcastClearBtn" style="display:none;">
+                <button type="button" class="btn-sm btn-secondary" id="broadcastClearBtn" style="display:none;">
                   <i class="fas fa-times"></i> Fjern
                 </button>
               </div>
@@ -122,23 +122,28 @@
               <span class="broadcast-status-dot inactive"></span>
               <span>Av</span>
             </div>
+            <div id="maintenanceTimer" style="display:none;margin-top:6px;font-size:13px;font-weight:600;color:#f59e0b;font-variant-numeric:tabular-nums;"></div>
             <div class="broadcast-form">
               <div class="preset-btns" id="maintenancePresets">
-                <button class="preset-btn" data-msg="Vi utfører vedlikehold. Prøv igjen om noen minutter.">Kort vedlikehold</button>
-                <button class="preset-btn" data-msg="Planlagt vedlikehold pågår. Vi forventer å være tilbake innen 30 minutter.">30 min vedlikehold</button>
-                <button class="preset-btn" data-msg="Vi oppgraderer serverne. Appen er utilgjengelig frem til ca. kl. 08:00.">Serveroppgradering</button>
-                <button class="preset-btn" data-msg="Nødvedlikehold pågår på grunn av tekniske problemer. Vi jobber med å løse det.">Nødvedlikehold</button>
+                <button type="button" class="preset-btn" data-msg="Vi utfører vedlikehold. Prøv igjen om noen minutter.">Kort vedlikehold</button>
+                <button type="button" class="preset-btn" data-msg="Planlagt vedlikehold pågår. Vi forventer å være tilbake innen 30 minutter.">30 min vedlikehold</button>
+                <button type="button" class="preset-btn" data-msg="Vi oppgraderer serverne. Appen er utilgjengelig frem til ca. kl. 08:00.">Serveroppgradering</button>
+                <button type="button" class="preset-btn" data-msg="Nødvedlikehold pågår på grunn av tekniske problemer. Vi jobber med å løse det.">Nødvedlikehold</button>
               </div>
               <textarea id="maintenanceMessage" rows="2" placeholder="Eller skriv en egen melding..." maxlength="500"></textarea>
               <div class="maintenance-mode-select">
                 <label><input type="radio" name="maintenanceMode" value="banner" checked> Banner (appen fungerer)</label>
                 <label><input type="radio" name="maintenanceMode" value="full"> Full blokkering</label>
               </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                <label for="maintenanceEstimatedEnd" style="font-size:12px;color:#94a3b8;white-space:nowrap;">Forventet ferdig kl.</label>
+                <input type="time" id="maintenanceEstimatedEnd" style="background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;padding:4px 8px;font-size:13px;">
+              </div>
               <div class="broadcast-actions">
-                <button class="btn-sm btn-warning" id="maintenanceOnBtn">
+                <button type="button" class="btn-sm btn-warning" id="maintenanceOnBtn">
                   <i class="fas fa-toggle-on"></i> Aktiver
                 </button>
-                <button class="btn-sm btn-secondary" id="maintenanceOffBtn" style="display:none;">
+                <button type="button" class="btn-sm btn-secondary" id="maintenanceOffBtn" style="display:none;">
                   <i class="fas fa-toggle-off"></i> Deaktiver
                 </button>
               </div>

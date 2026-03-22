@@ -238,8 +238,8 @@ export async function POST(request: NextRequest) {
 
     // Account-level lockout check (prevents distributed brute-force from multiple IPs)
     const supabaseForLockout = db.getSupabaseClient();
-    const ACCOUNT_LOCKOUT_MAX_ATTEMPTS = 10;
-    const ACCOUNT_LOCKOUT_WINDOW_MINUTES = 30;
+    const ACCOUNT_LOCKOUT_MAX_ATTEMPTS = 5;
+    const ACCOUNT_LOCKOUT_WINDOW_MINUTES = 60;
     const lockoutWindowStart = new Date(Date.now() - ACCOUNT_LOCKOUT_WINDOW_MINUTES * 60 * 1000).toISOString();
 
     const { count: recentFailures } = await supabaseForLockout

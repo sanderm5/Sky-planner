@@ -183,8 +183,8 @@ router.post(
 
     // Account-level lockout check (prevents distributed brute-force from multiple IPs)
     if (dbService.countRecentFailedLogins) {
-      const ACCOUNT_LOCKOUT_MAX = 10;
-      const ACCOUNT_LOCKOUT_WINDOW = 30; // minutes
+      const ACCOUNT_LOCKOUT_MAX = 5;
+      const ACCOUNT_LOCKOUT_WINDOW = 60; // minutes
       const recentFailures = await dbService.countRecentFailedLogins(epost, ACCOUNT_LOCKOUT_WINDOW);
       if (recentFailures >= ACCOUNT_LOCKOUT_MAX) {
         logSecurityEvent({ action: 'account_locked', details: { epost, recentFailures }, ipAddress: ip, userAgent });
@@ -696,24 +696,24 @@ router.post(
     const newRefreshHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
     const newRefreshDecoded = jwt.decode(newRefreshToken) as any;
 
-    // Store new refresh token and revoke old one
-    await Promise.all([
-      supabase.from('refresh_tokens').insert({
-        token_hash: newRefreshHash,
-        user_id: user.id,
-        user_type: stored.user_type,
-        organization_id: stored.organization_id,
-        jti: newRefreshDecoded.jti,
-        family_id: stored.family_id,
-        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        ip_address: req.ip,
-        user_agent: req.headers['user-agent'] || '',
-      }),
-      supabase.from('refresh_tokens').update({
-        revoked_at: new Date().toISOString(),
-        replaced_by: newRefreshDecoded.jti,
-      }).eq('id', stored.id),
-    ]);
+    // Revoke old token BEFORE issuing new one to prevent race condition
+    // where both tokens are valid simultaneously
+    await supabase.from('refresh_tokens').update({
+      revoked_at: new Date().toISOString(),
+      replaced_by: newRefreshDecoded.jti,
+    }).eq('id', stored.id);
+
+    await supabase.from('refresh_tokens').insert({
+      token_hash: newRefreshHash,
+      user_id: user.id,
+      user_type: stored.user_type,
+      organization_id: stored.organization_id,
+      jti: newRefreshDecoded.jti,
+      family_id: stored.family_id,
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      ip_address: req.ip,
+      user_agent: req.headers['user-agent'] || '',
+    });
 
     // Set new cookies
     const isProduction = config.NODE_ENV === 'production';

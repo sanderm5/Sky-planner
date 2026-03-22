@@ -215,6 +215,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load configuration first
   await loadConfig();
 
+  // Check maintenance BEFORE anything else renders
+  let fullMaintenanceActive = false;
+  try {
+    const mtRes = await fetch('/api/maintenance/status');
+    const mtData = await mtRes.json();
+    if (mtData.maintenance && mtData.mode === 'full') {
+      fullMaintenanceActive = true;
+      // Hide login overlay immediately
+      const lo = document.getElementById('loginOverlay');
+      if (lo) lo.style.display = 'none';
+      // Init map in globe mode, then show maintenance overlay
+      applyBranding();
+      initSharedMap({ skipGlobe: false });
+      showMaintenanceOverlay(mtData.message || 'Vedlikehold pågår', mtData.startedAt, mtData.estimatedEnd);
+      return;
+    }
+  } catch(e) { /* continue if check fails */ }
+
   // Apply branding from config
   applyBranding();
 

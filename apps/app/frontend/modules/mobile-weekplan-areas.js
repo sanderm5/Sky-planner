@@ -153,7 +153,9 @@ async function mfWpShowAreaBrowser(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => {
     overlay.classList.add('open');
   });
@@ -532,7 +534,9 @@ function mfWpShowAddMethodPicker(dayKey) {
     </div>
   `;
 
-  document.getElementById('mfWeekplanOverlay').appendChild(overlay);
+  const container = document.getElementById('mfWeekplanOverlay') || document.getElementById('mfWeekplanInline');
+  if (!container) return;
+  container.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('open'));
 }
 

@@ -18,6 +18,7 @@ let maintenanceEnabled = false;
 let maintenanceMode: 'banner' | 'full' = 'full';
 let maintenanceMessage = 'Vi utfører vedlikehold. Prøv igjen om noen minutter.';
 let maintenanceStartedAt: string | null = null;
+let maintenanceEstimatedEnd: string | null = null;
 
 // Exported getters for middleware
 export function isMaintenanceEnabled(): boolean {
@@ -36,15 +37,33 @@ export function getMaintenanceStartedAt(): string | null {
   return maintenanceStartedAt;
 }
 
+export function getMaintenanceEstimatedEnd(): string | null {
+  return maintenanceEstimatedEnd;
+}
+
+
+
+// Broadcast getter — registered by super-admin.ts to avoid circular imports
+let _getBroadcast: (() => string | null) | null = null;
+export function registerBroadcastGetter(fn: () => string | null): void {
+  _getBroadcast = fn;
+}
+export function getRegisteredBroadcast(): string | null {
+  return _getBroadcast ? _getBroadcast() : null;
+}
+
 /** Toggle maintenance from superadmin (no CRON_SECRET needed) */
-export function setMaintenance(enabled: boolean, mode?: 'banner' | 'full', message?: string): void {
+export function setMaintenance(enabled: boolean, mode?: 'banner' | 'full', message?: string, estimatedEnd?: string | null): void {
+  const wasEnabled = maintenanceEnabled;
   maintenanceEnabled = enabled;
   if (enabled) {
     if (mode) maintenanceMode = mode;
     if (message) maintenanceMessage = message;
-    maintenanceStartedAt = new Date().toISOString();
+    if (!wasEnabled) maintenanceStartedAt = new Date().toISOString();
+    maintenanceEstimatedEnd = (estimatedEnd !== undefined) ? (estimatedEnd || null) : maintenanceEstimatedEnd;
   } else {
     maintenanceStartedAt = null;
+    maintenanceEstimatedEnd = null;
   }
 }
 
@@ -83,7 +102,7 @@ function verifyCronSecret(req: Request, res: Response, next: NextFunction): void
  * Body: { enabled: boolean, mode?: "banner" | "full", message?: string }
  */
 router.post('/toggle', verifyCronSecret, (req: Request, res: Response) => {
-  const { enabled, mode, message } = req.body;
+  const { enabled, mode, message, estimatedEnd } = req.body;
 
   if (typeof enabled !== 'boolean') {
     res.status(400).json({ error: 'enabled must be a boolean' });
@@ -100,9 +119,11 @@ router.post('/toggle', verifyCronSecret, (req: Request, res: Response) => {
       maintenanceMessage = message.trim();
     }
     maintenanceStartedAt = new Date().toISOString();
-    logger.info({ mode: maintenanceMode, message: maintenanceMessage }, 'Maintenance mode ENABLED');
+    maintenanceEstimatedEnd = (typeof estimatedEnd === 'string' && estimatedEnd.trim()) ? estimatedEnd.trim() : null;
+    logger.info({ mode: maintenanceMode, message: maintenanceMessage, estimatedEnd: maintenanceEstimatedEnd }, 'Maintenance mode ENABLED');
   } else {
     maintenanceStartedAt = null;
+    maintenanceEstimatedEnd = null;
     logger.info('Maintenance mode DISABLED');
   }
 
@@ -112,6 +133,7 @@ router.post('/toggle', verifyCronSecret, (req: Request, res: Response) => {
     mode: maintenanceEnabled ? maintenanceMode : null,
     message: maintenanceMessage,
     startedAt: maintenanceStartedAt,
+    estimatedEnd: maintenanceEstimatedEnd,
   });
 });
 
@@ -121,20 +143,14 @@ router.post('/toggle', verifyCronSecret, (req: Request, res: Response) => {
  * Used by: frontend polling, service worker, Next.js middleware
  */
 router.get('/status', (_req: Request, res: Response) => {
-  // Import broadcast state (lazy to avoid circular dep at module load)
-  let broadcastMsg: string | null = null;
-  try {
-    const { getBroadcastMessage } = require('./super-admin');
-    broadcastMsg = getBroadcastMessage();
-  } catch { /* super-admin not loaded yet */ }
-
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     maintenance: maintenanceEnabled,
     mode: maintenanceEnabled ? maintenanceMode : null,
     message: maintenanceEnabled ? maintenanceMessage : '',
     startedAt: maintenanceStartedAt,
-    broadcast: broadcastMsg || null,
+    estimatedEnd: maintenanceEstimatedEnd,
+    broadcast: getRegisteredBroadcast(),
   });
 });
 

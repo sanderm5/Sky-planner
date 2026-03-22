@@ -301,7 +301,8 @@ function cnpSelectType(typeKey) {
   if (pills) {
     pills.forEach(p => {
       const args = p.dataset.args;
-      const key = args ? JSON.parse(args)[0] : '';
+      let key = '';
+      try { key = args ? JSON.parse(args)[0] : ''; } catch { /* ignore */ }
       p.classList.toggle('active', key === typeKey);
     });
   }

@@ -6,8 +6,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { isMaintenanceEnabled, getMaintenanceMode, getMaintenanceMessage } from '../routes/maintenance';
-import { getBroadcastMessage } from '../routes/super-admin';
+import { isMaintenanceEnabled, getMaintenanceMode, getMaintenanceMessage, getMaintenanceStartedAt, getMaintenanceEstimatedEnd, getRegisteredBroadcast } from '../routes/maintenance';
 
 // Paths that always pass through even in full maintenance mode
 const ALWAYS_PASS = [
@@ -29,7 +28,7 @@ function shouldPassThrough(path: string): boolean {
 
 export function maintenanceMiddleware(req: Request, res: Response, next: NextFunction): void {
   // Always add broadcast header if active (even without maintenance mode)
-  const broadcast = getBroadcastMessage();
+  const broadcast = getRegisteredBroadcast();
   if (broadcast) {
     res.setHeader('X-Broadcast', encodeURIComponent(broadcast));
   }
@@ -64,6 +63,8 @@ export function maintenanceMiddleware(req: Request, res: Response, next: NextFun
       error: {
         code: 'MAINTENANCE',
         message,
+        startedAt: getMaintenanceStartedAt(),
+        estimatedEnd: getMaintenanceEstimatedEnd(),
       },
     });
     return;

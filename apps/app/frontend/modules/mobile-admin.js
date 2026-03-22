@@ -290,6 +290,7 @@ function mfRenderTeamWeekView() {
   if (members.length === 0) {
     html += '<div class="mf-empty-state"><i class="fas fa-users"></i><p>Ingen teammedlemmer med ruter denne uken.</p></div>';
   } else {
+    html += '<div class="mf-team-list">';
     members.forEach((member, mIdx) => {
       const color = TEAM_COLORS[mIdx % TEAM_COLORS.length];
       const initials = mfGetInitials(member.navn);
@@ -355,15 +356,15 @@ function mfRenderTeamWeekView() {
         html += '</div>';
       }
     });
+    html += '</div>';
   }
 
   // Unassigned routes
   const hasUnassigned = dates.some(d => unassigned[d] && unassigned[d].length > 0);
   if (hasUnassigned) {
     const totalUnassigned = dates.reduce((s, d) => s + (unassigned[d]?.length || 0), 0);
-    html += `
-      <div class="mf-team-section-label">Utildelte ruter (${totalUnassigned})</div>
-    `;
+    html += `<div class="mf-team-section-label">Utildelte ruter (${totalUnassigned})</div>`;
+    html += '<div class="mf-team-list">';
     dates.forEach((date, dIdx) => {
       const routes = unassigned[date] || [];
       if (routes.length === 0) return;
@@ -381,6 +382,7 @@ function mfRenderTeamWeekView() {
         `;
       });
     });
+    html += '</div>';
   }
 
   content.innerHTML = html;

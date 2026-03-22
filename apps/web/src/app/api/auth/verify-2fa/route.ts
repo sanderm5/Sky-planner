@@ -90,6 +90,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Verify IP matches the one from login to prevent session hijacking
+    const currentIp = request.headers.get('x-real-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    if (session.ip_address && session.ip_address !== currentIp) {
+      await supabase.from('totp_pending_sessions').delete().eq('id', session.id);
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'ERROR', message: 'Sesjonen er ugyldig. Logg inn på nytt.' } }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Rate limiting: max 5 attempts per session
     // Uses true atomic SQL increment to prevent race conditions:
     // UPDATE ... SET attempts = attempts + 1 WHERE attempts < MAX RETURNING attempts
