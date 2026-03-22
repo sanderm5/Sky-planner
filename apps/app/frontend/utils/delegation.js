@@ -41,7 +41,10 @@
     'mfOpenChatConversation','mfSendChatMessage','mfShowChatList','mfShowNewDmView','mfStartDm',
     // Support widget
     'toggleSupportWidget','sendSupportWidgetMessage','sendSupportWidgetTopic',
-    'openSupportTicket','supportWidgetBack',
+    'openSupportTicket','supportWidgetBack','reopenSupportWidgetTicket',
+    // Mobile support chat
+    'mfSupportShowList','mfSupportOpenTicket','mfSupportCreateTicket',
+    'mfSupportSendMessage','mfSupportReopenTicket',
     // Mobile calendar
     'mfCompleteAvtale','mfShowNewAvtaleSheet','mfCloseNewAvtaleSheet','mfSubmitNewAvtale',
     'mfSelectNewAvtaleKunde','mfClearNewAvtaleKunde',
@@ -127,6 +130,8 @@
     'addSubcat','editSubcat','deleteSubcat',
     // Customer note popover
     'cnpShowPopover','cnpDismissPopover','cnpToggleAddForm','cnpSelectType','cnpSaveQuickNote',
+    // Maintenance game
+    'startMaintenanceGame',
   ]);
 
   // ---- Allowlisted handler names for change/input/submit/keydown ----

@@ -1078,6 +1078,26 @@ export async function closeSupportTicket(ctx: DatabaseContext, conversationId: n
 }
 
 /**
+ * Reopen a support ticket (set status = 'open').
+ */
+export async function reopenSupportTicket(ctx: DatabaseContext, conversationId: number): Promise<void> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+    await supabase
+      .from('chat_conversations')
+      .update({ status: 'open' })
+      .eq('id', conversationId)
+      .eq('type', 'support');
+    return;
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+  ctx.sqlite.prepare(
+    'UPDATE chat_conversations SET status = ? WHERE id = ? AND type = ?'
+  ).run('open', conversationId, 'support');
+}
+
+/**
  * Get all support tickets across all orgs (for superadmin dashboard).
  * No tenant validation — superadmin operates cross-org via service_role.
  */
@@ -1282,6 +1302,29 @@ export async function createSupportChatMessage(
     content,
     created_at: now,
   };
+}
+
+/**
+ * Delete an entire support ticket and all its messages (superadmin only).
+ */
+export async function deleteSupportTicket(ctx: DatabaseContext, conversationId: number): Promise<boolean> {
+  if (ctx.type === 'supabase') {
+    const supabase = await ctx.getSupabaseClient();
+    // Messages + read status cascade-deleted via FK
+    const { error } = await supabase
+      .from('chat_conversations')
+      .delete()
+      .eq('id', conversationId)
+      .eq('type', 'support');
+    return !error;
+  }
+
+  if (!ctx.sqlite) throw new Error('Database not initialized');
+  // Messages + read status cascade-deleted via FK
+  const result = ctx.sqlite.prepare(
+    'DELETE FROM chat_conversations WHERE id = ? AND type = ?'
+  ).run(conversationId, 'support');
+  return result.changes > 0;
 }
 
 /**

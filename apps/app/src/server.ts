@@ -565,6 +565,11 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(publicPath, 'admin.html'));
 });
 
+// Super admin login page — always accessible, even during maintenance
+app.get('/superlogin', (req, res) => {
+  res.sendFile(path.join(publicPath, 'superlogin.html'));
+});
+
 // ===== SPA FALLBACK =====
 app.get('*', (req, res) => {
   // Don't serve index.html for API routes

@@ -632,9 +632,6 @@ function initMap() {
     }
   }
 
-  // Initialize zoom-based panel opacity effect
-  if (typeof initPanelZoomOpacity === 'function') initPanelZoomOpacity();
-
   Logger.log('initMap() complete — Mapbox GL JS with Supercluster clustering');
 }
 

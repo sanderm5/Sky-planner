@@ -569,7 +569,10 @@ function escapeJsString(text) {
     'mfOpenChatConversation','mfSendChatMessage','mfShowChatList','mfShowNewDmView','mfStartDm',
     // Support widget
     'toggleSupportWidget','sendSupportWidgetMessage','sendSupportWidgetTopic',
-    'openSupportTicket','supportWidgetBack',
+    'openSupportTicket','supportWidgetBack','reopenSupportWidgetTicket',
+    // Mobile support chat
+    'mfSupportShowList','mfSupportOpenTicket','mfSupportCreateTicket',
+    'mfSupportSendMessage','mfSupportReopenTicket',
     // Mobile calendar
     'mfCompleteAvtale','mfShowNewAvtaleSheet','mfCloseNewAvtaleSheet','mfSubmitNewAvtale',
     'mfSelectNewAvtaleKunde','mfClearNewAvtaleKunde',
@@ -655,6 +658,8 @@ function escapeJsString(text) {
     'addSubcat','editSubcat','deleteSubcat',
     // Customer note popover
     'cnpShowPopover','cnpDismissPopover','cnpToggleAddForm','cnpSelectType','cnpSaveQuickNote',
+    // Maintenance game
+    'startMaintenanceGame',
   ]);
 
   // ---- Allowlisted handler names for change/input/submit/keydown ----
@@ -1483,6 +1488,10 @@ function handleLogout() {
   const supportPanel = document.getElementById('supportWidgetPanel');
   if (supportPanel) supportPanel.style.display = 'none';
 
+  // Hide broadcast banner
+  const broadcastBanner = document.getElementById('broadcast-banner');
+  if (broadcastBanner) broadcastBanner.remove();
+
   // Clear customer data and map markers
   customers = [];
   selectedCustomers.clear();
@@ -1892,6 +1901,8 @@ async function apiFetch(url, options = {}) {
     hideMaintenanceBanner();
   }
 
+  // Broadcast banner is managed by the background poller only (avoids flickering)
+
   // Check for subscription warning header (grace period / trial ending soon)
   const subscriptionWarning = response.headers.get('X-Subscription-Warning');
   if (subscriptionWarning) {
@@ -1912,8 +1923,8 @@ function showMaintenanceBanner(message) {
 
   maintenanceBannerEl = document.createElement('div');
   maintenanceBannerEl.id = 'maintenance-banner';
-  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:var(--color-text-inverse, #1a1a1a);text-align:center;padding:8px 16px;font-size:14px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
-  maintenanceBannerEl.innerHTML = '<span class="maintenance-banner-text">' + escapeHtml(message) + '</span>';
+  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:#1a1a1a;text-align:center;padding:6px 16px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+  maintenanceBannerEl.innerHTML = '<i class="fas fa-tools" style="margin-right:6px;font-size:12px;"></i><span class="maintenance-banner-text">' + escapeHtml(message) + '</span>';
   document.body.appendChild(maintenanceBannerEl);
 }
 
@@ -1924,12 +1935,38 @@ function hideMaintenanceBanner() {
   }
 }
 
+// System broadcast banner (blue bar — from superadmin)
+let broadcastBannerEl = null;
+
+function showBroadcastBanner(message) {
+  if (broadcastBannerEl) {
+    broadcastBannerEl.querySelector('.broadcast-banner-text').textContent = message;
+    return;
+  }
+
+  var isMobile = window.innerWidth <= 768;
+  broadcastBannerEl = document.createElement('div');
+  broadcastBannerEl.id = 'broadcast-banner';
+  broadcastBannerEl.style.cssText = 'position:fixed;' + (isMobile ? 'bottom:64px;left:8px;right:8px;' : 'bottom:24px;left:50%;transform:translateX(-50%);max-width:600px;') + 'z-index:9999;background:#6366f1;color:#fff;padding:10px 16px;font-size:13px;font-weight:500;border-radius:10px;box-shadow:0 4px 20px rgba(99,102,241,0.4);display:flex;align-items:center;gap:8px;';
+  broadcastBannerEl.innerHTML = '<i class="fas fa-bullhorn" style="font-size:14px;flex-shrink:0;"></i> <span class="broadcast-banner-text">' + escapeHtml(message) + '</span>';
+  document.body.appendChild(broadcastBannerEl);
+}
+
+function hideBroadcastBanner() {
+  if (broadcastBannerEl) {
+    broadcastBannerEl.remove();
+    broadcastBannerEl = null;
+  }
+}
+
 // Maintenance overlay (full screen block — app unusable)
 let maintenanceOverlayEl = null;
 let maintenancePollInterval = null;
 
 function showMaintenanceOverlay(message) {
   if (maintenanceOverlayEl) return; // Already showing
+  // Hide broadcast banner — maintenance takes priority
+  hideBroadcastBanner();
 
   maintenanceOverlayEl = document.createElement('div');
   maintenanceOverlayEl.id = 'maintenance-overlay';
@@ -1940,11 +1977,14 @@ function showMaintenanceOverlay(message) {
     + '<p style="color:var(--color-text-secondary);font-size:1rem;line-height:1.6;margin-bottom:2rem;">' + escapeHtml(message) + '</p>'
     + '<div style="width:32px;height:32px;border:3px solid rgba(99,102,241,0.2);border-top-color:#6366f1;border-radius:50%;animation:mtspin 1s linear infinite;margin:0 auto 1rem;"></div>'
     + '<p style="color:var(--color-text-muted);font-size:0.8rem;">Siden sjekker automatisk om vi er tilbake...</p>'
+    + '<button id="maintenance-game-btn" data-action="startMaintenanceGame" style="margin-top:1.5rem;padding:10px 24px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:10px;color:#a5b4fc;font-size:0.9rem;font-weight:500;cursor:pointer;transition:background 0.2s;" onmouseenter="this.style.background=\'rgba(99,102,241,0.25)\'" onmouseleave="this.style.background=\'rgba(99,102,241,0.15)\'">Spill mens du venter?</button>'
+    + '<div id="maintenance-game-container" style="margin-top:1rem;"></div>'
+    + '<a href="/superlogin" style="display:inline-block;margin-top:1.5rem;color:rgba(255,255,255,0.08);font-size:0.6rem;text-decoration:none;" onmouseenter="this.style.color=\'rgba(255,255,255,0.25)\'" onmouseleave="this.style.color=\'rgba(255,255,255,0.08)\'">Admin</a>'
     + '</div>'
     + '<style>@keyframes mtspin{to{transform:rotate(360deg)}}</style>';
   document.body.appendChild(maintenanceOverlayEl);
 
-  // Poll for maintenance end
+  // Poll for maintenance end (every 5s)
   maintenancePollInterval = setInterval(function() {
     fetch('/api/maintenance/status')
       .then(function(r) { return r.json(); })
@@ -1952,16 +1992,77 @@ function showMaintenanceOverlay(message) {
         if (!data.maintenance || data.mode !== 'full') {
           clearInterval(maintenancePollInterval);
           maintenancePollInterval = null;
-          if (maintenanceOverlayEl) {
-            maintenanceOverlayEl.remove();
-            maintenanceOverlayEl = null;
-          }
-          window.location.reload();
+          startMaintenanceCountdown();
         }
       })
       .catch(function() {});
-  }, 30000);
+  }, 5000);
 }
+
+function startMaintenanceCountdown() {
+  if (!maintenanceOverlayEl) return;
+  if (typeof destroyMaintenanceGame === 'function') destroyMaintenanceGame();
+  var seconds = 10;
+  // Replace spinner and auto-refresh text with countdown
+  maintenanceOverlayEl.querySelector('h1').textContent = 'Vi er tilbake!';
+  maintenanceOverlayEl.querySelector('h1').style.color = '#4ade80';
+  var msgEl = maintenanceOverlayEl.querySelector('p');
+  if (msgEl) msgEl.textContent = 'Vedlikeholdet er ferdig.';
+  // Find spinner and replace with countdown
+  var spinner = maintenanceOverlayEl.querySelector('[style*="animation"]');
+  if (spinner) {
+    spinner.style.cssText = 'width:64px;height:64px;border-radius:50%;background:rgba(99,102,241,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;font-size:1.5rem;font-weight:700;color:#6366f1;';
+    spinner.textContent = seconds;
+  }
+  var autoRefreshEl = maintenanceOverlayEl.querySelectorAll('p');
+  var lastP = autoRefreshEl[autoRefreshEl.length - 1];
+  if (lastP) lastP.textContent = 'Laster inn på nytt om ' + seconds + ' sekunder...';
+
+  var countdownInterval = setInterval(function() {
+    seconds--;
+    if (spinner) spinner.textContent = seconds;
+    if (lastP) lastP.textContent = 'Laster inn på nytt om ' + seconds + ' sekunder...';
+    if (seconds <= 0) {
+      clearInterval(countdownInterval);
+      if (maintenanceOverlayEl) {
+        maintenanceOverlayEl.remove();
+        maintenanceOverlayEl = null;
+      }
+      window.location.reload();
+    }
+  }, 1000);
+}
+
+// Background poller: check maintenance status every 15s
+// Shows overlay even if user is idle (no API calls triggering 503)
+(function startMaintenancePoller() {
+  function checkMaintenanceAndBroadcast() {
+    if (window.location.pathname.startsWith('/admin')) return;
+
+    fetch('/api/maintenance/status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        // Maintenance overlay
+        if (!maintenanceOverlayEl && data.maintenance && data.mode === 'full') {
+          showMaintenanceOverlay(data.message || 'Vedlikehold pågår');
+        }
+        // Broadcast banner (hide if maintenance active, or user not logged in)
+        var loginOverlay = document.getElementById('loginOverlay');
+        var isLoggedIn = !loginOverlay || loginOverlay.classList.contains('hidden');
+        if (data.broadcast && !maintenanceBannerEl && !maintenanceOverlayEl && isLoggedIn) {
+          showBroadcastBanner(data.broadcast);
+        } else if (!data.broadcast || maintenanceBannerEl || maintenanceOverlayEl || !isLoggedIn) {
+          hideBroadcastBanner();
+        }
+      })
+      .catch(function() {});
+  }
+
+  // Check immediately on load
+  setTimeout(checkMaintenanceAndBroadcast, 2000);
+  // Then every 5 seconds
+  setInterval(checkMaintenanceAndBroadcast, 5000);
+})();
 
 
 // ========================================
@@ -5758,6 +5859,42 @@ window.loadOlderChatMessages = loadOlderChatMessages;
 // Floating widget — each request creates a ticket with ID
 // ========================================
 
+// Two-tone "ding-dong" notification for support messages
+function playSupportNotificationSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // First tone — high
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.frequency.value = 587; // D5
+    osc1.type = 'sine';
+    gain1.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc1.start(ctx.currentTime);
+    osc1.stop(ctx.currentTime + 0.25);
+
+    // Second tone — lower, slight delay
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.frequency.value = 440; // A4
+    osc2.type = 'sine';
+    gain2.gain.setValueAtTime(0.12, ctx.currentTime + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+    osc2.start(ctx.currentTime + 0.15);
+    osc2.stop(ctx.currentTime + 0.45);
+
+    // Clean up
+    setTimeout(() => ctx.close(), 600);
+  } catch (e) {
+    // Silent fail
+  }
+}
+
 const supportWidgetState = {
   tickets: [],          // Open tickets for this org
   activeTicketId: null,
@@ -5769,8 +5906,12 @@ const supportWidgetState = {
 
 async function initSupportWidget() {
   // Show widget (hidden by default on login screen)
+  // Hide on mobile — mobile uses the dedicated support tab instead
   const widget = document.getElementById('supportWidget');
-  if (widget) widget.style.display = '';
+  if (widget) {
+    const isMobile = typeof isMobileDevice === 'function' && isMobileDevice();
+    widget.style.display = isMobile ? 'none' : '';
+  }
 
   // Load existing tickets
   await loadSupportTickets();
@@ -5934,6 +6075,22 @@ async function openSupportTicket(ticketId) {
   if (inputArea) inputArea.style.display = isClosed ? 'none' : 'flex';
   if (backBtn) backBtn.style.display = 'inline-flex';
 
+  // Show/hide reopen button for closed tickets
+  const msgList = document.getElementById('supportWidgetMsgList');
+  const existingReopen = document.getElementById('swReopenBtn');
+  if (existingReopen) existingReopen.remove();
+  if (isClosed && msgList) {
+    const reopenDiv = document.createElement('div');
+    reopenDiv.className = 'sw-closed-notice';
+    reopenDiv.id = 'swReopenBtn';
+    reopenDiv.innerHTML = `
+      <span>Denne saken er lukket</span>
+      <button class="sw-reopen-btn" data-action="reopenSupportWidgetTicket" data-args='[${ticketId}]'>
+        <i class="fas fa-redo"></i> Gjenåpne
+      </button>`;
+    msgList.parentElement.appendChild(reopenDiv);
+  }
+
   // Load messages
   await loadSupportWidgetMessages(ticketId);
   scrollSupportWidgetToBottom();
@@ -6080,10 +6237,34 @@ function handleSupportWidgetMessage(data) {
       scrollSupportWidgetToBottom();
       markSupportWidgetAsRead(ticketId);
     }
+  } else {
+    // Play support-specific notification sound
+    playSupportNotificationSound();
   }
 
   // Reload tickets to update badge
   loadSupportTickets();
+
+  // Also notify mobile support tab
+  if (typeof mfHandleSupportMessage === 'function') {
+    mfHandleSupportMessage(data);
+  }
+}
+
+async function reopenSupportWidgetTicket(ticketId) {
+  try {
+    const response = await fetch(`/api/support-chat/tickets/${ticketId}/reopen`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+    });
+    if (response.ok) {
+      await loadSupportTickets();
+      openSupportTicket(ticketId);
+    }
+  } catch (e) {
+    // Silent fail
+  }
 }
 
 // Handle ticket closed event from WebSocket
@@ -6101,6 +6282,11 @@ function handleSupportTicketClosed(data) {
     renderSupportTicketList();
   }
   updateSupportWidgetBadge();
+
+  // Also notify mobile support tab
+  if (typeof mfHandleSupportTicketClosed === 'function') {
+    mfHandleSupportTicketClosed(data);
+  }
 }
 
 
@@ -6681,9 +6867,9 @@ function mfSetupCalendarTab() {
   // Insert before bottom bar
   mfView.insertBefore(calendarView, bottomBar);
 
-  // Add Calendar tab button after Route tab
-  const routeBtn = bottomBar.querySelector('[data-tab="route"]');
-  if (routeBtn && routeBtn.nextElementSibling) {
+  // Add Calendar tab button after Map tab
+  const mapBtn = bottomBar.querySelector('[data-tab="map"]');
+  if (mapBtn) {
     const calBtn = document.createElement('button');
     calBtn.className = 'mf-tab-btn';
     calBtn.dataset.tab = 'calendar';
@@ -6695,7 +6881,7 @@ function mfSetupCalendarTab() {
       <i class="fas fa-calendar-alt" aria-hidden="true"></i>
       <span>Kalender</span>
     `;
-    routeBtn.parentElement.insertBefore(calBtn, routeBtn.nextElementSibling);
+    mapBtn.parentElement.insertBefore(calBtn, mapBtn.nextElementSibling);
   }
 }
 
@@ -7530,6 +7716,503 @@ window.mfChatCleanup = mfChatCleanup;
 
 
 // ============================================
+// MOBILE SUPPORT CHAT — Support tab for mobile field view
+// Adds a Support tab to the bottom bar for ALL users.
+// Reuses supportWidgetState and API functions from support-widget.js.
+// ============================================
+
+let mfSupportInitialized = false;
+
+// ---- Tab injection ----
+
+function mfSetupSupportTab() {
+  const mfView = document.getElementById('mobileFieldView');
+  if (!mfView) return;
+
+  const bottomBar = mfView.querySelector('.mf-bottom-bar');
+  if (!bottomBar) return;
+
+  // Check if already injected
+  if (mfView.querySelector('#mfSupportView')) return;
+
+  // Create Support tab view container
+  const supportView = document.createElement('div');
+  supportView.className = 'mf-tab-view';
+  supportView.id = 'mfSupportView';
+  supportView.style.display = 'none';
+  supportView.innerHTML = `
+    <div id="mfSupportListView" class="mf-support-list-view">
+      <div class="mf-chat-header">
+        <h3><i class="fas fa-headset" aria-hidden="true"></i> Support</h3>
+      </div>
+      <div id="mfSupportContent" class="mf-support-content"></div>
+    </div>
+    <div id="mfSupportMessageView" class="mf-support-message-view" style="display:none;">
+      <div class="mf-chat-msg-header">
+        <button class="mf-action-btn" data-action="mfSupportShowList" aria-label="Tilbake">
+          <i class="fas fa-arrow-left" aria-hidden="true"></i>
+        </button>
+        <span id="mfSupportMessageTitle">Support</span>
+      </div>
+      <div id="mfSupportMessages" class="mf-chat-messages"></div>
+      <div id="mfSupportClosedNotice" class="mf-support-closed-notice" style="display:none;">
+        <span>Denne saken er lukket</span>
+        <button class="mf-btn mf-btn-small" id="mfSupportReopenBtn" data-action="mfSupportReopenTicket">
+          <i class="fas fa-redo" aria-hidden="true"></i> Gjenåpne
+        </button>
+      </div>
+      <div class="mf-chat-input-area" id="mfSupportInputArea">
+        <input type="text" id="mfSupportInput" class="mf-chat-input" placeholder="Skriv en melding..." maxlength="2000" autocomplete="off">
+        <button class="mf-chat-send-btn" data-action="mfSupportSendMessage" aria-label="Send">
+          <i class="fas fa-paper-plane" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Insert before bottom bar
+  mfView.insertBefore(supportView, bottomBar);
+
+  // Add Support tab button before Account tab
+  const accountBtn = bottomBar.querySelector('[data-tab="account"]');
+  if (accountBtn) {
+    const supportBtn = document.createElement('button');
+    supportBtn.className = 'mf-tab-btn';
+    supportBtn.dataset.tab = 'support';
+    supportBtn.dataset.action = 'mfSwitchTab';
+    supportBtn.dataset.args = '["support"]';
+    supportBtn.setAttribute('role', 'tab');
+    supportBtn.setAttribute('aria-label', 'Support');
+    supportBtn.innerHTML = `
+      <i class="fas fa-headset" aria-hidden="true"></i>
+      <span>Support</span>
+      <span id="mfSupportBadge" class="mf-tab-badge" style="display:none;"></span>
+    `;
+    accountBtn.parentElement.insertBefore(supportBtn, accountBtn);
+  }
+
+  // Set up input event listener
+  mfSetupSupportInputListeners();
+}
+
+// ---- Input listeners ----
+
+function mfSetupSupportInputListeners() {
+  const input = document.getElementById('mfSupportInput');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        mfSupportSendMessage();
+      }
+    });
+  }
+}
+
+// ---- Tab lifecycle hooks ----
+
+function mfOnSupportTabShown() {
+  if (!mfSupportInitialized) {
+    mfSupportInitialized = true;
+  }
+  // Always reload tickets when tab is shown
+  mfSupportLoadTickets();
+}
+
+// ---- Load tickets ----
+
+async function mfSupportLoadTickets() {
+  try {
+    const response = await fetch('/api/support-chat/tickets', { credentials: 'include' });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result.success && result.data) {
+      supportWidgetState.tickets = result.data;
+      mfSupportUpdateBadge();
+      if (supportWidgetState.view !== 'messages' || !supportWidgetState.activeTicketId) {
+        mfSupportRenderList();
+      }
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+// ---- Render ticket list ----
+
+function mfSupportRenderList() {
+  const container = document.getElementById('mfSupportContent');
+  if (!container) return;
+
+  const openTickets = supportWidgetState.tickets.filter(t => t.status === 'open');
+  const closedTickets = supportWidgetState.tickets.filter(t => t.status === 'closed');
+
+  let html = `
+    <div class="mf-support-topics">
+      <p class="mf-support-topics-title">Hva trenger du hjelp med?</p>
+      <div class="mf-support-topic-grid">
+        <button class="mf-support-topic-btn" data-action="mfSupportCreateTicket" data-args='["Rapporter bug"]'>
+          <i class="fas fa-bug" aria-hidden="true"></i>
+          <span>Rapporter bug</span>
+        </button>
+        <button class="mf-support-topic-btn" data-action="mfSupportCreateTicket" data-args='["Trenger hjelp"]'>
+          <i class="fas fa-question-circle" aria-hidden="true"></i>
+          <span>Trenger hjelp</span>
+        </button>
+        <button class="mf-support-topic-btn" data-action="mfSupportCreateTicket" data-args='["Forslag til forbedring"]'>
+          <i class="fas fa-lightbulb" aria-hidden="true"></i>
+          <span>Forslag</span>
+        </button>
+        <button class="mf-support-topic-btn" data-action="mfSupportCreateTicket" data-args='["Annet"]'>
+          <i class="fas fa-comment" aria-hidden="true"></i>
+          <span>Annet</span>
+        </button>
+      </div>
+    </div>`;
+
+  if (openTickets.length > 0) {
+    html += '<div class="mf-support-section"><div class="mf-support-section-title">Åpne saker</div>';
+    for (const t of openTickets) {
+      const time = t.updated_at ? new Date(t.updated_at).toLocaleDateString('no-NO', { day: 'numeric', month: 'short' }) : '';
+      html += `
+        <div class="mf-chat-conv-item" data-action="mfSupportOpenTicket" data-args='[${t.id}]'>
+          <div class="mf-chat-conv-icon"><i class="fas fa-headset" aria-hidden="true"></i></div>
+          <div class="mf-chat-conv-info">
+            <div class="mf-chat-conv-name">#${t.id} ${escapeHtml(t.subject || 'Support')}</div>
+            <div class="mf-chat-conv-preview">${escapeHtml(t.last_message?.content?.substring(0, 60) || 'Ingen meldinger')}</div>
+          </div>
+          <div class="mf-chat-conv-meta">
+            <span class="mf-chat-conv-time">${time}</span>
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (closedTickets.length > 0) {
+    html += '<div class="mf-support-section"><div class="mf-support-section-title">Lukket</div>';
+    for (const t of closedTickets.slice(0, 5)) {
+      html += `
+        <div class="mf-chat-conv-item mf-support-closed" data-action="mfSupportOpenTicket" data-args='[${t.id}]'>
+          <div class="mf-chat-conv-icon" style="opacity:0.5;"><i class="fas fa-headset" aria-hidden="true"></i></div>
+          <div class="mf-chat-conv-info">
+            <div class="mf-chat-conv-name">#${t.id} ${escapeHtml(t.subject || 'Support')}</div>
+          </div>
+          <span class="mf-support-closed-badge">Lukket</span>
+        </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (openTickets.length === 0 && closedTickets.length === 0) {
+    html += `
+      <div class="mf-empty-state" style="margin-top:16px;">
+        <i class="fas fa-headset" aria-hidden="true"></i>
+        <p>Ingen support-saker ennå</p>
+        <span class="mf-empty-hint">Velg et emne over for å kontakte oss</span>
+      </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// ---- Create ticket ----
+
+async function mfSupportCreateTicket(topic) {
+  try {
+    const response = await fetch('/api/support-chat/tickets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+      body: JSON.stringify({ subject: topic }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      if (typeof mfShowBanner === 'function') {
+        mfShowBanner(err.error || 'Kunne ikke opprette sak', 'error');
+      }
+      return;
+    }
+    const result = await response.json();
+    if (result.success && result.data) {
+      await mfSupportLoadTickets();
+      mfSupportOpenTicket(result.data.ticketId);
+    }
+  } catch (e) {
+    if (typeof mfShowBanner === 'function') {
+      mfShowBanner('Feil ved opprettelse av sak', 'error');
+    }
+  }
+}
+
+// ---- Open ticket (message view) ----
+
+async function mfSupportOpenTicket(ticketId) {
+  supportWidgetState.activeTicketId = ticketId;
+  supportWidgetState.view = 'messages';
+
+  const ticket = supportWidgetState.tickets.find(t => t.id === ticketId);
+  const isClosed = ticket?.status === 'closed';
+
+  // Set title
+  const titleEl = document.getElementById('mfSupportMessageTitle');
+  if (titleEl) titleEl.textContent = `#${ticketId} — ${ticket?.subject || 'Support'}`;
+
+  // Show message view, hide list
+  const listView = document.getElementById('mfSupportListView');
+  const msgView = document.getElementById('mfSupportMessageView');
+  if (listView) listView.style.display = 'none';
+  if (msgView) msgView.style.display = 'flex';
+
+  // Show/hide input and closed notice
+  const inputArea = document.getElementById('mfSupportInputArea');
+  const closedNotice = document.getElementById('mfSupportClosedNotice');
+  if (inputArea) inputArea.style.display = isClosed ? 'none' : 'flex';
+  if (closedNotice) closedNotice.style.display = isClosed ? 'flex' : 'none';
+
+  // Store ticketId for reopen button
+  const reopenBtn = document.getElementById('mfSupportReopenBtn');
+  if (reopenBtn) {
+    reopenBtn.dataset.args = `[${ticketId}]`;
+  }
+
+  // Load messages
+  await mfSupportLoadMessages(ticketId);
+  mfSupportScrollToBottom();
+
+  // Mark as read
+  if (supportWidgetState.messages.length > 0) {
+    mfSupportMarkAsRead(ticketId);
+  }
+
+  // Focus input
+  if (!isClosed) {
+    setTimeout(() => {
+      const input = document.getElementById('mfSupportInput');
+      if (input) input.focus();
+    }, 300);
+  }
+}
+
+// ---- Load messages ----
+
+async function mfSupportLoadMessages(ticketId) {
+  try {
+    const url = `/api/chat/conversations/${ticketId}/messages?limit=50`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result.success && result.data) {
+      supportWidgetState.messages = result.data;
+      mfSupportRenderMessages();
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+// ---- Render messages ----
+
+function mfSupportRenderMessages() {
+  const container = document.getElementById('mfSupportMessages');
+  if (!container) return;
+
+  if (supportWidgetState.messages.length === 0) {
+    container.innerHTML = `
+      <div class="mf-empty-state">
+        <i class="fas fa-comment-dots" aria-hidden="true"></i>
+        <p>Beskriv problemet ditt, så hjelper vi deg!</p>
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  let lastDate = '';
+
+  for (const msg of supportWidgetState.messages) {
+    const msgDate = new Date(msg.created_at).toLocaleDateString('no-NO', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+    if (msgDate !== lastDate) {
+      html += `<div class="mf-chat-date-sep">${msgDate}</div>`;
+      lastDate = msgDate;
+    }
+
+    const isSupport = msg.sender_name === 'Efffekt Support';
+    const time = new Date(msg.created_at).toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' });
+
+    html += `
+      <div class="mf-chat-msg ${isSupport ? 'other' : 'self'}">
+        ${isSupport ? '<div class="mf-chat-msg-sender">Efffekt Support</div>' : ''}
+        <div class="mf-chat-msg-content">${escapeHtml(msg.content)}</div>
+        <div class="mf-chat-msg-time">${time}</div>
+      </div>`;
+  }
+
+  container.innerHTML = html;
+  mfSupportScrollToBottom();
+}
+
+// ---- Scroll to bottom ----
+
+function mfSupportScrollToBottom() {
+  const container = document.getElementById('mfSupportMessages');
+  if (container) {
+    requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
+  }
+}
+
+// ---- Send message ----
+
+async function mfSupportSendMessage() {
+  const ticketId = supportWidgetState.activeTicketId;
+  if (!ticketId) return;
+
+  const input = document.getElementById('mfSupportInput');
+  const content = input?.value?.trim();
+  if (!content) return;
+
+  input.value = '';
+
+  try {
+    const response = await fetch(`/api/chat/conversations/${ticketId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+      body: JSON.stringify({ content }),
+    });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (result.success && result.data) {
+      supportWidgetState.messages.push(result.data);
+      mfSupportRenderMessages();
+      mfSupportScrollToBottom();
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+// ---- Mark as read ----
+
+async function mfSupportMarkAsRead(ticketId) {
+  if (supportWidgetState.messages.length === 0) return;
+  const lastMsg = supportWidgetState.messages[supportWidgetState.messages.length - 1];
+  try {
+    await fetch(`/api/chat/conversations/${ticketId}/read`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+      body: JSON.stringify({ messageId: lastMsg.id }),
+    });
+  } catch (e) {
+    // Non-critical
+  }
+}
+
+// ---- Navigation ----
+
+function mfSupportShowList() {
+  supportWidgetState.view = 'list';
+  supportWidgetState.activeTicketId = null;
+
+  const listView = document.getElementById('mfSupportListView');
+  const msgView = document.getElementById('mfSupportMessageView');
+  if (msgView) msgView.style.display = 'none';
+  if (listView) listView.style.display = '';
+
+  mfSupportLoadTickets();
+}
+
+// ---- Reopen ticket ----
+
+async function mfSupportReopenTicket(ticketId) {
+  try {
+    const response = await fetch(`/api/support-chat/tickets/${ticketId}/reopen`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+    });
+    if (response.ok) {
+      await mfSupportLoadTickets();
+      mfSupportOpenTicket(ticketId);
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+// ---- Badge update ----
+
+function mfSupportUpdateBadge() {
+  const badge = document.getElementById('mfSupportBadge');
+  if (!badge) return;
+  const openCount = supportWidgetState.tickets.filter(t => t.status === 'open').length;
+  if (openCount > 0) {
+    badge.textContent = openCount;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// ---- Handle incoming WebSocket messages (called from support-widget.js) ----
+
+function mfHandleSupportMessage(data) {
+  const ticketId = data.conversation_id;
+  const supportView = document.getElementById('mfSupportView');
+  const isVisible = supportView && supportView.style.display !== 'none';
+
+  if (isVisible && supportWidgetState.activeTicketId === ticketId) {
+    // Currently viewing this ticket — add message
+    if (!supportWidgetState.messages.find(m => m.id === data.id)) {
+      supportWidgetState.messages.push(data);
+      mfSupportRenderMessages();
+      mfSupportScrollToBottom();
+      mfSupportMarkAsRead(ticketId);
+    }
+  }
+
+  // Update badge
+  mfSupportLoadTickets();
+}
+
+// ---- Handle ticket closed/reopened events ----
+
+function mfHandleSupportTicketClosed(data) {
+  if (supportWidgetState.activeTicketId === data.conversationId) {
+    const inputArea = document.getElementById('mfSupportInputArea');
+    const closedNotice = document.getElementById('mfSupportClosedNotice');
+    if (inputArea) inputArea.style.display = 'none';
+    if (closedNotice) closedNotice.style.display = 'flex';
+  }
+  mfSupportLoadTickets();
+}
+
+// ---- Cleanup ----
+
+function mfSupportCleanup() {
+  mfSupportInitialized = false;
+  supportWidgetState.activeTicketId = null;
+  supportWidgetState.view = 'list';
+}
+
+// ---- Expose globally ----
+
+window.mfSetupSupportTab = mfSetupSupportTab;
+window.mfOnSupportTabShown = mfOnSupportTabShown;
+window.mfSupportShowList = mfSupportShowList;
+window.mfSupportOpenTicket = mfSupportOpenTicket;
+window.mfSupportCreateTicket = mfSupportCreateTicket;
+window.mfSupportSendMessage = mfSupportSendMessage;
+window.mfSupportReopenTicket = mfSupportReopenTicket;
+window.mfSupportUpdateBadge = mfSupportUpdateBadge;
+window.mfHandleSupportMessage = mfHandleSupportMessage;
+window.mfHandleSupportTicketClosed = mfHandleSupportTicketClosed;
+window.mfSupportCleanup = mfSupportCleanup;
+
+
+// ============================================
 // MOBILE FIELD VIEW — Dedicated mobile experience
 // Replaces the full desktop app on mobile devices.
 // Focused on: today's route, visit logging, navigation.
@@ -7620,6 +8303,11 @@ function showMobileFieldView() {
   // Inject chat tab (all users)
   if (typeof mfSetupChatTab === 'function') {
     mfSetupChatTab();
+  }
+
+  // Inject support tab (all users)
+  if (typeof mfSetupSupportTab === 'function') {
+    mfSetupSupportTab();
   }
 
   // Initialize inline weekplan
@@ -8066,6 +8754,7 @@ function mfSwitchTab(tab) {
   const kunderView = document.getElementById('mfKunderView');
   const calendarView = document.getElementById('mfCalendarView');
   const chatView = document.getElementById('mfChatView');
+  const supportView = document.getElementById('mfSupportView');
 
   if (weekplanView) weekplanView.style.display = tab === 'ukeplan' ? 'flex' : 'none';
   if (mapView) mapView.style.display = tab === 'map' ? 'flex' : 'none';
@@ -8074,6 +8763,7 @@ function mfSwitchTab(tab) {
   if (kunderView) kunderView.style.display = tab === 'kunder' ? 'flex' : 'none';
   if (calendarView) calendarView.style.display = tab === 'calendar' ? 'flex' : 'none';
   if (chatView) chatView.style.display = tab === 'chat' ? 'flex' : 'none';
+  if (supportView) supportView.style.display = tab === 'support' ? 'flex' : 'none';
 
   if (tab === 'ukeplan' && typeof mfShowWeekplanInline === 'function') {
     mfShowWeekplanInline();
@@ -8127,6 +8817,11 @@ function mfSwitchTab(tab) {
   }
   if (prevTab === 'chat' && tab !== 'chat' && typeof mfOnChatTabHidden === 'function') {
     mfOnChatTabHidden();
+  }
+
+  // Support tab hook
+  if (tab === 'support' && typeof mfOnSupportTabShown === 'function') {
+    mfOnSupportTabShown();
   }
 }
 
@@ -8333,6 +9028,11 @@ async function mfLogout() {
   // Clean up calendar
   if (typeof mfCalendarCleanup === 'function') {
     mfCalendarCleanup();
+  }
+
+  // Clean up support chat
+  if (typeof mfSupportCleanup === 'function') {
+    mfSupportCleanup();
   }
 
   // Reset state
@@ -30811,9 +31511,6 @@ function initMap() {
     }
   }
 
-  // Initialize zoom-based panel opacity effect
-  if (typeof initPanelZoomOpacity === 'function') initPanelZoomOpacity();
-
   Logger.log('initMap() complete — Mapbox GL JS with Supercluster clustering');
 }
 
@@ -31053,142 +31750,6 @@ function generatePopupContent(customer) {
       </button>` : ''}
     </div>
   `;
-}
-
-
-// PANEL ZOOM OPACITY - Fade all panels when zooming into the map
-// ================================================================
-// When the map zooms in (any method: scroll wheel, flyTo, fitBounds),
-// sidebar, content panel and filter panel become progressively more
-// transparent so the map gets focus. Hovering a panel restores its
-// own opacity temporarily.
-//
-// Uses a CSS custom property + ::after overlay instead of element opacity
-// to avoid breaking stacking context / z-index / pointer-events.
-
-let _panelBaseZoom = null;
-const _hoveredPanels = new Set();
-const PANEL_OPACITY_MIN = 0.35;
-const PANEL_OPACITY_MAX_DELTA = 10;
-
-const PANEL_IDS = ['sidebar', 'contentPanel', 'filterPanel'];
-
-function _getVisiblePanels() {
-  const panels = [];
-  for (const id of PANEL_IDS) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    if (el.classList.contains('closed') || el.classList.contains('slide-out') || el.classList.contains('collapsed')) continue;
-    panels.push(el);
-  }
-  return panels;
-}
-
-function _calcDim(zoomDelta) {
-  if (zoomDelta <= 0) return 0;
-  const t = Math.min(zoomDelta / PANEL_OPACITY_MAX_DELTA, 1);
-  return t * (1.0 - PANEL_OPACITY_MIN);
-}
-
-function _applyDim(panel, dim) {
-  if (dim <= 0) {
-    panel.classList.remove('zoom-dimmed');
-    panel.style.removeProperty('--zoom-dim');
-  } else {
-    panel.style.setProperty('--zoom-dim', dim);
-    panel.classList.add('zoom-dimmed');
-  }
-}
-
-function updatePanelZoomOpacity() {
-  if (_panelBaseZoom === null) return;
-
-  const currentZoom = map.getZoom();
-  const zoomDelta = currentZoom - _panelBaseZoom;
-
-  if (zoomDelta <= 0) {
-    _panelBaseZoom = currentZoom;
-    for (const panel of _getVisiblePanels()) {
-      _applyDim(panel, 0);
-    }
-    return;
-  }
-
-  const dim = _calcDim(zoomDelta);
-  for (const panel of _getVisiblePanels()) {
-    if (_hoveredPanels.has(panel.id)) continue;
-    _applyDim(panel, dim);
-  }
-}
-
-function resetPanelOpacity() {
-  for (const id of PANEL_IDS) {
-    const el = document.getElementById(id);
-    if (el) {
-      el.classList.remove('zoom-fading', 'zoom-dimmed');
-      el.style.removeProperty('--zoom-dim');
-    }
-  }
-  _panelBaseZoom = null;
-  _hoveredPanels.clear();
-}
-
-function initPanelZoomOpacity() {
-  if (!map) return;
-
-  _panelBaseZoom = map.getZoom();
-
-  // Wrap flyTo and fitBounds to add zoom-fading class for smooth CSS transitions
-  const originalFlyTo = map.flyTo.bind(map);
-  const originalFitBounds = map.fitBounds.bind(map);
-
-  map.flyTo = function(options, eventData) {
-    for (const panel of _getVisiblePanels()) {
-      panel.classList.add('zoom-fading');
-    }
-    return originalFlyTo(options, eventData);
-  };
-
-  map.fitBounds = function(bounds, options, eventData) {
-    for (const panel of _getVisiblePanels()) {
-      panel.classList.add('zoom-fading');
-    }
-    return originalFitBounds(bounds, options, eventData);
-  };
-
-  // Continuous opacity update during any zoom
-  map.on('zoom', updatePanelZoomOpacity);
-
-  // Remove transition class after programmatic zoom ends
-  map.on('zoomend', () => {
-    setTimeout(() => {
-      for (const id of PANEL_IDS) {
-        const el = document.getElementById(id);
-        if (el) el.classList.remove('zoom-fading');
-      }
-    }, 150);
-  });
-
-  // Restore on hover per panel
-  for (const id of PANEL_IDS) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-
-    el.addEventListener('mouseenter', () => {
-      _hoveredPanels.add(id);
-      _applyDim(el, 0);
-    });
-
-    el.addEventListener('mouseleave', () => {
-      _hoveredPanels.delete(id);
-      if (_panelBaseZoom !== null && map) {
-        const zoomDelta = map.getZoom() - _panelBaseZoom;
-        if (zoomDelta > 0) {
-          _applyDim(el, _calcDim(zoomDelta));
-        }
-      }
-    });
-  }
 }
 
 
@@ -36256,6 +36817,942 @@ function clusterCustomersByProximity(customerList) {
 }
 
 
+// ========================================
+// MAINTENANCE MINI-GAME: "Ruteplanleggeren"
+// Top-down canvas game: drive a service van, collect customers, avoid obstacles
+// Polished with particles, combos, smooth movement, screen shake, etc.
+// ========================================
+
+(function() {
+  var canvas, ctx, animFrame;
+  var gameState = 'title'; // title | playing | gameover
+  var dpr = 1;
+  var W = 320, H = 440;
+  var player, markers, obstacles, particles, floatingTexts, buildings;
+  var score, highScore, customersCollected, timeAlive, comboCount, comboTimer;
+  var obstacleTimer, difficultyTimer;
+  var keys = {};
+  var touchDir = { x: 0, y: 0 };
+  var container = null;
+  var keyHandler = null;
+  var keyUpHandler = null;
+  var shakeAmount = 0;
+  var titleTime = 0;
+  var gameOverFade = 0;
+  var newRecord = false;
+  var HS_KEY = 'skyplanner_maintenanceGameHighScore';
+  var FONT = '-apple-system,BlinkMacSystemFont,sans-serif';
+
+  // Difficulty scaling
+  var BASE_SPEED = 2.2;
+  var MAX_SPEED = 4.5;
+  var ACCEL = 0.18;
+  var FRICTION = 0.88;
+  var MARKER_COUNT = 5;
+
+  // Colors
+  var COL = {
+    bg: '#0a0e17',
+    grid: 'rgba(99,102,241,0.06)',
+    road: 'rgba(99,102,241,0.12)',
+    roadCenter: 'rgba(255,200,50,0.15)',
+    van: '#5E81AC',
+    vanLight: '#81A1C1',
+    vanWindow: '#88C0D0',
+    vanWheel: '#2E3440',
+    pin: '#A3BE8C',
+    pinGlow: 'rgba(163,190,140,0.3)',
+    obstacle: '#BF616A',
+    obstacleGlow: 'rgba(191,97,106,0.3)',
+    accent: '#6366f1',
+    accentGlow: 'rgba(99,102,241,0.4)',
+    text: '#E5E9F0',
+    textDim: '#5c6370',
+    textMuted: '#3b4252',
+    combo: '#EBCB8B',
+    building: '#161b26',
+    buildingEdge: '#1e2433'
+  };
+
+  // --- Utility ---
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function rand(min, max) { return min + Math.random() * (max - min); }
+  function dist(ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return Math.sqrt(dx * dx + dy * dy); }
+  function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+    return Math.abs(ax - bx) < (aw + bw) / 2 && Math.abs(ay - by) < (ah + bh) / 2;
+  }
+
+  function currentSpeed() {
+    return Math.min(MAX_SPEED, BASE_SPEED + score * 0.004);
+  }
+
+  // --- Buildings (decorative) ---
+  function generateBuildings() {
+    buildings = [];
+    // Place small buildings in a grid-like pattern, avoiding roads
+    var roadH = [128, 288];
+    var roadV = [96, 224];
+    for (var i = 0; i < 18; i++) {
+      var bx = rand(10, W - 10);
+      var by = rand(36, H - 10);
+      var bw = rand(14, 28);
+      var bh = rand(14, 24);
+      // Skip if on a road
+      var onRoad = false;
+      for (var r = 0; r < roadH.length; r++) {
+        if (Math.abs(by - roadH[r]) < 18) onRoad = true;
+      }
+      for (var v = 0; v < roadV.length; v++) {
+        if (Math.abs(bx - roadV[v]) < 18) onRoad = true;
+      }
+      if (!onRoad) buildings.push({ x: bx, y: by, w: bw, h: bh });
+    }
+  }
+
+  // --- Particles ---
+  function spawnParticles(x, y, color, count) {
+    for (var i = 0; i < count; i++) {
+      particles.push({
+        x: x, y: y,
+        vx: rand(-2.5, 2.5),
+        vy: rand(-2.5, 2.5),
+        life: rand(15, 30),
+        maxLife: 30,
+        size: rand(2, 5),
+        color: color
+      });
+    }
+  }
+
+  function spawnDust(x, y, vx, vy) {
+    particles.push({
+      x: x + rand(-3, 3), y: y + rand(-2, 2),
+      vx: -vx * 0.3 + rand(-0.5, 0.5),
+      vy: -vy * 0.3 + rand(-0.5, 0.5),
+      life: rand(8, 16),
+      maxLife: 16,
+      size: rand(1.5, 3.5),
+      color: 'rgba(99,102,241,0.5)'
+    });
+  }
+
+  function updateParticles() {
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= 0.95;
+      p.vy *= 0.95;
+      p.life--;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function drawParticles() {
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var alpha = p.life / p.maxLife;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // --- Floating text ---
+  function spawnFloatingText(x, y, text, color) {
+    floatingTexts.push({ x: x, y: y, text: text, color: color, life: 40, maxLife: 40 });
+  }
+
+  function updateFloatingTexts() {
+    for (var i = floatingTexts.length - 1; i >= 0; i--) {
+      var ft = floatingTexts[i];
+      ft.y -= 0.8;
+      ft.life--;
+      if (ft.life <= 0) floatingTexts.splice(i, 1);
+    }
+  }
+
+  function drawFloatingTexts() {
+    for (var i = 0; i < floatingTexts.length; i++) {
+      var ft = floatingTexts[i];
+      var alpha = ft.life / ft.maxLife;
+      var scale = 0.8 + 0.4 * (1 - alpha);
+      ctx.globalAlpha = alpha;
+      ctx.font = '700 ' + Math.round(14 * scale) + 'px ' + FONT;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = ft.color;
+      ctx.fillText(ft.text, ft.x, ft.y);
+    }
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+
+  // --- Spawn ---
+  function spawnMarker() {
+    var tries = 0;
+    var mx, my;
+    do {
+      mx = rand(24, W - 24);
+      my = rand(44, H - 24);
+      tries++;
+    } while (tries < 20 && isTooCloseToObstacles(mx, my, 30));
+    markers.push({
+      x: mx, y: my, r: 9,
+      pulse: rand(0, Math.PI * 2),
+      spawnAnim: 1.0
+    });
+  }
+
+  function isTooCloseToObstacles(x, y, minDist) {
+    for (var i = 0; i < obstacles.length; i++) {
+      if (dist(x, y, obstacles[i].x, obstacles[i].y) < minDist) return true;
+    }
+    return false;
+  }
+
+  function spawnObstacle() {
+    var tries = 0;
+    var ox, oy;
+    var size = rand(16, 24);
+    do {
+      ox = rand(24, W - 24);
+      oy = rand(44, H - 24);
+      tries++;
+    } while (tries < 30 && (dist(ox, oy, player.x, player.y) < 80 || isTooCloseToObstacles(ox, oy, 40)));
+    obstacles.push({
+      x: ox, y: oy, w: size, h: size,
+      rot: rand(0, Math.PI * 2),
+      pulse: rand(0, Math.PI * 2),
+      spawnAnim: 1.0
+    });
+  }
+
+  // --- Reset ---
+  function reset() {
+    player = { x: W / 2, y: H - 60, w: 24, h: 14, vx: 0, vy: 0, angle: -Math.PI / 2, targetAngle: -Math.PI / 2 };
+    markers = [];
+    obstacles = [];
+    particles = [];
+    floatingTexts = [];
+    score = 0;
+    customersCollected = 0;
+    timeAlive = 0;
+    comboCount = 0;
+    comboTimer = 0;
+    obstacleTimer = 0;
+    difficultyTimer = 0;
+    shakeAmount = 0;
+    gameOverFade = 0;
+    newRecord = false;
+    generateBuildings();
+    for (var i = 0; i < MARKER_COUNT; i++) spawnMarker();
+  }
+
+  // --- Drawing ---
+  function drawBackground() {
+    ctx.fillStyle = COL.bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Grid
+    ctx.strokeStyle = COL.grid;
+    ctx.lineWidth = 1;
+    for (var x = 0; x < W; x += 32) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (var y = 0; y < H; y += 32) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // Roads
+    var roadHY = [128, 288];
+    var roadVX = [96, 224];
+    ctx.fillStyle = 'rgba(99,102,241,0.04)';
+    for (var rh = 0; rh < roadHY.length; rh++) {
+      ctx.fillRect(0, roadHY[rh] - 12, W, 24);
+    }
+    for (var rv = 0; rv < roadVX.length; rv++) {
+      ctx.fillRect(roadVX[rv] - 12, 0, 24, H);
+    }
+    // Road edges
+    ctx.strokeStyle = COL.road;
+    ctx.lineWidth = 1;
+    for (var rh2 = 0; rh2 < roadHY.length; rh2++) {
+      ctx.beginPath(); ctx.moveTo(0, roadHY[rh2] - 12); ctx.lineTo(W, roadHY[rh2] - 12); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, roadHY[rh2] + 12); ctx.lineTo(W, roadHY[rh2] + 12); ctx.stroke();
+    }
+    for (var rv2 = 0; rv2 < roadVX.length; rv2++) {
+      ctx.beginPath(); ctx.moveTo(roadVX[rv2] - 12, 0); ctx.lineTo(roadVX[rv2] - 12, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(roadVX[rv2] + 12, 0); ctx.lineTo(roadVX[rv2] + 12, H); ctx.stroke();
+    }
+    // Center dashes
+    ctx.strokeStyle = COL.roadCenter;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 8]);
+    for (var rh3 = 0; rh3 < roadHY.length; rh3++) {
+      ctx.beginPath(); ctx.moveTo(0, roadHY[rh3]); ctx.lineTo(W, roadHY[rh3]); ctx.stroke();
+    }
+    for (var rv3 = 0; rv3 < roadVX.length; rv3++) {
+      ctx.beginPath(); ctx.moveTo(roadVX[rv3], 0); ctx.lineTo(roadVX[rv3], H); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Buildings
+    for (var b = 0; b < buildings.length; b++) {
+      var bl = buildings[b];
+      ctx.fillStyle = COL.building;
+      ctx.fillRect(bl.x - bl.w / 2, bl.y - bl.h / 2, bl.w, bl.h);
+      ctx.strokeStyle = COL.buildingEdge;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bl.x - bl.w / 2, bl.y - bl.h / 2, bl.w, bl.h);
+    }
+  }
+
+  function drawVan(x, y, angle) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(1, 2, 14, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Glow when moving
+    var speed = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
+    if (speed > 0.5) {
+      ctx.shadowColor = COL.accentGlow;
+      ctx.shadowBlur = 8 + speed * 2;
+    }
+
+    // Body
+    var bw = 24, bh = 14;
+    ctx.fillStyle = COL.van;
+    roundRect(ctx, -bw / 2, -bh / 2, bw, bh, 3);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Roof gradient
+    ctx.fillStyle = COL.vanLight;
+    roundRect(ctx, -bw / 2 + 2, -bh / 2 + 1, bw - 4, 4, 1.5);
+    ctx.fill();
+
+    // Windshield
+    ctx.fillStyle = COL.vanWindow;
+    ctx.fillRect(bw / 2 - 6, -bh / 2 + 2, 4, bh - 4);
+
+    // Headlights
+    ctx.fillStyle = '#EBCB8B';
+    ctx.globalAlpha = 0.8;
+    ctx.fillRect(bw / 2 - 1, -bh / 2 + 2, 2, 3);
+    ctx.fillRect(bw / 2 - 1, bh / 2 - 5, 2, 3);
+    ctx.globalAlpha = 1;
+
+    // Taillights
+    ctx.fillStyle = '#BF616A';
+    ctx.fillRect(-bw / 2 - 1, -bh / 2 + 2, 2, 3);
+    ctx.fillRect(-bw / 2 - 1, bh / 2 - 5, 2, 3);
+
+    // Wheels
+    ctx.fillStyle = COL.vanWheel;
+    ctx.fillRect(-bw / 2 + 1, -bh / 2 - 2, 5, 2.5);
+    ctx.fillRect(-bw / 2 + 1, bh / 2 - 0.5, 5, 2.5);
+    ctx.fillRect(bw / 2 - 6, -bh / 2 - 2, 5, 2.5);
+    ctx.fillRect(bw / 2 - 6, bh / 2 - 0.5, 5, 2.5);
+
+    ctx.restore();
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r);
+    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    c.lineTo(x + r, y + h);
+    c.quadraticCurveTo(x, y + h, x, y + h - r);
+    c.lineTo(x, y + r);
+    c.quadraticCurveTo(x, y, x + r, y);
+    c.closePath();
+  }
+
+  function drawPin(m, time) {
+    var x = m.x, y = m.y, r = m.r;
+    var pulse = 1 + Math.sin(m.pulse + time * 0.06) * 0.12;
+    var spawnScale = 1 - m.spawnAnim;
+    var sz = r * pulse * spawnScale;
+    if (sz <= 0) return;
+
+    // Glow
+    ctx.shadowColor = COL.pinGlow;
+    ctx.shadowBlur = 12;
+
+    // Pin body
+    ctx.fillStyle = COL.pin;
+    ctx.beginPath();
+    ctx.arc(x, y - sz * 0.7, sz * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x - sz * 0.35, y - sz * 0.35);
+    ctx.lineTo(x + sz * 0.35, y - sz * 0.35);
+    ctx.lineTo(x, y + sz * 0.45);
+    ctx.closePath();
+    ctx.fill();
+
+    // Inner dot
+    ctx.fillStyle = '#D8DEE9';
+    ctx.beginPath();
+    ctx.arc(x, y - sz * 0.7, sz * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+
+    // Ground shadow
+    ctx.fillStyle = 'rgba(163,190,140,0.15)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + sz * 0.5, sz * 0.5, sz * 0.15, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawObstacleObj(o, time) {
+    var pulse = 1 + Math.sin(o.pulse + time * 0.08) * 0.06;
+    var spawnScale = 1 - o.spawnAnim;
+    var sw = o.w * pulse * spawnScale;
+    var sh = o.h * pulse * spawnScale;
+    if (sw <= 0) return;
+
+    ctx.save();
+    ctx.translate(o.x, o.y);
+
+    // Glow
+    ctx.shadowColor = COL.obstacleGlow;
+    ctx.shadowBlur = 10;
+
+    // Warning sign: diamond shape
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = COL.obstacle;
+    roundRect(ctx, -sw / 2, -sh / 2, sw, sh, 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Inner warning
+    ctx.fillStyle = '#2E3440';
+    ctx.font = '700 ' + Math.round(sw * 0.55) + 'px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillText('!', 0, 0);
+    ctx.textBaseline = 'alphabetic';
+
+    ctx.restore();
+  }
+
+  function drawHUD(time) {
+    // Top bar
+    ctx.fillStyle = 'rgba(10,14,23,0.85)';
+    roundRect(ctx, 4, 4, W - 8, 30, 8);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(99,102,241,0.15)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, 4, 4, W - 8, 30, 8);
+    ctx.stroke();
+
+    // Score
+    ctx.font = '700 14px ' + FONT;
+    ctx.fillStyle = COL.text;
+    ctx.textAlign = 'left';
+    ctx.fillText(score + ' p', 16, 24);
+
+    // Combo indicator
+    if (comboCount > 1 && comboTimer > 0) {
+      var comboAlpha = Math.min(1, comboTimer / 20);
+      ctx.globalAlpha = comboAlpha;
+      ctx.fillStyle = COL.combo;
+      ctx.font = '700 12px ' + FONT;
+      ctx.fillText('x' + comboCount, 70, 24);
+      // Combo bar
+      var barW = 30;
+      var barFill = comboTimer / 90;
+      ctx.fillStyle = 'rgba(235,203,139,0.2)';
+      ctx.fillRect(92, 17, barW, 5);
+      ctx.fillStyle = COL.combo;
+      ctx.fillRect(92, 17, barW * barFill, 5);
+      ctx.globalAlpha = 1;
+    }
+
+    // High score
+    ctx.textAlign = 'right';
+    ctx.font = '600 11px ' + FONT;
+    ctx.fillStyle = '#88C0D0';
+    ctx.fillText('Rekord: ' + highScore, W - 14, 23);
+    ctx.textAlign = 'left';
+
+    // Customer count (bottom right)
+    ctx.fillStyle = 'rgba(10,14,23,0.7)';
+    roundRect(ctx, W - 60, H - 26, 56, 22, 6);
+    ctx.fill();
+    ctx.fillStyle = COL.pin;
+    ctx.font = '600 11px ' + FONT;
+    ctx.textAlign = 'right';
+    ctx.fillText(customersCollected + ' kunder', W - 10, H - 11);
+    ctx.textAlign = 'left';
+  }
+
+  function drawGameOver(time) {
+    gameOverFade = Math.min(1, gameOverFade + 0.04);
+    var fade = gameOverFade;
+
+    // Overlay
+    ctx.fillStyle = 'rgba(10,14,23,' + (0.85 * fade) + ')';
+    ctx.fillRect(0, 0, W, H);
+
+    if (fade < 0.3) return;
+
+    var contentAlpha = (fade - 0.3) / 0.7;
+    ctx.globalAlpha = contentAlpha;
+
+    var cy = H / 2 - 20;
+
+    // Title
+    ctx.textAlign = 'center';
+    ctx.fillStyle = COL.text;
+    ctx.font = '700 26px ' + FONT;
+    ctx.fillText('Tur over!', W / 2, cy - 50);
+
+    // Score box
+    ctx.fillStyle = 'rgba(99,102,241,0.1)';
+    roundRect(ctx, W / 2 - 80, cy - 30, 160, 70, 12);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(99,102,241,0.2)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, W / 2 - 80, cy - 30, 160, 70, 12);
+    ctx.stroke();
+
+    ctx.font = '700 32px ' + FONT;
+    ctx.fillStyle = '#88C0D0';
+    ctx.fillText(score, W / 2, cy + 8);
+    ctx.font = '500 12px ' + FONT;
+    ctx.fillStyle = COL.textDim;
+    ctx.fillText('poeng', W / 2, cy + 26);
+
+    // New record
+    if (newRecord) {
+      var bounce = 1 + Math.sin(time * 0.1) * 0.08;
+      ctx.font = '700 ' + Math.round(16 * bounce) + 'px ' + FONT;
+      ctx.fillStyle = COL.combo;
+      ctx.fillText('Ny rekord!', W / 2, cy + 60);
+    }
+
+    // Stats
+    var sy = cy + 85;
+    ctx.font = '500 12px ' + FONT;
+    ctx.fillStyle = COL.textDim;
+    ctx.fillText(customersCollected + ' kunder besøkt', W / 2, sy);
+    var secs = Math.floor(timeAlive / 60);
+    ctx.fillText(secs + ' sekunder', W / 2, sy + 20);
+
+    // Restart hint
+    var hintPulse = 0.5 + Math.sin(time * 0.06) * 0.3;
+    ctx.globalAlpha = contentAlpha * hintPulse + 0.4;
+    ctx.fillStyle = COL.accent;
+    ctx.font = '500 13px ' + FONT;
+    ctx.fillText('Trykk for å spille igjen', W / 2, sy + 56);
+
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+
+  function drawTitleScreen(time) {
+    titleTime++;
+    drawBackground();
+
+    // Decorative pins with gentle float
+    var pins = [
+      { x: 65, y: 100 }, { x: 245, y: 80 }, { x: 160, y: 240 },
+      { x: 50, y: 300 }, { x: 270, y: 260 }
+    ];
+    for (var i = 0; i < pins.length; i++) {
+      var pp = pins[i];
+      var fakeM = { x: pp.x, y: pp.y + Math.sin(titleTime * 0.03 + i) * 4, r: 10, pulse: i * 1.2, spawnAnim: 0 };
+      drawPin(fakeM, titleTime);
+    }
+
+    // Animated van driving in a circle
+    var vanAngle = titleTime * 0.015;
+    var vanX = W / 2 + Math.cos(vanAngle) * 40;
+    var vanY = H / 2 + 30 + Math.sin(vanAngle) * 25;
+    drawVan(vanX, vanY, vanAngle + Math.PI / 2);
+
+    // Title card
+    ctx.fillStyle = 'rgba(10,14,23,0.75)';
+    roundRect(ctx, W / 2 - 130, H / 2 - 108, 260, 96, 16);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(99,102,241,0.2)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, W / 2 - 130, H / 2 - 108, 260, 96, 16);
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+
+    // Logo-like title
+    ctx.font = '800 24px ' + FONT;
+    ctx.fillStyle = COL.text;
+    ctx.fillText('Ruteplanleggeren', W / 2, H / 2 - 72);
+
+    // Subtitle
+    ctx.font = '400 13px ' + FONT;
+    ctx.fillStyle = COL.textDim;
+    ctx.fillText('Samle kunder — unngå hindringer', W / 2, H / 2 - 48);
+
+    // High score
+    if (highScore > 0) {
+      ctx.font = '600 12px ' + FONT;
+      ctx.fillStyle = '#88C0D0';
+      ctx.fillText('Rekord: ' + highScore, W / 2, H / 2 - 28);
+    }
+
+    // Controls hint
+    ctx.font = '400 12px ' + FONT;
+    ctx.fillStyle = COL.textDim;
+    ctx.fillText('Piltaster eller D-pad for å styre', W / 2, H / 2 + 90);
+
+    // Start prompt (pulsing)
+    var startPulse = 0.5 + Math.sin(titleTime * 0.06) * 0.4;
+    ctx.globalAlpha = startPulse + 0.3;
+    ctx.fillStyle = COL.accent;
+    ctx.font = '600 15px ' + FONT;
+    ctx.fillText('Trykk for å starte', W / 2, H / 2 + 120);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+
+  // --- Update ---
+  function update() {
+    if (gameState !== 'playing') return;
+    timeAlive++;
+
+    // Input direction
+    var dx = 0, dy = 0;
+    if (keys.ArrowLeft || keys.a || touchDir.x < 0) dx = -1;
+    if (keys.ArrowRight || keys.d || touchDir.x > 0) dx = 1;
+    if (keys.ArrowUp || keys.w || touchDir.y < 0) dy = -1;
+    if (keys.ArrowDown || keys.s || touchDir.y > 0) dy = 1;
+
+    // Normalize diagonal
+    if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+
+    var spd = currentSpeed();
+
+    // Smooth acceleration
+    player.vx += dx * ACCEL * spd;
+    player.vy += dy * ACCEL * spd;
+
+    // Friction when no input
+    if (dx === 0) player.vx *= FRICTION;
+    if (dy === 0) player.vy *= FRICTION;
+
+    // Clamp velocity
+    var vel = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
+    if (vel > spd) {
+      player.vx = (player.vx / vel) * spd;
+      player.vy = (player.vy / vel) * spd;
+    }
+
+    player.x += player.vx;
+    player.y += player.vy;
+
+    // Rotation towards movement direction
+    if (vel > 0.3) {
+      player.targetAngle = Math.atan2(player.vy, player.vx);
+    }
+    // Smooth angle interpolation
+    var angleDiff = player.targetAngle - player.angle;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    player.angle += angleDiff * 0.15;
+
+    // Clamp to bounds
+    player.x = Math.max(player.w / 2, Math.min(W - player.w / 2, player.x));
+    player.y = Math.max(36 + player.h / 2, Math.min(H - player.h / 2, player.y));
+
+    // Dust trail
+    if (vel > 1.5 && Math.random() < 0.4) {
+      spawnDust(player.x - player.vx * 3, player.y - player.vy * 3, player.vx, player.vy);
+    }
+
+    // Combo timer
+    if (comboTimer > 0) comboTimer--;
+    if (comboTimer <= 0) comboCount = 0;
+
+    // Spawn animations
+    for (var mi = 0; mi < markers.length; mi++) {
+      if (markers[mi].spawnAnim > 0) markers[mi].spawnAnim = Math.max(0, markers[mi].spawnAnim - 0.06);
+    }
+    for (var oi = 0; oi < obstacles.length; oi++) {
+      if (obstacles[oi].spawnAnim > 0) obstacles[oi].spawnAnim = Math.max(0, obstacles[oi].spawnAnim - 0.04);
+    }
+
+    // Collect markers
+    for (var i = markers.length - 1; i >= 0; i--) {
+      var m = markers[i];
+      if (m.spawnAnim > 0.5) continue;
+      if (dist(player.x, player.y, m.x, m.y) < 20) {
+        // Combo
+        comboCount++;
+        comboTimer = 90;
+        var bonus = comboCount > 1 ? comboCount * 5 : 0;
+        var points = 10 + bonus;
+        score += points;
+        customersCollected++;
+
+        // Floating text
+        var txt = '+' + points;
+        if (comboCount > 1) txt += ' x' + comboCount;
+        spawnFloatingText(m.x, m.y - 10, txt, comboCount > 1 ? COL.combo : COL.pin);
+
+        // Particles
+        spawnParticles(m.x, m.y, COL.pin, 8);
+
+        // High score
+        if (score > highScore) {
+          if (!newRecord) newRecord = true;
+          highScore = score;
+          try { localStorage.setItem(HS_KEY, String(highScore)); } catch(e) {}
+        }
+
+        markers.splice(i, 1);
+        spawnMarker();
+      }
+    }
+
+    // Obstacle collision
+    for (var j = 0; j < obstacles.length; j++) {
+      var o = obstacles[j];
+      if (o.spawnAnim > 0.3) continue;
+      if (rectsOverlap(player.x, player.y, player.w * 0.8, player.h * 0.8, o.x, o.y, o.w * 0.7, o.h * 0.7)) {
+        gameState = 'gameover';
+        shakeAmount = 12;
+        spawnParticles(player.x, player.y, COL.obstacle, 20);
+        spawnParticles(player.x, player.y, COL.combo, 8);
+        return;
+      }
+    }
+
+    // Spawn obstacles (ramp up over time)
+    obstacleTimer++;
+    var obstacleInterval;
+    if (score < 30) {
+      obstacleInterval = 99999; // No obstacles yet
+    } else if (score < 80) {
+      obstacleInterval = 240;
+    } else if (score < 200) {
+      obstacleInterval = 160;
+    } else {
+      obstacleInterval = Math.max(70, 140 - Math.floor(score / 10));
+    }
+    if (obstacleTimer >= obstacleInterval && obstacles.length < 15) {
+      obstacleTimer = 0;
+      spawnObstacle();
+    }
+
+    // Screen shake decay
+    if (shakeAmount > 0) shakeAmount *= 0.9;
+    if (shakeAmount < 0.2) shakeAmount = 0;
+
+    updateParticles();
+    updateFloatingTexts();
+  }
+
+  // --- Draw frame ---
+  function drawFrame(time) {
+    drawBackground();
+
+    // Obstacles
+    for (var j = 0; j < obstacles.length; j++) drawObstacleObj(obstacles[j], time);
+
+    // Markers
+    for (var i = 0; i < markers.length; i++) drawPin(markers[i], time);
+
+    // Particles (below van)
+    drawParticles();
+
+    // Player van
+    drawVan(player.x, player.y, player.angle);
+
+    // Floating texts
+    drawFloatingTexts();
+
+    // HUD
+    drawHUD(time);
+
+    // Game over overlay
+    if (gameState === 'gameover') drawGameOver(time);
+  }
+
+  // --- Main loop ---
+  var frameCount = 0;
+  function loop() {
+    if (!canvas) return;
+    frameCount++;
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
+
+    // Death flash
+    var flashAlpha = shakeAmount / 12;
+    var doFlash = flashAlpha > 0.02;
+
+    update();
+
+    if (gameState === 'title') {
+      drawTitleScreen(frameCount);
+    } else {
+      drawFrame(frameCount);
+    }
+
+    // Red flash overlay on death
+    if (doFlash) {
+      ctx.fillStyle = 'rgba(191,97,106,' + (flashAlpha * 0.45) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    ctx.restore();
+    animFrame = requestAnimationFrame(loop);
+  }
+
+  function startGame() {
+    if (gameState === 'playing') return;
+    reset();
+    gameState = 'playing';
+  }
+
+  // --- Input ---
+  function setupKeyboard() {
+    keyHandler = function(e) {
+      if (!canvas) return;
+      keys[e.key] = true;
+      if ((e.key === ' ' || e.key === 'Enter') && gameState !== 'playing') {
+        e.preventDefault();
+        startGame();
+      }
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].indexOf(e.key) !== -1) {
+        e.preventDefault();
+      }
+    };
+    keyUpHandler = function(e) {
+      keys[e.key] = false;
+    };
+    document.addEventListener('keydown', keyHandler);
+    document.addEventListener('keyup', keyUpHandler);
+  }
+
+  function createDpad(parent) {
+    var dpad = document.createElement('div');
+    dpad.id = 'mg-dpad';
+    dpad.style.cssText = 'display:grid;grid-template-columns:52px 52px 52px;grid-template-rows:52px 52px;gap:6px;justify-content:center;margin-top:14px;user-select:none;-webkit-user-select:none;';
+
+    var btnBase = 'display:flex;align-items:center;justify-content:center;border-radius:14px;font-size:18px;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:none;transition:background 0.1s,transform 0.1s;';
+
+    var dirs = [
+      { label: '\u25B2', col: '2/3', row: '1/2', dx: 0, dy: -1 },
+      { label: '\u25C0', col: '1/2', row: '2/3', dx: -1, dy: 0 },
+      { label: '\u25BC', col: '2/3', row: '2/3', dx: 0, dy: 1 },
+      { label: '\u25B6', col: '3/4', row: '2/3', dx: 1, dy: 0 }
+    ];
+
+    dirs.forEach(function(d) {
+      var btn = document.createElement('div');
+      btn.style.cssText = btnBase + 'grid-column:' + d.col + ';grid-row:' + d.row + ';background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);color:#818cf8;';
+      btn.textContent = d.label;
+
+      function press(e) {
+        e.preventDefault();
+        touchDir.x = d.dx; touchDir.y = d.dy;
+        btn.style.background = 'rgba(99,102,241,0.3)';
+        btn.style.transform = 'scale(0.92)';
+        if (gameState !== 'playing') startGame();
+      }
+      function release(e) {
+        e.preventDefault();
+        if (d.dx !== 0) touchDir.x = 0;
+        if (d.dy !== 0) touchDir.y = 0;
+        btn.style.background = 'rgba(99,102,241,0.12)';
+        btn.style.transform = 'scale(1)';
+      }
+
+      btn.addEventListener('touchstart', press, { passive: false });
+      btn.addEventListener('touchend', release, { passive: false });
+      btn.addEventListener('touchcancel', release, { passive: false });
+      btn.addEventListener('mousedown', press);
+      btn.addEventListener('mouseup', release);
+      btn.addEventListener('mouseleave', release);
+      dpad.appendChild(btn);
+    });
+
+    parent.appendChild(dpad);
+  }
+
+  function setupCanvasTouch() {
+    if (!canvas) return;
+    canvas.addEventListener('click', function() {
+      if (gameState !== 'playing') startGame();
+    });
+  }
+
+  // --- Global API ---
+
+  window.startMaintenanceGame = function() {
+    container = document.getElementById('maintenance-game-container');
+    if (!container) return;
+
+    // Hide the play button
+    var btn = document.getElementById('maintenance-game-btn');
+    if (btn) btn.style.display = 'none';
+
+    highScore = parseInt(localStorage.getItem(HS_KEY) || '0', 10);
+    dpr = window.devicePixelRatio || 1;
+
+    canvas = document.createElement('canvas');
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.cssText = 'width:' + W + 'px;height:' + H + 'px;border-radius:14px;border:1px solid rgba(99,102,241,0.15);display:block;margin:0 auto;cursor:pointer;touch-action:none;box-shadow:0 4px 24px rgba(0,0,0,0.3),0 0 48px rgba(99,102,241,0.08);';
+    container.appendChild(canvas);
+
+    ctx = canvas.getContext('2d');
+    gameState = 'title';
+    frameCount = 0;
+    titleTime = 0;
+    particles = [];
+    floatingTexts = [];
+
+    generateBuildings();
+    setupKeyboard();
+    setupCanvasTouch();
+    createDpad(container);
+
+    reset();
+    gameState = 'title';
+    loop();
+  };
+
+  window.destroyMaintenanceGame = function() {
+    if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+    if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
+    if (keyUpHandler) { document.removeEventListener('keyup', keyUpHandler); keyUpHandler = null; }
+    canvas = null;
+    ctx = null;
+    container = null;
+    gameState = 'title';
+    keys = {};
+    touchDir = { x: 0, y: 0 };
+  };
+})();
+
+
 // @ts-nocheck
 
 // ========================================
@@ -37113,7 +38610,6 @@ function setupEventListeners() {
       contentPanel.style.transition = '';
       contentPanel.classList.remove('closed');
       contentPanel.classList.add('open');
-      if (typeof resetPanelOpacity === 'function') resetPanelOpacity();
       localStorage.setItem('contentPanelOpen', 'true');
 
       // On mobile, default to half-height mode

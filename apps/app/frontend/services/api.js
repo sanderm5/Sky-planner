@@ -180,6 +180,8 @@ async function apiFetch(url, options = {}) {
     hideMaintenanceBanner();
   }
 
+  // Broadcast banner is managed by the background poller only (avoids flickering)
+
   // Check for subscription warning header (grace period / trial ending soon)
   const subscriptionWarning = response.headers.get('X-Subscription-Warning');
   if (subscriptionWarning) {
@@ -200,8 +202,8 @@ function showMaintenanceBanner(message) {
 
   maintenanceBannerEl = document.createElement('div');
   maintenanceBannerEl.id = 'maintenance-banner';
-  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:var(--color-text-inverse, #1a1a1a);text-align:center;padding:8px 16px;font-size:14px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
-  maintenanceBannerEl.innerHTML = '<span class="maintenance-banner-text">' + escapeHtml(message) + '</span>';
+  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:#1a1a1a;text-align:center;padding:6px 16px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+  maintenanceBannerEl.innerHTML = '<i class="fas fa-tools" style="margin-right:6px;font-size:12px;"></i><span class="maintenance-banner-text">' + escapeHtml(message) + '</span>';
   document.body.appendChild(maintenanceBannerEl);
 }
 
@@ -212,12 +214,38 @@ function hideMaintenanceBanner() {
   }
 }
 
+// System broadcast banner (blue bar — from superadmin)
+let broadcastBannerEl = null;
+
+function showBroadcastBanner(message) {
+  if (broadcastBannerEl) {
+    broadcastBannerEl.querySelector('.broadcast-banner-text').textContent = message;
+    return;
+  }
+
+  var isMobile = window.innerWidth <= 768;
+  broadcastBannerEl = document.createElement('div');
+  broadcastBannerEl.id = 'broadcast-banner';
+  broadcastBannerEl.style.cssText = 'position:fixed;' + (isMobile ? 'bottom:64px;left:8px;right:8px;' : 'bottom:24px;left:50%;transform:translateX(-50%);max-width:600px;') + 'z-index:9999;background:#6366f1;color:#fff;padding:10px 16px;font-size:13px;font-weight:500;border-radius:10px;box-shadow:0 4px 20px rgba(99,102,241,0.4);display:flex;align-items:center;gap:8px;';
+  broadcastBannerEl.innerHTML = '<i class="fas fa-bullhorn" style="font-size:14px;flex-shrink:0;"></i> <span class="broadcast-banner-text">' + escapeHtml(message) + '</span>';
+  document.body.appendChild(broadcastBannerEl);
+}
+
+function hideBroadcastBanner() {
+  if (broadcastBannerEl) {
+    broadcastBannerEl.remove();
+    broadcastBannerEl = null;
+  }
+}
+
 // Maintenance overlay (full screen block — app unusable)
 let maintenanceOverlayEl = null;
 let maintenancePollInterval = null;
 
 function showMaintenanceOverlay(message) {
   if (maintenanceOverlayEl) return; // Already showing
+  // Hide broadcast banner — maintenance takes priority
+  hideBroadcastBanner();
 
   maintenanceOverlayEl = document.createElement('div');
   maintenanceOverlayEl.id = 'maintenance-overlay';
@@ -228,11 +256,14 @@ function showMaintenanceOverlay(message) {
     + '<p style="color:var(--color-text-secondary);font-size:1rem;line-height:1.6;margin-bottom:2rem;">' + escapeHtml(message) + '</p>'
     + '<div style="width:32px;height:32px;border:3px solid rgba(99,102,241,0.2);border-top-color:#6366f1;border-radius:50%;animation:mtspin 1s linear infinite;margin:0 auto 1rem;"></div>'
     + '<p style="color:var(--color-text-muted);font-size:0.8rem;">Siden sjekker automatisk om vi er tilbake...</p>'
+    + '<button id="maintenance-game-btn" data-action="startMaintenanceGame" style="margin-top:1.5rem;padding:10px 24px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:10px;color:#a5b4fc;font-size:0.9rem;font-weight:500;cursor:pointer;transition:background 0.2s;" onmouseenter="this.style.background=\'rgba(99,102,241,0.25)\'" onmouseleave="this.style.background=\'rgba(99,102,241,0.15)\'">Spill mens du venter?</button>'
+    + '<div id="maintenance-game-container" style="margin-top:1rem;"></div>'
+    + '<a href="/superlogin" style="display:inline-block;margin-top:1.5rem;color:rgba(255,255,255,0.08);font-size:0.6rem;text-decoration:none;" onmouseenter="this.style.color=\'rgba(255,255,255,0.25)\'" onmouseleave="this.style.color=\'rgba(255,255,255,0.08)\'">Admin</a>'
     + '</div>'
     + '<style>@keyframes mtspin{to{transform:rotate(360deg)}}</style>';
   document.body.appendChild(maintenanceOverlayEl);
 
-  // Poll for maintenance end
+  // Poll for maintenance end (every 5s)
   maintenancePollInterval = setInterval(function() {
     fetch('/api/maintenance/status')
       .then(function(r) { return r.json(); })
@@ -240,13 +271,74 @@ function showMaintenanceOverlay(message) {
         if (!data.maintenance || data.mode !== 'full') {
           clearInterval(maintenancePollInterval);
           maintenancePollInterval = null;
-          if (maintenanceOverlayEl) {
-            maintenanceOverlayEl.remove();
-            maintenanceOverlayEl = null;
-          }
-          window.location.reload();
+          startMaintenanceCountdown();
         }
       })
       .catch(function() {});
-  }, 30000);
+  }, 5000);
 }
+
+function startMaintenanceCountdown() {
+  if (!maintenanceOverlayEl) return;
+  if (typeof destroyMaintenanceGame === 'function') destroyMaintenanceGame();
+  var seconds = 10;
+  // Replace spinner and auto-refresh text with countdown
+  maintenanceOverlayEl.querySelector('h1').textContent = 'Vi er tilbake!';
+  maintenanceOverlayEl.querySelector('h1').style.color = '#4ade80';
+  var msgEl = maintenanceOverlayEl.querySelector('p');
+  if (msgEl) msgEl.textContent = 'Vedlikeholdet er ferdig.';
+  // Find spinner and replace with countdown
+  var spinner = maintenanceOverlayEl.querySelector('[style*="animation"]');
+  if (spinner) {
+    spinner.style.cssText = 'width:64px;height:64px;border-radius:50%;background:rgba(99,102,241,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;font-size:1.5rem;font-weight:700;color:#6366f1;';
+    spinner.textContent = seconds;
+  }
+  var autoRefreshEl = maintenanceOverlayEl.querySelectorAll('p');
+  var lastP = autoRefreshEl[autoRefreshEl.length - 1];
+  if (lastP) lastP.textContent = 'Laster inn på nytt om ' + seconds + ' sekunder...';
+
+  var countdownInterval = setInterval(function() {
+    seconds--;
+    if (spinner) spinner.textContent = seconds;
+    if (lastP) lastP.textContent = 'Laster inn på nytt om ' + seconds + ' sekunder...';
+    if (seconds <= 0) {
+      clearInterval(countdownInterval);
+      if (maintenanceOverlayEl) {
+        maintenanceOverlayEl.remove();
+        maintenanceOverlayEl = null;
+      }
+      window.location.reload();
+    }
+  }, 1000);
+}
+
+// Background poller: check maintenance status every 15s
+// Shows overlay even if user is idle (no API calls triggering 503)
+(function startMaintenancePoller() {
+  function checkMaintenanceAndBroadcast() {
+    if (window.location.pathname.startsWith('/admin')) return;
+
+    fetch('/api/maintenance/status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        // Maintenance overlay
+        if (!maintenanceOverlayEl && data.maintenance && data.mode === 'full') {
+          showMaintenanceOverlay(data.message || 'Vedlikehold pågår');
+        }
+        // Broadcast banner (hide if maintenance active, or user not logged in)
+        var loginOverlay = document.getElementById('loginOverlay');
+        var isLoggedIn = !loginOverlay || loginOverlay.classList.contains('hidden');
+        if (data.broadcast && !maintenanceBannerEl && !maintenanceOverlayEl && isLoggedIn) {
+          showBroadcastBanner(data.broadcast);
+        } else if (!data.broadcast || maintenanceBannerEl || maintenanceOverlayEl || !isLoggedIn) {
+          hideBroadcastBanner();
+        }
+      })
+      .catch(function() {});
+  }
+
+  // Check immediately on load
+  setTimeout(checkMaintenanceAndBroadcast, 2000);
+  // Then every 5 seconds
+  setInterval(checkMaintenanceAndBroadcast, 5000);
+})();

@@ -7,11 +7,20 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { isMaintenanceEnabled, getMaintenanceMode, getMaintenanceMessage } from '../routes/maintenance';
+import { getBroadcastMessage } from '../routes/super-admin';
 
 // Paths that always pass through even in full maintenance mode
 const ALWAYS_PASS = [
   '/api/maintenance',
   '/api/health',
+  '/api/super-admin',
+  '/api/klient/login',
+  '/api/klient/verify',
+  '/api/klient/logout',
+  '/api/auth',
+  '/api/csrf-token',
+  '/api/config',
+  '/superlogin',
 ];
 
 function shouldPassThrough(path: string): boolean {
@@ -19,6 +28,12 @@ function shouldPassThrough(path: string): boolean {
 }
 
 export function maintenanceMiddleware(req: Request, res: Response, next: NextFunction): void {
+  // Always add broadcast header if active (even without maintenance mode)
+  const broadcast = getBroadcastMessage();
+  if (broadcast) {
+    res.setHeader('X-Broadcast', encodeURIComponent(broadcast));
+  }
+
   if (!isMaintenanceEnabled()) {
     next();
     return;
@@ -35,13 +50,13 @@ export function maintenanceMiddleware(req: Request, res: Response, next: NextFun
     return;
   }
 
-  // Full mode: block everything except maintenance/health endpoints
+  // Full mode: block API calls except allowlisted paths
   if (shouldPassThrough(req.path)) {
     next();
     return;
   }
 
-  // API requests: return 503 JSON
+  // API requests: return 503 JSON (blocks app functionality)
   if (req.path.startsWith('/api/')) {
     res.status(503).setHeader('X-Maintenance', 'true');
     res.json({
@@ -54,15 +69,12 @@ export function maintenanceMiddleware(req: Request, res: Response, next: NextFun
     return;
   }
 
-  // Navigation/HTML requests: return maintenance page
-  res.status(503);
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.setHeader('X-Maintenance', 'true');
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(getMaintenanceHtml(message));
+  // Static files and HTML pages always pass through
+  // (the frontend handles showing the maintenance overlay via 503 API responses)
+  next();
 }
 
-function getMaintenanceHtml(message: string): string {
+export function getMaintenanceHtml(message: string): string {
   const escapedMessage = message.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   return `<!DOCTYPE html>

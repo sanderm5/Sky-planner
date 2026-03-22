@@ -32,6 +32,22 @@ export function getMaintenanceMessage(): string {
   return maintenanceMessage;
 }
 
+export function getMaintenanceStartedAt(): string | null {
+  return maintenanceStartedAt;
+}
+
+/** Toggle maintenance from superadmin (no CRON_SECRET needed) */
+export function setMaintenance(enabled: boolean, mode?: 'banner' | 'full', message?: string): void {
+  maintenanceEnabled = enabled;
+  if (enabled) {
+    if (mode) maintenanceMode = mode;
+    if (message) maintenanceMessage = message;
+    maintenanceStartedAt = new Date().toISOString();
+  } else {
+    maintenanceStartedAt = null;
+  }
+}
+
 /**
  * Verify CRON_SECRET (same pattern as cron.ts)
  */
@@ -105,12 +121,20 @@ router.post('/toggle', verifyCronSecret, (req: Request, res: Response) => {
  * Used by: frontend polling, service worker, Next.js middleware
  */
 router.get('/status', (_req: Request, res: Response) => {
+  // Import broadcast state (lazy to avoid circular dep at module load)
+  let broadcastMsg: string | null = null;
+  try {
+    const { getBroadcastMessage } = require('./super-admin');
+    broadcastMsg = getBroadcastMessage();
+  } catch { /* super-admin not loaded yet */ }
+
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     maintenance: maintenanceEnabled,
     mode: maintenanceEnabled ? maintenanceMode : null,
     message: maintenanceEnabled ? maintenanceMessage : '',
     startedAt: maintenanceStartedAt,
+    broadcast: broadcastMsg || null,
   });
 });
 

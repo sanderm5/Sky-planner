@@ -46,6 +46,7 @@ const SOURCE_FILES = [
   'frontend/modules/mobile-visit-form.js',
   'frontend/modules/mobile-calendar.js',
   'frontend/modules/mobile-chat.js',
+  'frontend/modules/mobile-support-chat.js',
   'frontend/modules/mobile-field.js',
   'frontend/modules/mobile-admin.js',
   'frontend/modules/mobile-weekplan-edit.js',
@@ -79,7 +80,6 @@ const SOURCE_FILES = [
   'frontend/modules/filter-panel.js',
   'frontend/modules/dashboard.js',
   'frontend/modules/map-core.js',
-  'frontend/modules/panel-zoom-opacity.js',
   'frontend/modules/spa-auth.js',
   'frontend/modules/industry.js',
   'frontend/modules/excel-import.js',
@@ -92,6 +92,7 @@ const SOURCE_FILES = [
   'frontend/modules/customer-form.js',
   'frontend/modules/customer-admin.js',
   'frontend/modules/proximity.js',
+  'frontend/modules/maintenance-game.js',
 
   // -- Legacy: global state + init + setupEventListeners --
   'frontend/app-legacy.js',

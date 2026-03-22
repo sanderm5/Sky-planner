@@ -74,7 +74,9 @@ async function initAdminPanel() {
       loadBillingOverview(),
       loadSentryStatus(),
       loadSystemMonitor(),
-      loadSupportConversations()
+      loadSupportConversations(),
+      loadBroadcastStatus(),
+      loadMaintenanceStatus()
     ]);
 
     // Start system monitor auto-refresh
@@ -83,6 +85,9 @@ async function initAdminPanel() {
     // Setup support chat
     setupSupportChatListeners();
     initSupportWebSocket();
+
+    // Setup broadcast
+    setupBroadcastListeners();
 
   } catch (error) {
     console.error('Failed to initialize admin panel:', error);
@@ -2122,6 +2127,155 @@ function toggleSystemMonitorAutoRefresh(e) {
 }
 
 // ========================================
+// SYSTEM BROADCAST
+// ========================================
+
+async function loadBroadcastStatus() {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/broadcast`);
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.success && result.data) {
+      updateBroadcastUI(result.data.enabled, result.data.message);
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+function updateBroadcastUI(enabled, message) {
+  const status = document.getElementById('broadcastStatus');
+  const textarea = document.getElementById('broadcastMessage');
+  const sendBtn = document.getElementById('broadcastSendBtn');
+  const clearBtn = document.getElementById('broadcastClearBtn');
+
+  if (enabled && message) {
+    status.innerHTML = '<span class="broadcast-status-dot active"></span><span>Aktiv: ' + escapeHtmlAdmin(message) + '</span>';
+    textarea.value = message;
+    sendBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Oppdater';
+    clearBtn.style.display = 'inline-flex';
+  } else {
+    status.innerHTML = '<span class="broadcast-status-dot inactive"></span><span>Ingen aktiv melding</span>';
+    textarea.value = '';
+    sendBtn.innerHTML = '<i class="fas fa-bullhorn"></i> Publiser';
+    clearBtn.style.display = 'none';
+  }
+}
+
+async function sendBroadcast() {
+  const message = document.getElementById('broadcastMessage').value.trim();
+  if (!message) return alert('Skriv en melding først');
+
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/broadcast`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled: true, message }),
+    });
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.success) {
+      updateBroadcastUI(true, result.data.message);
+    }
+  } catch (e) {
+    console.error('Failed to send broadcast:', e);
+  }
+}
+
+async function clearBroadcast() {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/broadcast`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled: false }),
+    });
+    if (!res.ok) return;
+    updateBroadcastUI(false, '');
+  } catch (e) {
+    console.error('Failed to clear broadcast:', e);
+  }
+}
+
+async function loadMaintenanceStatus() {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/maintenance`);
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.success && result.data) {
+      updateMaintenanceUI(result.data.enabled, result.data.mode, result.data.message);
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+function updateMaintenanceUI(enabled, mode, message) {
+  const status = document.getElementById('maintenanceStatus');
+  const textarea = document.getElementById('maintenanceMessage');
+  const onBtn = document.getElementById('maintenanceOnBtn');
+  const offBtn = document.getElementById('maintenanceOffBtn');
+
+  if (enabled) {
+    const modeText = mode === 'full' ? 'Full blokkering' : 'Banner';
+    status.innerHTML = `<span class="broadcast-status-dot active" style="background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.4);"></span><span>Aktiv — ${escapeHtmlAdmin(modeText)}</span>`;
+    if (message) textarea.value = message;
+    onBtn.style.display = 'none';
+    offBtn.style.display = 'inline-flex';
+    // Set radio
+    const radio = document.querySelector(`input[name="maintenanceMode"][value="${mode}"]`);
+    if (radio) radio.checked = true;
+  } else {
+    status.innerHTML = '<span class="broadcast-status-dot inactive"></span><span>Av</span>';
+    onBtn.style.display = 'inline-flex';
+    offBtn.style.display = 'none';
+  }
+}
+
+async function toggleMaintenance(enabled) {
+  const message = document.getElementById('maintenanceMessage').value.trim();
+  const modeRadio = document.querySelector('input[name="maintenanceMode"]:checked');
+  const mode = modeRadio ? modeRadio.value : 'banner';
+
+  if (enabled && !message) return alert('Skriv en vedlikeholdsmelding først');
+
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/maintenance`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled, mode, message: message || undefined }),
+    });
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.success) {
+      updateMaintenanceUI(result.data.enabled, result.data.mode, result.data.message);
+    }
+  } catch (e) {
+    console.error('Failed to toggle maintenance:', e);
+  }
+}
+
+function setupBroadcastListeners() {
+  const sendBtn = document.getElementById('broadcastSendBtn');
+  if (sendBtn) sendBtn.addEventListener('click', sendBroadcast);
+  const clearBtn = document.getElementById('broadcastClearBtn');
+  if (clearBtn) clearBtn.addEventListener('click', clearBroadcast);
+
+  const maintenanceOnBtn = document.getElementById('maintenanceOnBtn');
+  if (maintenanceOnBtn) maintenanceOnBtn.addEventListener('click', () => toggleMaintenance(true));
+  const maintenanceOffBtn = document.getElementById('maintenanceOffBtn');
+  if (maintenanceOffBtn) maintenanceOffBtn.addEventListener('click', () => toggleMaintenance(false));
+
+  // Preset buttons — fill textarea on click
+  document.querySelectorAll('#broadcastPresets .preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('broadcastMessage').value = btn.dataset.msg;
+    });
+  });
+  document.querySelectorAll('#maintenancePresets .preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('maintenanceMessage').value = btn.dataset.msg;
+    });
+  });
+}
+
+// ========================================
 // SUPPORT CHAT
 // ========================================
 
@@ -2210,9 +2364,11 @@ async function openSupportConversation(convId, orgName) {
   if (nameEl) nameEl.innerHTML = `${escapeHtmlAdmin(orgName)} <span class="support-ticket-id">#${convId}</span>` +
     (conv?.subject ? ` — ${escapeHtmlAdmin(conv.subject)}` : '');
 
-  // Show/hide close button and input
+  // Show close or reopen button
   const closeBtn = document.getElementById('supportCloseTicketBtn');
+  const reopenBtn = document.getElementById('supportReopenTicketBtn');
   if (closeBtn) closeBtn.style.display = isClosed ? 'none' : 'inline-flex';
+  if (reopenBtn) reopenBtn.style.display = isClosed ? 'inline-flex' : 'none';
   const inputArea = document.querySelector('#supportMsgArea .support-input-area');
   if (inputArea) inputArea.style.display = isClosed ? 'none' : 'flex';
 
@@ -2243,10 +2399,35 @@ async function closeSupportTicket() {
     await fetchWithAuth(`${SUPPORT_API}/conversations/${activeSupportConvId}/close`, { method: 'PUT' });
     const conv = supportConversations.find(c => c.id === activeSupportConvId);
     if (conv) conv.status = 'closed';
-    // Re-open to refresh UI
     openSupportConversation(activeSupportConvId, activeSupportOrgName);
   } catch (e) {
     console.error('Failed to close ticket:', e);
+  }
+}
+
+async function deleteSupportTicket() {
+  if (!activeSupportConvId) return;
+  if (!confirm('Er du sikker på at du vil slette denne saken og alle meldinger permanent?')) return;
+  try {
+    const res = await fetchWithAuth(`${SUPPORT_API}/conversations/${activeSupportConvId}`, { method: 'DELETE' });
+    if (!res.ok) return;
+    activeSupportConvId = null;
+    document.getElementById('supportMsgArea').style.display = 'none';
+    await loadSupportConversations();
+  } catch (e) {
+    console.error('Failed to delete ticket:', e);
+  }
+}
+
+async function reopenSupportTicket() {
+  if (!activeSupportConvId) return;
+  try {
+    await fetchWithAuth(`${SUPPORT_API}/conversations/${activeSupportConvId}/reopen`, { method: 'PUT' });
+    const conv = supportConversations.find(c => c.id === activeSupportConvId);
+    if (conv) conv.status = 'open';
+    openSupportConversation(activeSupportConvId, activeSupportOrgName);
+  } catch (e) {
+    console.error('Failed to reopen ticket:', e);
   }
 }
 
@@ -2482,6 +2663,14 @@ function setupSupportChatListeners() {
   // Close ticket button
   const closeTicketBtn = document.getElementById('supportCloseTicketBtn');
   if (closeTicketBtn) closeTicketBtn.addEventListener('click', closeSupportTicket);
+
+  // Reopen ticket button
+  const reopenTicketBtn = document.getElementById('supportReopenTicketBtn');
+  if (reopenTicketBtn) reopenTicketBtn.addEventListener('click', reopenSupportTicket);
+
+  // Delete ticket button
+  const deleteTicketBtn = document.getElementById('supportDeleteTicketBtn');
+  if (deleteTicketBtn) deleteTicketBtn.addEventListener('click', deleteSupportTicket);
 }
 
 // ========================================

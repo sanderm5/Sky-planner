@@ -91,6 +91,11 @@ function showMobileFieldView() {
     mfSetupChatTab();
   }
 
+  // Inject support tab (all users)
+  if (typeof mfSetupSupportTab === 'function') {
+    mfSetupSupportTab();
+  }
+
   // Initialize inline weekplan
   if (typeof mfShowWeekplanInline === 'function') {
     mfShowWeekplanInline();
@@ -535,6 +540,7 @@ function mfSwitchTab(tab) {
   const kunderView = document.getElementById('mfKunderView');
   const calendarView = document.getElementById('mfCalendarView');
   const chatView = document.getElementById('mfChatView');
+  const supportView = document.getElementById('mfSupportView');
 
   if (weekplanView) weekplanView.style.display = tab === 'ukeplan' ? 'flex' : 'none';
   if (mapView) mapView.style.display = tab === 'map' ? 'flex' : 'none';
@@ -543,6 +549,7 @@ function mfSwitchTab(tab) {
   if (kunderView) kunderView.style.display = tab === 'kunder' ? 'flex' : 'none';
   if (calendarView) calendarView.style.display = tab === 'calendar' ? 'flex' : 'none';
   if (chatView) chatView.style.display = tab === 'chat' ? 'flex' : 'none';
+  if (supportView) supportView.style.display = tab === 'support' ? 'flex' : 'none';
 
   if (tab === 'ukeplan' && typeof mfShowWeekplanInline === 'function') {
     mfShowWeekplanInline();
@@ -596,6 +603,11 @@ function mfSwitchTab(tab) {
   }
   if (prevTab === 'chat' && tab !== 'chat' && typeof mfOnChatTabHidden === 'function') {
     mfOnChatTabHidden();
+  }
+
+  // Support tab hook
+  if (tab === 'support' && typeof mfOnSupportTabShown === 'function') {
+    mfOnSupportTabShown();
   }
 }
 
@@ -802,6 +814,11 @@ async function mfLogout() {
   // Clean up calendar
   if (typeof mfCalendarCleanup === 'function') {
     mfCalendarCleanup();
+  }
+
+  // Clean up support chat
+  if (typeof mfSupportCleanup === 'function') {
+    mfSupportCleanup();
   }
 
   // Reset state

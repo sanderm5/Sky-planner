@@ -82,6 +82,71 @@
         </div>
       </section>
 
+      <!-- System Broadcast & Maintenance section -->
+      <section class="broadcast-section" id="broadcastSection">
+        <div class="section-header">
+          <h2><i class="fas fa-bullhorn"></i> Systemmelding &amp; Vedlikehold</h2>
+        </div>
+        <div class="broadcast-maintenance-grid">
+          <!-- Broadcast -->
+          <div class="broadcast-card">
+            <h3><i class="fas fa-bullhorn"></i> Systemmelding</h3>
+            <p class="broadcast-desc">Vises som en melding nederst i appen for alle brukere.</p>
+            <div class="broadcast-status" id="broadcastStatus">
+              <span class="broadcast-status-dot inactive"></span>
+              <span>Ingen aktiv melding</span>
+            </div>
+            <div class="broadcast-form">
+              <div class="preset-btns" id="broadcastPresets">
+                <button class="preset-btn" data-msg="Vi opplever for tiden treg ytelse. Vi jobber med saken.">Treg ytelse</button>
+                <button class="preset-btn" data-msg="Vi har problemer med databasen. Noen funksjoner kan være utilgjengelige.">Databasefeil</button>
+                <button class="preset-btn" data-msg="Planlagt vedlikehold i kveld kl. 22:00–23:00. Appen kan være utilgjengelig.">Planlagt vedlikehold</button>
+                <button class="preset-btn" data-msg="Vi har oppdatert appen med nye funksjoner! Se patch notes for detaljer.">Ny oppdatering</button>
+              </div>
+              <textarea id="broadcastMessage" rows="2" placeholder="Eller skriv en egen melding..." maxlength="500"></textarea>
+              <div class="broadcast-actions">
+                <button class="btn-sm btn-primary" id="broadcastSendBtn">
+                  <i class="fas fa-bullhorn"></i> Publiser
+                </button>
+                <button class="btn-sm btn-secondary" id="broadcastClearBtn" style="display:none;">
+                  <i class="fas fa-times"></i> Fjern
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- Maintenance -->
+          <div class="broadcast-card">
+            <h3><i class="fas fa-tools"></i> Vedlikeholdsmodus</h3>
+            <p class="broadcast-desc">Stenger appen helt eller viser et vedlikeholdsvarsel.</p>
+            <div class="broadcast-status" id="maintenanceStatus">
+              <span class="broadcast-status-dot inactive"></span>
+              <span>Av</span>
+            </div>
+            <div class="broadcast-form">
+              <div class="preset-btns" id="maintenancePresets">
+                <button class="preset-btn" data-msg="Vi utfører vedlikehold. Prøv igjen om noen minutter.">Kort vedlikehold</button>
+                <button class="preset-btn" data-msg="Planlagt vedlikehold pågår. Vi forventer å være tilbake innen 30 minutter.">30 min vedlikehold</button>
+                <button class="preset-btn" data-msg="Vi oppgraderer serverne. Appen er utilgjengelig frem til ca. kl. 08:00.">Serveroppgradering</button>
+                <button class="preset-btn" data-msg="Nødvedlikehold pågår på grunn av tekniske problemer. Vi jobber med å løse det.">Nødvedlikehold</button>
+              </div>
+              <textarea id="maintenanceMessage" rows="2" placeholder="Eller skriv en egen melding..." maxlength="500"></textarea>
+              <div class="maintenance-mode-select">
+                <label><input type="radio" name="maintenanceMode" value="banner" checked> Banner (appen fungerer)</label>
+                <label><input type="radio" name="maintenanceMode" value="full"> Full blokkering</label>
+              </div>
+              <div class="broadcast-actions">
+                <button class="btn-sm btn-warning" id="maintenanceOnBtn">
+                  <i class="fas fa-toggle-on"></i> Aktiver
+                </button>
+                <button class="btn-sm btn-secondary" id="maintenanceOffBtn" style="display:none;">
+                  <i class="fas fa-toggle-off"></i> Deaktiver
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Support Chat section -->
       <section class="support-chat-section" id="supportChatSection">
         <div class="section-header">
@@ -105,6 +170,12 @@
               <span class="support-msg-org-name" id="supportMsgOrgName">-</span>
               <button class="support-close-ticket-btn" id="supportCloseTicketBtn" title="Lukk saken">
                 <i class="fas fa-check-circle"></i> Lukk sak
+              </button>
+              <button class="support-reopen-ticket-btn" id="supportReopenTicketBtn" title="Gjenåpne saken" style="display:none;">
+                <i class="fas fa-redo"></i> Gjenåpne
+              </button>
+              <button class="support-delete-ticket-btn" id="supportDeleteTicketBtn" title="Slett saken permanent">
+                <i class="fas fa-trash-alt"></i>
               </button>
             </div>
             <div class="support-messages" id="supportMessages"></div>

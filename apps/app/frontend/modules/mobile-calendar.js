@@ -30,9 +30,9 @@ function mfSetupCalendarTab() {
   // Insert before bottom bar
   mfView.insertBefore(calendarView, bottomBar);
 
-  // Add Calendar tab button after Route tab
-  const routeBtn = bottomBar.querySelector('[data-tab="route"]');
-  if (routeBtn && routeBtn.nextElementSibling) {
+  // Add Calendar tab button after Map tab
+  const mapBtn = bottomBar.querySelector('[data-tab="map"]');
+  if (mapBtn) {
     const calBtn = document.createElement('button');
     calBtn.className = 'mf-tab-btn';
     calBtn.dataset.tab = 'calendar';
@@ -44,7 +44,7 @@ function mfSetupCalendarTab() {
       <i class="fas fa-calendar-alt" aria-hidden="true"></i>
       <span>Kalender</span>
     `;
-    routeBtn.parentElement.insertBefore(calBtn, routeBtn.nextElementSibling);
+    mapBtn.parentElement.insertBefore(calBtn, mapBtn.nextElementSibling);
   }
 }
 

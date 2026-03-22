@@ -1379,4 +1379,109 @@ router.get(
   })
 );
 
+// ========================================
+// SYSTEM BROADCAST (maintenance banner)
+// ========================================
+
+import {
+  isMaintenanceEnabled,
+  getMaintenanceMode,
+  getMaintenanceMessage,
+  getMaintenanceStartedAt,
+  setMaintenance,
+} from './maintenance';
+
+/**
+ * POST /api/super-admin/maintenance
+ * Toggle maintenance mode on/off
+ * Body: { enabled: boolean, mode?: "banner" | "full", message?: string }
+ */
+router.post('/maintenance', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { enabled, mode, message } = req.body;
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ success: false, error: { code: 'INVALID', message: 'enabled må være true/false' } });
+    return;
+  }
+  setMaintenance(enabled, mode, message);
+  res.json({
+    success: true,
+    data: {
+      enabled: isMaintenanceEnabled(),
+      mode: getMaintenanceMode(),
+      message: getMaintenanceMessage(),
+      startedAt: getMaintenanceStartedAt(),
+    },
+  });
+}));
+
+/**
+ * GET /api/super-admin/maintenance
+ * Get current maintenance status
+ */
+router.get('/maintenance', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      enabled: isMaintenanceEnabled(),
+      mode: getMaintenanceMode(),
+      message: getMaintenanceMessage(),
+      startedAt: getMaintenanceStartedAt(),
+    },
+  });
+}));
+
+// Re-use the in-memory maintenance state but expose via superadmin auth
+// We import the toggle function indirectly by reimplementing it here
+// to avoid circular dependency with CRON_SECRET auth
+let broadcastMessage = '';
+let broadcastEnabled = false;
+
+/**
+ * POST /api/super-admin/broadcast
+ * Set or clear a system-wide banner message for all users
+ * Body: { message: string, enabled: boolean }
+ */
+router.post('/broadcast', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { message, enabled } = req.body;
+
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ success: false, error: { code: 'INVALID', message: 'enabled må være true/false' } });
+    return;
+  }
+
+  broadcastEnabled = enabled;
+  if (enabled && typeof message === 'string' && message.trim()) {
+    broadcastMessage = message.trim().substring(0, 500);
+  }
+
+  if (!enabled) {
+    broadcastMessage = '';
+  }
+
+  res.json({ success: true, data: { enabled: broadcastEnabled, message: broadcastMessage } });
+}));
+
+/**
+ * GET /api/super-admin/broadcast
+ * Get current broadcast status
+ */
+router.get('/broadcast', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      enabled: broadcastEnabled,
+      message: broadcastMessage,
+      // Also include maintenance mode status
+      maintenanceEnabled: isMaintenanceEnabled(),
+      maintenanceMode: getMaintenanceMode(),
+      maintenanceMessage: getMaintenanceMessage(),
+    },
+  });
+}));
+
+// Export getter for middleware to use
+export function getBroadcastMessage(): string | null {
+  return broadcastEnabled ? broadcastMessage : null;
+}
+
 export default router;

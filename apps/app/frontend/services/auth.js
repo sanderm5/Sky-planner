@@ -85,6 +85,10 @@ function handleLogout() {
   const supportPanel = document.getElementById('supportWidgetPanel');
   if (supportPanel) supportPanel.style.display = 'none';
 
+  // Hide broadcast banner
+  const broadcastBanner = document.getElementById('broadcast-banner');
+  if (broadcastBanner) broadcastBanner.remove();
+
   // Clear customer data and map markers
   customers = [];
   selectedCustomers.clear();

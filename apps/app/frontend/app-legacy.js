@@ -855,7 +855,6 @@ function setupEventListeners() {
       contentPanel.style.transition = '';
       contentPanel.classList.remove('closed');
       contentPanel.classList.add('open');
-      if (typeof resetPanelOpacity === 'function') resetPanelOpacity();
       localStorage.setItem('contentPanelOpen', 'true');
 
       // On mobile, default to half-height mode

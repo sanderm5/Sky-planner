@@ -3,6 +3,42 @@
 // Floating widget — each request creates a ticket with ID
 // ========================================
 
+// Two-tone "ding-dong" notification for support messages
+function playSupportNotificationSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // First tone — high
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.frequency.value = 587; // D5
+    osc1.type = 'sine';
+    gain1.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc1.start(ctx.currentTime);
+    osc1.stop(ctx.currentTime + 0.25);
+
+    // Second tone — lower, slight delay
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.frequency.value = 440; // A4
+    osc2.type = 'sine';
+    gain2.gain.setValueAtTime(0.12, ctx.currentTime + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+    osc2.start(ctx.currentTime + 0.15);
+    osc2.stop(ctx.currentTime + 0.45);
+
+    // Clean up
+    setTimeout(() => ctx.close(), 600);
+  } catch (e) {
+    // Silent fail
+  }
+}
+
 const supportWidgetState = {
   tickets: [],          // Open tickets for this org
   activeTicketId: null,
@@ -14,8 +50,12 @@ const supportWidgetState = {
 
 async function initSupportWidget() {
   // Show widget (hidden by default on login screen)
+  // Hide on mobile — mobile uses the dedicated support tab instead
   const widget = document.getElementById('supportWidget');
-  if (widget) widget.style.display = '';
+  if (widget) {
+    const isMobile = typeof isMobileDevice === 'function' && isMobileDevice();
+    widget.style.display = isMobile ? 'none' : '';
+  }
 
   // Load existing tickets
   await loadSupportTickets();
@@ -179,6 +219,22 @@ async function openSupportTicket(ticketId) {
   if (inputArea) inputArea.style.display = isClosed ? 'none' : 'flex';
   if (backBtn) backBtn.style.display = 'inline-flex';
 
+  // Show/hide reopen button for closed tickets
+  const msgList = document.getElementById('supportWidgetMsgList');
+  const existingReopen = document.getElementById('swReopenBtn');
+  if (existingReopen) existingReopen.remove();
+  if (isClosed && msgList) {
+    const reopenDiv = document.createElement('div');
+    reopenDiv.className = 'sw-closed-notice';
+    reopenDiv.id = 'swReopenBtn';
+    reopenDiv.innerHTML = `
+      <span>Denne saken er lukket</span>
+      <button class="sw-reopen-btn" data-action="reopenSupportWidgetTicket" data-args='[${ticketId}]'>
+        <i class="fas fa-redo"></i> Gjenåpne
+      </button>`;
+    msgList.parentElement.appendChild(reopenDiv);
+  }
+
   // Load messages
   await loadSupportWidgetMessages(ticketId);
   scrollSupportWidgetToBottom();
@@ -325,10 +381,34 @@ function handleSupportWidgetMessage(data) {
       scrollSupportWidgetToBottom();
       markSupportWidgetAsRead(ticketId);
     }
+  } else {
+    // Play support-specific notification sound
+    playSupportNotificationSound();
   }
 
   // Reload tickets to update badge
   loadSupportTickets();
+
+  // Also notify mobile support tab
+  if (typeof mfHandleSupportMessage === 'function') {
+    mfHandleSupportMessage(data);
+  }
+}
+
+async function reopenSupportWidgetTicket(ticketId) {
+  try {
+    const response = await fetch(`/api/support-chat/tickets/${ticketId}/reopen`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+      credentials: 'include',
+    });
+    if (response.ok) {
+      await loadSupportTickets();
+      openSupportTicket(ticketId);
+    }
+  } catch (e) {
+    // Silent fail
+  }
 }
 
 // Handle ticket closed event from WebSocket
@@ -346,4 +426,9 @@ function handleSupportTicketClosed(data) {
     renderSupportTicketList();
   }
   updateSupportWidgetBadge();
+
+  // Also notify mobile support tab
+  if (typeof mfHandleSupportTicketClosed === 'function') {
+    mfHandleSupportTicketClosed(data);
+  }
 }

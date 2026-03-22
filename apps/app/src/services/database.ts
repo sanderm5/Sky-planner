@@ -2562,6 +2562,10 @@ class DatabaseService implements DatabaseContext {
     return communicationQueries.closeSupportTicket(this, conversationId);
   }
 
+  async reopenSupportTicket(conversationId: number): Promise<void> {
+    return communicationQueries.reopenSupportTicket(this, conversationId);
+  }
+
   async getAllSupportConversations(adminUserId: number): Promise<Array<{
     id: number; organization_id: number; organization_name: string;
     subject?: string; status?: string;
@@ -2576,6 +2580,10 @@ class DatabaseService implements DatabaseContext {
 
   async createSupportChatMessage(conversationId: number, senderId: number, senderName: string, content: string): Promise<import('../types').ChatMessage> {
     return communicationQueries.createSupportChatMessage(this, conversationId, senderId, senderName, content);
+  }
+
+  async deleteSupportTicket(conversationId: number): Promise<boolean> {
+    return communicationQueries.deleteSupportTicket(this, conversationId);
   }
 
   async getSupportConversationOrgId(conversationId: number): Promise<number | null> {
