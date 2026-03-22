@@ -17,7 +17,7 @@ jobs:
 
       - name: Setup Node.js
         # actions/setup-node v4 - pinned to commit SHA for security
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version: '20'
 
