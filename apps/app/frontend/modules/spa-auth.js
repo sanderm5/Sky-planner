@@ -660,6 +660,14 @@ function showLoginView() {
     CoverageAreaManager.clearOverlays();
   }
 
+  // Clear team zone overlays and marker colors
+  if (typeof TeamZones !== 'undefined') {
+    TeamZones.clear();
+    TeamZones.clearMarkerColors();
+    TeamZones.removeLegend();
+    TeamZones.visible = false;
+  }
+
   // Step 4: Show login overlay and start map fly animation
   setTimeout(() => {
     loginOverlay.classList.remove('hidden');

@@ -5,7 +5,7 @@
 
 import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
-import type { JWTPayload, TokenOptions, VerifyResult } from './types';
+import type { JWTPayload, RefreshTokenPayload, TokenOptions, VerifyResult } from './types';
 
 /**
  * Signs a JWT token with the provided payload.
@@ -16,11 +16,33 @@ export function signToken(
   secret: string,
   options: TokenOptions = {}
 ): string {
-  const { expiresIn = '24h' } = options;
+  const { expiresIn = '24h', kid } = options;
   const tokenPayload = { ...payload, jti: payload.jti || crypto.randomUUID() };
   return jwt.sign(tokenPayload, secret, {
     algorithm: 'HS256',
     expiresIn: expiresIn as jwt.SignOptions['expiresIn'],
+    ...(kid ? { keyid: kid } : {}),
+  });
+}
+
+/**
+ * Signs a refresh token with minimal payload
+ */
+export function signRefreshToken(
+  payload: Omit<RefreshTokenPayload, 'iat' | 'exp' | 'tokenType'>,
+  secret: string,
+  options: TokenOptions = {}
+): string {
+  const { expiresIn = '30d', kid } = options;
+  const tokenPayload = {
+    ...payload,
+    tokenType: 'refresh' as const,
+    jti: payload.jti || crypto.randomUUID(),
+  };
+  return jwt.sign(tokenPayload, secret, {
+    algorithm: 'HS256',
+    expiresIn: expiresIn as jwt.SignOptions['expiresIn'],
+    ...(kid ? { keyid: kid } : {}),
   });
 }
 
@@ -41,6 +63,30 @@ export function verifyToken(token: string, secret: string): VerifyResult {
     }
     return { success: false, error: 'malformed' };
   }
+}
+
+/**
+ * Verifies a JWT token, falling back to a previous secret if the primary fails.
+ * Enables zero-downtime key rotation: deploy new JWT_SECRET while keeping
+ * JWT_SECRET_PREVIOUS to verify tokens signed with the old key.
+ */
+export function verifyTokenWithFallback(
+  token: string,
+  primarySecret: string,
+  previousSecret?: string
+): VerifyResult {
+  const result = verifyToken(token, primarySecret);
+  if (result.success) return result;
+
+  // Don't try fallback for expired tokens — they're expired regardless of key
+  if (previousSecret && result.error !== 'expired') {
+    const fallbackResult = verifyToken(token, previousSecret);
+    if (fallbackResult.success) {
+      return { ...fallbackResult, usedFallbackKey: true };
+    }
+  }
+
+  return result;
 }
 
 /**

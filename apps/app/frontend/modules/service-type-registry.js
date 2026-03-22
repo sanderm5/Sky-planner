@@ -220,8 +220,8 @@ class ServiceTypeRegistry {
 
     serviceTypes.forEach(st => {
       const isActive = activeCategory === st.slug || activeCategory === st.name;
-      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${st.name}">
-        ${this.getIcon(st)} ${st.name}
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${escapeHtml(st.name)}">
+        ${this.getIcon(st)} ${escapeHtml(st.name)}
       </button>`;
     });
 
@@ -230,8 +230,8 @@ class ServiceTypeRegistry {
       const combinedName = serviceTypes.map(st => st.name).join(' + ');
       const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';
       const isActive = activeCategory === combinedName || activeCategory === 'El-Kontroll + Brannvarsling';
-      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${combinedName}">
-        ${serviceTypes.map(st => this.getIcon(st)).join('')} ${combinedLabel}
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${escapeHtml(combinedName)}">
+        ${serviceTypes.map(st => this.getIcon(st)).join('')} ${escapeHtml(combinedLabel)}
       </button>`;
     }
 

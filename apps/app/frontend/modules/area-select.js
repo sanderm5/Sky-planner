@@ -178,7 +178,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
         ${wpDayPickerHtml}
       ` : ''}
       ${splitViewOpen && splitViewState.activeDay ? `
-        <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToSplitDay" style="background:var(--color-primary);color:#fff;">
+        <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToSplitDay" style="background:var(--color-accent);color:#fff;">
           <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
         </button>
       ` : ''}
@@ -310,11 +310,11 @@ function showAreaSelectMenu(selectedCustomersList, center) {
       <div style="padding:4px 0;">
         <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Dato</label>
         <input type="date" id="areaCalDate" value="${new Date().toISOString().split('T')[0]}"
-          style="width:100%;padding:6px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box;">
+          style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--color-border);background:var(--color-bg-input);color:var(--color-text-primary);box-sizing:border-box;">
       </div>
       <div style="padding:4px 0;">
         <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Type</label>
-        <select id="areaCalType" style="width:100%;padding:6px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box;">
+        <select id="areaCalType" style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--color-border);background:var(--color-bg-input);color:var(--color-text-primary);box-sizing:border-box;">
           ${serviceTypeRegistry ? serviceTypeRegistry.renderCategoryOptions('Kontroll') : '<option>Kontroll</option>'}
         </select>
       </div>

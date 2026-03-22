@@ -6,9 +6,9 @@
  * - skyplanner.no (marketing site)
  * - app.skyplanner.no (main application)
  */
-export type { JWTPayload, CookieOptions, TokenOptions, VerifyResult, } from './types';
-export { signToken, verifyToken, decodeToken, isTokenExpired, getTokenTTL, } from './jwt';
-export { AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME, getCookieConfig, getRefreshCookieConfig, extractTokenFromCookies, buildSetCookieHeader, buildClearCookieHeader, } from './cookies';
+export type { JWTPayload, RefreshTokenPayload, CookieOptions, TokenOptions, VerifyResult, } from './types';
+export { signToken, signRefreshToken, verifyToken, verifyTokenWithFallback, decodeToken, isTokenExpired, getTokenTTL, } from './jwt';
+export { AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME, getCookieConfig, getRefreshCookieConfig, extractTokenFromCookies, buildSetCookieHeader, buildClearCookieHeader, buildClearCookieHeaders, } from './cookies';
 export { validatePassword, assertValidPassword, getPasswordStrengthLabel, } from './password-validation';
 export type { PasswordValidationResult, PasswordValidationOptions, } from './password-validation';
 export { generateTOTPSecret, generateTOTP, verifyTOTP, generateBackupCodes, hashBackupCode, verifyBackupCode, generateTOTPUri, encryptTOTPSecret, decryptTOTPSecret, verifyTOTPWithCounter, } from './totp';

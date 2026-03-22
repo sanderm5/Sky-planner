@@ -58,6 +58,9 @@ interface LoginAttemptRecord {
   firstAttempt: number;
 }
 
+// Note: This in-memory rate limit resets on server restart/redeploy.
+// The database-level account lockout below (login_attempts table) provides
+// persistent protection against brute-force attacks across restarts.
 const loginAttempts = new Map<string, LoginAttemptRecord>();
 
 // Exponential lockout durations in milliseconds
@@ -320,14 +323,17 @@ export async function POST(request: NextRequest) {
       epost: epost.toLowerCase(), ip_address: ip, success: true,
     }).then(() => {}, () => {});
 
-    // Check if user has 2FA enabled
+    // Check 2FA status and email verification
     const supabase = db.getSupabaseClient();
     const tableName = userType === 'klient' ? 'klient' : 'brukere';
-    const { data: totpData } = await supabase
+    const { data: userMeta } = await supabase
       .from(tableName)
-      .select('totp_enabled')
+      .select('totp_enabled, email_verified')
       .eq('id', user.id)
       .single();
+
+    const totpData = userMeta;
+    const emailVerified = userMeta?.email_verified ?? false;
 
     if (totpData?.totp_enabled) {
       // 2FA is enabled — create pending session instead of JWT
@@ -383,9 +389,39 @@ export async function POST(request: NextRequest) {
       currentPeriodEnd: organization?.current_period_end,
     };
 
-    const token = auth.signToken(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
-    const cookieConfig = auth.getCookieConfig(isProduction);
-    const cookieHeader = auth.buildSetCookieHeader(token, cookieConfig.options);
+    // Access token (1h) + refresh token (30d)
+    const token = auth.signToken(tokenPayload, JWT_SECRET, { expiresIn: '1h' });
+    const familyId = crypto.randomUUID();
+    const refreshToken = auth.signRefreshToken({
+      userId: user.id,
+      type: userType,
+      organizationId: organization?.id,
+      familyId,
+    }, JWT_SECRET, { expiresIn: '30d' });
+
+    // Set both cookies
+    const accessCookieConfig = auth.getCookieConfig(isProduction);
+    const refreshCookieConfig = auth.getRefreshCookieConfig(isProduction);
+    const accessOpts = { ...accessCookieConfig.options, maxAge: 60 * 60 }; // 1h
+    const accessCookieHeader = auth.buildSetCookieHeader(token, accessOpts);
+    const refreshCookieHeader = auth.buildSetCookieHeader(refreshToken, refreshCookieConfig.options, auth.REFRESH_COOKIE_NAME);
+
+    // Store refresh token hash
+    const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const refreshDecoded = auth.decodeToken(refreshToken);
+    if (refreshDecoded?.jti) {
+      supabase.from('refresh_tokens').insert({
+        token_hash: refreshHash,
+        user_id: user.id,
+        user_type: userType,
+        organization_id: organization?.id,
+        jti: refreshDecoded.jti,
+        family_id: familyId,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        ip_address: ip,
+        user_agent: request.headers.get('user-agent') || '',
+      }).then(() => {}, () => {});
+    }
 
     // Track active session
     const decoded = auth.decodeToken(token);
@@ -398,7 +434,7 @@ export async function POST(request: NextRequest) {
         ip_address: ip,
         user_agent: userAgent,
         device_info: parseDeviceInfo(userAgent),
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       });
     }
 
@@ -415,15 +451,17 @@ export async function POST(request: NextRequest) {
           navn: organization.navn,
           slug: organization.slug,
         } : null,
+        emailVerified,
         redirectUrl: redirectTo,
         appUrl: process.env.NEXT_PUBLIC_APP_URL || 'https://app.skyplanner.no',
       }),
       {
         status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Set-Cookie': cookieHeader,
-        },
+        headers: new Headers([
+          ['Content-Type', 'application/json'],
+          ['Set-Cookie', accessCookieHeader],
+          ['Set-Cookie', refreshCookieHeader],
+        ]),
       }
     );
   } catch (error) {

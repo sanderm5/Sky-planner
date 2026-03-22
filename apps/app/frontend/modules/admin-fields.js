@@ -578,11 +578,11 @@ async function renderAdminSubcategories() {
   if (empty) empty.style.display = groups.length === 0 ? 'block' : 'none';
 
   content.innerHTML = groups.map(group => `
-    <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border, #444); padding-left: 10px;">
+    <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border); padding-left: 10px;">
       <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-        <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
-        <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
-        <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
+        <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted); font-size: 11px;"></i>
+        <span style="color: var(--color-text-primary); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
+        <span style="color: var(--color-text-muted); font-size: 11px;">(${(group.subcategories || []).length})</span>
         <button class="btn-icon" style="padding: 2px 4px;" data-action="editSubcatGroup" data-args='[${group.id}, "${escapeHtml(group.navn)}"]' title="Gi nytt navn">
           <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
         </button>
@@ -593,8 +593,8 @@ async function renderAdminSubcategories() {
 
       ${(group.subcategories || []).map(sub => `
         <div style="display: flex; align-items: center; gap: 6px; margin-left: 16px; padding: 2px 0;">
-          <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
-          <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
+          <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted); flex-shrink: 0;"></span>
+          <span style="color: var(--color-text-secondary); font-size: 13px;">${escapeHtml(sub.navn)}</span>
           <button class="btn-icon subcat-hover-btn" style="padding: 2px 4px;" data-action="editSubcatItem" data-args='[${sub.id}, "${escapeHtml(sub.navn)}"]' title="Gi nytt navn">
             <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
           </button>
@@ -615,7 +615,7 @@ async function renderAdminSubcategories() {
       </div>
     </div>
   `).join('') + `
-    <div style="display: flex; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--color-border, #333);">
+    <div style="display: flex; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--color-border);">
       <input type="text" class="form-control" placeholder="Ny gruppe..." maxlength="100"
         style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
         id="adminAddGroupInput"

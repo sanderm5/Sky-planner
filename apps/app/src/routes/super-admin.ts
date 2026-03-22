@@ -752,7 +752,7 @@ router.post(
         isImpersonating: true,
         originalUserId: req.user!.userId,
       },
-      '4h' // Shorter duration for security
+      '1h' // Short duration for impersonation security
     );
 
     logAudit(apiLogger, 'SUPER_ADMIN_IMPERSONATE', req.user!.userId, 'organization', orgId, {
@@ -1189,7 +1189,7 @@ router.get(
     const { getConnectionCount } = await import('../services/websocket');
 
     const db = await getDatabase();
-    let supabase: any = null;
+    let supabase: Awaited<ReturnType<typeof db.getSupabaseClient>> | null = null;
     try {
       supabase = await db.getSupabaseClient();
     } catch {
@@ -1342,8 +1342,8 @@ router.get(
     // Compute overall status from all signals
     const memoryDegraded = memory.heap_used_mb > 512;
     const highErrorRate = metrics.requests.error_rate_percent > 5;
-    const serviceFailures = Object.values(services).some((s: any) => s.total >= 3 && s.failure_rate > 50);
-    const openBreakers = Object.values(circuit_breakers).filter((cb: any) => cb.state === 'OPEN');
+    const serviceFailures = Object.values(services).some((s: { total: number; failure_rate: number }) => s.total >= 3 && s.failure_rate > 50);
+    const openBreakers = Object.values(circuit_breakers).filter((cb: { state: string }) => cb.state === 'OPEN');
     const failingJobs = cron_jobs.filter(j => j.consecutiveFailures >= 3);
     let overall_status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
     if (database.status === 'unhealthy') overall_status = 'unhealthy';

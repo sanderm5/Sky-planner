@@ -177,6 +177,16 @@ export function validateEnvironment(): EnvConfig {
       return `dev-${crypto.randomBytes(32).toString('hex')}`;
     })(),
 
+    // Previous JWT secret for zero-downtime key rotation
+    // Set this to the old JWT_SECRET when rotating keys
+    JWT_SECRET_PREVIOUS: (() => {
+      const prev = getEnvString('JWT_SECRET_PREVIOUS', '');
+      if (prev && isProduction && prev.length < 64) {
+        errors.push('JWT_SECRET_PREVIOUS må være minst 64 tegn i produksjon');
+      }
+      return prev;
+    })(),
+
     // Supabase
     SUPABASE_URL: getEnvString('SUPABASE_URL'),
     SUPABASE_ANON_KEY: getEnvString('SUPABASE_ANON_KEY'),

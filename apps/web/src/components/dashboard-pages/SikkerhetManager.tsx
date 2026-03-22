@@ -26,7 +26,7 @@ interface Session {
 }
 
 type TwoFAState = 'loading' | 'disabled' | 'enabled';
-type SetupStep = 'qr' | 'backup' | 'verify' | 'success';
+type SetupStep = 'password' | 'qr' | 'backup' | 'verify' | 'success';
 type SessionsState = 'loading' | 'loaded' | 'empty' | 'error';
 
 export function SikkerhetManager() {
@@ -49,6 +49,11 @@ export function SikkerhetManager() {
   const [disablePassword, setDisablePassword] = useState('');
   const [disableError, setDisableError] = useState('');
   const [disabling, setDisabling] = useState(false);
+
+  // Setup password state
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupPasswordError, setSetupPasswordError] = useState('');
+  const [setupLoading, setSetupLoading] = useState(false);
 
   // Copy codes state
   const [codesCopied, setCodesCopied] = useState(false);
@@ -86,27 +91,41 @@ export function SikkerhetManager() {
   }, [fetchStatus]);
 
   // ---- Setup flow ----
-  async function handleEnableClick() {
+  function handleEnableClick() {
     setShowSetupModal(true);
-    setSetupStep('qr');
+    setSetupStep('password');
+    setSetupPassword('');
+    setSetupPasswordError('');
     document.body.style.overflow = 'hidden';
+  }
+
+  async function handleSetupPasswordSubmit() {
+    if (!setupPassword) {
+      setSetupPasswordError('Passord er påkrevd');
+      return;
+    }
+
+    setSetupLoading(true);
+    setSetupPasswordError('');
 
     try {
       const res = await fetch('/api/dashboard/2fa/setup', {
         method: 'POST',
-        headers: { 'X-CSRF-Token': getCsrfToken() },
+        headers: csrfHeaders(),
+        body: JSON.stringify({ password: setupPassword }),
       });
       const data = await res.json();
       if (!data.success) {
-        alert(data.error || 'Noe gikk galt');
-        closeSetupModal();
+        setSetupPasswordError(data.error?.message || data.error || 'Noe gikk galt');
+        setSetupLoading(false);
         return;
       }
       setSetupData(data.data);
+      setSetupStep('qr');
     } catch {
-      alert('Kunne ikke starte 2FA-oppsett');
-      closeSetupModal();
+      setSetupPasswordError('Kunne ikke starte 2FA-oppsett');
     }
+    setSetupLoading(false);
   }
 
   function closeSetupModal() {
@@ -519,6 +538,47 @@ export function SikkerhetManager() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+
+              {/* Step 0: Password verification */}
+              {setupStep === 'password' && (
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-2">
+                    Bekreft passord
+                  </h3>
+                  <p className="text-dark-400 text-sm mb-4">
+                    Skriv inn passordet ditt for å starte 2FA-oppsettet.
+                  </p>
+                  <div className="mb-4">
+                    <label className="input-label" htmlFor="setup-password">
+                      Passord
+                    </label>
+                    <input
+                      type="password"
+                      id="setup-password"
+                      className="input w-full"
+                      placeholder="Ditt passord"
+                      value={setupPassword}
+                      onChange={(e) => setSetupPassword(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSetupPasswordSubmit();
+                      }}
+                      autoFocus
+                    />
+                    {setupPasswordError && (
+                      <p className="text-red-400 text-sm mt-2" role="alert">
+                        {setupPasswordError}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleSetupPasswordSubmit}
+                    className="btn-primary w-full"
+                    disabled={setupLoading}
+                  >
+                    {setupLoading ? 'Verifiserer...' : 'Fortsett'}
+                  </button>
+                </div>
+              )}
 
               {/* Step 1: QR Code */}
               {setupStep === 'qr' && setupData && (

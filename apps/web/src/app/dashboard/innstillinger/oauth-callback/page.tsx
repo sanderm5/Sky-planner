@@ -76,8 +76,8 @@ export default function OAuthCallbackPage() {
         sessionStorage.removeItem('oauth_state');
 
         setState('success');
-      } catch (err: any) {
-        setErrorMessage(err.message);
+      } catch (err: unknown) {
+        setErrorMessage(err instanceof Error ? err.message : 'Ukjent feil');
         setState('error');
       }
     }

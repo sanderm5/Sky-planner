@@ -10,6 +10,7 @@
 // Types
 export type {
   JWTPayload,
+  RefreshTokenPayload,
   CookieOptions,
   TokenOptions,
   VerifyResult,
@@ -18,7 +19,9 @@ export type {
 // JWT utilities
 export {
   signToken,
+  signRefreshToken,
   verifyToken,
+  verifyTokenWithFallback,
   decodeToken,
   isTokenExpired,
   getTokenTTL,
@@ -33,6 +36,7 @@ export {
   extractTokenFromCookies,
   buildSetCookieHeader,
   buildClearCookieHeader,
+  buildClearCookieHeaders,
 } from './cookies';
 
 // Password validation

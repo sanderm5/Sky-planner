@@ -17,8 +17,16 @@ interface DashboardHeaderProps {
 
 export function DashboardHeader({ user, organization }: DashboardHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showEmailBanner, setShowEmailBanner] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // Check for unverified email banner
+  useEffect(() => {
+    if (sessionStorage.getItem('skyplanner_email_unverified') === 'true') {
+      setShowEmailBanner(true);
+    }
+  }, []);
 
   // Get initials from name
   const initials = user.navn
@@ -61,6 +69,26 @@ export function DashboardHeader({ user, organization }: DashboardHeaderProps) {
   }, [menuOpen, closeMenu]);
 
   return (
+    <>
+    {showEmailBanner && (
+      <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 lg:px-8 py-2.5 flex items-center justify-between">
+        <p className="text-amber-300 text-sm">
+          E-postadressen din er ikke verifisert. Sjekk innboksen din for en verifiseringslenke.
+        </p>
+        <button
+          onClick={() => {
+            setShowEmailBanner(false);
+            sessionStorage.removeItem('skyplanner_email_unverified');
+          }}
+          className="text-amber-400 hover:text-amber-300 ml-4 flex-shrink-0"
+          aria-label="Lukk"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    )}
     <header className="sticky top-0 z-20 bg-dark-900/95 backdrop-blur-sm border-b border-dark-700/50">
       <div className="flex items-center justify-between h-16 px-4 lg:px-8">
         {/* Mobile Menu Toggle */}
@@ -181,5 +209,6 @@ export function DashboardHeader({ user, organization }: DashboardHeaderProps) {
         </div>
       </div>
     </header>
+    </>
   );
 }

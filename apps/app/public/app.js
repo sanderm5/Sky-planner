@@ -650,6 +650,8 @@ function escapeJsString(text) {
     'popover-accounting','popover-import','popover-manual',
     // Add subcat
     'addSubcat','editSubcat','deleteSubcat',
+    // Customer note popover
+    'cnpShowPopover','cnpDismissPopover','cnpToggleAddForm','cnpSelectType','cnpSaveQuickNote',
   ]);
 
   // ---- Allowlisted handler names for change/input/submit/keydown ----
@@ -882,7 +884,7 @@ const ModalSystem = {
           width: 100%;
           padding: 32px;
           box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-          border: 1px solid var(--color-border, #333);
+          border: 1px solid var(--color-border);
         ">
           <div class="modal-system-icon" style="
             text-align: center;
@@ -892,14 +894,14 @@ const ModalSystem = {
           <h2 class="modal-system-title" id="modal-system-title" style="
             font-size: 22px;
             font-weight: 600;
-            color: var(--color-text-primary, #fff);
+            color: var(--color-text-primary);
             margin: 0 0 16px 0;
             text-align: center;
             line-height: 1.4;
           "></h2>
           <p class="modal-system-message" style="
             font-size: 18px;
-            color: var(--color-text-secondary, #a0a0a0);
+            color: var(--color-text-secondary);
             margin: 0 0 28px 0;
             text-align: center;
             line-height: 1.6;
@@ -965,9 +967,9 @@ const ModalSystem = {
           button.style.background = 'var(--color-accent, #5E81AC)';
           button.style.color = '#fff';
         } else {
-          button.style.background = 'var(--color-bg-tertiary, #252525)';
-          button.style.color = 'var(--color-text-primary, #fff)';
-          button.style.border = '1px solid var(--color-border, #333)';
+          button.style.background = 'var(--color-bg-tertiary)';
+          button.style.color = 'var(--color-text-primary)';
+          button.style.border = '1px solid var(--color-border)';
         }
 
         button.onclick = () => {
@@ -1742,6 +1744,9 @@ async function refreshAccessToken() {
 
         // Tokens are managed via httpOnly cookies
         authToken = data.accessToken || data.token;
+        if (data.expiresAt) {
+          accessTokenExpiresAt = data.expiresAt;
+        }
 
         Logger.log('Access token refreshed successfully');
         return true;
@@ -1898,7 +1903,7 @@ function showMaintenanceBanner(message) {
 
   maintenanceBannerEl = document.createElement('div');
   maintenanceBannerEl.id = 'maintenance-banner';
-  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:#1a1a1a;text-align:center;padding:8px 16px;font-size:14px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+  maintenanceBannerEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#f59e0b;color:var(--color-text-inverse, #1a1a1a);text-align:center;padding:8px 16px;font-size:14px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
   maintenanceBannerEl.innerHTML = '<span class="maintenance-banner-text">' + escapeHtml(message) + '</span>';
   document.body.appendChild(maintenanceBannerEl);
 }
@@ -1919,13 +1924,13 @@ function showMaintenanceOverlay(message) {
 
   maintenanceOverlayEl = document.createElement('div');
   maintenanceOverlayEl.id = 'maintenance-overlay';
-  maintenanceOverlayEl.style.cssText = 'position:fixed;inset:0;z-index:100000;background:#0A0E16;display:flex;align-items:center;justify-content:center;';
-  maintenanceOverlayEl.innerHTML = '<div style="text-align:center;padding:2rem;max-width:480px;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">'
+  maintenanceOverlayEl.style.cssText = 'position:fixed;inset:0;z-index:100000;background:var(--color-bg-primary);display:flex;align-items:center;justify-content:center;';
+  maintenanceOverlayEl.innerHTML = '<div style="text-align:center;padding:2rem;max-width:480px;color:var(--color-text-primary);font-family:-apple-system,BlinkMacSystemFont,sans-serif;">'
     + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="64" height="64" style="margin:0 auto 1.5rem;display:block;"><defs><linearGradient id="mg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#6366f1"/><stop offset="100%" style="stop-color:#a855f7"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#mg)"/><rect x="5" y="18" width="5" height="10" rx="1" fill="white" opacity="0.5"/><rect x="13" y="12" width="5" height="16" rx="1" fill="white" opacity="0.75"/><rect x="21" y="6" width="5" height="22" rx="1" fill="white"/><path d="M6 16L15 9L24 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 3"/></svg>'
-    + '<h1 style="font-size:1.5rem;font-weight:600;margin-bottom:0.75rem;color:#fff;">Vedlikehold pågår</h1>'
-    + '<p style="color:#94a3b8;font-size:1rem;line-height:1.6;margin-bottom:2rem;">' + escapeHtml(message) + '</p>'
+    + '<h1 style="font-size:1.5rem;font-weight:600;margin-bottom:0.75rem;color:var(--color-text-primary);">Vedlikehold pågår</h1>'
+    + '<p style="color:var(--color-text-secondary);font-size:1rem;line-height:1.6;margin-bottom:2rem;">' + escapeHtml(message) + '</p>'
     + '<div style="width:32px;height:32px;border:3px solid rgba(99,102,241,0.2);border-top-color:#6366f1;border-radius:50%;animation:mtspin 1s linear infinite;margin:0 auto 1rem;"></div>'
-    + '<p style="color:#64748b;font-size:0.8rem;">Siden sjekker automatisk om vi er tilbake...</p>'
+    + '<p style="color:var(--color-text-muted);font-size:0.8rem;">Siden sjekker automatisk om vi er tilbake...</p>'
     + '</div>'
     + '<style>@keyframes mtspin{to{transform:rotate(360deg)}}</style>';
   document.body.appendChild(maintenanceOverlayEl);
@@ -2347,13 +2352,13 @@ function showSubscriptionError(errorData) {
   const statusTitle = statusMessages[details.reason] || 'Abonnement kreves';
 
   modal.innerHTML = `
-    <div style="background:var(--card-bg, #1a1a2e);border-radius:12px;padding:32px;max-width:450px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+    <div style="background:var(--color-bg-elevated);border-radius:12px;padding:32px;max-width:450px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;">
         <i aria-hidden="true" class="fas fa-exclamation-triangle" style="font-size:28px;color:white;"></i>
       </div>
-      <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:24px;">${escapeHtml(statusTitle)}</h2>
-      <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 24px;font-size:15px;line-height:1.6;">${escapeHtml(message)}</p>
-      <p style="font-size:13px;color:var(--text-muted, #666);">
+      <h2 style="color:var(--color-text-primary);margin:0 0 12px;font-size:24px;">${escapeHtml(statusTitle)}</h2>
+      <p style="color:var(--color-text-secondary);margin:0 0 24px;font-size:15px;line-height:1.6;">${escapeHtml(message)}</p>
+      <p style="font-size:13px;color:var(--color-text-muted);">
         Kontakt administrator for å håndtere abonnementet, eller <a href="mailto:sander@efffekt.no" style="color:#3b82f6;">ta kontakt med support</a>.
       </p>
     </div>
@@ -3082,8 +3087,8 @@ class ServiceTypeRegistry {
 
     serviceTypes.forEach(st => {
       const isActive = activeCategory === st.slug || activeCategory === st.name;
-      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${st.name}">
-        ${this.getIcon(st)} ${st.name}
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${escapeHtml(st.name)}">
+        ${this.getIcon(st)} ${escapeHtml(st.name)}
       </button>`;
     });
 
@@ -3092,8 +3097,8 @@ class ServiceTypeRegistry {
       const combinedName = serviceTypes.map(st => st.name).join(' + ');
       const combinedLabel = serviceTypes.length > 2 ? 'Alle' : 'Begge';
       const isActive = activeCategory === combinedName || activeCategory === 'El-Kontroll + Brannvarsling';
-      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${combinedName}">
-        ${serviceTypes.map(st => this.getIcon(st)).join('')} ${combinedLabel}
+      html += `<button class="kategori-tab ${isActive ? 'active' : ''}" data-kategori="${escapeHtml(combinedName)}">
+        ${serviceTypes.map(st => this.getIcon(st)).join('')} ${escapeHtml(combinedLabel)}
       </button>`;
     }
 
@@ -8256,11 +8261,11 @@ async function mfNotifyCustomer(kundeId) {
       </div>
       <div class="mf-info-body">
         <p style="margin:0 0 12px">Send «på vei»-varsel til <strong>${escapeHtml(kunde.kontaktperson || kunde.navn)}</strong>?</p>
-        <p style="margin:0 0 8px;color:#a1a1aa;font-size:13px"><i class="fas fa-envelope" aria-hidden="true"></i> ${escapeHtml(kunde.epost)}</p>
+        <p style="margin:0 0 8px;color:var(--color-text-muted);font-size:13px"><i class="fas fa-envelope" aria-hidden="true"></i> ${escapeHtml(kunde.epost)}</p>
         <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
           <span>Estimert ankomst:</span>
           <input type="number" id="mfNotifyEstMin" value="${estMin}" min="1" max="180" step="5"
-            style="width:60px;padding:4px 8px;border:1px solid #3f3f46;border-radius:6px;background:#27272a;color:#e4e4e7;text-align:center">
+            style="width:60px;padding:4px 8px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-bg-tertiary);color:var(--color-text-primary);text-align:center">
           <span>min</span>
         </label>
       </div>
@@ -8268,7 +8273,7 @@ async function mfNotifyCustomer(kundeId) {
         <button class="mf-btn mf-btn-notify" id="mfNotifySendBtn">
           <i class="fas fa-paper-plane" aria-hidden="true"></i> Send varsel
         </button>
-        <button class="mf-btn" id="mfNotifyCancelBtn" style="background:#3f3f46">
+        <button class="mf-btn" id="mfNotifyCancelBtn" style="background:var(--color-bg-tertiary)">
           Avbryt
         </button>
       </div>
@@ -11742,6 +11747,8 @@ async function raoLoadWeekData() {
   raoRenderWeekGrid();
   // Activate team map coloring after data loads
   raoActivateTeamMap();
+  // Load ukeplan notes for customer popover indicators
+  if (typeof cnpLoadWeekNotes === 'function') cnpLoadWeekNotes(raoWeekStart);
 }
 
 // ---- Navigation ----
@@ -11980,9 +11987,10 @@ function raoRenderWeekGrid() {
           if (isExpanded && route.kunder && route.kunder.length > 0) {
             html += '<div class="rao-stop-list">';
             route.kunder.forEach((k, ki) => {
-              html += `<div class="rao-stop-item">
+              html += `<div class="rao-stop-item cnp-clickable" data-action="cnpShowPopover" data-args='[${k.id}]' data-kunde-id="${k.id}">
                 <span class="rao-stop-num">${ki + 1}</span>
                 <span class="rao-stop-name">${escapeHtml(k.navn || 'Ukjent')}</span>
+                <i class="fas fa-sticky-note cnp-note-indicator" style="display:none" aria-hidden="true"></i>
               </div>`;
             });
             html += '</div>';
@@ -12021,9 +12029,10 @@ function raoRenderWeekGrid() {
           if (isExpanded && route.kunder && route.kunder.length > 0) {
             html += '<div class="rao-stop-list">';
             route.kunder.forEach((k, ki) => {
-              html += `<div class="rao-stop-item">
+              html += `<div class="rao-stop-item cnp-clickable" data-action="cnpShowPopover" data-args='[${k.id}]' data-kunde-id="${k.id}">
                 <span class="rao-stop-num">${ki + 1}</span>
                 <span class="rao-stop-name">${escapeHtml(k.navn || 'Ukjent')}</span>
+                <i class="fas fa-sticky-note cnp-note-indicator" style="display:none" aria-hidden="true"></i>
               </div>`;
             });
             html += '</div>';
@@ -12220,6 +12229,381 @@ function raoShowTeamLegend() {
 function raoHideTeamLegend() {
   const el = document.getElementById('raoTeamLegend');
   if (el) el.remove();
+}
+
+
+// ========================================
+// CUSTOMER NOTE POPOVER
+// Contextual popover showing notes, huskeliste and contact log
+// when clicking a customer stop in RAO or Ukeplan
+// ========================================
+
+let cnpActivePopover = null;
+let cnpCachedData = {};       // { [kundeId]: { kunde, kontaktlogg, ts } }
+let cnpWeekNotes = [];        // batch-loaded ukeplan notes for current RAO week
+let cnpWeekStart = null;      // current week start for batch notes
+const CNP_CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+const CNP_NOTE_TYPES = [
+  { key: 'ring',       label: 'Ring',       icon: 'fa-phone',           color: '#2563eb' },
+  { key: 'besok',      label: 'Besøk',      icon: 'fa-wrench',          color: '#16a34a' },
+  { key: 'bestill',    label: 'Bestill',     icon: 'fa-box',             color: '#ea580c' },
+  { key: 'oppfolging', label: 'Oppfølging',  icon: 'fa-clipboard-check', color: '#9333ea' },
+  { key: 'notat',      label: 'Notat',       icon: 'fa-sticky-note',     color: '#64748b' },
+];
+
+// ---- Data loading ----
+
+async function cnpLoadWeekNotes(weekStart) {
+  if (!weekStart) return;
+  cnpWeekStart = weekStart;
+  try {
+    const resp = await apiFetch(`/api/ukeplan-notater?uke_start=${weekStart}`);
+    if (resp.ok) {
+      const json = await resp.json();
+      cnpWeekNotes = json.success ? (json.data || []) : [];
+    } else {
+      cnpWeekNotes = [];
+    }
+  } catch (e) {
+    console.error('CNP: Failed to load week notes', e);
+    cnpWeekNotes = [];
+  }
+  cnpMarkStopsWithNotes();
+}
+
+function cnpGetCustomerWeekNotes(kundeId) {
+  // If weekplan state has notes loaded (in Ukeplan view), prefer those
+  if (typeof weekPlanState !== 'undefined' && weekPlanState.notater && weekPlanState.notater.length > 0) {
+    return weekPlanState.notater.filter(n => n.kunde_id === kundeId && !n.fullfort);
+  }
+  return cnpWeekNotes.filter(n => n.kunde_id === kundeId && !n.fullfort);
+}
+
+async function cnpFetchCustomerData(kundeId) {
+  const cached = cnpCachedData[kundeId];
+  if (cached && (Date.now() - cached.ts) < CNP_CACHE_TTL) {
+    return cached;
+  }
+
+  try {
+    const [kundeResp, logResp] = await Promise.all([
+      apiFetch(`/api/kunder/${kundeId}`),
+      apiFetch(`/api/kunder/${kundeId}/kontaktlogg`)
+    ]);
+
+    let kunde = null;
+    let kontaktlogg = [];
+
+    if (kundeResp.ok) {
+      const kj = await kundeResp.json();
+      kunde = kj.success ? kj.data : (kj.kunde || kj);
+    }
+    if (logResp.ok) {
+      const lj = await logResp.json();
+      kontaktlogg = (lj.success ? lj.data : lj) || [];
+    }
+
+    const entry = { kunde, kontaktlogg: kontaktlogg.slice(0, 5), ts: Date.now() };
+    cnpCachedData[kundeId] = entry;
+    return entry;
+  } catch (e) {
+    console.error('CNP: Failed to fetch customer data', e);
+    return { kunde: null, kontaktlogg: [], ts: Date.now() };
+  }
+}
+
+// ---- Note indicators ----
+
+function cnpMarkStopsWithNotes() {
+  const indicators = document.querySelectorAll('.cnp-note-indicator');
+  indicators.forEach(el => {
+    const stopItem = el.closest('[data-kunde-id]');
+    if (!stopItem) return;
+    const kundeId = parseInt(stopItem.dataset.kundeId, 10);
+    const hasNotes = cnpWeekNotes.some(n => n.kunde_id === kundeId && !n.fullfort);
+    el.style.display = hasNotes ? 'inline' : 'none';
+  });
+}
+
+// ---- Popover rendering ----
+
+function cnpRenderContent(kunde, kontaktlogg, weekNotes) {
+  const name = kunde?.navn || 'Ukjent kunde';
+  let html = `<div class="cnp-header">
+    <strong class="cnp-title">${escapeHtml(name)}</strong>
+    <button class="cnp-close" data-action="cnpDismissPopover" aria-label="Lukk">&times;</button>
+  </div><div class="cnp-body">`;
+
+  // Section 1: Customer note
+  if (kunde?.notater) {
+    html += `<div class="cnp-section">
+      <div class="cnp-section-label"><i class="fas fa-sticky-note" aria-hidden="true"></i> Notat</div>
+      <div class="cnp-note-text">${escapeHtml(kunde.notater)}</div>
+    </div>`;
+  }
+
+  // Section 2: Huskeliste (ukeplan notes)
+  if (weekNotes.length > 0) {
+    const weekNum = cnpGetWeekNumber(cnpWeekStart || raoWeekStart || weekPlanState?.weekStart);
+    html += `<div class="cnp-section">
+      <div class="cnp-section-label"><i class="fas fa-clipboard-list" aria-hidden="true"></i> Huskeliste${weekNum ? ` (uke ${weekNum})` : ''}</div>`;
+    for (const n of weekNotes) {
+      const nt = CNP_NOTE_TYPES.find(t => t.key === n.type) || CNP_NOTE_TYPES[4];
+      const assignee = n.tilordnet ? ` <span class="cnp-assignee">${escapeHtml(cnpGetInitials(n.tilordnet))}</span>` : '';
+      html += `<div class="cnp-task" style="--cnp-type-color:${nt.color}">
+        <i class="fas ${nt.icon}" aria-hidden="true" style="color:${nt.color};width:14px;text-align:center"></i>
+        <span class="cnp-task-text">${escapeHtml(n.notat)}</span>${assignee}
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Section 3: Recent contact log
+  if (kontaktlogg.length > 0) {
+    html += `<div class="cnp-section">
+      <div class="cnp-section-label"><i class="fas fa-history" aria-hidden="true"></i> Siste kontakt</div>`;
+    for (const k of kontaktlogg) {
+      const d = k.dato ? new Date(k.dato) : null;
+      const dateStr = d ? `${d.getDate()}. ${['jan','feb','mar','apr','mai','jun','jul','aug','sep','okt','nov','des'][d.getMonth()]}` : '';
+      html += `<div class="cnp-log-entry">
+        <span class="cnp-log-date">${escapeHtml(dateStr)}</span>
+        <span class="cnp-log-type">${escapeHtml(k.type || 'Annet')}</span>
+        ${k.notat ? `<span class="cnp-log-note">${escapeHtml(k.notat.length > 60 ? k.notat.substring(0, 60) + '...' : k.notat)}</span>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Empty state
+  if (!kunde?.notater && weekNotes.length === 0 && kontaktlogg.length === 0) {
+    html += '<div class="cnp-empty"><i class="fas fa-info-circle" aria-hidden="true"></i> Ingen notater for denne kunden.</div>';
+  }
+
+  html += '</div>';
+
+  // Quick-add section (always shown)
+  const kundeId = kunde?.id;
+  if (kundeId) {
+    html += `<div class="cnp-add-section" id="cnpAddSection">
+      <button class="cnp-add-btn" data-action="cnpToggleAddForm" data-args='[${kundeId}]'>
+        <i class="fas fa-plus" aria-hidden="true"></i> Legg til huskeliste
+      </button>
+      <div class="cnp-add-form" id="cnpAddForm" style="display:none">
+        <div class="cnp-type-pills">
+          ${CNP_NOTE_TYPES.map((t, i) => `<button class="cnp-type-pill${i === 0 ? ' active' : ''}" data-action="cnpSelectType" data-args='["${t.key}"]' style="--pill-color:${t.color}" title="${escapeHtml(t.label)}"><i class="fas ${t.icon}" aria-hidden="true"></i></button>`).join('')}
+        </div>
+        <div class="cnp-input-row">
+          <input type="text" class="cnp-input" id="cnpNoteInput" placeholder="Skriv notat..." maxlength="500">
+          <button class="cnp-save-btn" data-action="cnpSaveQuickNote" data-args='[${kundeId}]' title="Lagre"><i class="fas fa-check" aria-hidden="true"></i></button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  return html;
+}
+
+// ---- Popover show/dismiss ----
+
+async function cnpShowPopover(kundeId, event) {
+  // Prevent the click from also triggering raoExpandRoute
+  if (event && event.stopPropagation) event.stopPropagation();
+
+  kundeId = parseInt(kundeId, 10);
+  if (!kundeId || isNaN(kundeId)) return;
+
+  // Close existing
+  cnpDismissPopover();
+
+  // Find anchor element
+  const anchor = event?.target?.closest?.('[data-kunde-id]') || event?.target;
+  if (!anchor) return;
+
+  // Create popover container
+  const popover = document.createElement('div');
+  popover.className = 'cnp-popover';
+  popover.innerHTML = '<div class="cnp-loading"><i class="fas fa-spinner fa-spin"></i> Laster...</div>';
+  document.body.appendChild(popover);
+  cnpActivePopover = popover;
+
+  // Position
+  cnpPositionPopover(popover, anchor);
+
+  // Attach dismiss listeners
+  setTimeout(() => {
+    document.addEventListener('mousedown', cnpOutsideClickHandler);
+    document.addEventListener('keydown', cnpEscapeHandler);
+  }, 10);
+
+  // Fetch data and render
+  const data = await cnpFetchCustomerData(kundeId);
+  const weekNotes = cnpGetCustomerWeekNotes(kundeId);
+
+  // Check popover still active (user may have clicked away)
+  if (cnpActivePopover !== popover) {
+    popover.remove();
+    return;
+  }
+
+  popover.innerHTML = cnpRenderContent(data.kunde, data.kontaktlogg, weekNotes);
+  // Reposition after content renders (size may have changed)
+  cnpPositionPopover(popover, anchor);
+}
+
+function cnpPositionPopover(popover, anchor) {
+  const rect = anchor.getBoundingClientRect();
+  const isMobile = window.innerWidth <= 768;
+
+  if (isMobile) {
+    // Bottom sheet on mobile
+    popover.classList.add('cnp-mobile');
+    popover.style.left = '0';
+    popover.style.right = '0';
+    popover.style.bottom = '0';
+    popover.style.top = 'auto';
+    return;
+  }
+
+  // Desktop: position to the right of anchor, or left if near right edge
+  const popW = 300;
+  const popH = popover.offsetHeight || 300;
+  const margin = 8;
+
+  let left = rect.right + margin;
+  let top = rect.top;
+
+  // Flip left if too close to right edge
+  if (left + popW > window.innerWidth - 16) {
+    left = rect.left - popW - margin;
+  }
+  // Clamp left
+  if (left < 8) left = 8;
+
+  // Flip up if too close to bottom
+  if (top + popH > window.innerHeight - 16) {
+    top = window.innerHeight - popH - 16;
+  }
+  if (top < 8) top = 8;
+
+  popover.style.left = left + 'px';
+  popover.style.top = top + 'px';
+}
+
+function cnpDismissPopover() {
+  if (cnpActivePopover) {
+    cnpActivePopover.remove();
+    cnpActivePopover = null;
+  }
+  document.removeEventListener('mousedown', cnpOutsideClickHandler);
+  document.removeEventListener('keydown', cnpEscapeHandler);
+}
+
+function cnpOutsideClickHandler(e) {
+  if (cnpActivePopover && !cnpActivePopover.contains(e.target) && !e.target.closest('[data-action="cnpShowPopover"]')) {
+    cnpDismissPopover();
+  }
+}
+
+function cnpEscapeHandler(e) {
+  if (e.key === 'Escape') {
+    cnpDismissPopover();
+  }
+}
+
+// ---- Quick-add note ----
+
+let cnpSelectedType = 'ring';
+
+function cnpToggleAddForm() {
+  const form = document.getElementById('cnpAddForm');
+  const btn = cnpActivePopover?.querySelector('.cnp-add-btn');
+  if (!form) return;
+  const showing = form.style.display !== 'none';
+  form.style.display = showing ? 'none' : 'block';
+  if (btn) btn.style.display = showing ? '' : 'none';
+  if (!showing) {
+    cnpSelectedType = 'ring';
+    const input = document.getElementById('cnpNoteInput');
+    if (input) { input.value = ''; input.focus(); }
+  }
+}
+
+function cnpSelectType(typeKey) {
+  cnpSelectedType = typeKey;
+  const pills = cnpActivePopover?.querySelectorAll('.cnp-type-pill');
+  if (pills) {
+    pills.forEach(p => {
+      const args = p.dataset.args;
+      const key = args ? JSON.parse(args)[0] : '';
+      p.classList.toggle('active', key === typeKey);
+    });
+  }
+}
+
+async function cnpSaveQuickNote(kundeId) {
+  kundeId = parseInt(kundeId, 10);
+  const input = document.getElementById('cnpNoteInput');
+  const notat = input?.value?.trim();
+  if (!notat) return;
+
+  // Determine current week start
+  const weekStart = cnpWeekStart || raoWeekStart || (typeof weekPlanState !== 'undefined' ? weekPlanState.weekStart : null);
+  if (!weekStart) {
+    console.error('CNP: No week start available');
+    return;
+  }
+
+  try {
+    const resp = await apiFetch('/api/ukeplan-notater', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kunde_id: kundeId,
+        uke_start: weekStart,
+        notat: notat,
+        type: cnpSelectedType
+      })
+    });
+
+    if (resp.ok) {
+      // Invalidate cache and reload
+      delete cnpCachedData[kundeId];
+      await cnpLoadWeekNotes(weekStart);
+
+      // Also refresh weekplan state if in ukeplan view
+      if (typeof wpLoadNotater === 'function') {
+        try { await wpLoadNotater(); } catch (_) {}
+      }
+
+      // Re-render popover with fresh data
+      const anchor = cnpActivePopover?.previousAnchor;
+      if (cnpActivePopover) {
+        const data = await cnpFetchCustomerData(kundeId);
+        const weekNotes = cnpGetCustomerWeekNotes(kundeId);
+        cnpActivePopover.innerHTML = cnpRenderContent(data.kunde, data.kontaktlogg, weekNotes);
+      }
+    }
+  } catch (e) {
+    console.error('CNP: Failed to save note', e);
+  }
+}
+
+// ---- Helpers ----
+
+function cnpGetInitials(name) {
+  if (!name) return '';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return parts.map(p => (p[0] || '').toUpperCase()).join('');
+}
+
+function cnpGetWeekNumber(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
 }
 
 
@@ -17115,11 +17499,11 @@ async function renderAdminSubcategories() {
   if (empty) empty.style.display = groups.length === 0 ? 'block' : 'none';
 
   content.innerHTML = groups.map(group => `
-    <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border, #444); padding-left: 10px;">
+    <div class="subcat-group" data-group-id="${group.id}" style="margin-bottom: 10px; border-left: 2px solid var(--color-border); padding-left: 10px;">
       <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-        <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted, #888); font-size: 11px;"></i>
-        <span style="color: var(--color-text, #fff); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
-        <span style="color: var(--color-text-muted, #888); font-size: 11px;">(${(group.subcategories || []).length})</span>
+        <i aria-hidden="true" class="fas fa-folder" style="color: var(--color-text-muted); font-size: 11px;"></i>
+        <span style="color: var(--color-text-primary); font-size: 13px; font-weight: 500;">${escapeHtml(group.navn)}</span>
+        <span style="color: var(--color-text-muted); font-size: 11px;">(${(group.subcategories || []).length})</span>
         <button class="btn-icon" style="padding: 2px 4px;" data-action="editSubcatGroup" data-args='[${group.id}, "${escapeHtml(group.navn)}"]' title="Gi nytt navn">
           <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
         </button>
@@ -17130,8 +17514,8 @@ async function renderAdminSubcategories() {
 
       ${(group.subcategories || []).map(sub => `
         <div style="display: flex; align-items: center; gap: 6px; margin-left: 16px; padding: 2px 0;">
-          <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted, #888); flex-shrink: 0;"></span>
-          <span style="color: var(--color-text-secondary, #ccc); font-size: 13px;">${escapeHtml(sub.navn)}</span>
+          <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-text-muted); flex-shrink: 0;"></span>
+          <span style="color: var(--color-text-secondary); font-size: 13px;">${escapeHtml(sub.navn)}</span>
           <button class="btn-icon subcat-hover-btn" style="padding: 2px 4px;" data-action="editSubcatItem" data-args='[${sub.id}, "${escapeHtml(sub.navn)}"]' title="Gi nytt navn">
             <i aria-hidden="true" class="fas fa-pen" style="font-size: 10px;"></i>
           </button>
@@ -17152,7 +17536,7 @@ async function renderAdminSubcategories() {
       </div>
     </div>
   `).join('') + `
-    <div style="display: flex; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--color-border, #333);">
+    <div style="display: flex; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--color-border);">
       <input type="text" class="form-control" placeholder="Ny gruppe..." maxlength="100"
         style="flex: 1; font-size: 12px; padding: 4px 8px; height: 28px;"
         id="adminAddGroupInput"
@@ -20741,22 +21125,22 @@ async function quickMarkVisited(customerId) {
   overlay.className = 'qmv-overlay';
   overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100001;display:flex;justify-content:center;align-items:center;padding:20px;';
   overlay.innerHTML = `
-    <div style="background:var(--color-bg-secondary,#1a1a1a);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border,#333);">
-      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary,#fff);">
+    <div style="background:var(--color-bg-secondary);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border);">
+      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary);">
         Marker besøkt: ${escapeHtml(customer?.navn || 'Kunde')}
       </h3>
       <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Dato for besøk</label>
-        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="qmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);font-size:15px;">
+        <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Dato for besøk</label>
+        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="qmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);font-size:15px;">
       </div>
       ${serviceTypes.length > 0 ? `
         <div style="margin-bottom:20px;">
-          <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Oppdater kontrolldatoer</label>
+          <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Oppdater kontrolldatoer</label>
           ${checkboxesHtml}
         </div>
       ` : ''}
       <div style="display:flex;gap:12px;justify-content:flex-end;">
-        <button id="qmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);cursor:pointer;">Avbryt</button>
+        <button id="qmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);cursor:pointer;">Avbryt</button>
         <button id="qmvConfirm" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:none;background:var(--color-accent,#5E81AC);color:#fff;cursor:pointer;">Marker besøkt</button>
       </div>
     </div>
@@ -20828,22 +21212,22 @@ async function bulkMarkVisited(customerIds) {
   overlay.className = 'qmv-overlay';
   overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100001;display:flex;justify-content:center;align-items:center;padding:20px;';
   overlay.innerHTML = `
-    <div style="background:var(--color-bg-secondary,#1a1a1a);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border,#333);">
-      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary,#fff);">
+    <div style="background:var(--color-bg-secondary);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border);">
+      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary);">
         Marker ${count} kunder som besøkt
       </h3>
       <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Dato for besøk</label>
-        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="bmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);font-size:15px;">
+        <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Dato for besøk</label>
+        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="bmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);font-size:15px;">
       </div>
       ${serviceTypes.length > 0 ? `
         <div style="margin-bottom:20px;">
-          <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Oppdater kontrolldatoer</label>
+          <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Oppdater kontrolldatoer</label>
           ${checkboxesHtml}
         </div>
       ` : ''}
       <div style="display:flex;gap:12px;justify-content:flex-end;">
-        <button id="bmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);cursor:pointer;">Avbryt</button>
+        <button id="bmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);cursor:pointer;">Avbryt</button>
         <button id="bmvConfirm" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:none;background:var(--color-accent,#5E81AC);color:#fff;cursor:pointer;">Marker besøkt</button>
       </div>
     </div>
@@ -22348,6 +22732,287 @@ function renderUpcomingTab() {
 
 
 
+// ========================================
+// TEAM ZONES — Territory + marker coloring per team member
+// 1. Colors customer marker borders by assigned team member
+// 2. Draws filled zone polygons on the map
+// ========================================
+
+const TeamZones = {
+  visible: false,
+  layerIds: [],
+  legendEl: null,
+
+  toggle() {
+    this.visible = !this.visible;
+    localStorage.setItem('skyplanner_teamZonesVisible', this.visible ? '1' : '');
+    if (this.visible) {
+      this.render();
+      this.colorMarkers();
+      this.showLegend();
+    } else {
+      this.clear();
+      this.clearMarkerColors();
+      this.removeLegend();
+    }
+    const btn = document.querySelector('.wp-team-zone-toggle');
+    if (btn) btn.classList.toggle('active', this.visible);
+  },
+
+  update() {
+    if (!this.visible) return;
+    this.clear();
+    this.render();
+    this.colorMarkers();
+    this.showLegend();
+  },
+
+  restore() {
+    this.visible = localStorage.getItem('skyplanner_teamZonesVisible') === '1';
+    if (this.visible && typeof map !== 'undefined' && map) {
+      this.render();
+      this.colorMarkers();
+      this.showLegend();
+    }
+  },
+
+  // ---- Marker coloring ----
+
+  colorMarkers() {
+    if (typeof getWeekTeamMembers !== 'function' || typeof markers === 'undefined') return;
+    const teamMembers = getWeekTeamMembers();
+
+    // Build kundeId → color map
+    const colorMap = new Map();
+    for (const m of teamMembers) {
+      for (const id of m.kundeIds) {
+        colorMap.set(id, m.color);
+      }
+    }
+
+    for (const kundeId of Object.keys(markers)) {
+      const el = markers[kundeId].getElement();
+      if (!el) continue;
+      const iconEl = el.querySelector('.marker-icon');
+      if (!iconEl) continue;
+
+      const color = colorMap.get(Number(kundeId));
+      if (color) {
+        iconEl.style.borderColor = color;
+        iconEl.style.borderWidth = '4px';
+        iconEl.style.boxShadow = `0 0 0 2px ${color}40, 0 0 12px ${color}60, 0 2px 8px rgba(0,0,0,0.5)`;
+        el.dataset.teamZoneColor = color;
+      }
+    }
+  },
+
+  clearMarkerColors() {
+    if (typeof markers === 'undefined') return;
+    for (const kundeId of Object.keys(markers)) {
+      const el = markers[kundeId].getElement();
+      if (!el || !el.dataset.teamZoneColor) continue;
+      const iconEl = el.querySelector('.marker-icon');
+      if (iconEl) {
+        iconEl.style.borderColor = '';
+        iconEl.style.borderWidth = '';
+        iconEl.style.boxShadow = '';
+      }
+      delete el.dataset.teamZoneColor;
+    }
+  },
+
+  // ---- Zone rendering ----
+
+  render() {
+    if (!map || typeof getWeekTeamMembers !== 'function') return;
+
+    const teamMembers = getWeekTeamMembers();
+    if (teamMembers.length === 0) return;
+
+    for (const member of teamMembers) {
+      const coords = this._collectCoords(member.kundeIds);
+      if (coords.length === 0) continue;
+
+      // Generate buffered points around each customer (3km radius, 12 segments)
+      // This guarantees a polygon with area even when points are collinear
+      const bufferedPoints = [];
+      const radiusM = 3000;
+      const midLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+      const cosLat = Math.cos(midLat * Math.PI / 180);
+      const rLat = radiusM / 111320;
+      const rLng = rLat / cosLat;
+
+      for (const [lng, lat] of coords) {
+        for (let i = 0; i < 12; i++) {
+          const angle = (2 * Math.PI * i) / 12;
+          bufferedPoints.push([
+            lat + rLat * Math.sin(angle),
+            lng + rLng * Math.cos(angle)
+          ]);
+        }
+      }
+
+      // Compute convex hull of all buffered points
+      const hull = getConvexHull(bufferedPoints);
+      const polygon = hull.map(p => [p[1], p[0]]); // back to [lng, lat]
+      polygon.push(polygon[0]); // close ring
+
+      const srcId = `team-zone-${member.name.replace(/[^a-zA-Z0-9]/g, '-')}`;
+      const fillId = srcId + '-fill';
+      const lineId = srcId + '-line';
+
+      try {
+        this._removeIfExists(srcId, fillId, lineId);
+
+        map.addSource(srcId, {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [polygon] }
+          }
+        });
+
+        map.addLayer({
+          id: fillId,
+          type: 'fill',
+          source: srcId,
+          paint: {
+            'fill-color': member.color,
+            'fill-opacity': 0.22
+          }
+        });
+
+        map.addLayer({
+          id: lineId,
+          type: 'line',
+          source: srcId,
+          paint: {
+            'line-color': member.color,
+            'line-width': 3,
+            'line-opacity': 0.8
+          }
+        });
+
+        this.layerIds.push(srcId, fillId, lineId);
+      } catch (err) {
+        Logger.log('TeamZones: Kunne ikke tegne sone for ' + member.name, err);
+      }
+    }
+  },
+
+  clear() {
+    if (!map) return;
+    for (const id of this.layerIds) {
+      try {
+        if (map.getLayer(id)) map.removeLayer(id);
+        if (map.getSource(id)) map.removeSource(id);
+      } catch { /* ignore */ }
+    }
+    this.layerIds = [];
+  },
+
+  // ---- Legend ----
+
+  showLegend() {
+    this.removeLegend();
+    if (typeof getWeekTeamMembers !== 'function') return;
+
+    const teamMembers = getWeekTeamMembers();
+    if (teamMembers.length === 0) return;
+
+    const legend = document.createElement('div');
+    legend.className = 'team-zones-legend';
+
+    let html = '<div class="team-zones-legend-handle"><i class="fas fa-grip-lines" aria-hidden="true"></i></div>';
+    html += '<div class="team-zones-legend-title">Teamområder denne uken</div>';
+    for (const m of teamMembers) {
+      html += `<div class="team-zones-legend-item">
+        <span class="team-zones-legend-swatch" style="background:${m.color}"></span>
+        <span class="team-zones-legend-name">${escapeHtml(m.name)}</span>
+        <span class="team-zones-legend-count">${m.count} kunder</span>
+      </div>`;
+    }
+    legend.innerHTML = html;
+    document.body.appendChild(legend);
+    this.legendEl = legend;
+    this._makeDraggable(legend);
+  },
+
+  _makeDraggable(el) {
+    let startX, startY, startLeft, startTop;
+    const handle = el.querySelector('.team-zones-legend-handle') || el;
+
+    const onMove = (e) => {
+      const cx = e.touches ? e.touches[0].clientX : e.clientX;
+      const cy = e.touches ? e.touches[0].clientY : e.clientY;
+      el.style.left = (startLeft + cx - startX) + 'px';
+      el.style.top = (startTop + cy - startY) + 'px';
+      el.style.right = 'auto';
+      el.style.bottom = 'auto';
+      el.style.transform = 'none';
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onUp);
+    };
+    const onDown = (e) => {
+      e.preventDefault();
+      startX = e.touches ? e.touches[0].clientX : e.clientX;
+      startY = e.touches ? e.touches[0].clientY : e.clientY;
+      const rect = el.getBoundingClientRect();
+      startLeft = rect.left;
+      startTop = rect.top;
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend', onUp);
+    };
+    handle.addEventListener('mousedown', onDown);
+    handle.addEventListener('touchstart', onDown, { passive: false });
+  },
+
+  removeLegend() {
+    if (this.legendEl) {
+      this.legendEl.remove();
+      this.legendEl = null;
+    }
+  },
+
+  onStyleLoad() {
+    if (this.visible) {
+      setTimeout(() => {
+        this.clear();
+        this.render();
+      }, 200);
+    }
+  },
+
+  // ---- Helpers ----
+
+  _collectCoords(kundeIds) {
+    const coords = [];
+    if (!kundeIds || typeof markers === 'undefined') return coords;
+    for (const id of kundeIds) {
+      const marker = markers[id];
+      if (!marker) continue;
+      const lngLat = marker.getLngLat();
+      if (lngLat) coords.push([lngLat.lng, lngLat.lat]);
+    }
+    return coords;
+  },
+
+  _removeIfExists(srcId, fillId, lineId) {
+    try {
+      if (map.getLayer(fillId)) map.removeLayer(fillId);
+      if (map.getLayer(lineId)) map.removeLayer(lineId);
+      if (map.getSource(srcId)) map.removeSource(srcId);
+    } catch { /* ignore */ }
+  }
+};
+
+
 // === Calendar helper functions ===
 
 function formatDateISO(date) {
@@ -22475,6 +23140,92 @@ function wpGetDayCapacityByMember(dayKey) {
   return memberMap;
 }
 
+function getWpDayTeamMembers(dayKey) {
+  const memberCap = wpGetDayCapacityByMember(dayKey);
+  return Array.from(memberCap.entries()).map(([name, data]) => ({ name, count: data.stopCount }));
+}
+
+async function getWpAvailableTeamMembers(dayKey) {
+  const allMembers = await loadWpTeamMembers();
+  if (!allMembers || allMembers.length === 0) return [];
+  const dayMembers = getWpDayTeamMembers(dayKey);
+  const dayMemberMap = new Map(dayMembers.map(m => [m.name, m.count]));
+  // Include all team members + current user, show stop count for those with stops
+  const currentUser = localStorage.getItem('userName') || '';
+  const seen = new Set();
+  const result = [];
+  // First: members that have stops on this day
+  for (const m of dayMembers) {
+    result.push({ name: m.name, count: m.count });
+    seen.add(m.name);
+  }
+  // Then: other team members without stops
+  for (const m of allMembers) {
+    if (!seen.has(m.navn)) {
+      result.push({ name: m.navn, count: 0 });
+      seen.add(m.navn);
+    }
+  }
+  // Include current user if not already
+  if (currentUser && !seen.has(currentUser)) {
+    result.push({ name: currentUser, count: dayMemberMap.get(currentUser) || 0 });
+  }
+  return result;
+}
+
+function wpShowTeamMemberPicker(dayKey, members, totalDayStops) {
+  return new Promise((resolve) => {
+    // Build color map from TEAM_COLORS
+    const colorMap = new Map();
+    members.forEach((m, i) => { colorMap.set(m.name, TEAM_COLORS[i % TEAM_COLORS.length]); });
+
+    let optionsHtml = members.map((m, i) => {
+      const initials = getCreatorDisplay(m.name, true);
+      const color = colorMap.get(m.name) || TEAM_COLORS[0];
+      const countLabel = m.count > 0 ? `${m.count} stopp` : '';
+      return `<button class="wp-team-picker-option" data-member-idx="${i}">
+        <span class="wp-team-picker-avatar" style="background:${color}">${escapeHtml(initials)}</span>
+        <span class="wp-team-picker-name">${escapeHtml(m.name)}</span>
+        <span class="wp-team-picker-count">${countLabel}</span>
+      </button>`;
+    }).join('');
+
+    optionsHtml += `<button class="wp-team-picker-option wp-team-picker-all" data-member-idx="__all__">
+      <span class="wp-team-picker-avatar" style="background:#888"><i class="fas fa-users" aria-hidden="true" style="font-size:11px"></i></span>
+      <span class="wp-team-picker-name">Alle</span>
+      <span class="wp-team-picker-count">${totalDayStops} stopp</span>
+    </button>`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'wp-team-picker-overlay';
+    overlay.innerHTML = `<div class="wp-team-picker">
+      <div class="wp-team-picker-title">Velg teammedlem</div>
+      <div class="wp-team-picker-options">${optionsHtml}</div>
+      <button class="btn btn-small btn-secondary wp-team-picker-cancel">Avbryt</button>
+    </div>`;
+
+    function cleanup(result) {
+      overlay.remove();
+      resolve(result);
+    }
+
+    overlay.addEventListener('click', (e) => {
+      const opt = e.target.closest('.wp-team-picker-option');
+      if (opt) {
+        const idx = opt.dataset.memberIdx;
+        if (idx === '__all__') { cleanup('__all__'); return; }
+        const member = members[parseInt(idx, 10)];
+        cleanup(member ? member.name : null);
+        return;
+      }
+      if (e.target.closest('.wp-team-picker-cancel')) { cleanup(null); return; }
+      if (e.target === overlay) { cleanup(null); }
+    });
+
+    document.body.appendChild(overlay);
+  });
+}
+
 function wpRenderCapacityBars(dayKey, teamColorMap, currentUserColor) {
   const memberCap = wpGetDayCapacityByMember(dayKey);
   if (memberCap.size < 2) return '';
@@ -22589,7 +23340,9 @@ function focusTeamMemberOnMap(memberName) {
 
   // Zoom map FIRST, then apply styling after zoom settles
   if (hasPoints) {
-    map.fitBounds(bounds, { maxZoom: 11, padding: 40 });
+    const cp = document.querySelector('.content-panel');
+    const cpWidth = (cp && !cp.classList.contains('closed')) ? cp.offsetWidth : 0;
+    map.fitBounds(bounds, { maxZoom: 13, padding: { top: 60, bottom: 60, left: 60, right: cpWidth + 60 } });
   }
 
   // Delay focus styling until after zoom animation completes
@@ -22957,7 +23710,11 @@ async function renderWeeklyPlan() {
       html += `<span class="wp-team-chip ${isActive ? 'active' : ''}" style="background:${member.color}" data-action="focusTeamMember" data-member-name="${escapeHtml(member.name)}" title="Vis ${escapeHtml(member.name)} på kartet" role="button" tabindex="0">${escapeHtml(member.initials)} <span class="chip-count">${member.count}</span></span>`;
     }
     if (wpFocusedTeamMember) {
-      html += `<span class="wp-team-chip" style="background:var(--bg-tertiary, #666);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-times"></i></span>`;
+      html += `<span class="wp-team-chip" style="background:var(--color-bg-tertiary);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-times"></i></span>`;
+    }
+    if (teamMembers.length >= 1) {
+      const zonesActive = typeof TeamZones !== 'undefined' && TeamZones.visible;
+      html += `<span class="wp-team-zone-toggle ${zonesActive ? 'active' : ''}" data-action="toggleTeamZones" title="Vis/skjul teamområder" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-draw-polygon"></i></span>`;
     }
     html += `</div>`;
   }
@@ -23045,7 +23802,7 @@ async function renderWeeklyPlan() {
           <div class="wp-item new wp-timeline-item stagger-item" draggable="true" style="--stagger-index:${Math.min(stopIndex - 1, 15)};border-left:3px solid ${custColor}" data-customer-id="${c.id}" data-day="${dayKey}">
             <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${custColor}">${stopIndex}</span>${custInitials ? `<span class="wp-stop-initials" style="background:${custColor}">${escapeHtml(custInitials)}</span>` : ''}</span>
             <div class="wp-item-main">
-              <span class="wp-item-name">${escapeHtml(c.navn)}${custContext.icons}</span>
+              <span class="wp-item-name"><span class="cnp-clickable" data-action="cnpShowPopover" data-args='[${c.id}]' data-kunde-id="${c.id}" title="Vis notater">${escapeHtml(c.navn)}</span>${custContext.icons}</span>
               ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
               ${c.telefon ? `<span class="wp-item-phone"><i aria-hidden="true" class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
               <span class="wp-item-timerange"><i aria-hidden="true" class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
@@ -23068,13 +23825,13 @@ async function renderWeeklyPlan() {
         const addr = [a.kunder?.adresse, a.kunder?.postnummer, a.kunder?.poststed].filter(Boolean).join(', ');
         const phone = a.kunder?.telefon || a.telefon || '';
         const creatorName = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
-        const creatorColor = creatorName ? (teamColorMap.get(creatorName) || '#999') : '';
+        const creatorColor = creatorName ? (teamColorMap.get(creatorName) || 'var(--color-text-muted)') : '';
         const exStartTime = formatTimeOfDay(cumulativeMin);
         cumulativeMin += (a.varighet || 30);
         const exEndTime = formatTimeOfDay(cumulativeMin);
         html += `
           <div class="wp-item existing wp-timeline-item" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" style="${creatorColor ? 'border-left:3px solid ' + creatorColor : ''}" title="${creatorName ? 'Opprettet av ' + escapeHtml(creatorName) : ''}">
-            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${creatorColor || 'var(--bg-tertiary, #666)'}">${stopIndex}</span>${creatorName ? `<span class="wp-stop-initials" style="background:${creatorColor || 'var(--bg-tertiary, #666)'}">${escapeHtml(getCreatorDisplay(creatorName, true))}</span>` : ''}</span>
+            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${creatorColor || 'var(--color-bg-tertiary)'}">${stopIndex}</span>${creatorName ? `<span class="wp-stop-initials" style="background:${creatorColor || 'var(--color-bg-tertiary)'}">${escapeHtml(getCreatorDisplay(creatorName, true))}</span>` : ''}</span>
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(name)}</span>
               ${addr ? `<span class="wp-item-addr">${escapeHtml(addr)}</span>` : ''}
@@ -23481,6 +24238,9 @@ async function renderWeeklyPlan() {
 
   // Update map markers with plan badges
   updateWeekPlanBadges();
+
+  // Restore team zone visibility from localStorage
+  if (typeof TeamZones !== 'undefined') TeamZones.restore();
 
   // Load travel times asynchronously for each day with content
   if (typeof MatrixService !== 'undefined') {
@@ -24465,7 +25225,7 @@ async function clearDayAvtaler(dayKey, dateStr) {
 }
 
 // Helper: collect stops with coordinates for a weekplan day (planned + existing avtaler)
-function getWpDayStops(dayKey, includeAvtaler = false) {
+function getWpDayStops(dayKey, includeAvtaler = false, filterMember = null) {
   const dayData = weekPlanState.days[dayKey];
   if (!dayData) return null;
 
@@ -24478,7 +25238,13 @@ function getWpDayStops(dayKey, includeAvtaler = false) {
 
   if (includeAvtaler) {
     const dateStr = dayData.date;
-    const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+    let existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+    if (filterMember) {
+      existingAvtaler = existingAvtaler.filter(a => {
+        const tech = a.tildelt_tekniker || a.opprettet_av || '';
+        return tech === filterMember;
+      });
+    }
     for (const a of existingAvtaler) {
       const kunde = customers.find(c => c.id === a.kunde_id);
       if (kunde?.lat && kunde?.lng) {
@@ -24508,6 +25274,15 @@ function reorderPlannedStops(dayData, optimizedStops) {
 }
 
 async function wpOptimizeOrder(dayKey) {
+  const availableMembers = await getWpAvailableTeamMembers(dayKey);
+  const dayStopCount = weekPlanState.days[dayKey]?.planned?.length || 0;
+  let filterMember = null;
+  if (availableMembers.length > 1) {
+    filterMember = await wpShowTeamMemberPicker(dayKey, availableMembers, dayStopCount);
+    if (filterMember === null) return;
+  }
+  // filterMember = who the route is FOR (display only), don't filter stops
+
   const result = getWpDayStops(dayKey);
   if (!result) return;
   const { dayData, stops, routeStart } = result;
@@ -24593,7 +25368,17 @@ async function wpNotifyCustomer(kundeId) {
 }
 
 async function wpNavigateDay(dayKey) {
-  const result = getWpDayStops(dayKey, true);
+  const availableMembers = await getWpAvailableTeamMembers(dayKey);
+  const dayStopCount = weekPlanState.days[dayKey]?.planned?.length || 0;
+  let filterMember = null;
+  if (availableMembers.length > 1) {
+    filterMember = await wpShowTeamMemberPicker(dayKey, availableMembers, dayStopCount);
+    if (filterMember === null) return;
+  }
+  // filterMember selects which team member's avtaler to include
+  const memberFilter = (filterMember && filterMember !== '__all__') ? filterMember : null;
+
+  const result = getWpDayStops(dayKey, true, memberFilter);
   if (!result) return;
   const { dayData, stops, routeStart } = result;
 
@@ -24645,7 +25430,7 @@ async function wpNavigateDay(dayKey) {
     currentRouteData = { customers: stops, duration: routeResult.drivingSeconds, distance: routeResult.distanceMeters };
 
     // Show summary panel
-    showWpRouteSummary(dayKey, stops, routeResult.drivingSeconds, routeResult.distanceMeters);
+    showWpRouteSummary(dayKey, stops, routeResult.drivingSeconds, routeResult.distanceMeters, filterMember);
 
   } catch (err) {
     if (loadingToast) loadingToast.remove();
@@ -24659,7 +25444,7 @@ async function wpNavigateDay(dayKey) {
 }
 
 // Show weekly plan route summary panel
-function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
+function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters, memberName = null) {
   // Only remove previous panel element (don't clear route - we just drew a new one)
   const oldPanel = document.getElementById('wpRouteSummary');
   if (oldPanel) oldPanel.remove();
@@ -24669,13 +25454,14 @@ function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
   const totalMin = drivingMin + customerMin;
   const km = (distanceMeters / 1000).toFixed(1);
   const dayLabel = weekDayLabels[weekDayKeys.indexOf(dayKey)];
+  const memberLabel = memberName && memberName !== '__all__' ? ` — ${escapeHtml(memberName)}` : '';
 
   const panel = document.createElement('div');
   panel.id = 'wpRouteSummary';
   panel.className = 'wp-route-summary';
   panel.innerHTML = `
     <div class="wp-route-header">
-      <strong>${escapeHtml(dayLabel)} — ${stops.length} stopp</strong>
+      <strong>${escapeHtml(dayLabel)}${memberLabel} — ${stops.length} stopp</strong>
       <button class="wp-route-close" data-action="closeWpRoute" aria-label="Fjern">&times;</button>
     </div>
     <div class="wp-route-stats">
@@ -26659,13 +27445,13 @@ function showInactivityWarning() {
 
   let secondsLeft = 120;
   modal.innerHTML = `
-    <div style="background:var(--card-bg, #1a1a2e);border-radius:12px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+    <div style="background:var(--color-bg-elevated);border-radius:12px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;">
         <i aria-hidden="true" class="fas fa-clock" style="font-size:28px;color:white;"></i>
       </div>
-      <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:20px;">Inaktivitet oppdaget</h2>
-      <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 8px;font-size:15px;">Du logges ut om <strong id="inactivityCountdown">${secondsLeft}</strong> sekunder på grunn av inaktivitet.</p>
-      <p style="color:var(--text-muted, #666);margin:0 0 24px;font-size:13px;">Klikk knappen under for å forbli innlogget.</p>
+      <h2 style="color:var(--color-text-primary);margin:0 0 12px;font-size:20px;">Inaktivitet oppdaget</h2>
+      <p style="color:var(--color-text-secondary);margin:0 0 8px;font-size:15px;">Du logges ut om <strong id="inactivityCountdown">${secondsLeft}</strong> sekunder på grunn av inaktivitet.</p>
+      <p style="color:var(--color-text-muted);margin:0 0 24px;font-size:13px;">Klikk knappen under for å forbli innlogget.</p>
       <button id="extendSessionBtn" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;border:none;padding:12px 32px;border-radius:8px;font-size:15px;cursor:pointer;font-weight:600;">Fortsett sesjonen</button>
     </div>
   `;
@@ -30700,6 +31486,14 @@ function showLoginView() {
     CoverageAreaManager.clearOverlays();
   }
 
+  // Clear team zone overlays and marker colors
+  if (typeof TeamZones !== 'undefined') {
+    TeamZones.clear();
+    TeamZones.clearMarkerColors();
+    TeamZones.removeLegend();
+    TeamZones.visible = false;
+  }
+
   // Step 4: Show login overlay and start map fly animation
   setTimeout(() => {
     loginOverlay.classList.remove('hidden');
@@ -31228,11 +32022,11 @@ function renderLoginFeatures() {
   container.innerHTML = allFeatures.map(feature => `
     <div class="login-feature">
       <div class="login-feature-icon">
-        <i class="${feature.icon}"></i>
+        <i class="${escapeHtml(feature.icon)}"></i>
       </div>
       <div class="login-feature-text">
-        <h4>${feature.name}</h4>
-        <p>${feature.description}</p>
+        <h4>${escapeHtml(feature.name)}</h4>
+        <p>${escapeHtml(feature.description)}</p>
       </div>
     </div>
   `).join('');
@@ -32115,6 +32909,7 @@ function updateWeekPlanBadges() {
     }
   }
   if (typeof refreshClusters === 'function') refreshClusters();
+  if (typeof TeamZones !== 'undefined' && TeamZones.visible) TeamZones.update();
 }
 
 // Lightweight re-apply of plan badges on visible markers (uses data stored on marker.options)
@@ -33624,7 +34419,7 @@ function showAreaSelectMenu(selectedCustomersList, center) {
         ${wpDayPickerHtml}
       ` : ''}
       ${splitViewOpen && splitViewState.activeDay ? `
-        <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToSplitDay" style="background:var(--color-primary);color:#fff;">
+        <button class="btn btn-small asm-btn asm-btn-calendar" id="areaAddToSplitDay" style="background:var(--color-accent);color:#fff;">
           <i aria-hidden="true" class="fas fa-calendar-plus"></i> Legg til ${new Date(splitViewState.activeDay + 'T00:00:00').toLocaleDateString('nb-NO', { weekday: 'short', day: 'numeric', month: 'short' })}
         </button>
       ` : ''}
@@ -33756,11 +34551,11 @@ function showAreaSelectMenu(selectedCustomersList, center) {
       <div style="padding:4px 0;">
         <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Dato</label>
         <input type="date" id="areaCalDate" value="${new Date().toISOString().split('T')[0]}"
-          style="width:100%;padding:6px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box;">
+          style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--color-border);background:var(--color-bg-input);color:var(--color-text-primary);box-sizing:border-box;">
       </div>
       <div style="padding:4px 0;">
         <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Type</label>
-        <select id="areaCalType" style="width:100%;padding:6px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box;">
+        <select id="areaCalType" style="width:100%;padding:6px;border-radius:4px;border:1px solid var(--color-border);background:var(--color-bg-input);color:var(--color-text-primary);box-sizing:border-box;">
           ${serviceTypeRegistry ? serviceTypeRegistry.renderCategoryOptions('Kontroll') : '<option>Kontroll</option>'}
         </select>
       </div>
@@ -33945,7 +34740,7 @@ function editCustomer(id) {
   if (claim && claim.userId !== myUserId) {
     const banner = document.createElement('div');
     banner.id = 'presenceWarningBanner';
-    banner.style.cssText = `background:${getPresenceColor(claim.userId)}18;border-left:3px solid ${getPresenceColor(claim.userId)};padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:13px;color:#333;`;
+    banner.style.cssText = `background:${getPresenceColor(claim.userId)}18;border-left:3px solid ${getPresenceColor(claim.userId)};padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:13px;color:var(--color-text-primary);`;
     banner.innerHTML = `<strong>${escapeHtml(claim.initials)}</strong> ${escapeHtml(claim.userName)} jobber med denne kunden`;
     const modalTitle = document.getElementById('modalTitle');
     modalTitle.parentNode.insertBefore(banner, modalTitle.nextSibling);
@@ -36769,6 +37564,10 @@ function setupEventListeners() {
       case 'focusTeamMember':
         e.stopPropagation();
         focusTeamMemberOnMap(actionEl.dataset.memberName);
+        break;
+      case 'toggleTeamZones':
+        e.stopPropagation();
+        if (typeof TeamZones !== 'undefined') TeamZones.toggle();
         break;
 
       case 'quickAddToday':

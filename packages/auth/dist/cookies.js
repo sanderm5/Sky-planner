@@ -60,7 +60,7 @@ export function getRefreshCookieConfig(isProduction, customDomain) {
             httpOnly: true,
             secure: isProduction,
             sameSite: 'lax', // Must be 'lax' for cross-subdomain SSO to work
-            maxAge: 60 * 60 * 24 * 90, // 90 days
+            maxAge: 60 * 60 * 24 * 30, // 30 days (matches refresh token lifetime)
         },
     };
 }
@@ -85,11 +85,11 @@ export function extractTokenFromCookies(cookies, cookieName = AUTH_COOKIE_NAME) 
     return cookies[cookieName] || null;
 }
 /**
- * Builds a Set-Cookie header value for the auth token
+ * Builds a Set-Cookie header value for a token cookie
  */
-export function buildSetCookieHeader(token, options) {
+export function buildSetCookieHeader(token, options, cookieName = AUTH_COOKIE_NAME) {
     const parts = [
-        `${AUTH_COOKIE_NAME}=${token}`,
+        `${cookieName}=${token}`,
         `Path=${options.path}`,
         `Max-Age=${options.maxAge}`,
         `SameSite=${options.sameSite}`,
@@ -104,12 +104,22 @@ export function buildSetCookieHeader(token, options) {
     return parts.join('; ');
 }
 /**
- * Builds a Set-Cookie header to clear/logout
- * Uses the same domain logic as other cookie functions
+ * Builds a Set-Cookie header to clear/logout (access token only)
  */
 export function buildClearCookieHeader(isProduction) {
     const domain = getCookieDomain(isProduction);
     const domainPart = domain ? `Domain=${domain}; ` : '';
     return `${AUTH_COOKIE_NAME}=; Path=/; ${domainPart}Max-Age=0`;
+}
+/**
+ * Builds Set-Cookie headers to clear BOTH access and refresh cookies
+ */
+export function buildClearCookieHeaders(isProduction) {
+    const domain = getCookieDomain(isProduction);
+    const domainPart = domain ? `Domain=${domain}; ` : '';
+    return [
+        `${AUTH_COOKIE_NAME}=; Path=/; ${domainPart}Max-Age=0`,
+        `${REFRESH_COOKIE_NAME}=; Path=/; ${domainPart}Max-Age=0`,
+    ];
 }
 //# sourceMappingURL=cookies.js.map

@@ -31,10 +31,23 @@ export interface CookieOptions {
 
 export interface TokenOptions {
   expiresIn?: string | number;
+  kid?: string;
 }
 
 export interface VerifyResult {
   success: boolean;
   payload?: JWTPayload;
   error?: 'expired' | 'invalid' | 'malformed';
+  usedFallbackKey?: boolean;
+}
+
+export interface RefreshTokenPayload {
+  userId: number;
+  type: 'klient' | 'bruker';
+  organizationId?: number;
+  familyId: string;
+  tokenType: 'refresh';
+  jti?: string;
+  iat?: number;
+  exp?: number;
 }

@@ -625,7 +625,7 @@ export async function getChatConversationsForUser(ctx: DatabaseContext, organiza
       .eq('user_id', userId);
 
     const dmConvIds = (dmParticipations || []).map((p: { conversation_id: number }) => p.conversation_id);
-    let dmConvs: any[] = [];
+    let dmConvs: import('../../types').ChatConversation[] = [];
     if (dmConvIds.length > 0) {
       const { data } = await supabase
         .from('chat_conversations')
@@ -633,7 +633,7 @@ export async function getChatConversationsForUser(ctx: DatabaseContext, organiza
         .eq('organization_id', organizationId)
         .eq('type', 'dm')
         .in('id', dmConvIds);
-      dmConvs = data || [];
+      dmConvs = (data || []) as import('../../types').ChatConversation[];
     }
 
     const allConvs = [...(orgConvs || []), ...dmConvs];
@@ -722,17 +722,17 @@ export async function getChatConversationsForUser(ctx: DatabaseContext, organiza
   // Get org conversations
   const orgConvs = ctx.sqlite.prepare(
     'SELECT * FROM chat_conversations WHERE organization_id = ? AND type = ?'
-  ).all(organizationId, 'org') as any[];
+  ).all(organizationId, 'org') as import('../../types').ChatConversation[];
 
   // Get DM conversations
   const dmConvIds = ctx.sqlite.prepare(
     'SELECT conversation_id FROM chat_participants WHERE user_id = ?'
   ).all(userId) as { conversation_id: number }[];
-  const dmConvs: any[] = [];
+  const dmConvs: import('../../types').ChatConversation[] = [];
   for (const { conversation_id } of dmConvIds) {
     const conv = ctx.sqlite.prepare(
       'SELECT * FROM chat_conversations WHERE id = ? AND organization_id = ? AND type = ?'
-    ).get(conversation_id, organizationId, 'dm');
+    ).get(conversation_id, organizationId, 'dm') as import('../../types').ChatConversation | undefined;
     if (conv) dmConvs.push(conv);
   }
 

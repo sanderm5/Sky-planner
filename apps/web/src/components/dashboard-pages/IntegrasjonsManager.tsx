@@ -195,8 +195,8 @@ export function IntegrasjonsManager({ isAdmin }: IntegrasjonsManagerProps) {
       if (confirm('Tilkobling vellykket! Vil du hente og importere kunder nå?')) {
         await runPreview(id);
       }
-    } catch (err: any) {
-      setConnectError(err.message);
+    } catch (err: unknown) {
+      setConnectError(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 
@@ -211,8 +211,8 @@ export function IntegrasjonsManager({ isAdmin }: IntegrasjonsManagerProps) {
       });
       if (!res.ok) throw new Error('Kunne ikke koble fra');
       await loadIntegrations();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 
@@ -264,8 +264,8 @@ export function IntegrasjonsManager({ isAdmin }: IntegrasjonsManagerProps) {
       setAllCategories([...allCats].sort());
 
       setPreviewState('content');
-    } catch (err: any) {
-      setPreviewError(err.message);
+    } catch (err: unknown) {
+      setPreviewError(err instanceof Error ? err.message : 'Ukjent feil');
       setPreviewState('error');
     }
   }
@@ -302,8 +302,8 @@ export function IntegrasjonsManager({ isAdmin }: IntegrasjonsManagerProps) {
       setSyncResult(data.data);
       setSyncState('result');
       await loadIntegrations();
-    } catch (err: any) {
-      setSyncError(err.message);
+    } catch (err: unknown) {
+      setSyncError(err instanceof Error ? err.message : 'Ukjent feil');
       setSyncState('error');
     }
   }

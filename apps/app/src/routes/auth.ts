@@ -6,13 +6,19 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { authLogger, logAudit, logSecurityEvent } from '../services/logger';
 import { generateToken, extractToken, getTokenId, requireAuth } from '../middleware/auth';
 import { asyncHandler, Errors } from '../middleware/errorHandler';
 import { validateLoginRequest } from '../utils/validation';
 import { getConfig } from '../config/env';
 import { blacklistToken, isTokenBlacklisted } from '../services/token-blacklist';
-import { getCookieConfig, buildSetCookieHeader, buildClearCookieHeader } from '@skyplanner/auth';
+import {
+  getCookieConfig, getRefreshCookieConfig,
+  buildSetCookieHeader, buildClearCookieHeader, buildClearCookieHeaders,
+  REFRESH_COOKIE_NAME, extractTokenFromCookies,
+  signRefreshToken, verifyTokenWithFallback as authVerifyWithFallback,
+} from '@skyplanner/auth';
 import type { AuthenticatedRequest, JWTPayload, ApiResponse } from '../types';
 
 const router: Router = Router();
@@ -263,8 +269,7 @@ router.post(
       organization = await dbService.getOrganizationById(user.organization_id);
     }
 
-    // Generate JWT token
-    const sessionDuration = rememberMe ? '30d' : '24h';
+    // Generate access token (1h) and refresh token (30d)
     const tokenPayload: Omit<JWTPayload, 'iat' | 'exp'> = {
       userId: user.id,
       epost: user.epost,
@@ -276,10 +281,34 @@ router.post(
       trialEndsAt: organization?.trial_ends_at,
       currentPeriodEnd: organization?.current_period_end,
     };
-    const token = generateToken(tokenPayload, sessionDuration);
+    const token = generateToken(tokenPayload, '1h');
+    const expiresAt = Date.now() + 60 * 60 * 1000; // 1h
 
-    // Calculate expiry timestamp
-    const expiresAt = Date.now() + (rememberMe ? REMEMBER_ME_DURATION_MS : SESSION_DURATION_MS);
+    // Generate refresh token
+    const config = getConfig();
+    const familyId = crypto.randomUUID();
+    const refreshToken = signRefreshToken({
+      userId: user.id,
+      type: userType,
+      organizationId: user.organization_id,
+      familyId,
+    }, config.JWT_SECRET, { expiresIn: '30d' });
+
+    // Store refresh token hash in database
+    const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const refreshDecoded = jwt.decode(refreshToken) as any;
+    const supabase = dbService.getSupabase();
+    await supabase.from('refresh_tokens').insert({
+      token_hash: refreshHash,
+      user_id: user.id,
+      user_type: userType,
+      organization_id: user.organization_id,
+      jti: refreshDecoded.jti,
+      family_id: familyId,
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      ip_address: ip,
+      user_agent: userAgent,
+    }).then(() => {}, err => authLogger.error({ err }, 'Failed to store refresh token'));
 
     // Log successful login
     await dbService.logLoginAttempt({
@@ -387,11 +416,14 @@ router.post(
       requestId: req.requestId,
     };
 
-    // Set httpOnly auth cookie (secure alternative to localStorage)
-    const isProduction = getConfig().NODE_ENV === 'production';
-    const cookieConfig = getCookieConfig(isProduction);
-    const cookieHeader = buildSetCookieHeader(token, cookieConfig.options);
-    res.setHeader('Set-Cookie', cookieHeader);
+    // Set httpOnly auth cookies (access + refresh)
+    const isProduction = config.NODE_ENV === 'production';
+    const accessCookieConfig = getCookieConfig(isProduction);
+    const refreshCookieConfig = getRefreshCookieConfig(isProduction);
+    // Override access cookie maxAge to 1h
+    const accessOpts = { ...accessCookieConfig.options, maxAge: 60 * 60 };
+    res.append('Set-Cookie', buildSetCookieHeader(token, accessOpts));
+    res.append('Set-Cookie', buildSetCookieHeader(refreshToken, refreshCookieConfig.options, REFRESH_COOKIE_NAME));
 
     res.json(response);
   })
@@ -528,7 +560,20 @@ router.post(
 
     // Clear httpOnly auth cookie
     const isProduction = getConfig().NODE_ENV === 'production';
-    res.setHeader('Set-Cookie', buildClearCookieHeader(isProduction));
+    // Clear both access and refresh cookies
+    const clearHeaders = buildClearCookieHeaders(isProduction);
+    clearHeaders.forEach(h => res.append('Set-Cookie', h));
+
+    // Revoke refresh token if present
+    const refreshToken = req.headers.cookie ? extractTokenFromCookies(req.headers.cookie, REFRESH_COOKIE_NAME) : null;
+    if (refreshToken) {
+      try {
+        const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        await dbService.getSupabase().from('refresh_tokens').update({ revoked_at: new Date().toISOString() }).eq('token_hash', refreshHash);
+      } catch (err) {
+        authLogger.error({ err }, 'Failed to revoke refresh token on logout');
+      }
+    }
 
     const response: ApiResponse = {
       success: true,
@@ -537,6 +582,150 @@ router.post(
     };
 
     res.json(response);
+  })
+);
+
+/**
+ * POST /api/klient/refresh
+ * Refreshes the access token using a valid refresh token (httpOnly cookie)
+ * Implements token rotation: old refresh token is revoked, new pair issued
+ */
+router.post(
+  '/refresh',
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const config = getConfig();
+    const refreshToken = req.headers.cookie ? extractTokenFromCookies(req.headers.cookie, REFRESH_COOKIE_NAME) : null;
+
+    if (!refreshToken) {
+      throw Errors.unauthorized('Mangler refresh-token');
+    }
+
+    // Verify refresh token JWT signature
+    const result = authVerifyWithFallback(refreshToken, config.JWT_SECRET, config.JWT_SECRET_PREVIOUS || undefined);
+    if (!result.success || !result.payload) {
+      throw Errors.unauthorized('Ugyldig refresh-token');
+    }
+
+    const decoded = result.payload as any;
+    if (decoded.tokenType !== 'refresh') {
+      throw Errors.unauthorized('Ugyldig token-type');
+    }
+
+    // Look up refresh token in database
+    const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const supabase = dbService.getSupabase();
+    const { data: stored } = await supabase
+      .from('refresh_tokens')
+      .select('*')
+      .eq('token_hash', tokenHash)
+      .single();
+
+    if (!stored) {
+      throw Errors.unauthorized('Refresh-token ikke funnet');
+    }
+
+    // Replay detection: if token is already revoked, revoke entire family
+    if (stored.revoked_at) {
+      await supabase
+        .from('refresh_tokens')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('family_id', stored.family_id)
+        .is('revoked_at', null);
+
+      logSecurityEvent({
+        action: 'refresh_token_replay_detected',
+        userId: stored.user_id,
+        userType: stored.user_type,
+        organizationId: stored.organization_id,
+        metadata: { familyId: stored.family_id },
+      });
+
+      throw Errors.unauthorized('Refresh-token allerede brukt — alle sesjoner revokert');
+    }
+
+    // Check expiry
+    if (new Date(stored.expires_at) < new Date()) {
+      throw Errors.unauthorized('Refresh-token utløpt');
+    }
+
+    // Fetch fresh user data
+    let user: any = null;
+    if (stored.user_type === 'klient') {
+      user = await dbService.getKlientById(stored.user_id);
+    } else {
+      user = await dbService.getBrukerById(stored.user_id);
+    }
+
+    if (!user || !user.aktiv) {
+      throw Errors.unauthorized('Bruker deaktivert');
+    }
+
+    let organization = null;
+    if (stored.organization_id) {
+      organization = await dbService.getOrganizationById(stored.organization_id);
+    }
+
+    // Generate new access token (1h)
+    const accessToken = generateToken({
+      userId: user.id,
+      epost: user.epost,
+      organizationId: stored.organization_id,
+      organizationSlug: organization?.slug,
+      type: stored.user_type as 'klient' | 'bruker',
+      subscriptionStatus: organization?.subscription_status,
+      subscriptionPlan: organization?.plan_type,
+      trialEndsAt: organization?.trial_ends_at,
+      currentPeriodEnd: organization?.current_period_end,
+    }, '1h');
+
+    // Generate new refresh token (rotation)
+    const newRefreshToken = signRefreshToken({
+      userId: user.id,
+      type: stored.user_type as 'klient' | 'bruker',
+      organizationId: stored.organization_id,
+      familyId: stored.family_id,
+    }, config.JWT_SECRET, { expiresIn: '30d' });
+
+    const newRefreshHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+    const newRefreshDecoded = jwt.decode(newRefreshToken) as any;
+
+    // Store new refresh token and revoke old one
+    await Promise.all([
+      supabase.from('refresh_tokens').insert({
+        token_hash: newRefreshHash,
+        user_id: user.id,
+        user_type: stored.user_type,
+        organization_id: stored.organization_id,
+        jti: newRefreshDecoded.jti,
+        family_id: stored.family_id,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        ip_address: req.ip,
+        user_agent: req.headers['user-agent'] || '',
+      }),
+      supabase.from('refresh_tokens').update({
+        revoked_at: new Date().toISOString(),
+        replaced_by: newRefreshDecoded.jti,
+      }).eq('id', stored.id),
+    ]);
+
+    // Set new cookies
+    const isProduction = config.NODE_ENV === 'production';
+    const accessCookieConfig = getCookieConfig(isProduction);
+    const refreshCookieConfig = getRefreshCookieConfig(isProduction);
+
+    // Override access cookie maxAge to 1h
+    const accessCookieOpts = { ...accessCookieConfig.options, maxAge: 60 * 60 };
+    res.append('Set-Cookie', buildSetCookieHeader(accessToken, accessCookieOpts));
+    res.append('Set-Cookie', buildSetCookieHeader(newRefreshToken, refreshCookieConfig.options, REFRESH_COOKIE_NAME));
+
+    const expiresAt = Date.now() + 60 * 60 * 1000; // 1h from now
+
+    res.json({
+      success: true,
+      accessToken,
+      token: accessToken,
+      expiresAt,
+    });
   })
 );
 
@@ -561,7 +750,16 @@ router.get(
     }
 
     try {
-      const decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
+      const verifyResult = authVerifyWithFallback(token, config.JWT_SECRET, config.JWT_SECRET_PREVIOUS || undefined);
+      if (!verifyResult.success || !verifyResult.payload) {
+        res.json({
+          success: true,
+          data: { valid: false, reason: verifyResult.error === 'expired' ? 'token_expired' : 'invalid_token' },
+          requestId: req.requestId,
+        });
+        return;
+      }
+      const decoded = verifyResult.payload as JWTPayload;
 
       // Check if token has been blacklisted (logout)
       const tokenId = getTokenId(decoded);

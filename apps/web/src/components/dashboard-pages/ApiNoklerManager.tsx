@@ -131,8 +131,8 @@ export function ApiNoklerManager({ isAdmin }: Props) {
       // Show the key
       setNewKeyValue(data.data.key);
       setShowKeyCreatedModal(true);
-    } catch (err: any) {
-      setCreateError(err.message);
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Ukjent feil');
     } finally {
       setCreateSubmitting(false);
     }
@@ -150,8 +150,8 @@ export function ApiNoklerManager({ isAdmin }: Props) {
       });
       if (!res.ok) throw new Error('Kunne ikke deaktivere nøkkel');
       await loadApiKeys();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 

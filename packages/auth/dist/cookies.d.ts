@@ -19,12 +19,15 @@ export declare function getCookieConfig(isProduction: boolean, customDomain?: st
 export declare function getRefreshCookieConfig(isProduction: boolean, customDomain?: string): CookieOptions;
 export declare function extractTokenFromCookies(cookies: string | Record<string, string>, cookieName?: string): string | null;
 /**
- * Builds a Set-Cookie header value for the auth token
+ * Builds a Set-Cookie header value for a token cookie
  */
-export declare function buildSetCookieHeader(token: string, options: CookieOptions['options']): string;
+export declare function buildSetCookieHeader(token: string, options: CookieOptions['options'], cookieName?: string): string;
 /**
- * Builds a Set-Cookie header to clear/logout
- * Uses the same domain logic as other cookie functions
+ * Builds a Set-Cookie header to clear/logout (access token only)
  */
 export declare function buildClearCookieHeader(isProduction: boolean): string;
+/**
+ * Builds Set-Cookie headers to clear BOTH access and refresh cookies
+ */
+export declare function buildClearCookieHeaders(isProduction: boolean): string[];
 //# sourceMappingURL=cookies.d.ts.map

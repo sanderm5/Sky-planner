@@ -1681,6 +1681,10 @@ function setupEventListeners() {
         e.stopPropagation();
         focusTeamMemberOnMap(actionEl.dataset.memberName);
         break;
+      case 'toggleTeamZones':
+        e.stopPropagation();
+        if (typeof TeamZones !== 'undefined') TeamZones.toggle();
+        break;
 
       case 'quickAddToday':
         e.stopPropagation();

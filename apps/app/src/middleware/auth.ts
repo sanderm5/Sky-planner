@@ -7,7 +7,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { extractTokenFromCookies, AUTH_COOKIE_NAME } from '@skyplanner/auth';
+import { extractTokenFromCookies, AUTH_COOKIE_NAME, verifyTokenWithFallback } from '@skyplanner/auth';
 import { getConfig } from '../config/env';
 import { authLogger } from '../services/logger';
 import { isTokenBlacklisted } from '../services/token-blacklist';
@@ -67,7 +67,11 @@ export async function requireAuth(
 
   try {
     const config = getConfig();
-    const decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
+    const result = verifyTokenWithFallback(token, config.JWT_SECRET, config.JWT_SECRET_PREVIOUS || undefined);
+    if (!result.success || !result.payload) {
+      return next(Errors.unauthorized(result.error === 'expired' ? 'Token har utløpt' : 'Ugyldig token'));
+    }
+    const decoded = result.payload as JWTPayload;
 
     // Check if token has been blacklisted (logout)
     const tokenId = getTokenId(decoded);
@@ -330,7 +334,11 @@ export async function optionalAuth(
 
   try {
     const config = getConfig();
-    const decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
+    const result = verifyTokenWithFallback(token, config.JWT_SECRET, config.JWT_SECRET_PREVIOUS || undefined);
+    if (!result.success || !result.payload) {
+      return next();
+    }
+    const decoded = result.payload as JWTPayload;
 
     // Check if token has been blacklisted (logout)
     const tokenId = getTokenId(decoded);
@@ -352,25 +360,23 @@ export async function optionalAuth(
 
 /**
  * Generates a JWT token for a user
- * Includes a unique JTI for blacklist tracking
+ * Includes a unique JTI and kid for blacklist tracking and key rotation
  */
 export function generateToken(
   payload: Omit<JWTPayload, 'iat' | 'exp' | 'jti'>,
-  expiresIn: string | number = '24h'
+  expiresIn: string | number = '1h'
 ): string {
   const config = getConfig();
   const jti = crypto.randomUUID();
-  return jwt.sign({ ...payload, jti }, config.JWT_SECRET, { algorithm: 'HS256', expiresIn: expiresIn as jwt.SignOptions['expiresIn'] });
+  const kid = crypto.createHash('sha256').update(config.JWT_SECRET).digest('hex').substring(0, 8);
+  return jwt.sign({ ...payload, jti }, config.JWT_SECRET, { algorithm: 'HS256', expiresIn: expiresIn as jwt.SignOptions['expiresIn'], keyid: kid });
 }
 
 /**
- * Verifies and decodes a JWT token
+ * Verifies and decodes a JWT token (with key rotation fallback)
  */
-export function verifyToken(token: string): JWTPayload | null {
-  try {
-    const config = getConfig();
-    return jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as JWTPayload;
-  } catch {
-    return null;
-  }
+export function verifyLocalToken(token: string): JWTPayload | null {
+  const config = getConfig();
+  const result = verifyTokenWithFallback(token, config.JWT_SECRET, config.JWT_SECRET_PREVIOUS || undefined);
+  return result.success && result.payload ? result.payload as JWTPayload : null;
 }

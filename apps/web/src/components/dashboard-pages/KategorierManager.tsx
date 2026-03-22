@@ -45,8 +45,8 @@ export function KategorierManager({ isAdmin }: Props) {
       if (!data.success) throw new Error(data.error?.message || data.error || 'Feil ved lasting');
 
       setGroups(data.data || []);
-    } catch (err: any) {
-      setError(err.message || 'Kunne ikke laste underkategorier.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke laste underkategorier.');
     } finally {
       setLoading(false);
     }
@@ -71,8 +71,8 @@ export function KategorierManager({ isAdmin }: Props) {
       if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke opprette gruppe');
       setNewGroupName('');
       await loadData();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 
@@ -90,8 +90,8 @@ export function KategorierManager({ isAdmin }: Props) {
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke oppdatere gruppe');
       await loadData();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 
@@ -107,8 +107,8 @@ export function KategorierManager({ isAdmin }: Props) {
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke slette gruppe');
       await loadData();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 
@@ -127,8 +127,8 @@ export function KategorierManager({ isAdmin }: Props) {
       if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke opprette underkategori');
       setNewSubcatNames(prev => ({ ...prev, [groupId]: '' }));
       await loadData();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 
@@ -146,8 +146,8 @@ export function KategorierManager({ isAdmin }: Props) {
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke oppdatere underkategori');
       await loadData();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 
@@ -163,8 +163,8 @@ export function KategorierManager({ isAdmin }: Props) {
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke slette underkategori');
       await loadData();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 

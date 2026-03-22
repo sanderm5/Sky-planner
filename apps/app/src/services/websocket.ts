@@ -6,7 +6,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server, IncomingMessage } from 'http';
 import { extractTokenFromCookies, AUTH_COOKIE_NAME } from '@skyplanner/auth';
-import { verifyToken, getTokenId } from '../middleware/auth';
+import { verifyLocalToken as verifyToken, getTokenId } from '../middleware/auth';
 import { isTokenBlacklisted } from './token-blacklist';
 import { logger } from './logger';
 

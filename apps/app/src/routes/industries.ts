@@ -11,6 +11,14 @@ import type { AuthenticatedRequest, ApiResponse } from '../types';
 
 const apiLogger = createLogger('industries');
 
+// Row types for Supabase query results
+interface IndustryRow { id: number; name: string; slug: string; icon: string; color: string; description: string | null; sort_order: number }
+interface ServiceTypeRow { id: number; name: string; slug: string; icon: string; color: string; default_interval_months: number; description: string | null; sort_order: number; subtypes?: SubtypeRow[]; equipment?: EquipmentRow[] }
+interface SubtypeRow { id: number; name: string; slug: string; default_interval_months: number }
+interface EquipmentRow { id: number; name: string; slug: string }
+interface IntervalRow { months: number; label: string; is_default: boolean }
+interface TemplateTypeRow { id: number; name: string; slug: string; icon?: string; color?: string; default_interval_months?: number; description?: string | null; sort_order?: number }
+
 const router: Router = Router();
 
 // Use centralized database service instead of direct service role key
@@ -133,7 +141,7 @@ router.get(
 
     const response: ApiResponse = {
       success: true,
-      data: (industries || []).map((industry: any) => ({
+      data: (industries || []).map((industry: IndustryRow) => ({
         id: industry.id,
         name: industry.name,
         slug: industry.slug,
@@ -185,7 +193,7 @@ router.get(
 
     // Get subtypes and equipment for each service type
     const serviceTypesWithDetails = await Promise.all(
-      (serviceTypes || []).map(async (st: any) => {
+      (serviceTypes || []).map(async (st: ServiceTypeRow) => {
         const [subtypesResult, equipmentResult] = await Promise.all([
           supabaseClient.from('template_subtypes').select('*').eq('service_type_id', st.id).order('sort_order'),
           supabaseClient.from('template_equipment').select('*').eq('service_type_id', st.id).order('sort_order'),
@@ -214,7 +222,7 @@ router.get(
         icon: industry.icon,
         color: industry.color,
         description: industry.description,
-        serviceTypes: serviceTypesWithDetails.map((st: any) => ({
+        serviceTypes: serviceTypesWithDetails.map((st: ServiceTypeRow) => ({
           id: st.id,
           name: st.name,
           slug: st.slug,
@@ -223,19 +231,19 @@ router.get(
           defaultInterval: st.default_interval_months,
           description: st.description,
           sortOrder: st.sort_order,
-          subtypes: (st.subtypes || []).map((sub: any) => ({
+          subtypes: (st.subtypes || []).map((sub: SubtypeRow) => ({
             id: sub.id,
             name: sub.name,
             slug: sub.slug,
             defaultInterval: sub.default_interval_months,
           })),
-          equipment: (st.equipment || []).map((eq: any) => ({
+          equipment: (st.equipment || []).map((eq: EquipmentRow) => ({
             id: eq.id,
             name: eq.name,
             slug: eq.slug,
           })),
         })),
-        intervals: (intervals || []).map((i: any) => ({
+        intervals: (intervals || []).map((i: IntervalRow) => ({
           months: i.months,
           label: i.label,
           isDefault: i.is_default,
@@ -308,7 +316,7 @@ router.post(
         .order('sort_order', { ascending: true });
 
       if (templateTypes && templateTypes.length > 0) {
-        const rows = templateTypes.map((t: any) => ({
+        const rows = templateTypes.map((t: TemplateTypeRow) => ({
           organization_id: organizationId,
           name: t.name,
           slug: t.slug,

@@ -36,13 +36,13 @@ function showInactivityWarning() {
 
   let secondsLeft = 120;
   modal.innerHTML = `
-    <div style="background:var(--card-bg, #1a1a2e);border-radius:12px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+    <div style="background:var(--color-bg-elevated);border-radius:12px;padding:32px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
       <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:50%;display:flex;align-items:center;justify-content:center;">
         <i aria-hidden="true" class="fas fa-clock" style="font-size:28px;color:white;"></i>
       </div>
-      <h2 style="color:var(--text-primary, #fff);margin:0 0 12px;font-size:20px;">Inaktivitet oppdaget</h2>
-      <p style="color:var(--text-secondary, #a0a0a0);margin:0 0 8px;font-size:15px;">Du logges ut om <strong id="inactivityCountdown">${secondsLeft}</strong> sekunder på grunn av inaktivitet.</p>
-      <p style="color:var(--text-muted, #666);margin:0 0 24px;font-size:13px;">Klikk knappen under for å forbli innlogget.</p>
+      <h2 style="color:var(--color-text-primary);margin:0 0 12px;font-size:20px;">Inaktivitet oppdaget</h2>
+      <p style="color:var(--color-text-secondary);margin:0 0 8px;font-size:15px;">Du logges ut om <strong id="inactivityCountdown">${secondsLeft}</strong> sekunder på grunn av inaktivitet.</p>
+      <p style="color:var(--color-text-muted);margin:0 0 24px;font-size:13px;">Klikk knappen under for å forbli innlogget.</p>
       <button id="extendSessionBtn" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;border:none;padding:12px 32px;border-radius:8px;font-size:15px;cursor:pointer;font-weight:600;">Fortsett sesjonen</button>
     </div>
   `;

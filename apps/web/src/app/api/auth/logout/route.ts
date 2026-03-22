@@ -20,7 +20,7 @@ async function blacklistCurrentToken(cookieHeader: string): Promise<void> {
     initDb();
     const client = db.getSupabaseClient();
 
-    // Blacklist token so it can't be reused
+    // Blacklist access token so it can't be reused
     await client.from('token_blacklist').insert({
       jti: payload.jti,
       user_id: payload.userId,
@@ -36,6 +36,16 @@ async function blacklistCurrentToken(cookieHeader: string): Promise<void> {
       .from('active_sessions')
       .delete()
       .eq('jti', payload.jti);
+
+    // Revoke refresh token if present
+    const refreshToken = auth.extractTokenFromCookies(cookieHeader, auth.REFRESH_COOKIE_NAME);
+    if (refreshToken) {
+      const crypto = await import('crypto');
+      const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      await client.from('refresh_tokens')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('token_hash', refreshHash);
+    }
   } catch (err) {
     // Don't block logout if blacklisting fails
     console.error('Token blacklist on logout failed:', err instanceof Error ? err.message : 'Unknown');
@@ -46,31 +56,23 @@ export async function GET(request: NextRequest) {
   const cookieHeader = request.headers.get('cookie') || '';
   await blacklistCurrentToken(cookieHeader);
 
-  const clearCookieHeader = auth.buildClearCookieHeader(isProduction);
+  const clearHeaders = auth.buildClearCookieHeaders(isProduction);
+  const headers = new Headers([['Location', '/auth/login']]);
+  clearHeaders.forEach(h => headers.append('Set-Cookie', h));
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      'Location': '/auth/login',
-      'Set-Cookie': clearCookieHeader,
-    },
-  });
+  return new Response(null, { status: 302, headers });
 }
 
 export async function POST(request: NextRequest) {
   const cookieHeader = request.headers.get('cookie') || '';
   await blacklistCurrentToken(cookieHeader);
 
-  const clearCookieHeader = auth.buildClearCookieHeader(isProduction);
+  const clearHeaders = auth.buildClearCookieHeaders(isProduction);
+  const headers = new Headers([['Content-Type', 'application/json']]);
+  clearHeaders.forEach(h => headers.append('Set-Cookie', h));
 
   return new Response(
     JSON.stringify({ success: true, message: 'Logget ut' }),
-    {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Set-Cookie': clearCookieHeader,
-      },
-    }
+    { status: 200, headers }
   );
 }

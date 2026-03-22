@@ -72,8 +72,8 @@ export function TjenesterManager({ isAdmin }: Props) {
       if (!data.success) throw new Error(data.error?.message || data.error || 'Feil ved lasting');
 
       setServiceTypes(data.data || []);
-    } catch (err: any) {
-      setError(err.message || 'Kunne ikke laste tjenestekategorier.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke laste tjenestekategorier.');
     } finally {
       setLoading(false);
     }
@@ -138,8 +138,8 @@ export function TjenesterManager({ isAdmin }: Props) {
 
       closeModal();
       await loadServiceTypes();
-    } catch (err: any) {
-      alert(err.message || 'Feil ved lagring');
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Feil ved lagring');
     } finally {
       setSaving(false);
     }
@@ -157,8 +157,8 @@ export function TjenesterManager({ isAdmin }: Props) {
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || data.error || 'Kunne ikke slette');
       await loadServiceTypes();
-    } catch (err: any) {
-      alert(err.message || 'Feil ved sletting');
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Feil ved sletting');
     }
   }
 

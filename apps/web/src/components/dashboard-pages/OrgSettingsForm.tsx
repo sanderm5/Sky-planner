@@ -24,7 +24,7 @@ interface Organization {
   primary_color?: string;
   app_mode?: string;
   dato_modus?: string;
-  [key: string]: any;
+  [key: string]: string | number | boolean | undefined;
 }
 
 interface OrgSettingsFormProps {
@@ -55,7 +55,7 @@ export function OrgSettingsForm({
     organization.dato_modus || 'full_date'
   );
   const [companyAddress, setCompanyAddress] = useState(
-    (organization as any).company_address || ''
+    (organization.company_address as string) || ''
   );
   const [companyPostnummer, setCompanyPostnummer] = useState(
     (organization as any).company_postnummer || ''
@@ -142,13 +142,25 @@ export function OrgSettingsForm({
   }
 
   // ---- Address autocomplete ----
+  interface KartverketAddress {
+    adressetekst?: string;
+    postnummer?: string;
+    poststed?: string;
+    representasjonspunkt?: { lat: number; lon: number };
+    kommunenavn?: string;
+  }
+
+  interface KartverketResponse {
+    adresser?: KartverketAddress[];
+  }
+
   function parseKartverketResults(
-    data: any
+    data: KartverketResponse
   ): AddressSuggestion[] {
     if (!data.adresser || data.adresser.length === 0) return [];
     return data.adresser
-      .filter((addr: any) => addr.representasjonspunkt)
-      .map((addr: any) => ({
+      .filter((addr): addr is KartverketAddress & { representasjonspunkt: { lat: number; lon: number } } => !!addr.representasjonspunkt)
+      .map((addr) => ({
         adresse: addr.adressetekst || '',
         postnummer: addr.postnummer || '',
         poststed: addr.poststed || '',
@@ -232,8 +244,8 @@ export function OrgSettingsForm({
           return;
         }
       }
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return;
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return;
     }
 
     // Fallback: Kartverket fuzzy search
@@ -252,8 +264,8 @@ export function OrgSettingsForm({
           return;
         }
       }
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return;
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return;
     }
 
     // Last resort: backend proxy (Mapbox)
@@ -278,8 +290,8 @@ export function OrgSettingsForm({
       setSuggestions(results);
       setShowSuggestions(results.length > 0);
       setActiveSuggestionIndex(-1);
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
+    } catch (err: unknown) {
+      if (!(err instanceof Error && err.name === 'AbortError')) {
         setShowSuggestions(false);
       }
     }

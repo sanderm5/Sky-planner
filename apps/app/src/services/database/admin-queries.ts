@@ -809,17 +809,17 @@ export async function getPatchNotes(ctx: DatabaseContext, limit?: number): Promi
     if (limit) query = query.limit(limit);
     const { data, error } = await query;
     if (error) throw new Error(`Failed to fetch patch notes: ${error.message}`);
-    return (data || []).map((row: any) => ({
+    return (data || []).map((row: Record<string, unknown>) => ({
       ...row,
       items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
-    }));
+    })) as unknown as import('../../types').PatchNote[];
   }
   if (!ctx.sqlite) throw new Error('Database not initialized');
   const sql = limit
     ? 'SELECT * FROM patch_notes WHERE aktiv = 1 ORDER BY published_at DESC LIMIT ?'
     : 'SELECT * FROM patch_notes WHERE aktiv = 1 ORDER BY published_at DESC';
-  const rows = (limit ? ctx.sqlite.prepare(sql).all(limit) : ctx.sqlite.prepare(sql).all()) as any[];
-  return rows.map(r => ({ ...r, items: JSON.parse(r.items || '[]'), aktiv: !!r.aktiv }));
+  const rows = (limit ? ctx.sqlite.prepare(sql).all(limit) : ctx.sqlite.prepare(sql).all()) as Record<string, unknown>[];
+  return rows.map(r => ({ ...r, items: JSON.parse((r.items as string) || '[]'), aktiv: !!r.aktiv })) as unknown as import('../../types').PatchNote[];
 }
 
 export async function getPatchNotesSince(ctx: DatabaseContext, sinceId: number): Promise<import('../../types').PatchNote[]> {
@@ -832,16 +832,16 @@ export async function getPatchNotesSince(ctx: DatabaseContext, sinceId: number):
       .gt('id', sinceId)
       .order('published_at', { ascending: false });
     if (error) throw new Error(`Failed to fetch patch notes: ${error.message}`);
-    return (data || []).map((row: any) => ({
+    return (data || []).map((row: Record<string, unknown>) => ({
       ...row,
       items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
-    }));
+    })) as unknown as import('../../types').PatchNote[];
   }
   if (!ctx.sqlite) throw new Error('Database not initialized');
   const rows = ctx.sqlite.prepare(
     'SELECT * FROM patch_notes WHERE aktiv = 1 AND id > ? ORDER BY published_at DESC'
-  ).all(sinceId) as any[];
-  return rows.map(r => ({ ...r, items: JSON.parse(r.items || '[]'), aktiv: !!r.aktiv }));
+  ).all(sinceId) as Record<string, unknown>[];
+  return rows.map(r => ({ ...r, items: JSON.parse((r.items as string) || '[]'), aktiv: !!r.aktiv })) as unknown as import('../../types').PatchNote[];
 }
 
 export async function getLatestPatchNoteId(ctx: DatabaseContext): Promise<number> {
@@ -1017,7 +1017,7 @@ export async function copyTemplateServiceTypes(ctx: DatabaseContext, organizatio
     if (!templates || templates.length === 0) return [];
 
     // Insert as org service types (ignore conflicts)
-    const rows = templates.map((t: any) => ({
+    const rows = templates.map((t: Record<string, unknown>) => ({
       organization_id: organizationId,
       name: t.name,
       slug: t.slug,

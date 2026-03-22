@@ -7,9 +7,9 @@
  * - app.skyplanner.no (main application)
  */
 // JWT utilities
-export { signToken, verifyToken, decodeToken, isTokenExpired, getTokenTTL, } from './jwt';
+export { signToken, signRefreshToken, verifyToken, verifyTokenWithFallback, decodeToken, isTokenExpired, getTokenTTL, } from './jwt';
 // Cookie utilities
-export { AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME, getCookieConfig, getRefreshCookieConfig, extractTokenFromCookies, buildSetCookieHeader, buildClearCookieHeader, } from './cookies';
+export { AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME, getCookieConfig, getRefreshCookieConfig, extractTokenFromCookies, buildSetCookieHeader, buildClearCookieHeader, buildClearCookieHeaders, } from './cookies';
 // Password validation
 export { validatePassword, assertValidPassword, getPasswordStrengthLabel, } from './password-validation';
 // TOTP (Two-Factor Authentication)

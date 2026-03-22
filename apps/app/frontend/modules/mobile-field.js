@@ -1098,11 +1098,11 @@ async function mfNotifyCustomer(kundeId) {
       </div>
       <div class="mf-info-body">
         <p style="margin:0 0 12px">Send «på vei»-varsel til <strong>${escapeHtml(kunde.kontaktperson || kunde.navn)}</strong>?</p>
-        <p style="margin:0 0 8px;color:#a1a1aa;font-size:13px"><i class="fas fa-envelope" aria-hidden="true"></i> ${escapeHtml(kunde.epost)}</p>
+        <p style="margin:0 0 8px;color:var(--color-text-muted);font-size:13px"><i class="fas fa-envelope" aria-hidden="true"></i> ${escapeHtml(kunde.epost)}</p>
         <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
           <span>Estimert ankomst:</span>
           <input type="number" id="mfNotifyEstMin" value="${estMin}" min="1" max="180" step="5"
-            style="width:60px;padding:4px 8px;border:1px solid #3f3f46;border-radius:6px;background:#27272a;color:#e4e4e7;text-align:center">
+            style="width:60px;padding:4px 8px;border:1px solid var(--color-border);border-radius:6px;background:var(--color-bg-tertiary);color:var(--color-text-primary);text-align:center">
           <span>min</span>
         </label>
       </div>
@@ -1110,7 +1110,7 @@ async function mfNotifyCustomer(kundeId) {
         <button class="mf-btn mf-btn-notify" id="mfNotifySendBtn">
           <i class="fas fa-paper-plane" aria-hidden="true"></i> Send varsel
         </button>
-        <button class="mf-btn" id="mfNotifyCancelBtn" style="background:#3f3f46">
+        <button class="mf-btn" id="mfNotifyCancelBtn" style="background:var(--color-bg-tertiary)">
           Avbryt
         </button>
       </div>

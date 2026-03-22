@@ -92,6 +92,8 @@ async function raoLoadWeekData() {
   raoRenderWeekGrid();
   // Activate team map coloring after data loads
   raoActivateTeamMap();
+  // Load ukeplan notes for customer popover indicators
+  if (typeof cnpLoadWeekNotes === 'function') cnpLoadWeekNotes(raoWeekStart);
 }
 
 // ---- Navigation ----
@@ -330,9 +332,10 @@ function raoRenderWeekGrid() {
           if (isExpanded && route.kunder && route.kunder.length > 0) {
             html += '<div class="rao-stop-list">';
             route.kunder.forEach((k, ki) => {
-              html += `<div class="rao-stop-item">
+              html += `<div class="rao-stop-item cnp-clickable" data-action="cnpShowPopover" data-args='[${k.id}]' data-kunde-id="${k.id}">
                 <span class="rao-stop-num">${ki + 1}</span>
                 <span class="rao-stop-name">${escapeHtml(k.navn || 'Ukjent')}</span>
+                <i class="fas fa-sticky-note cnp-note-indicator" style="display:none" aria-hidden="true"></i>
               </div>`;
             });
             html += '</div>';
@@ -371,9 +374,10 @@ function raoRenderWeekGrid() {
           if (isExpanded && route.kunder && route.kunder.length > 0) {
             html += '<div class="rao-stop-list">';
             route.kunder.forEach((k, ki) => {
-              html += `<div class="rao-stop-item">
+              html += `<div class="rao-stop-item cnp-clickable" data-action="cnpShowPopover" data-args='[${k.id}]' data-kunde-id="${k.id}">
                 <span class="rao-stop-num">${ki + 1}</span>
                 <span class="rao-stop-name">${escapeHtml(k.navn || 'Ukjent')}</span>
+                <i class="fas fa-sticky-note cnp-note-indicator" style="display:none" aria-hidden="true"></i>
               </div>`;
             });
             html += '</div>';

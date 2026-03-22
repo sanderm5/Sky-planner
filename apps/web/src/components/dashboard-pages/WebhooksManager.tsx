@@ -196,8 +196,8 @@ export function WebhooksManager({ isAdmin }: WebhooksManagerProps) {
       // Show the secret
       setNewWebhookSecret(data.data.secret);
       openModal(setShowCreatedModal);
-    } catch (err: any) {
-      setCreateError(err.message);
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Ukjent feil');
     } finally {
       setCreating(false);
     }
@@ -222,8 +222,8 @@ export function WebhooksManager({ isAdmin }: WebhooksManagerProps) {
       });
       if (!res.ok) throw new Error('Kunne ikke slette webhook');
       await loadWebhooks();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Ukjent feil');
     }
   }
 

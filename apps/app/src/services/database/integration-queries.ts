@@ -1001,7 +1001,7 @@ export async function getOrganizationApiKeys(ctx: DatabaseContext, organizationI
       .order('created_at', { ascending: false });
 
     if (error) throw new Error(`Failed to get API keys: ${error.message}`);
-    return (data || []).map((k: any) => ({ ...k, is_active: !!k.is_active }));
+    return (data || []).map((k) => ({ ...k, is_active: !!k.is_active }));
   }
 
   if (!ctx.sqlite) return [];

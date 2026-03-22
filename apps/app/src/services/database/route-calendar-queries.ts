@@ -6,7 +6,31 @@
 
 import type { DatabaseContext, Kunde, Rute, Avtale } from './types';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+// Row types for Supabase query results (untyped without codegen)
+interface RuteRow {
+  id: number;
+  navn: string;
+  assigned_to: number | null;
+  planned_date: string | null;
+  planlagt_dato: string | null;
+  execution_started_at: string | null;
+  execution_ended_at: string | null;
+  organization_id: number;
+}
+
+interface RuteKundeRow {
+  kunde_id: number;
+  kunder?: { id: number; navn: string; adresse: string } | null;
+}
+
+interface VisitRow {
+  completed: boolean;
+}
+
+interface AvtaleRow extends Record<string, unknown> {
+  kunder?: { navn?: string; adresse?: string; postnummer?: string; poststed?: string; telefon?: string; kategori?: string } | null;
+  _tildelt_tekniker?: string | null;
+}
 
 // ============ RUTER CRUD ============
 
@@ -435,9 +459,9 @@ export async function getRoutesForDateByOrg(
     if (!routes || routes.length === 0) return [];
 
     // Get team member names for assigned routes
-    const assignedIds = routes
-      .map((r: any) => r.assigned_to)
-      .filter((id: any): id is number => id != null);
+    const assignedIds = (routes as RuteRow[])
+      .map((r) => r.assigned_to)
+      .filter((id): id is number => id != null);
 
     let memberNameMap: Record<number, string> = {};
     if (assignedIds.length > 0) {
@@ -462,7 +486,7 @@ export async function getRoutesForDateByOrg(
         .eq('rute_id', route.id)
         .order('rekkefolge', { ascending: true });
 
-      const kunder = (ruteKunder || []).map((rk: any) => ({
+      const kunder = (ruteKunder || []).map((rk: RuteKundeRow) => ({
         id: rk.kunder?.id ?? rk.kunde_id,
         navn: rk.kunder?.navn ?? '',
         adresse: rk.kunder?.adresse ?? '',
@@ -475,14 +499,14 @@ export async function getRoutesForDateByOrg(
         .eq('rute_id', route.id)
         .eq('organization_id', organizationId);
 
-      const completedCount = (visits || []).filter((v: any) => v.completed).length;
+      const completedCount = (visits || []).filter((v: VisitRow) => v.completed).length;
 
       results.push({
         id: route.id,
         navn: route.navn,
         assigned_to: route.assigned_to,
         technician_name: route.assigned_to ? (memberNameMap[route.assigned_to] || null) : null,
-        planned_date: route.planned_date || (route as any).planlagt_dato,
+        planned_date: route.planned_date || route.planlagt_dato,
         total_count: kunder.length,
         completed_count: completedCount,
         execution_started_at: route.execution_started_at || null,
@@ -578,8 +602,8 @@ export async function getAllAvtaler(ctx: DatabaseContext, organizationId: number
   ctx.validateTenantContext(organizationId, 'getAllAvtaler');
 
   if (ctx.type === 'supabase' && ctx.supabase) {
-    const data = await ctx.supabase.getAvtalerByTenant(organizationId, start, end) as any[];
-    return (data || []).map((a: any) => ({
+    const data = await ctx.supabase.getAvtalerByTenant(organizationId, start, end);
+    return ((data || []) as AvtaleRow[]).map((a) => ({
       ...a,
       kunde_navn: a.kunder?.navn,
       adresse: a.kunder?.adresse,
@@ -587,9 +611,8 @@ export async function getAllAvtaler(ctx: DatabaseContext, organizationId: number
       poststed: a.kunder?.poststed,
       telefon: a.kunder?.telefon,
       kategori: a.kunder?.kategori,
-      // Resolve technician name from route assignment (overrides opprettet_av for display)
       tildelt_tekniker: a._tildelt_tekniker || null,
-    }));
+    })) as unknown as (Avtale & { kunde_navn?: string })[];
   }
 
   if (!ctx.sqlite) throw new Error('Database not initialized');

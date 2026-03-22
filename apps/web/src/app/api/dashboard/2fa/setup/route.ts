@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import * as db from '@skyplanner/database';
 import * as auth from '@skyplanner/auth';
 import QRCode from 'qrcode';
+import bcrypt from 'bcryptjs';
 import { requireApiAuth, isAuthError } from '@/lib/auth';
 import { initDb } from '@/lib/db';
 
@@ -27,12 +28,27 @@ export async function POST(request: NextRequest) {
 
   const payload = authResult.payload;
 
+  // Require password re-verification before 2FA setup
+  let body: { password?: string } = {};
   try {
-    // Get user with 2FA status using direct query
+    body = await request.json();
+  } catch {
+    // No body provided
+  }
+
+  if (!body.password) {
+    return Response.json(
+      { success: false, error: { code: 'ERROR', message: 'Passord er påkrevd for å aktivere 2FA' } },
+      { status: 400 }
+    );
+  }
+
+  try {
+    // Get user with 2FA status and password hash
     const client = db.getSupabaseClient();
     const { data: klient, error: fetchError } = await client
       .from('klient')
-      .select('id, epost, totp_enabled')
+      .select('id, epost, totp_enabled, passord_hash')
       .eq('id', payload.userId)
       .single();
 
@@ -40,6 +56,15 @@ export async function POST(request: NextRequest) {
       return Response.json(
         { success: false, error: { code: 'ERROR', message: 'Bruker ikke funnet' } },
         { status: 404 }
+      );
+    }
+
+    // Verify password before allowing 2FA setup
+    const passwordValid = await bcrypt.compare(body.password, klient.passord_hash);
+    if (!passwordValid) {
+      return Response.json(
+        { success: false, error: { code: 'ERROR', message: 'Feil passord' } },
+        { status: 401 }
       );
     }
 

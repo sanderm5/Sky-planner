@@ -14,7 +14,7 @@ export default async function BrukerePage() {
   const users = await db.getKlienterByOrganization(organization.id);
 
   // Serialize users for client component
-  const serializedUsers = users.map((u: any) => ({
+  const serializedUsers = users.map((u) => ({
     id: u.id,
     navn: u.navn,
     epost: u.epost,

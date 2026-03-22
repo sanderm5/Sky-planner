@@ -36,6 +36,7 @@ import type {
   StagingRowStatus,
   UploadImportResponse,
   BatchQualityReport,
+  InsertValidationError,
 } from '../../types/import';
 
 // Database service interface
@@ -507,7 +508,7 @@ class ImportService {
       offset: 0,
     });
 
-    const allErrors: any[] = [];
+    const allErrors: InsertValidationError[] = [];
     const counts = await this.validateRows(stagingRows, batchId, mappingConfig, allErrors);
 
     // Duplicate detection
@@ -537,7 +538,7 @@ class ImportService {
       validCount: counts.valid,
       warningCount: counts.warning,
       errorCount: counts.error,
-      errors: allErrors,
+      errors: allErrors as unknown as import('../../types/import').ImportValidationError[],
       previewRows: [],
       duplicateReport: dupResult ? {
         totalChecked: dupResult.totalChecked,
@@ -553,7 +554,7 @@ class ImportService {
     stagingRows: ImportStagingRow[],
     batchId: number,
     mappingConfig: ImportMappingConfig | undefined,
-    allErrors: any[]
+    allErrors: InsertValidationError[]
   ): Promise<{ valid: number; warning: number; error: number; completenessScores: number[] }> {
     let valid = 0, warning = 0, error = 0;
     const completenessScores: number[] = [];
@@ -587,7 +588,7 @@ class ImportService {
     organizationId: number,
     batchId: number,
     stagingRows: ImportStagingRow[],
-    allErrors: any[],
+    allErrors: InsertValidationError[],
     counts: { valid: number; warning: number; error: number }
   ): Promise<BatchDuplicateReport | undefined> {
     try {
@@ -611,7 +612,7 @@ class ImportService {
     report: BatchDuplicateReport,
     stagingRows: ImportStagingRow[],
     batchId: number,
-    allErrors: any[],
+    allErrors: InsertValidationError[],
     counts: { valid: number; warning: number }
   ): Promise<void> {
     for (const dupResult of report.results) {
@@ -619,7 +620,7 @@ class ImportService {
       const topCandidate = dupResult.candidates[0];
       if (!stagingRow || !topCandidate) continue;
 
-      const errorCode = topCandidate.batchRowIndex === undefined ? 'DUPLICATE_ENTRY' : 'DUPLICATE_IN_BATCH';
+      const errorCode = topCandidate.batchRowIndex === undefined ? 'DUPLICATE_ENTRY' as const : 'DUPLICATE_IN_BATCH' as const;
       const message = topCandidate.existingKundeId
         ? `Mulig duplikat av eksisterende kunde "${topCandidate.navn}" (${Math.round(topCandidate.score * 100)}% match)`
         : `Mulig duplikat av rad ${(topCandidate.batchRowIndex ?? 0) + 2} i filen (${Math.round(topCandidate.score * 100)}% match)`;
@@ -648,7 +649,7 @@ class ImportService {
   private buildQualityReport(
     stagingRows: ImportStagingRow[],
     counts: { valid: number; warning: number; error: number; completenessScores: number[] },
-    allErrors: any[]
+    allErrors: InsertValidationError[]
   ): BatchQualityReport {
     const total = counts.valid + counts.warning + counts.error;
     const completenessAvg = counts.completenessScores.length > 0

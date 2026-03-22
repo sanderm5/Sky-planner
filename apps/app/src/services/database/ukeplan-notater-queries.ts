@@ -24,6 +24,11 @@ export interface UkeplanNotat {
   kunde_poststed?: string;
 }
 
+// Supabase row with joined kunder relation
+interface NotatWithKundeRow extends Record<string, unknown> {
+  kunder?: { navn?: string; adresse?: string; poststed?: string } | null;
+}
+
 // ============ UKEPLAN NOTATER ============
 
 export async function getUkeplanNotater(ctx: DatabaseContext, organizationId: number, ukeStart: string): Promise<UkeplanNotat[]> {
@@ -40,7 +45,7 @@ export async function getUkeplanNotater(ctx: DatabaseContext, organizationId: nu
 
     if (error) throw error;
 
-    return (data || []).map((row: any) => ({
+    return (data || []).map((row: NotatWithKundeRow) => ({
       ...row,
       kunde_navn: row.kunder?.navn,
       kunde_adresse: row.kunder?.adresse,
@@ -214,7 +219,7 @@ export async function getOverforteNotater(ctx: DatabaseContext, organizationId: 
 
     if (error) throw error;
 
-    return (data || []).map((row: any) => ({
+    return (data || []).map((row: NotatWithKundeRow) => ({
       ...row,
       kunde_navn: row.kunder?.navn,
       kunde_adresse: row.kunder?.adresse,

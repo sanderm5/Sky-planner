@@ -139,7 +139,7 @@ export const requireAuth = cache(async (): Promise<AuthResult> => {
     redirect('/auth/login');
   }
 
-  const result = auth.verifyToken(token, JWT_SECRET);
+  const result = auth.verifyTokenWithFallback(token, JWT_SECRET, process.env.JWT_SECRET_PREVIOUS || undefined);
   if (!result.success || !result.payload) {
     redirect('/auth/login?error=session_expired');
   }
@@ -195,7 +195,7 @@ export async function requireApiAuth(
     );
   }
 
-  const result = auth.verifyToken(token, JWT_SECRET);
+  const result = auth.verifyTokenWithFallback(token, JWT_SECRET, process.env.JWT_SECRET_PREVIOUS || undefined);
   if (!result.success || !result.payload) {
     return new Response(
       JSON.stringify({ error: 'Ugyldig eller utløpt sesjon' }),

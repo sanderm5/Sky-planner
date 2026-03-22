@@ -122,6 +122,8 @@
     'popover-accounting','popover-import','popover-manual',
     // Add subcat
     'addSubcat','editSubcat','deleteSubcat',
+    // Customer note popover
+    'cnpShowPopover','cnpDismissPopover','cnpToggleAddForm','cnpSelectType','cnpSaveQuickNote',
   ]);
 
   // ---- Allowlisted handler names for change/input/submit/keydown ----

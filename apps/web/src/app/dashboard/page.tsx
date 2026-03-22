@@ -14,7 +14,7 @@ export default async function DashboardPage() {
     db.getKlienterByOrganization(organization.id),
     db.getKundeCountByOrganization(organization.id),
   ]);
-  const activeUsers = users.filter((u: any) => u.aktiv).length;
+  const activeUsers = users.filter((u) => u.aktiv).length;
 
   // Format subscription status
   const statusLabels: Record<string, string> = {

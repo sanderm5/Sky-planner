@@ -429,11 +429,11 @@ function renderLoginFeatures() {
   container.innerHTML = allFeatures.map(feature => `
     <div class="login-feature">
       <div class="login-feature-icon">
-        <i class="${feature.icon}"></i>
+        <i class="${escapeHtml(feature.icon)}"></i>
       </div>
       <div class="login-feature-text">
-        <h4>${feature.name}</h4>
-        <p>${feature.description}</p>
+        <h4>${escapeHtml(feature.name)}</h4>
+        <p>${escapeHtml(feature.description)}</p>
       </div>
     </div>
   `).join('');

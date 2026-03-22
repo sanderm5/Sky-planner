@@ -21,22 +21,22 @@ async function quickMarkVisited(customerId) {
   overlay.className = 'qmv-overlay';
   overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100001;display:flex;justify-content:center;align-items:center;padding:20px;';
   overlay.innerHTML = `
-    <div style="background:var(--color-bg-secondary,#1a1a1a);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border,#333);">
-      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary,#fff);">
+    <div style="background:var(--color-bg-secondary);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border);">
+      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary);">
         Marker besøkt: ${escapeHtml(customer?.navn || 'Kunde')}
       </h3>
       <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Dato for besøk</label>
-        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="qmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);font-size:15px;">
+        <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Dato for besøk</label>
+        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="qmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);font-size:15px;">
       </div>
       ${serviceTypes.length > 0 ? `
         <div style="margin-bottom:20px;">
-          <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Oppdater kontrolldatoer</label>
+          <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Oppdater kontrolldatoer</label>
           ${checkboxesHtml}
         </div>
       ` : ''}
       <div style="display:flex;gap:12px;justify-content:flex-end;">
-        <button id="qmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);cursor:pointer;">Avbryt</button>
+        <button id="qmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);cursor:pointer;">Avbryt</button>
         <button id="qmvConfirm" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:none;background:var(--color-accent,#5E81AC);color:#fff;cursor:pointer;">Marker besøkt</button>
       </div>
     </div>
@@ -108,22 +108,22 @@ async function bulkMarkVisited(customerIds) {
   overlay.className = 'qmv-overlay';
   overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100001;display:flex;justify-content:center;align-items:center;padding:20px;';
   overlay.innerHTML = `
-    <div style="background:var(--color-bg-secondary,#1a1a1a);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border,#333);">
-      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary,#fff);">
+    <div style="background:var(--color-bg-secondary);border-radius:16px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.5);border:1px solid var(--color-border);">
+      <h3 style="margin:0 0 16px;font-size:18px;color:var(--color-text-primary);">
         Marker ${count} kunder som besøkt
       </h3>
       <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Dato for besøk</label>
-        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="bmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);font-size:15px;">
+        <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Dato for besøk</label>
+        <input type="${appConfig.datoModus === 'month_year' ? 'month' : 'date'}" id="bmvDate" value="${appConfig.datoModus === 'month_year' ? today.substring(0, 7) : today}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);font-size:15px;">
       </div>
       ${serviceTypes.length > 0 ? `
         <div style="margin-bottom:20px;">
-          <label style="display:block;font-size:13px;color:var(--color-text-secondary,#a0a0a0);margin-bottom:6px;">Oppdater kontrolldatoer</label>
+          <label style="display:block;font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">Oppdater kontrolldatoer</label>
           ${checkboxesHtml}
         </div>
       ` : ''}
       <div style="display:flex;gap:12px;justify-content:flex-end;">
-        <button id="bmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border,#333);background:var(--color-bg-tertiary,#252525);color:var(--color-text-primary,#fff);cursor:pointer;">Avbryt</button>
+        <button id="bmvCancel" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:1px solid var(--color-border);background:var(--color-bg-tertiary);color:var(--color-text-primary);cursor:pointer;">Avbryt</button>
         <button id="bmvConfirm" style="padding:12px 24px;font-size:15px;font-weight:600;border-radius:10px;border:none;background:var(--color-accent,#5E81AC);color:#fff;cursor:pointer;">Marker besøkt</button>
       </div>
     </div>

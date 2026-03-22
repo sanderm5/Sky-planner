@@ -68,8 +68,8 @@ export function FakturaerManager() {
       }
 
       setInvoices(result.invoices || []);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Ukjent feil');
     } finally {
       setLoading(false);
     }

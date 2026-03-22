@@ -45,6 +45,11 @@ export default function LoginForm() {
         return;
       }
 
+      // Store email verification status for dashboard banner
+      if (data.emailVerified === false) {
+        sessionStorage.setItem('skyplanner_email_unverified', 'true');
+      }
+
       if (data.redirectUrl) {
         window.location.href = data.redirectUrl;
       }

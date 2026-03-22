@@ -32,7 +32,7 @@ const ModalSystem = {
           width: 100%;
           padding: 32px;
           box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-          border: 1px solid var(--color-border, #333);
+          border: 1px solid var(--color-border);
         ">
           <div class="modal-system-icon" style="
             text-align: center;
@@ -42,14 +42,14 @@ const ModalSystem = {
           <h2 class="modal-system-title" id="modal-system-title" style="
             font-size: 22px;
             font-weight: 600;
-            color: var(--color-text-primary, #fff);
+            color: var(--color-text-primary);
             margin: 0 0 16px 0;
             text-align: center;
             line-height: 1.4;
           "></h2>
           <p class="modal-system-message" style="
             font-size: 18px;
-            color: var(--color-text-secondary, #a0a0a0);
+            color: var(--color-text-secondary);
             margin: 0 0 28px 0;
             text-align: center;
             line-height: 1.6;
@@ -115,9 +115,9 @@ const ModalSystem = {
           button.style.background = 'var(--color-accent, #5E81AC)';
           button.style.color = '#fff';
         } else {
-          button.style.background = 'var(--color-bg-tertiary, #252525)';
-          button.style.color = 'var(--color-text-primary, #fff)';
-          button.style.border = '1px solid var(--color-border, #333)';
+          button.style.background = 'var(--color-bg-tertiary)';
+          button.style.color = 'var(--color-text-primary)';
+          button.style.border = '1px solid var(--color-border)';
         }
 
         button.onclick = () => {

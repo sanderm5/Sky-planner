@@ -95,6 +95,7 @@ function updateWeekPlanBadges() {
     }
   }
   if (typeof refreshClusters === 'function') refreshClusters();
+  if (typeof TeamZones !== 'undefined' && TeamZones.visible) TeamZones.update();
 }
 
 // Lightweight re-apply of plan badges on visible markers (uses data stored on marker.options)

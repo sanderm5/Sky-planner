@@ -108,7 +108,7 @@ function editCustomer(id) {
   if (claim && claim.userId !== myUserId) {
     const banner = document.createElement('div');
     banner.id = 'presenceWarningBanner';
-    banner.style.cssText = `background:${getPresenceColor(claim.userId)}18;border-left:3px solid ${getPresenceColor(claim.userId)};padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:13px;color:#333;`;
+    banner.style.cssText = `background:${getPresenceColor(claim.userId)}18;border-left:3px solid ${getPresenceColor(claim.userId)};padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:13px;color:var(--color-text-primary);`;
     banner.innerHTML = `<strong>${escapeHtml(claim.initials)}</strong> ${escapeHtml(claim.userName)} jobber med denne kunden`;
     const modalTitle = document.getElementById('modalTitle');
     modalTitle.parentNode.insertBefore(banner, modalTitle.nextSibling);

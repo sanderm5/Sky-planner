@@ -125,6 +125,92 @@ function wpGetDayCapacityByMember(dayKey) {
   return memberMap;
 }
 
+function getWpDayTeamMembers(dayKey) {
+  const memberCap = wpGetDayCapacityByMember(dayKey);
+  return Array.from(memberCap.entries()).map(([name, data]) => ({ name, count: data.stopCount }));
+}
+
+async function getWpAvailableTeamMembers(dayKey) {
+  const allMembers = await loadWpTeamMembers();
+  if (!allMembers || allMembers.length === 0) return [];
+  const dayMembers = getWpDayTeamMembers(dayKey);
+  const dayMemberMap = new Map(dayMembers.map(m => [m.name, m.count]));
+  // Include all team members + current user, show stop count for those with stops
+  const currentUser = localStorage.getItem('userName') || '';
+  const seen = new Set();
+  const result = [];
+  // First: members that have stops on this day
+  for (const m of dayMembers) {
+    result.push({ name: m.name, count: m.count });
+    seen.add(m.name);
+  }
+  // Then: other team members without stops
+  for (const m of allMembers) {
+    if (!seen.has(m.navn)) {
+      result.push({ name: m.navn, count: 0 });
+      seen.add(m.navn);
+    }
+  }
+  // Include current user if not already
+  if (currentUser && !seen.has(currentUser)) {
+    result.push({ name: currentUser, count: dayMemberMap.get(currentUser) || 0 });
+  }
+  return result;
+}
+
+function wpShowTeamMemberPicker(dayKey, members, totalDayStops) {
+  return new Promise((resolve) => {
+    // Build color map from TEAM_COLORS
+    const colorMap = new Map();
+    members.forEach((m, i) => { colorMap.set(m.name, TEAM_COLORS[i % TEAM_COLORS.length]); });
+
+    let optionsHtml = members.map((m, i) => {
+      const initials = getCreatorDisplay(m.name, true);
+      const color = colorMap.get(m.name) || TEAM_COLORS[0];
+      const countLabel = m.count > 0 ? `${m.count} stopp` : '';
+      return `<button class="wp-team-picker-option" data-member-idx="${i}">
+        <span class="wp-team-picker-avatar" style="background:${color}">${escapeHtml(initials)}</span>
+        <span class="wp-team-picker-name">${escapeHtml(m.name)}</span>
+        <span class="wp-team-picker-count">${countLabel}</span>
+      </button>`;
+    }).join('');
+
+    optionsHtml += `<button class="wp-team-picker-option wp-team-picker-all" data-member-idx="__all__">
+      <span class="wp-team-picker-avatar" style="background:#888"><i class="fas fa-users" aria-hidden="true" style="font-size:11px"></i></span>
+      <span class="wp-team-picker-name">Alle</span>
+      <span class="wp-team-picker-count">${totalDayStops} stopp</span>
+    </button>`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'wp-team-picker-overlay';
+    overlay.innerHTML = `<div class="wp-team-picker">
+      <div class="wp-team-picker-title">Velg teammedlem</div>
+      <div class="wp-team-picker-options">${optionsHtml}</div>
+      <button class="btn btn-small btn-secondary wp-team-picker-cancel">Avbryt</button>
+    </div>`;
+
+    function cleanup(result) {
+      overlay.remove();
+      resolve(result);
+    }
+
+    overlay.addEventListener('click', (e) => {
+      const opt = e.target.closest('.wp-team-picker-option');
+      if (opt) {
+        const idx = opt.dataset.memberIdx;
+        if (idx === '__all__') { cleanup('__all__'); return; }
+        const member = members[parseInt(idx, 10)];
+        cleanup(member ? member.name : null);
+        return;
+      }
+      if (e.target.closest('.wp-team-picker-cancel')) { cleanup(null); return; }
+      if (e.target === overlay) { cleanup(null); }
+    });
+
+    document.body.appendChild(overlay);
+  });
+}
+
 function wpRenderCapacityBars(dayKey, teamColorMap, currentUserColor) {
   const memberCap = wpGetDayCapacityByMember(dayKey);
   if (memberCap.size < 2) return '';
@@ -239,7 +325,9 @@ function focusTeamMemberOnMap(memberName) {
 
   // Zoom map FIRST, then apply styling after zoom settles
   if (hasPoints) {
-    map.fitBounds(bounds, { maxZoom: 11, padding: 40 });
+    const cp = document.querySelector('.content-panel');
+    const cpWidth = (cp && !cp.classList.contains('closed')) ? cp.offsetWidth : 0;
+    map.fitBounds(bounds, { maxZoom: 13, padding: { top: 60, bottom: 60, left: 60, right: cpWidth + 60 } });
   }
 
   // Delay focus styling until after zoom animation completes
@@ -607,7 +695,11 @@ async function renderWeeklyPlan() {
       html += `<span class="wp-team-chip ${isActive ? 'active' : ''}" style="background:${member.color}" data-action="focusTeamMember" data-member-name="${escapeHtml(member.name)}" title="Vis ${escapeHtml(member.name)} på kartet" role="button" tabindex="0">${escapeHtml(member.initials)} <span class="chip-count">${member.count}</span></span>`;
     }
     if (wpFocusedTeamMember) {
-      html += `<span class="wp-team-chip" style="background:var(--bg-tertiary, #666);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-times"></i></span>`;
+      html += `<span class="wp-team-chip" style="background:var(--color-bg-tertiary);font-size:11px;" data-action="focusTeamMember" data-member-name="${escapeHtml(wpFocusedTeamMember)}" title="Vis alle" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-times"></i></span>`;
+    }
+    if (teamMembers.length >= 1) {
+      const zonesActive = typeof TeamZones !== 'undefined' && TeamZones.visible;
+      html += `<span class="wp-team-zone-toggle ${zonesActive ? 'active' : ''}" data-action="toggleTeamZones" title="Vis/skjul teamområder" role="button" tabindex="0"><i aria-hidden="true" class="fas fa-draw-polygon"></i></span>`;
     }
     html += `</div>`;
   }
@@ -695,7 +787,7 @@ async function renderWeeklyPlan() {
           <div class="wp-item new wp-timeline-item stagger-item" draggable="true" style="--stagger-index:${Math.min(stopIndex - 1, 15)};border-left:3px solid ${custColor}" data-customer-id="${c.id}" data-day="${dayKey}">
             <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${custColor}">${stopIndex}</span>${custInitials ? `<span class="wp-stop-initials" style="background:${custColor}">${escapeHtml(custInitials)}</span>` : ''}</span>
             <div class="wp-item-main">
-              <span class="wp-item-name">${escapeHtml(c.navn)}${custContext.icons}</span>
+              <span class="wp-item-name"><span class="cnp-clickable" data-action="cnpShowPopover" data-args='[${c.id}]' data-kunde-id="${c.id}" title="Vis notater">${escapeHtml(c.navn)}</span>${custContext.icons}</span>
               ${addrStr ? `<span class="wp-item-addr" title="${escapeHtml(addrStr)}">${escapeHtml(addrStr)}</span>` : ''}
               ${c.telefon ? `<span class="wp-item-phone"><i aria-hidden="true" class="fas fa-phone" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(c.telefon)}</span>` : ''}
               <span class="wp-item-timerange"><i aria-hidden="true" class="fas fa-clock" style="font-size:8px;margin-right:2px;"></i>${startTime} - ${endTime}</span>
@@ -718,13 +810,13 @@ async function renderWeeklyPlan() {
         const addr = [a.kunder?.adresse, a.kunder?.postnummer, a.kunder?.poststed].filter(Boolean).join(', ');
         const phone = a.kunder?.telefon || a.telefon || '';
         const creatorName = a.tildelt_tekniker || (a.opprettet_av && a.opprettet_av !== 'admin' ? a.opprettet_av : '');
-        const creatorColor = creatorName ? (teamColorMap.get(creatorName) || '#999') : '';
+        const creatorColor = creatorName ? (teamColorMap.get(creatorName) || 'var(--color-text-muted)') : '';
         const exStartTime = formatTimeOfDay(cumulativeMin);
         cumulativeMin += (a.varighet || 30);
         const exEndTime = formatTimeOfDay(cumulativeMin);
         html += `
           <div class="wp-item existing wp-timeline-item" data-avtale-id="${a.id}" data-avtale-name="${escapeHtml(name)}" style="${creatorColor ? 'border-left:3px solid ' + creatorColor : ''}" title="${creatorName ? 'Opprettet av ' + escapeHtml(creatorName) : ''}">
-            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${creatorColor || 'var(--bg-tertiary, #666)'}">${stopIndex}</span>${creatorName ? `<span class="wp-stop-initials" style="background:${creatorColor || 'var(--bg-tertiary, #666)'}">${escapeHtml(getCreatorDisplay(creatorName, true))}</span>` : ''}</span>
+            <span class="wp-stop-badge"><span class="wp-stop-num" style="background:${creatorColor || 'var(--color-bg-tertiary)'}">${stopIndex}</span>${creatorName ? `<span class="wp-stop-initials" style="background:${creatorColor || 'var(--color-bg-tertiary)'}">${escapeHtml(getCreatorDisplay(creatorName, true))}</span>` : ''}</span>
             <div class="wp-item-main">
               <span class="wp-item-name">${escapeHtml(name)}</span>
               ${addr ? `<span class="wp-item-addr">${escapeHtml(addr)}</span>` : ''}
@@ -1131,6 +1223,9 @@ async function renderWeeklyPlan() {
 
   // Update map markers with plan badges
   updateWeekPlanBadges();
+
+  // Restore team zone visibility from localStorage
+  if (typeof TeamZones !== 'undefined') TeamZones.restore();
 
   // Load travel times asynchronously for each day with content
   if (typeof MatrixService !== 'undefined') {
@@ -2115,7 +2210,7 @@ async function clearDayAvtaler(dayKey, dateStr) {
 }
 
 // Helper: collect stops with coordinates for a weekplan day (planned + existing avtaler)
-function getWpDayStops(dayKey, includeAvtaler = false) {
+function getWpDayStops(dayKey, includeAvtaler = false, filterMember = null) {
   const dayData = weekPlanState.days[dayKey];
   if (!dayData) return null;
 
@@ -2128,7 +2223,13 @@ function getWpDayStops(dayKey, includeAvtaler = false) {
 
   if (includeAvtaler) {
     const dateStr = dayData.date;
-    const existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+    let existingAvtaler = avtaler.filter(a => a.dato === dateStr);
+    if (filterMember) {
+      existingAvtaler = existingAvtaler.filter(a => {
+        const tech = a.tildelt_tekniker || a.opprettet_av || '';
+        return tech === filterMember;
+      });
+    }
     for (const a of existingAvtaler) {
       const kunde = customers.find(c => c.id === a.kunde_id);
       if (kunde?.lat && kunde?.lng) {
@@ -2158,6 +2259,15 @@ function reorderPlannedStops(dayData, optimizedStops) {
 }
 
 async function wpOptimizeOrder(dayKey) {
+  const availableMembers = await getWpAvailableTeamMembers(dayKey);
+  const dayStopCount = weekPlanState.days[dayKey]?.planned?.length || 0;
+  let filterMember = null;
+  if (availableMembers.length > 1) {
+    filterMember = await wpShowTeamMemberPicker(dayKey, availableMembers, dayStopCount);
+    if (filterMember === null) return;
+  }
+  // filterMember = who the route is FOR (display only), don't filter stops
+
   const result = getWpDayStops(dayKey);
   if (!result) return;
   const { dayData, stops, routeStart } = result;
@@ -2243,7 +2353,17 @@ async function wpNotifyCustomer(kundeId) {
 }
 
 async function wpNavigateDay(dayKey) {
-  const result = getWpDayStops(dayKey, true);
+  const availableMembers = await getWpAvailableTeamMembers(dayKey);
+  const dayStopCount = weekPlanState.days[dayKey]?.planned?.length || 0;
+  let filterMember = null;
+  if (availableMembers.length > 1) {
+    filterMember = await wpShowTeamMemberPicker(dayKey, availableMembers, dayStopCount);
+    if (filterMember === null) return;
+  }
+  // filterMember selects which team member's avtaler to include
+  const memberFilter = (filterMember && filterMember !== '__all__') ? filterMember : null;
+
+  const result = getWpDayStops(dayKey, true, memberFilter);
   if (!result) return;
   const { dayData, stops, routeStart } = result;
 
@@ -2295,7 +2415,7 @@ async function wpNavigateDay(dayKey) {
     currentRouteData = { customers: stops, duration: routeResult.drivingSeconds, distance: routeResult.distanceMeters };
 
     // Show summary panel
-    showWpRouteSummary(dayKey, stops, routeResult.drivingSeconds, routeResult.distanceMeters);
+    showWpRouteSummary(dayKey, stops, routeResult.drivingSeconds, routeResult.distanceMeters, filterMember);
 
   } catch (err) {
     if (loadingToast) loadingToast.remove();
@@ -2309,7 +2429,7 @@ async function wpNavigateDay(dayKey) {
 }
 
 // Show weekly plan route summary panel
-function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
+function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters, memberName = null) {
   // Only remove previous panel element (don't clear route - we just drew a new one)
   const oldPanel = document.getElementById('wpRouteSummary');
   if (oldPanel) oldPanel.remove();
@@ -2319,13 +2439,14 @@ function showWpRouteSummary(dayKey, stops, drivingSeconds, distanceMeters) {
   const totalMin = drivingMin + customerMin;
   const km = (distanceMeters / 1000).toFixed(1);
   const dayLabel = weekDayLabels[weekDayKeys.indexOf(dayKey)];
+  const memberLabel = memberName && memberName !== '__all__' ? ` — ${escapeHtml(memberName)}` : '';
 
   const panel = document.createElement('div');
   panel.id = 'wpRouteSummary';
   panel.className = 'wp-route-summary';
   panel.innerHTML = `
     <div class="wp-route-header">
-      <strong>${escapeHtml(dayLabel)} — ${stops.length} stopp</strong>
+      <strong>${escapeHtml(dayLabel)}${memberLabel} — ${stops.length} stopp</strong>
       <button class="wp-route-close" data-action="closeWpRoute" aria-label="Fjern">&times;</button>
     </div>
     <div class="wp-route-stats">
