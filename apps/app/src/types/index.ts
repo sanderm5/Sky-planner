@@ -607,6 +607,7 @@ export interface EnvConfig {
   NODE_ENV: 'development' | 'production' | 'test';
   DATABASE_TYPE: 'sqlite' | 'supabase';
   JWT_SECRET: string;
+  JWT_SECRET_PREVIOUS: string;
 
   // Supabase
   SUPABASE_URL?: string;

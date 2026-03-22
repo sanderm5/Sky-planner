@@ -294,21 +294,26 @@ router.post(
       familyId,
     }, config.JWT_SECRET, { expiresIn: '30d' });
 
-    // Store refresh token hash in database
+    // Store refresh token hash in database (non-blocking, don't fail login if table missing)
     const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
     const refreshDecoded = jwt.decode(refreshToken) as any;
-    const supabase = dbService.getSupabase();
-    await supabase.from('refresh_tokens').insert({
-      token_hash: refreshHash,
-      user_id: user.id,
-      user_type: userType,
-      organization_id: user.organization_id,
-      jti: refreshDecoded.jti,
-      family_id: familyId,
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      ip_address: ip,
-      user_agent: userAgent,
-    }).then(() => {}, err => authLogger.error({ err }, 'Failed to store refresh token'));
+    try {
+      const { getSupabaseClient } = await import('@skyplanner/database');
+      const supabase = getSupabaseClient();
+      await supabase.from('refresh_tokens').insert({
+        token_hash: refreshHash,
+        user_id: user.id,
+        user_type: userType,
+        organization_id: user.organization_id,
+        jti: refreshDecoded.jti,
+        family_id: familyId,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        ip_address: ip,
+        user_agent: userAgent,
+      });
+    } catch (err) {
+      authLogger.error({ err }, 'Failed to store refresh token');
+    }
 
     // Log successful login
     await dbService.logLoginAttempt({
@@ -569,7 +574,8 @@ router.post(
     if (refreshToken) {
       try {
         const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-        await dbService.getSupabase().from('refresh_tokens').update({ revoked_at: new Date().toISOString() }).eq('token_hash', refreshHash);
+        const { getSupabaseClient } = await import('@skyplanner/database');
+        await getSupabaseClient().from('refresh_tokens').update({ revoked_at: new Date().toISOString() }).eq('token_hash', refreshHash);
       } catch (err) {
         authLogger.error({ err }, 'Failed to revoke refresh token on logout');
       }
@@ -613,7 +619,8 @@ router.post(
 
     // Look up refresh token in database
     const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-    const supabase = dbService.getSupabase();
+    const { getSupabaseClient } = await import('@skyplanner/database');
+    const supabase = getSupabaseClient();
     const { data: stored } = await supabase
       .from('refresh_tokens')
       .select('*')
@@ -649,12 +656,12 @@ router.post(
     }
 
     // Fetch fresh user data
-    let user: any = null;
-    if (stored.user_type === 'klient') {
-      user = await dbService.getKlientById(stored.user_id);
-    } else {
-      user = await dbService.getBrukerById(stored.user_id);
-    }
+    const table = stored.user_type === 'klient' ? 'klient' : 'brukere';
+    const { data: user } = await supabase
+      .from(table)
+      .select('*')
+      .eq('id', stored.user_id)
+      .single();
 
     if (!user || !user.aktiv) {
       throw Errors.unauthorized('Bruker deaktivert');
