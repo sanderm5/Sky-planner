@@ -1477,6 +1477,12 @@ function handleLogout() {
   // customer/organization data between different logins
   // =====================================================
 
+  // Hide support widget
+  const supportWidget = document.getElementById('supportWidget');
+  if (supportWidget) supportWidget.style.display = 'none';
+  const supportPanel = document.getElementById('supportWidgetPanel');
+  if (supportPanel) supportPanel.style.display = 'none';
+
   // Clear customer data and map markers
   customers = [];
   selectedCustomers.clear();
