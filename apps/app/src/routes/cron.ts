@@ -6,6 +6,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { createLogger } from '../services/logger';
+import { asyncHandler } from '../middleware/errorHandler';
 import { cleanupExpiredTokens } from '../services/token-blacklist';
 import { getDatabase } from '../services/database';
 import { timingSafeEqual, createHash } from 'crypto';
@@ -54,7 +55,7 @@ function verifyCronSecret(req: Request, res: Response, next: NextFunction): void
  * POST /api/cron/cleanup-tokens
  * Cleans up expired JWT blacklist tokens and password reset tokens
  */
-router.post('/cleanup-tokens', verifyCronSecret, async (_req: Request, res: Response) => {
+router.post('/cleanup-tokens', verifyCronSecret, asyncHandler(async (_req: Request, res: Response) => {
   const startTime = Date.now();
   const results: Record<string, number | string> = {};
 
@@ -104,13 +105,13 @@ router.post('/cleanup-tokens', verifyCronSecret, async (_req: Request, res: Resp
       error: 'Cleanup failed',
     });
   }
-});
+}));
 
 /**
  * POST /api/cron/cleanup-all
  * Runs all cleanup tasks
  */
-router.post('/cleanup-all', verifyCronSecret, async (_req: Request, res: Response) => {
+router.post('/cleanup-all', verifyCronSecret, asyncHandler(async (_req: Request, res: Response) => {
   const startTime = Date.now();
   const results: Record<string, unknown> = {};
 
@@ -176,13 +177,13 @@ router.post('/cleanup-all', verifyCronSecret, async (_req: Request, res: Respons
       error: 'Cleanup failed',
     });
   }
-});
+}));
 
 /**
  * POST /api/cron/process-deletions
  * Process pending account deletions that have passed their grace period
  */
-router.post('/process-deletions', verifyCronSecret, async (_req: Request, res: Response) => {
+router.post('/process-deletions', verifyCronSecret, asyncHandler(async (_req: Request, res: Response) => {
   const startTime = Date.now();
   const results: { processed: number; failed: number; details: unknown[] } = {
     processed: 0,
@@ -300,13 +301,13 @@ router.post('/process-deletions', verifyCronSecret, async (_req: Request, res: R
       error: 'Processing failed',
     });
   }
-});
+}));
 
 /**
  * POST /api/cron/sync-integrations
  * Automatically sync all active integrations that are due based on sync_frequency_hours
  */
-router.post('/sync-integrations', verifyCronSecret, async (_req: Request, res: Response) => {
+router.post('/sync-integrations', verifyCronSecret, asyncHandler(async (_req: Request, res: Response) => {
   const startTime = Date.now();
   const results: Array<{
     organizationId: number;
@@ -498,13 +499,13 @@ router.post('/sync-integrations', verifyCronSecret, async (_req: Request, res: R
       error: 'Sync cron failed',
     });
   }
-});
+}));
 
 /**
  * POST /api/cron/backup
  * Kryptert backup av hele databasen til Supabase Storage
  */
-router.post('/backup', verifyCronSecret, async (_req: Request, res: Response) => {
+router.post('/backup', verifyCronSecret, asyncHandler(async (_req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -529,7 +530,7 @@ router.post('/backup', verifyCronSecret, async (_req: Request, res: Response) =>
       error: error instanceof Error ? error.message : 'Backup failed',
     });
   }
-});
+}));
 
 /**
  * GET /api/cron/health

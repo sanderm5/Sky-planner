@@ -7,6 +7,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { createLogger } from '../services/logger';
+import { asyncHandler } from '../middleware/errorHandler';
 import { getDatabase } from '../services/database';
 import { getIntegrationRegistry } from '../integrations/registry';
 import { decryptCredentials, encryptCredentials, isCredentialsExpired } from '../integrations/encryption';
@@ -28,7 +29,7 @@ const logger = createLogger('integration-webhooks');
  *   "value": { ... }
  * }
  */
-router.post('/tripletex/:organizationId', async (req: Request, res: Response) => {
+router.post('/tripletex/:organizationId', asyncHandler(async (req: Request, res: Response) => {
   const organizationId = parseInt(req.params.organizationId, 10);
 
   if (isNaN(organizationId) || organizationId <= 0 || !Number.isSafeInteger(organizationId) || organizationId > 2147483647) {
@@ -131,7 +132,7 @@ router.post('/tripletex/:organizationId', async (req: Request, res: Response) =>
     // Return 200 to acknowledge receipt (avoid infinite retries from Tripletex)
     res.status(200).json({ received: true, processed: false, error: 'Processing failed' });
   }
-});
+}));
 
 /**
  * Process a customer create/update event from Tripletex

@@ -30,7 +30,8 @@ export function maintenanceMiddleware(req: Request, res: Response, next: NextFun
   // Always add broadcast header if active (even without maintenance mode)
   const broadcast = getRegisteredBroadcast();
   if (broadcast) {
-    res.setHeader('X-Broadcast', encodeURIComponent(broadcast));
+    res.setHeader('X-Broadcast', encodeURIComponent(broadcast.message));
+    res.setHeader('X-Broadcast-Id', String(broadcast.messageId));
   }
 
   if (!isMaintenanceEnabled()) {
