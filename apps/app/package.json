@@ -32,7 +32,7 @@
     "@skyplanner/theme": "workspace:*",
     "@supabase/supabase-js": "^2.89.0",
     "axios": "^1.13.5",
-    "bcryptjs": "^2.4.3",
+    "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -59,7 +59,7 @@
     "better-sqlite3": "^9.4.3"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
+    "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.9",
     "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
