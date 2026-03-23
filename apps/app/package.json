@@ -81,7 +81,7 @@
     "@vitest/coverage-v8": "^1.6.1",
     "clean-css-cli": "^5.6.3",
     "esbuild": "0.21.5",
-    "eslint": "^8.57.0",
+    "eslint": "^10.1.0",
     "supertest": "^7.2.2",
     "terser": "^5.44.1",
     "tsup": "^8.5.1",
