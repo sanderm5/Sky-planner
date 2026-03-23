@@ -269,7 +269,7 @@ export interface GDPRExportData {
   exportedAt: string;
 }
 
-export function exportGDPRData(data: GDPRExportData): ExportResult {
+export async function exportGDPRData(data: GDPRExportData): Promise<ExportResult> {
   const timestamp = new Date().toISOString().split('T')[0];
 
   logger.info(
@@ -281,9 +281,56 @@ export function exportGDPRData(data: GDPRExportData): ExportResult {
     'GDPR data export generated'
   );
 
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Sky Planner';
+  workbook.created = new Date();
+
+  // -- Info-ark --
+  const infoSheet = workbook.addWorksheet('Eksportinfo');
+  infoSheet.columns = [
+    { header: 'Felt', key: 'felt', width: 25 },
+    { header: 'Verdi', key: 'verdi', width: 40 },
+  ];
+  infoSheet.addRows([
+    { felt: 'Organisasjon', verdi: data.organization.navn },
+    { felt: 'Abonnement', verdi: data.organization.plan_type },
+    { felt: 'Bruker', verdi: data.user.navn },
+    { felt: 'E-post', verdi: data.user.epost },
+    { felt: 'Eksportert', verdi: data.exportedAt },
+    { felt: 'Antall kunder', verdi: String(data.customers.length) },
+    { felt: 'Antall ruter', verdi: String(data.routes.length) },
+  ]);
+  infoSheet.getRow(1).font = { bold: true };
+
+  // -- Kunder-ark --
+  const customerSheet = workbook.addWorksheet('Kunder');
+  customerSheet.columns = CUSTOMER_COLUMNS.map(col => ({
+    header: col.label,
+    key: col.key,
+    width: col.key === 'navn' || col.key === 'adresse' ? 30 : col.key === 'notater' ? 40 : 18,
+  }));
+  for (const c of data.customers) {
+    customerSheet.addRow(c);
+  }
+  customerSheet.getRow(1).font = { bold: true };
+
+  // -- Ruter-ark --
+  const routeSheet = workbook.addWorksheet('Ruter');
+  routeSheet.columns = ROUTE_COLUMNS.map(col => ({
+    header: col.label,
+    key: col.key,
+    width: col.key === 'navn' || col.key === 'beskrivelse' ? 30 : 18,
+  }));
+  for (const r of data.routes) {
+    routeSheet.addRow(r);
+  }
+  routeSheet.getRow(1).font = { bold: true };
+
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
   return {
-    data: JSON.stringify(data, null, 2),
-    filename: `skyplanner_data_export_${timestamp}.json`,
-    contentType: 'application/json; charset=utf-8',
+    data: buffer,
+    filename: `skyplanner-eksport-${timestamp}.xlsx`,
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   };
 }

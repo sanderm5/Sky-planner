@@ -614,9 +614,7 @@ async function renderWeeklyPlan() {
 
   // Load team members for technician assignment dropdown
   const allTeamMembers = await loadWpTeamMembers();
-  // Filter out current user — solo admins should not see a redundant dropdown
   const currentEmail = (localStorage.getItem('userEmail') || '').toLowerCase();
-  const otherTeamMembers = allTeamMembers.filter(m => (m.epost || '').toLowerCase() !== currentEmail);
 
   const weekNum = getISOWeekNumber(weekPlanState.weekStart);
   const totalPlanned = getWeekPlanTotalPlanned();
@@ -634,18 +632,19 @@ async function renderWeeklyPlan() {
     </div>
   `;
 
-  // Admin: technician assignment panel
+  // Admin: technician assignment panel (show all team members including self)
   const wpIsAdmin = localStorage.getItem('userRole') === 'admin' || localStorage.getItem('userType') === 'bruker';
-  if (wpIsAdmin && otherTeamMembers.length > 0) {
+  if (wpIsAdmin && allTeamMembers.length > 1) {
     const globalAssigned = weekPlanState.globalAssignedTo || '';
-    const tmOpts = otherTeamMembers.map(m =>
-      `<option value="${escapeHtml(m.navn)}" ${globalAssigned === m.navn ? 'selected' : ''}>${escapeHtml(m.navn)}</option>`
-    ).join('');
+    const tmOpts = allTeamMembers.map(m => {
+      const isMe = (m.epost || '').toLowerCase() === currentEmail;
+      const label = isMe ? `${m.navn} (meg)` : m.navn;
+      return `<option value="${escapeHtml(m.navn)}" ${globalAssigned === m.navn ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('');
     html += `<div class="wp-dispatch-bar">
       <i aria-hidden="true" class="fas fa-user-hard-hat"></i>
       <span>Planlegg for:</span>
       <select class="wp-dispatch-select" id="wpDispatchSelect">
-        <option value="">Meg selv</option>
         ${tmOpts}
       </select>
     </div>`;

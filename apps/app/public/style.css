@@ -4,6 +4,7 @@
 
 /* Dark Theme (Default) — maps shared --sky-* (polarnatt.css) → app --color-* */
 :root {
+  color-scheme: dark;
   /* Theme identifier */
   --theme-mode: dark;
 
@@ -617,6 +618,108 @@ a:hover {
 
   .patch-notes-modal-body {
     padding: 16px;
+  }
+}
+
+/* ============================================
+   SYSTEM MESSAGE POPUP - Large modal for broadcast
+   ============================================ */
+
+.system-message-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 100001;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.system-message-modal {
+  background: var(--color-bg-secondary);
+  border-radius: 16px;
+  max-width: 480px;
+  width: 100%;
+  padding: 40px 32px 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--color-border);
+  text-align: center;
+  animation: systemMessageIn 0.3s ease-out;
+}
+
+@keyframes systemMessageIn {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.system-message-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+  font-size: 22px;
+  color: #6366f1;
+}
+
+.system-message-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 16px;
+}
+
+.system-message-text {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  margin: 0 0 28px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.system-message-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 28px;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.system-message-btn:hover {
+  background: #4f46e5;
+}
+
+@media (max-width: 768px) {
+  .system-message-overlay {
+    padding: 16px;
+  }
+  .system-message-modal {
+    padding: 32px 20px 24px;
+    border-radius: 12px;
+  }
+  .system-message-icon {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+  }
+  .system-message-title {
+    font-size: 18px;
   }
 }
 
@@ -2812,7 +2915,8 @@ a:hover {
   color: var(--color-text-secondary);
 }
 
-.overdue-filters select {
+.overdue-filters select,
+.warning-actions select {
   padding: 6px 12px;
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
@@ -28413,4 +28517,80 @@ body.role-kontor .export-btn {
     border-radius: 16px 16px 0 0;
   }
   .support-widget-btn { width: 50px; height: 50px; font-size: 20px; }
+}
+
+/* Support tab styles */
+.support-ticket-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.support-ticket-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.support-welcome-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: rgba(255,255,255,0.5);
+  gap: 8px;
+  padding: 24px 8px;
+}
+
+.support-welcome-inline p {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.8);
+  margin: 0;
+}
+
+.support-message-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.support-message-view .sw-msg-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.support-inline-input {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.support-inline-input input {
+  flex: 1;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.support-inline-input input:focus {
+  border-color: var(--color-accent);
+}
+
+.support-inline-input input::placeholder {
+  color: var(--color-text-tertiary);
 }

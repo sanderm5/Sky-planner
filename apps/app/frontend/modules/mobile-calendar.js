@@ -255,19 +255,19 @@ function mfShowNewAvtaleSheet() {
   document.getElementById('mobileFieldView').appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('open'));
 
-  // Populate team member dropdown (hidden for solo admin)
+  // Populate team member dropdown (include current user marked with "(meg)")
   mfCalLoadTeamMembers().then(members => {
+    if (members.length === 0) return;
     const currentEmail = (localStorage.getItem('userEmail') || '').toLowerCase();
-    const others = members.filter(m => (m.epost || '').toLowerCase() !== currentEmail);
-    if (others.length === 0) return;
     const wrapper = document.getElementById('mfNewAvtaleTildeltWrapper');
     const select = document.getElementById('mfNewAvtaleTildelt');
     if (!wrapper || !select) return;
     wrapper.style.display = '';
-    for (const m of others) {
+    for (const m of members) {
       const opt = document.createElement('option');
       opt.value = m.navn;
-      opt.textContent = m.navn;
+      const isMe = (m.epost || '').toLowerCase() === currentEmail;
+      opt.textContent = isMe ? `${m.navn} (meg)` : m.navn;
       select.appendChild(opt);
     }
   });

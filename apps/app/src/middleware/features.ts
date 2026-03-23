@@ -33,7 +33,8 @@ export function requireFeature(featureKey: string) {
 
       // Check if feature is enabled for this organization
       const orgFeature = await db.getOrganizationFeature(req.organizationId, featureKey);
-      if (!orgFeature?.enabled) {
+      const isEnabled = orgFeature?.enabled ?? featureDef.default_enabled;
+      if (!isEnabled) {
         authLogger.debug({
           userId: req.user?.userId,
           organizationId: req.organizationId,

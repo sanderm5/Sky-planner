@@ -7,10 +7,6 @@ export const metadata = { title: 'Personvern' };
 export default async function PersonvernPage() {
   const { isAdmin } = await requireAuth();
 
-  const appUrl = process.env.APP_API_URL || (process.env.NODE_ENV === 'production'
-    ? 'https://skyplannerapp-production.up.railway.app'
-    : 'http://localhost:3000');
-
   return (
     <>
       <div className="mb-8">
@@ -22,7 +18,6 @@ export default async function PersonvernPage() {
 
       <PersonvernSettings
         isCurrentUserAdmin={isAdmin}
-        appUrl={appUrl}
       />
     </>
   );

@@ -162,7 +162,7 @@ router.get(
       routeCount: routes.length,
     });
 
-    const result = exportGDPRData(exportData);
+    const result = await exportGDPRData(exportData);
 
     res.setHeader('Content-Type', result.contentType);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);

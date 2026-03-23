@@ -5,10 +5,9 @@ import Link from 'next/link';
 
 interface Props {
   isCurrentUserAdmin: boolean;
-  appUrl: string;
 }
 
-export function PersonvernSettings({ isCurrentUserAdmin, appUrl }: Props) {
+export function PersonvernSettings({ isCurrentUserAdmin }: Props) {
   const [loading, setLoading] = useState(true);
   const [hasPendingDeletion, setHasPendingDeletion] = useState(false);
   const [scheduledDeletionAt, setScheduledDeletionAt] = useState<string | null>(null);
@@ -184,7 +183,7 @@ export function PersonvernSettings({ isCurrentUserAdmin, appUrl }: Props) {
                 Dette er i tråd med GDPR artikkel 20 (rett til dataportabilitet).
               </p>
               <a
-                href={`${appUrl}/api/export/all`}
+                href="/api/app/export/all"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center px-4 py-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors font-medium text-sm"
