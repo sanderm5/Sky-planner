@@ -213,8 +213,9 @@ export function initCronJobs(): void {
     handler: async () => {
       const { getDatabase } = await import('./database');
       const db = await getDatabase();
-      const supabase = 'supabase' in db ? (db as any).supabase : null;
-      if (!supabase) return;
+      const supabaseService = 'supabase' in db ? (db as any).supabase : null;
+      if (!supabaseService) return;
+      const supabase = supabaseService.getClient();
 
       const { data: pending } = await supabase
         .from('account_deletion_requests')

@@ -192,7 +192,14 @@ router.post('/process-deletions', verifyCronSecret, async (_req: Request, res: R
 
   try {
     const db = await getDatabase();
-    const supabase = 'supabase' in db ? (db as any).supabase : null;
+    const supabaseService = 'supabase' in db ? (db as any).supabase : null;
+
+    if (!supabaseService) {
+      res.status(500).json({ error: 'Database not configured for deletions' });
+      return;
+    }
+
+    const supabase = supabaseService.getClient();
 
     if (!supabase) {
       res.status(500).json({ error: 'Database not configured for deletions' });
