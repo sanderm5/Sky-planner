@@ -475,7 +475,7 @@ export function OrgSettingsForm({
       setLogoUrl(result.logo_url);
       setUploadStatus('success');
       setTimeout(() => setUploadStatus('idle'), 3000);
-      setTimeout(() => window.location.reload(), 1000);
+      // Logo already updated in state via setLogoUrl above
     } catch (err) {
       setUploadErrorMsg(
         err instanceof Error ? err.message : 'Opplasting feilet'
@@ -498,7 +498,8 @@ export function OrgSettingsForm({
         const result = await res.json();
         throw new Error(result.error || 'Kunne ikke fjerne logo');
       }
-      window.location.reload();
+      setLogoUrl('');
+      setLogoPreviewUrl(null);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Kunne ikke fjerne logo');
     }

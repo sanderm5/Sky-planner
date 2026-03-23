@@ -44,11 +44,11 @@ export function getMaintenanceEstimatedEnd(): string | null {
 
 
 // Broadcast getter — registered by super-admin.ts to avoid circular imports
-let _getBroadcast: (() => string | null) | null = null;
-export function registerBroadcastGetter(fn: () => string | null): void {
+let _getBroadcast: (() => { message: string; messageId: number } | null) | null = null;
+export function registerBroadcastGetter(fn: () => { message: string; messageId: number } | null): void {
   _getBroadcast = fn;
 }
-export function getRegisteredBroadcast(): string | null {
+export function getRegisteredBroadcast(): { message: string; messageId: number } | null {
   return _getBroadcast ? _getBroadcast() : null;
 }
 
@@ -144,13 +144,15 @@ router.post('/toggle', verifyCronSecret, (req: Request, res: Response) => {
  */
 router.get('/status', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
+  const broadcastData = getRegisteredBroadcast();
   res.json({
     maintenance: maintenanceEnabled,
     mode: maintenanceEnabled ? maintenanceMode : null,
     message: maintenanceEnabled ? maintenanceMessage : '',
     startedAt: maintenanceStartedAt,
     estimatedEnd: maintenanceEstimatedEnd,
-    broadcast: getRegisteredBroadcast(),
+    broadcast: broadcastData ? broadcastData.message : null,
+    broadcastId: broadcastData ? broadcastData.messageId : null,
   });
 });
 

@@ -1135,6 +1135,8 @@ function setupEventListeners() {
           loadAdminData();
         } else if (tabName === 'chat') {
           onChatTabOpened();
+        } else if (tabName === 'support') {
+          if (typeof loadSupportTickets === 'function') loadSupportTickets();
         } else if (tabName === 'email') {
           loadEmailData();
         } else if (tabName === 'calendar') {

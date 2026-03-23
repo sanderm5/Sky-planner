@@ -20,7 +20,7 @@ interface Props {
 }
 
 export function BrukereManager({ users: initialUsers, currentUserId, isCurrentUserAdmin, maxBrukere }: Props) {
-  const [users] = useState<User[]>(initialUsers);
+  const [users, setUsers] = useState<User[]>(initialUsers);
   const activeCount = users.filter(u => u.aktiv).length;
 
   // Invite modal state
@@ -97,7 +97,8 @@ export function BrukereManager({ users: initialUsers, currentUserId, isCurrentUs
         return;
       }
 
-      window.location.reload();
+      setUsers(prev => [...prev, result.data ?? result]);
+      setShowInviteModal(false);
     } catch {
       setInviteError('Nettverksfeil. Prøv igjen.');
     }
@@ -130,7 +131,9 @@ export function BrukereManager({ users: initialUsers, currentUserId, isCurrentUs
         return;
       }
 
-      window.location.reload();
+      const updated = result.data ?? result;
+      setUsers(prev => prev.map(u => u.id === editUserId ? { ...u, ...updated } : u));
+      setShowEditModal(false);
     } catch {
       setEditError('Nettverksfeil. Prøv igjen.');
     }
@@ -153,7 +156,7 @@ export function BrukereManager({ users: initialUsers, currentUserId, isCurrentUs
         return;
       }
 
-      window.location.reload();
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, aktiv: !isActive } : u));
     } catch {
       alert('Nettverksfeil. Prøv igjen.');
     }

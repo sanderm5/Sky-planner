@@ -758,9 +758,21 @@ export function detectIssues(ctx?: ExternalContext): DetectedIssue[] {
   return issues;
 }
 
+const MAX_METRICS_SIZE = 1000;
+
 function pruneOldEntries(): void {
   const cutoff = Date.now() - WINDOW_MS;
   while (requestMetrics.length > 0 && requestMetrics[0].timestamp < cutoff) {
     requestMetrics.shift();
+  }
+  // Hard cap to prevent unbounded growth under high traffic
+  if (requestMetrics.length > MAX_METRICS_SIZE) {
+    requestMetrics.splice(0, requestMetrics.length - MAX_METRICS_SIZE);
+  }
+  if (serviceEvents.length > MAX_METRICS_SIZE) {
+    serviceEvents.splice(0, serviceEvents.length - MAX_METRICS_SIZE);
+  }
+  if (memorySnapshots.length > MAX_METRICS_SIZE) {
+    memorySnapshots.splice(0, memorySnapshots.length - MAX_METRICS_SIZE);
   }
 }

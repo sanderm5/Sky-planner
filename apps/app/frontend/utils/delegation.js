@@ -39,8 +39,8 @@
     'mfShowCustomerInfo','mfLogout','mfSwitchTab','mfPrevDay','mfNextDay',
     // Mobile chat
     'mfOpenChatConversation','mfSendChatMessage','mfShowChatList','mfShowNewDmView','mfStartDm',
-    // Support widget
-    'toggleSupportWidget','sendSupportWidgetMessage','sendSupportWidgetTopic',
+    // Support (in Meldinger tab)
+    'sendSupportWidgetMessage','sendSupportWidgetTopic',
     'openSupportTicket','supportWidgetBack','reopenSupportWidgetTicket',
     // Mobile support chat
     'mfSupportShowList','mfSupportOpenTicket','mfSupportCreateTicket',

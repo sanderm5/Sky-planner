@@ -44,13 +44,7 @@ export default function RootLayout({
   return (
     <html lang="nb" className={`dark ${plusJakarta.variable} ${fraunces.variable}`}>
       <head>
-        {/* Font Awesome — loaded async to avoid render blocking */}
-        <link
-          rel="preload"
-          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
-          as="style"
-          crossOrigin="anonymous"
-        />
+        {/* Font Awesome */}
         <link
           rel="stylesheet"
           href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"

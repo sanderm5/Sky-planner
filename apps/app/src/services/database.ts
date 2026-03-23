@@ -78,6 +78,8 @@ interface SupabaseService {
   getAllOrganizations(): Promise<Organization[]>;
   getKundeCountForOrganization(organizationId: number): Promise<number>;
   getBrukerCountForOrganization(organizationId: number): Promise<number>;
+  getKundeCountsForOrganizations(orgIds: number[]): Promise<Record<number, number>>;
+  getBrukerCountsForOrganizations(orgIds: number[]): Promise<Record<number, number>>;
   getKlienterForOrganization(organizationId: number): Promise<KlientRecord[]>;
   updateOrganization(id: number, data: Partial<Organization>): Promise<Organization | null>;
   getGlobalStatistics(): Promise<{ totalOrganizations: number; totalKunder: number; totalUsers: number; activeSubscriptions: number; organizationsByPlan?: Record<string, number> }>;
@@ -1687,6 +1689,14 @@ class DatabaseService implements DatabaseContext {
    */
   async getBrukerCountForOrganization(organizationId: number): Promise<number> {
     return adminQueries.getBrukerCountForOrganization(this, organizationId);
+  }
+
+  async getKundeCountsForOrganizations(orgIds: number[]): Promise<Record<number, number>> {
+    return adminQueries.getKundeCountsForOrganizations(this, orgIds);
+  }
+
+  async getBrukerCountsForOrganizations(orgIds: number[]): Promise<Record<number, number>> {
+    return adminQueries.getBrukerCountsForOrganizations(this, orgIds);
   }
 
   /**

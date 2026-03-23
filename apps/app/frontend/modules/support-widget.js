@@ -1,6 +1,6 @@
 // ========================================
-// SUPPORT CHAT WIDGET (TICKET SYSTEM)
-// Floating widget — each request creates a ticket with ID
+// SUPPORT CHAT (TICKET SYSTEM)
+// Integrated into Meldinger tab as "Support" sub-view
 // ========================================
 
 // Two-tone "ding-dong" notification for support messages
@@ -44,19 +44,10 @@ const supportWidgetState = {
   activeTicketId: null,
   messages: [],
   unreadCounts: {},     // { ticketId: count }
-  isOpen: false,
   view: 'list',         // 'list' | 'messages'
 };
 
 async function initSupportWidget() {
-  // Show widget (hidden by default on login screen)
-  // Hide on mobile — mobile uses the dedicated support tab instead
-  const widget = document.getElementById('supportWidget');
-  if (widget) {
-    const isMobile = typeof isMobileDevice === 'function' && isMobileDevice();
-    widget.style.display = isMobile ? 'none' : '';
-  }
-
   // Load existing tickets
   await loadSupportTickets();
 
@@ -72,23 +63,6 @@ async function initSupportWidget() {
   }
 }
 
-function toggleSupportWidget() {
-  supportWidgetState.isOpen = !supportWidgetState.isOpen;
-  const panel = document.getElementById('supportWidgetPanel');
-  const btn = document.getElementById('supportWidgetBtn');
-  if (!panel || !btn) return;
-
-  if (supportWidgetState.isOpen) {
-    panel.style.display = 'flex';
-    btn.classList.add('active');
-    loadSupportTickets();
-    showSupportTicketList();
-  } else {
-    panel.style.display = 'none';
-    btn.classList.remove('active');
-  }
-}
-
 async function loadSupportTickets() {
   try {
     const response = await fetch('/api/support-chat/tickets', { credentials: 'include' });
@@ -97,7 +71,7 @@ async function loadSupportTickets() {
     if (result.success && result.data) {
       supportWidgetState.tickets = result.data;
       updateSupportWidgetBadge();
-      if (supportWidgetState.isOpen && supportWidgetState.view === 'list') {
+      if (supportWidgetState.view === 'list') {
         renderSupportTicketList();
       }
     }
@@ -109,12 +83,10 @@ async function loadSupportTickets() {
 function showSupportTicketList() {
   supportWidgetState.view = 'list';
   supportWidgetState.activeTicketId = null;
+  const ticketList = document.getElementById('supportTicketList');
   const messagesArea = document.getElementById('supportWidgetMessagesArea');
-  const listArea = document.getElementById('supportWidgetMessages');
-  const backBtn = document.querySelector('.sw-back-btn');
+  if (ticketList) ticketList.style.display = '';
   if (messagesArea) messagesArea.style.display = 'none';
-  if (listArea) listArea.style.display = 'flex';
-  if (backBtn) backBtn.style.display = 'none';
   renderSupportTicketList();
 }
 
@@ -126,7 +98,7 @@ function renderSupportTicketList() {
   const closedTickets = supportWidgetState.tickets.filter(t => t.status === 'closed');
 
   let html = `
-    <div class="support-widget-welcome">
+    <div class="support-welcome-inline">
       <p>Hva trenger du hjelp med?</p>
       <div class="sw-topics">
         <button class="sw-topic-btn" data-action="sendSupportWidgetTopic" data-args='["Rapporter bug"]'>
@@ -145,7 +117,7 @@ function renderSupportTicketList() {
     </div>`;
 
   if (openTickets.length > 0) {
-    html += '<div class="sw-ticket-section"><div class="sw-ticket-section-title">Åpne saker</div>';
+    html += '<div class="sw-ticket-section"><div class="sw-ticket-section-title">\u00c5pne saker</div>';
     for (const t of openTickets) {
       html += `
         <div class="sw-ticket-item" data-action="openSupportTicket" data-args='[${t.id}]'>
@@ -205,19 +177,17 @@ async function openSupportTicket(ticketId) {
   const ticket = supportWidgetState.tickets.find(t => t.id === ticketId);
   const isClosed = ticket?.status === 'closed';
 
-  // Update header
-  const header = document.querySelector('.support-widget-header-info span');
-  if (header) header.textContent = `#${ticketId} — ${ticket?.subject || 'Support'}`;
+  // Update header title
+  const title = document.getElementById('supportMessageTitle');
+  if (title) title.textContent = `#${ticketId} \u2014 ${ticket?.subject || 'Support'}`;
 
-  // Show messages area, hide list
-  const listArea = document.getElementById('supportWidgetMessages');
+  // Show messages area, hide ticket list
+  const ticketList = document.getElementById('supportTicketList');
   const messagesArea = document.getElementById('supportWidgetMessagesArea');
-  const inputArea = document.querySelector('.support-widget-input');
-  const backBtn = document.querySelector('.sw-back-btn');
-  if (listArea) listArea.style.display = 'none';
+  const inputArea = document.getElementById('supportInlineInput');
+  if (ticketList) ticketList.style.display = 'none';
   if (messagesArea) messagesArea.style.display = 'flex';
   if (inputArea) inputArea.style.display = isClosed ? 'none' : 'flex';
-  if (backBtn) backBtn.style.display = 'inline-flex';
 
   // Show/hide reopen button for closed tickets
   const msgList = document.getElementById('supportWidgetMsgList');
@@ -230,7 +200,7 @@ async function openSupportTicket(ticketId) {
     reopenDiv.innerHTML = `
       <span>Denne saken er lukket</span>
       <button class="sw-reopen-btn" data-action="reopenSupportWidgetTicket" data-args='[${ticketId}]'>
-        <i class="fas fa-redo"></i> Gjenåpne
+        <i class="fas fa-redo"></i> Gjen\u00e5pne
       </button>`;
     msgList.parentElement.appendChild(reopenDiv);
   }
@@ -255,10 +225,6 @@ async function openSupportTicket(ticketId) {
 
 function supportWidgetBack() {
   showSupportTicketList();
-  const header = document.querySelector('.support-widget-header-info span');
-  if (header) header.textContent = 'Support';
-  const inputArea = document.querySelector('.support-widget-input');
-  if (inputArea) inputArea.style.display = 'none';
 }
 
 async function loadSupportWidgetMessages(ticketId) {
@@ -281,7 +247,7 @@ function renderSupportWidgetMessages() {
   if (!container) return;
 
   if (supportWidgetState.messages.length === 0) {
-    container.innerHTML = '<div class="sw-empty-msgs"><p>Beskriv problemet ditt, så hjelper vi deg!</p></div>';
+    container.innerHTML = '<div class="sw-empty-msgs"><p>Beskriv problemet ditt, s\u00e5 hjelper vi deg!</p></div>';
     return;
   }
 
@@ -363,18 +329,23 @@ async function markSupportWidgetAsRead(ticketId) {
 }
 
 function updateSupportWidgetBadge() {
-  const badge = document.getElementById('supportWidgetBadge');
+  const badge = document.getElementById('supportUnreadBadge');
   if (!badge) return;
   const openCount = supportWidgetState.tickets.filter(t => t.status === 'open').length;
   badge.textContent = openCount;
-  badge.style.display = openCount > 0 ? 'flex' : 'none';
+  badge.style.display = openCount > 0 ? '' : 'none';
 }
 
 // Handle incoming support messages via WebSocket
 function handleSupportWidgetMessage(data) {
   const ticketId = data.conversation_id;
 
-  if (supportWidgetState.isOpen && supportWidgetState.activeTicketId === ticketId) {
+  // Check if support tab is active and viewing this ticket
+  const supportPane = document.getElementById('tab-support');
+  const isViewingSupport = supportPane && supportPane.classList.contains('active');
+  const isViewingTicket = isViewingSupport && supportWidgetState.activeTicketId === ticketId;
+
+  if (isViewingTicket) {
     if (!supportWidgetState.messages.find(m => m.id === data.id)) {
       supportWidgetState.messages.push(data);
       renderSupportWidgetMessages();
@@ -418,7 +389,7 @@ function handleSupportTicketClosed(data) {
 
   if (supportWidgetState.activeTicketId === data.conversationId) {
     // Hide input, show closed notice
-    const inputArea = document.querySelector('.support-widget-input');
+    const inputArea = document.getElementById('supportInlineInput');
     if (inputArea) inputArea.style.display = 'none';
   }
 

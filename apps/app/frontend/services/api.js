@@ -319,6 +319,55 @@ function hideBroadcastBanner() {
   }
 }
 
+// System message popup (large modal — shown once per message)
+let systemMessagePopupEl = null;
+let systemMessagePopupId = null;
+
+function showSystemMessagePopup(message, messageId) {
+  // Already showing this message
+  if (systemMessagePopupEl && systemMessagePopupId === messageId) return;
+  // Remove old popup if different message
+  hideSystemMessagePopup();
+
+  systemMessagePopupId = messageId;
+  systemMessagePopupEl = document.createElement('div');
+  systemMessagePopupEl.id = 'systemMessagePopup';
+  systemMessagePopupEl.className = 'system-message-overlay';
+  systemMessagePopupEl.innerHTML = '<div class="system-message-modal">'
+    + '<div class="system-message-icon"><i class="fas fa-bullhorn"></i></div>'
+    + '<h2 class="system-message-title">Systemmelding</h2>'
+    + '<p class="system-message-text">' + escapeHtml(message) + '</p>'
+    + '<button class="system-message-btn" id="systemMessageDismissBtn">OK, jeg forst\u00e5r</button>'
+    + '</div>';
+
+  document.body.appendChild(systemMessagePopupEl);
+
+  // Close on button click
+  var dismissBtn = systemMessagePopupEl.querySelector('#systemMessageDismissBtn');
+  dismissBtn.addEventListener('click', function() {
+    localStorage.setItem('skyplanner_lastSeenSystemMessage', String(messageId));
+    hideSystemMessagePopup();
+    showBroadcastBanner(message);
+  });
+
+  // Close on backdrop click
+  systemMessagePopupEl.addEventListener('click', function(e) {
+    if (e.target === systemMessagePopupEl) {
+      localStorage.setItem('skyplanner_lastSeenSystemMessage', String(messageId));
+      hideSystemMessagePopup();
+      showBroadcastBanner(message);
+    }
+  });
+}
+
+function hideSystemMessagePopup() {
+  if (systemMessagePopupEl) {
+    systemMessagePopupEl.remove();
+    systemMessagePopupEl = null;
+    systemMessagePopupId = null;
+  }
+}
+
 // Maintenance overlay (full screen block — app unusable)
 let maintenanceOverlayEl = null;
 let maintenancePollInterval = null;
@@ -466,11 +515,18 @@ function startMaintenanceCountdown() {
           hideMaintenanceBanner();
         }
 
-        // Broadcast banner (hide if maintenance active)
+        // Broadcast: popup for unseen messages (only after login), banner for seen ones
         if (data.broadcast && !maintenanceBannerEl && !maintenanceOverlayEl) {
-          showBroadcastBanner(data.broadcast);
+          var isLoggedIn = !!localStorage.getItem('userName');
+          var seenId = localStorage.getItem('skyplanner_lastSeenSystemMessage');
+          if (!isLoggedIn || (data.broadcastId && String(data.broadcastId) === seenId)) {
+            showBroadcastBanner(data.broadcast);
+          } else {
+            showSystemMessagePopup(data.broadcast, data.broadcastId);
+          }
         } else if (!data.broadcast || maintenanceBannerEl || maintenanceOverlayEl) {
           hideBroadcastBanner();
+          hideSystemMessagePopup();
         }
       })
       .catch(function() {});

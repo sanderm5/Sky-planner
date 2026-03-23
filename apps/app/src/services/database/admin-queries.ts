@@ -57,6 +57,77 @@ export async function getBrukerCountForOrganization(ctx: DatabaseContext, organi
 }
 
 /**
+ * Batch-fetch customer counts for multiple organizations (avoids N+1)
+ */
+export async function getKundeCountsForOrganizations(ctx: DatabaseContext, orgIds: number[]): Promise<Record<number, number>> {
+  const result: Record<number, number> = {};
+  if (orgIds.length === 0) return result;
+
+  if (ctx.type === 'supabase' && ctx.supabase) {
+    const client = ctx.supabase.getClient();
+    const { data } = await client
+      .from('kunder')
+      .select('organization_id')
+      .in('organization_id', orgIds);
+
+    for (const row of data || []) {
+      result[row.organization_id] = (result[row.organization_id] || 0) + 1;
+    }
+    return result;
+  }
+
+  if (!ctx.sqlite) return result;
+
+  const placeholders = orgIds.map(() => '?').join(',');
+  const rows = ctx.sqlite.prepare(`
+    SELECT organization_id, COUNT(*) as count FROM kunder
+    WHERE organization_id IN (${placeholders})
+    GROUP BY organization_id
+  `).all(...orgIds) as Array<{ organization_id: number; count: number }>;
+
+  for (const row of rows) {
+    result[row.organization_id] = row.count;
+  }
+  return result;
+}
+
+/**
+ * Batch-fetch user counts for multiple organizations (avoids N+1)
+ */
+export async function getBrukerCountsForOrganizations(ctx: DatabaseContext, orgIds: number[]): Promise<Record<number, number>> {
+  const result: Record<number, number> = {};
+  if (orgIds.length === 0) return result;
+
+  if (ctx.type === 'supabase' && ctx.supabase) {
+    const client = ctx.supabase.getClient();
+    const { data } = await client
+      .from('klient')
+      .select('organization_id')
+      .in('organization_id', orgIds)
+      .eq('aktiv', true);
+
+    for (const row of data || []) {
+      result[row.organization_id] = (result[row.organization_id] || 0) + 1;
+    }
+    return result;
+  }
+
+  if (!ctx.sqlite) return result;
+
+  const placeholders = orgIds.map(() => '?').join(',');
+  const rows = ctx.sqlite.prepare(`
+    SELECT organization_id, COUNT(*) as count FROM klient
+    WHERE organization_id IN (${placeholders}) AND aktiv = 1
+    GROUP BY organization_id
+  `).all(...orgIds) as Array<{ organization_id: number; count: number }>;
+
+  for (const row of rows) {
+    result[row.organization_id] = row.count;
+  }
+  return result;
+}
+
+/**
  * Update organization (for super admin)
  */
 export async function updateOrganization(ctx: DatabaseContext, id: number, data: Record<string, unknown>): Promise<Organization | null> {
@@ -292,31 +363,21 @@ export async function getGrowthStatistics(ctx: DatabaseContext, months: number =
   users: Array<{ month: string; count: number }>;
 }> {
   if (ctx.type === 'supabase' && ctx.supabase) {
-    // Supabase implementation
     const client = ctx.supabase.getClient();
-
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
+    const startIso = startDate.toISOString();
 
-    const { data: orgs } = await client
-      .from('organizations')
-      .select('created_at')
-      .gte('created_at', startDate.toISOString());
-
-    const { data: customers } = await client
-      .from('kunder')
-      .select('opprettet')
-      .gte('opprettet', startDate.toISOString());
-
-    const { data: users } = await client
-      .from('klient')
-      .select('opprettet')
-      .gte('opprettet', startDate.toISOString());
+    const [orgsRes, customersRes, usersRes] = await Promise.all([
+      client.from('organizations').select('created_at').gte('created_at', startIso),
+      client.from('kunder').select('opprettet').gte('opprettet', startIso),
+      client.from('klient').select('opprettet').gte('opprettet', startIso),
+    ]);
 
     return {
-      organizations: aggregateByMonth(orgs || [], 'created_at'),
-      customers: aggregateByMonth(customers || [], 'opprettet'),
-      users: aggregateByMonth(users || [], 'opprettet'),
+      organizations: aggregateByMonth(orgsRes.data || [], 'created_at'),
+      customers: aggregateByMonth(customersRes.data || [], 'opprettet'),
+      users: aggregateByMonth(usersRes.data || [], 'opprettet'),
     };
   }
 
@@ -392,33 +453,19 @@ export async function getActivityStatistics(ctx: DatabaseContext, days: number =
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    const { data: logins } = await client
-      .from('login_logg')
-      .select('tidspunkt, status')
-      .gte('tidspunkt', startDate.toISOString());
+    const [loginsRes, active7Res, active30Res] = await Promise.all([
+      client.from('login_logg').select('tidspunkt, status').gte('tidspunkt', startDate.toISOString()),
+      client.from('klient').select('id', { count: 'exact', head: true }).gte('sist_innlogget', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).eq('aktiv', true),
+      client.from('klient').select('id', { count: 'exact', head: true }).gte('sist_innlogget', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()).eq('aktiv', true),
+    ]);
 
-    const active7Query = client
-      .from('klient')
-      .select('id')
-      .gte('sist_innlogget', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
-      .eq('aktiv', true);
-    const { data: active7Data } = await active7Query;
-
-    const active30Query = client
-      .from('klient')
-      .select('id')
-      .gte('sist_innlogget', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-      .eq('aktiv', true);
-    const { data: active30Data } = await active30Query;
-
-    const active7 = active7Data?.length || 0;
-    const active30 = active30Data?.length || 0;
+    const logins = loginsRes.data || [];
 
     return {
-      loginsByDay: aggregateLoginsByDay(logins || []),
-      activeUsers7Days: active7 || 0,
-      activeUsers30Days: active30 || 0,
-      totalLogins: logins?.length || 0,
+      loginsByDay: aggregateLoginsByDay(logins),
+      activeUsers7Days: active7Res.count || 0,
+      activeUsers30Days: active30Res.count || 0,
+      totalLogins: logins.length,
     };
   }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 
 const screenshots = [
   {
@@ -90,10 +91,11 @@ export default function Showcase() {
                       onClick={() => setLightbox({ src: screenshot.src, alt: screenshot.alt })}
                       aria-label={`Forstørr: ${screenshot.alt}`}
                     >
-                      <img
+                      <Image
                         src={screenshot.src}
                         alt={screenshot.alt}
-                        loading="lazy"
+                        width={800}
+                        height={500}
                         className="w-full h-auto"
                       />
                     </button>

@@ -105,9 +105,11 @@ async function applyFilters() {
     );
   }
 
-  renderCustomerList(filtered);
-  renderMarkers(filtered);
-  updateCategoryFilterCounts();
+  requestAnimationFrame(() => {
+    renderCustomerList(filtered);
+    renderMarkers(filtered);
+    updateCategoryFilterCounts();
+  });
 
   // Fremhev søketreff på kartet
   const activeSearch = searchInput?.value?.trim();

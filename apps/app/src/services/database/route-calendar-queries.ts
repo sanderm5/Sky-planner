@@ -43,8 +43,10 @@ export async function getAllRuter(ctx: DatabaseContext, organizationId: number):
 
   if (!ctx.sqlite) throw new Error('Database not initialized');
 
-  const sql = `SELECT r.*, (SELECT COUNT(*) FROM rute_kunder WHERE rute_id = r.id) as antall_kunder
-       FROM ruter r WHERE r.organization_id = ?
+  const sql = `SELECT r.*, COALESCE(rk.antall_kunder, 0) as antall_kunder
+       FROM ruter r
+       LEFT JOIN (SELECT rute_id, COUNT(*) as antall_kunder FROM rute_kunder GROUP BY rute_id) rk ON rk.rute_id = r.id
+       WHERE r.organization_id = ?
        ORDER BY r.planlagt_dato DESC, r.opprettet DESC`;
 
   return ctx.sqlite.prepare(sql).all(organizationId) as (Rute & { antall_kunder: number })[];

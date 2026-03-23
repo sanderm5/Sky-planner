@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import Badge from '../ui/Badge';
 
 export default function Hero() {
@@ -114,11 +115,13 @@ export default function Hero() {
               onClick={() => setIsLightboxOpen(true)}
               aria-label="Forstørr skjermbilde"
             >
-              <img
+              <Image
                 src="/screenshots/screenshot-map-overview.jpg"
                 alt="Sky Planner - Interaktivt kart med kundeadministrasjon"
                 className="w-full h-auto"
-                loading="eager"
+                width={1200}
+                height={800}
+                priority
               />
             </button>
           </div>

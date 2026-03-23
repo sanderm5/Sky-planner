@@ -263,42 +263,52 @@ export function initCronJobs(): void {
 
       if (dueIntegrations.length === 0) return;
 
+      // Sync integrations in parallel with concurrency limit of 3
+      const CONCURRENCY = 3;
       let synced = 0;
       let failed = 0;
 
-      for (const integration of dueIntegrations) {
-        try {
-          const adapter = registry.get(integration.integration_id);
-          if (!adapter) continue;
+      async function syncOne(integration: typeof dueIntegrations[number]) {
+        const adapter = registry.get(integration.integration_id);
+        if (!adapter) return;
 
-          let credentials = await decryptCredentials(integration.credentials_encrypted);
-          if (isCredentialsExpired(credentials)) {
-            credentials = await adapter.refreshAuth(credentials);
-            const encrypted = await encryptCredentials(credentials);
-            await db.saveIntegrationCredentials(integration.organization_id, {
-              integration_id: integration.integration_id,
-              credentials_encrypted: encrypted,
-              is_active: true,
-            });
-          }
+        let credentials = await decryptCredentials(integration.credentials_encrypted);
+        if (isCredentialsExpired(credentials)) {
+          credentials = await adapter.refreshAuth(credentials);
+          const encrypted = await encryptCredentials(credentials);
+          await db.saveIntegrationCredentials(integration.organization_id, {
+            integration_id: integration.integration_id,
+            credentials_encrypted: encrypted,
+            is_active: true,
+          });
+        }
 
-          await adapter.syncCustomers(integration.organization_id, credentials, { fullSync: false });
-          await db.updateIntegrationLastSync(integration.organization_id, integration.integration_id, new Date());
-          synced++;
-        } catch (err) {
-          failed++;
-          logger.error({ integrationId: integration.integration_id, error: err }, 'Integrasjonssynk feilet');
+        await adapter.syncCustomers(integration.organization_id, credentials, { fullSync: false });
+        await db.updateIntegrationLastSync(integration.organization_id, integration.integration_id, new Date());
+        synced++;
+      }
 
-          try {
-            await db.logIntegrationSync(integration.organization_id, {
-              integration_id: integration.integration_id,
-              sync_type: 'scheduled',
-              status: 'failed',
-              error_message: err instanceof Error ? err.message : 'Unknown error',
-              completed_at: new Date(),
-            });
-          } catch {
-            // Non-critical
+      // Process in batches of CONCURRENCY
+      for (let i = 0; i < dueIntegrations.length; i += CONCURRENCY) {
+        const batch = dueIntegrations.slice(i, i + CONCURRENCY);
+        const results = await Promise.allSettled(batch.map(integration => syncOne(integration)));
+        for (let j = 0; j < results.length; j++) {
+          if (results[j].status === 'rejected') {
+            failed++;
+            const err = (results[j] as PromiseRejectedResult).reason;
+            const integration = batch[j];
+            logger.error({ integrationId: integration.integration_id, error: err }, 'Integrasjonssynk feilet');
+            try {
+              await db.logIntegrationSync(integration.organization_id, {
+                integration_id: integration.integration_id,
+                sync_type: 'scheduled',
+                status: 'failed',
+                error_message: err instanceof Error ? err.message : 'Unknown error',
+                completed_at: new Date(),
+              });
+            } catch {
+              // Non-critical
+            }
           }
         }
       }

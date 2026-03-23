@@ -79,11 +79,13 @@ function handleLogout() {
   // customer/organization data between different logins
   // =====================================================
 
-  // Hide support widget
-  const supportWidget = document.getElementById('supportWidget');
-  if (supportWidget) supportWidget.style.display = 'none';
-  const supportPanel = document.getElementById('supportWidgetPanel');
-  if (supportPanel) supportPanel.style.display = 'none';
+  // Reset support state
+  if (typeof supportWidgetState !== 'undefined') {
+    supportWidgetState.tickets = [];
+    supportWidgetState.messages = [];
+    supportWidgetState.activeTicketId = null;
+    supportWidgetState.view = 'list';
+  }
 
   // Hide broadcast banner
   const broadcastBanner = document.getElementById('broadcast-banner');

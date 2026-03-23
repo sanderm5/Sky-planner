@@ -99,24 +99,18 @@ router.get(
       return;
     }
 
-    // Get customers on the route
-    const kunder = await dbService.getRuteKunder(rute.id);
-
-    // Get visit records if available
-    let visits: Array<{ id: number; kunde_id: number; visited_at?: string; completed: boolean; comment?: string; materials_used?: string[] }> = [];
-    if (dbService.getVisitRecords) {
-      visits = await dbService.getVisitRecords(rute.id, req.organizationId!);
-    }
-
-    // Resolve assigned team member name
-    let assignedToName: string | null = null;
-    if (rute.assigned_to) {
-      try {
-        const members = await dbService.getActiveTeamMembersForOrg(req.organizationId!);
-        const member = members.find(m => m.id === rute.assigned_to);
-        if (member) assignedToName = member.navn;
-      } catch { /* continue without name */ }
-    }
+    // Fetch route data in parallel
+    const [kunder, visits, assignedToName] = await Promise.all([
+      dbService.getRuteKunder(rute.id),
+      dbService.getVisitRecords
+        ? dbService.getVisitRecords(rute.id, req.organizationId!)
+        : Promise.resolve([] as Array<{ id: number; kunde_id: number; visited_at?: string; completed: boolean; comment?: string; materials_used?: string[] }>),
+      rute.assigned_to
+        ? dbService.getActiveTeamMembersForOrg(req.organizationId!)
+            .then(members => members.find(m => m.id === rute.assigned_to)?.navn ?? null)
+            .catch(() => null)
+        : Promise.resolve(null as string | null),
+    ]);
 
     const response: ApiResponse = {
       success: true,

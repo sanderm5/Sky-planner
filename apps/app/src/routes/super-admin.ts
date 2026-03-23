@@ -42,23 +42,22 @@ router.get(
     // Paginate before enriching to avoid N+1 on all orgs
     const paginatedOrgs = organizations.slice(offset, offset + limit);
 
-    // Enrich with stats
-    const enrichedOrgs = await Promise.all(
-      paginatedOrgs.map(async (org) => {
-        const kundeCount = await db.getKundeCountForOrganization(org.id);
-        const brukerCount = await db.getBrukerCountForOrganization(org.id);
+    // Batch-fetch counts for all paginated orgs in 2 queries instead of 2*N
+    const orgIds = paginatedOrgs.map(o => o.id);
+    const [kundeCounts, brukerCounts] = await Promise.all([
+      db.getKundeCountsForOrganizations(orgIds),
+      db.getBrukerCountsForOrganizations(orgIds),
+    ]);
 
-        return {
-          ...org,
-          stats: {
-            kundeCount,
-            brukerCount,
-            maxKunder: org.max_kunder || 100,
-            maxBrukere: org.max_brukere || 5,
-          },
-        };
-      })
-    );
+    const enrichedOrgs = paginatedOrgs.map((org) => ({
+      ...org,
+      stats: {
+        kundeCount: kundeCounts[org.id] || 0,
+        brukerCount: brukerCounts[org.id] || 0,
+        maxKunder: org.max_kunder || 100,
+        maxBrukere: org.max_brukere || 5,
+      },
+    }));
 
     const response: ApiResponse = {
       success: true,
@@ -92,9 +91,11 @@ router.get(
       throw Errors.notFound('Organisasjon');
     }
 
-    // Get stats
-    const kundeCount = await db.getKundeCountForOrganization(orgId);
-    const brukerCount = await db.getBrukerCountForOrganization(orgId);
+    // Get stats in parallel
+    const [kundeCount, brukerCount] = await Promise.all([
+      db.getKundeCountForOrganization(orgId),
+      db.getBrukerCountForOrganization(orgId),
+    ]);
 
     const response: ApiResponse = {
       success: true,
@@ -1228,7 +1229,11 @@ router.get(
     // WebSocket connections (in-memory, instant)
     const websocket = getConnectionCount();
 
-    // Database latency: live probe + record for rolling average
+    // Service health metrics (in-memory, instant)
+    const services = getServiceMetrics();
+    const frontend_errors = getFrontendErrors();
+
+    // Run all DB queries in parallel
     let database = {
       status: 'healthy' as 'healthy' | 'unhealthy' | 'degraded',
       latency_ms: 0,
@@ -1237,106 +1242,75 @@ router.get(
       max_ms: metrics.database_latency.max_ms,
       samples: metrics.database_latency.samples,
     };
-    try {
+    let integrations = { total_active: 0, recent_syncs: [] as any[], failed_items_count: 0 };
+    let security = { failed_logins_24h: 0, locked_accounts: 0, recent_events: [] as any[] };
+    let data_integrity = { customers_without_coords: 0, orphaned_tags: 0 };
+
+    if (supabase) {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const nowIso = new Date().toISOString();
       const dbStart = Date.now();
-      if (supabase) {
-        const { error } = await supabase.from('organizations').select('id').limit(1);
-        if (error) throw error;
-      } else {
-        await db.getAllOrganizations();
-      }
+
+      // Fire all 9 Supabase queries in one Promise.all
+      const [
+        dbProbe,
+        activeRes, syncsRes, failedRes,
+        failedLoginsRes, lockedRes, recentLoginsRes,
+        noCoordsRes, orphanTagsRes,
+      ] = await Promise.all([
+        // DB latency probe
+        supabase.from('organizations').select('id').limit(1),
+        // Integration syncs
+        supabase.from('organization_integrations').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('integration_sync_log').select('organization_id, integration_id, sync_type, status, error_message, completed_at, created_count, updated_count, failed_count').order('completed_at', { ascending: false }).limit(10),
+        supabase.from('failed_sync_items').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        // Security events
+        supabase.from('login_logg').select('id', { count: 'exact', head: true }).eq('status', 'feilet').gte('tidspunkt', twentyFourHoursAgo),
+        supabase.from('klient').select('id', { count: 'exact', head: true }).gt('account_locked_until', nowIso),
+        supabase.from('login_logg').select('epost, ip_adresse, tidspunkt, user_agent').eq('status', 'feilet').order('tidspunkt', { ascending: false }).limit(10),
+        // Data integrity
+        supabase.from('kunder').select('id', { count: 'exact', head: true }).or('lat.is.null,lng.is.null'),
+        supabase.from('tags').select('id', { count: 'exact', head: true }).is('group_id', null),
+      ]);
+
+      // DB latency
       database.latency_ms = Date.now() - dbStart;
       recordDbLatency(database.latency_ms);
-      if (database.latency_ms > 1000) database.status = 'degraded';
-    } catch {
-      database = { ...database, status: 'unhealthy', latency_ms: -1 };
-    }
-
-    // Integration syncs (cross-org)
-    let integrations = { total_active: 0, recent_syncs: [] as any[], failed_items_count: 0 };
-    if (supabase) {
-      try {
-        const [activeRes, syncsRes, failedRes] = await Promise.all([
-          supabase
-            .from('organization_integrations')
-            .select('id', { count: 'exact', head: true })
-            .eq('is_active', true),
-          supabase
-            .from('integration_sync_log')
-            .select('organization_id, integration_id, sync_type, status, error_message, completed_at, created_count, updated_count, failed_count')
-            .order('completed_at', { ascending: false })
-            .limit(10),
-          supabase
-            .from('failed_sync_items')
-            .select('id', { count: 'exact', head: true })
-            .eq('status', 'pending'),
-        ]);
-        integrations = {
-          total_active: activeRes.count ?? 0,
-          recent_syncs: syncsRes.data ?? [],
-          failed_items_count: failedRes.count ?? 0,
-        };
-      } catch {
-        // Tables might not exist
+      if (dbProbe.error) {
+        database = { ...database, status: 'unhealthy', latency_ms: -1 };
+      } else if (database.latency_ms > 1000) {
+        database.status = 'degraded';
       }
-    }
 
-    // Security events (cross-org)
-    let security = { failed_logins_24h: 0, locked_accounts: 0, recent_events: [] as any[] };
-    if (supabase) {
+      // Integrations
+      integrations = {
+        total_active: activeRes.count ?? 0,
+        recent_syncs: syncsRes.data ?? [],
+        failed_items_count: failedRes.count ?? 0,
+      };
+
+      // Security
+      security = {
+        failed_logins_24h: failedLoginsRes.count ?? 0,
+        locked_accounts: lockedRes.count ?? 0,
+        recent_events: recentLoginsRes.data ?? [],
+      };
+
+      // Data integrity
+      data_integrity = {
+        customers_without_coords: noCoordsRes.count ?? 0,
+        orphaned_tags: orphanTagsRes.count ?? 0,
+      };
+    } else {
+      // SQLite mode — just probe DB latency
       try {
-        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-        const [failedRes, lockedRes, recentRes] = await Promise.all([
-          supabase
-            .from('login_logg')
-            .select('id', { count: 'exact', head: true })
-            .eq('status', 'feilet')
-            .gte('tidspunkt', twentyFourHoursAgo),
-          supabase
-            .from('klient')
-            .select('id', { count: 'exact', head: true })
-            .gt('account_locked_until', new Date().toISOString()),
-          supabase
-            .from('login_logg')
-            .select('epost, ip_adresse, tidspunkt, user_agent')
-            .eq('status', 'feilet')
-            .order('tidspunkt', { ascending: false })
-            .limit(10),
-        ]);
-        security = {
-          failed_logins_24h: failedRes.count ?? 0,
-          locked_accounts: lockedRes.count ?? 0,
-          recent_events: recentRes.data ?? [],
-        };
+        const dbStart = Date.now();
+        await db.getAllOrganizations();
+        database.latency_ms = Date.now() - dbStart;
+        recordDbLatency(database.latency_ms);
+        if (database.latency_ms > 1000) database.status = 'degraded';
       } catch {
-        // Tables might not exist
-      }
-    }
-
-    // Service health metrics
-    const services = getServiceMetrics();
-    const frontend_errors = getFrontendErrors();
-
-    // Data integrity checks (lightweight queries)
-    let data_integrity = { customers_without_coords: 0, orphaned_tags: 0 };
-    if (supabase) {
-      try {
-        const [noCoordsRes, orphanTagsRes] = await Promise.all([
-          supabase
-            .from('kunder')
-            .select('id', { count: 'exact', head: true })
-            .or('lat.is.null,lng.is.null'),
-          supabase
-            .from('tags')
-            .select('id', { count: 'exact', head: true })
-            .is('group_id', null),
-        ]);
-        data_integrity = {
-          customers_without_coords: noCoordsRes.count ?? 0,
-          orphaned_tags: orphanTagsRes.count ?? 0,
-        };
-      } catch {
-        // Tables might not exist
+        database = { ...database, status: 'unhealthy', latency_ms: -1 };
       }
     }
 
@@ -1440,9 +1414,10 @@ router.get('/maintenance', asyncHandler(async (req: AuthenticatedRequest, res: R
 // to avoid circular dependency with CRON_SECRET auth
 let broadcastMessage = '';
 let broadcastEnabled = false;
+let broadcastMessageId = 0;
 
 // Register getter so maintenance/status endpoint can include broadcast
-registerBroadcastGetter(() => broadcastEnabled ? broadcastMessage : null);
+registerBroadcastGetter(() => broadcastEnabled ? { message: broadcastMessage, messageId: broadcastMessageId } : null);
 
 /**
  * POST /api/super-admin/broadcast
@@ -1460,13 +1435,15 @@ router.post('/broadcast', asyncHandler(async (req: AuthenticatedRequest, res: Re
   broadcastEnabled = enabled;
   if (enabled && typeof message === 'string' && message.trim()) {
     broadcastMessage = message.trim().substring(0, 500);
+    broadcastMessageId = Date.now();
   }
 
   if (!enabled) {
     broadcastMessage = '';
+    broadcastMessageId = 0;
   }
 
-  res.json({ success: true, data: { enabled: broadcastEnabled, message: broadcastMessage } });
+  res.json({ success: true, data: { enabled: broadcastEnabled, message: broadcastMessage, messageId: broadcastMessageId } });
 }));
 
 /**
@@ -1479,6 +1456,7 @@ router.get('/broadcast', asyncHandler(async (req: AuthenticatedRequest, res: Res
     data: {
       enabled: broadcastEnabled,
       message: broadcastMessage,
+      messageId: broadcastMessageId,
       // Also include maintenance mode status
       maintenanceEnabled: isMaintenanceEnabled(),
       maintenanceMode: getMaintenanceMode(),

@@ -132,7 +132,7 @@ async function handleProxy(request: NextRequest, { params }: { params: Promise<{
       }
     });
 
-    // Check Content-Length before reading body to prevent OOM on Vercel (128MB limit)
+    // Check Content-Length before streaming to prevent OOM on Vercel (128MB limit)
     const contentLength = response.headers.get('content-length');
     const MAX_RESPONSE_SIZE = 50 * 1024 * 1024; // 50MB
     if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_SIZE) {
@@ -145,9 +145,8 @@ async function handleProxy(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
-    const responseBody = await response.text();
-
-    return new Response(responseBody, {
+    // Stream response directly instead of buffering entire body in memory
+    return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,

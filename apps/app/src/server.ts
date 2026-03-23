@@ -17,6 +17,7 @@ import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import rateLimit from 'express-rate-limit';
+import compression from 'compression';
 
 // ESM equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -69,6 +70,7 @@ import patchNotesRoutes, { initPatchNotesRoutes } from './routes/patch-notes';
 import chatRoutes, { initChatRoutes } from './routes/chat';
 import { initSupportChatRoutes, supportChatUserRouter, supportChatAdminRouter } from './routes/support-chat';
 import ukeplanNotaterRoutes, { initUkeplanNotaterRoutes } from './routes/ukeplan-notater';
+import fieldsRoutes from './routes/fields';
 import { csrfTokenMiddleware, csrfProtection, getCsrfTokenHandler } from './middleware/csrf';
 import { maintenanceMiddleware } from './middleware/maintenance';
 import { initWebSocketServer, shutdownWebSocket } from './services/websocket';
@@ -347,6 +349,9 @@ app.use('/api/bruker/2fa', sensitiveActionLimiter);
 app.use('/api/klient/sso', sensitiveActionLimiter);
 app.use('/api/klient/verify', apiLimiter);
 
+// ===== COMPRESSION =====
+app.use(compression({ threshold: 1024 }));
+
 // ===== STATIC FILES =====
 const publicPath = path.join(__dirname, '..', 'public');
 
@@ -363,7 +368,16 @@ app.get('/manifest.json', (_req, res, next) => {
   next();
 });
 
-app.use(express.static(publicPath));
+app.use(express.static(publicPath, {
+  maxAge: '1y',
+  immutable: true,
+  setHeaders: (res, filePath) => {
+    // HTML should never be cached aggressively
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 
 // ===== API ROUTES =====
 app.use('/api/klient', authRoutes);
@@ -396,6 +410,7 @@ app.use('/api/reports', requireTenantAuth, requireActiveSubscription, reportRout
 app.use('/api/integrations', requireTenantAuth, requireActiveSubscription, integrationsRoutes);
 app.use('/api/features', requireTenantAuth, requireActiveSubscription, featuresRoutes);
 app.use('/api/service-types', requireTenantAuth, requireActiveSubscription, serviceTypesRoutes);
+app.use('/api/fields', requireTenantAuth, requireActiveSubscription, fieldsRoutes);
 app.use('/api/customer-emails', requireTenantAuth, requireActiveSubscription, customerEmailRoutes);
 app.use('/api/ekk', requireTenantAuth, requireActiveSubscription, ekkRoutes);
 app.use('/api/outlook', requireTenantAuth, requireActiveSubscription, outlookRoutes);

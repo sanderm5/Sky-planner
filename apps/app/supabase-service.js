@@ -1263,57 +1263,34 @@ async function getKlienterForOrganization(organizationId) {
  * Get global statistics across all organizations (for super admin)
  */
 async function getGlobalStatistics() {
-  // Get total organizations
-  const { count: totalOrganizations, error: orgError } = await getClient()
-    .from('organizations')
-    .select('*', { count: 'exact', head: true })
-    .eq('aktiv', true);
+  const client = getClient();
 
-  if (orgError) throw orgError;
+  // Run all count queries in parallel
+  const [orgRes, kundeRes, userRes, subRes, planRes] = await Promise.all([
+    client.from('organizations').select('*', { count: 'exact', head: true }).eq('aktiv', true),
+    client.from('kunder').select('*', { count: 'exact', head: true }),
+    client.from('klient').select('*', { count: 'exact', head: true }).eq('aktiv', true),
+    client.from('organizations').select('*', { count: 'exact', head: true }).eq('aktiv', true).in('subscription_status', ['active', 'trialing']),
+    client.from('organizations').select('plan_type, subscription_status').eq('aktiv', true),
+  ]);
 
-  // Get total customers
-  const { count: totalKunder, error: kundeError } = await getClient()
-    .from('kunder')
-    .select('*', { count: 'exact', head: true });
-
-  if (kundeError) throw kundeError;
-
-  // Get total users (klienter)
-  const { count: totalUsers, error: userError } = await getClient()
-    .from('klient')
-    .select('*', { count: 'exact', head: true })
-    .eq('aktiv', true);
-
-  if (userError) throw userError;
-
-  // Get active subscriptions
-  const { count: activeSubscriptions, error: subError } = await getClient()
-    .from('organizations')
-    .select('*', { count: 'exact', head: true })
-    .eq('aktiv', true)
-    .in('subscription_status', ['active', 'trialing']);
-
-  if (subError) throw subError;
-
-  // Get plan distribution
-  const { data: planOrgs, error: planError } = await getClient()
-    .from('organizations')
-    .select('plan_type, subscription_status')
-    .eq('aktiv', true);
-
-  if (planError) throw planError;
+  if (orgRes.error) throw orgRes.error;
+  if (kundeRes.error) throw kundeRes.error;
+  if (userRes.error) throw userRes.error;
+  if (subRes.error) throw subRes.error;
+  if (planRes.error) throw planRes.error;
 
   const organizationsByPlan = {};
-  for (const org of (planOrgs || [])) {
+  for (const org of (planRes.data || [])) {
     const plan = org.plan_type || 'free';
     organizationsByPlan[plan] = (organizationsByPlan[plan] || 0) + 1;
   }
 
   return {
-    totalOrganizations: totalOrganizations || 0,
-    totalKunder: totalKunder || 0,
-    totalUsers: totalUsers || 0,
-    activeSubscriptions: activeSubscriptions || 0,
+    totalOrganizations: orgRes.count || 0,
+    totalKunder: kundeRes.count || 0,
+    totalUsers: userRes.count || 0,
+    activeSubscriptions: subRes.count || 0,
     organizationsByPlan,
   };
 }
